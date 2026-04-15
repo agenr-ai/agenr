@@ -13,6 +13,30 @@ export type BeforeTurnSuppressedTurnCategory = "short_social" | "low_signal";
 export type BeforeTurnSignalLabel = "task" | "factual" | "procedural";
 
 /**
+ * Stable query policy used for proactive durable-memory recall.
+ */
+export type BeforeTurnQueryPolicy = "current_only" | "contextual_fallback" | "contextual_required";
+
+/**
+ * Stable query variant kind preserved for before-turn diagnostics.
+ */
+export type BeforeTurnQueryVariantKind = "current_only" | "contextual_anchor";
+
+/**
+ * One attempted durable-memory query variant.
+ */
+export interface BeforeTurnQueryVariant {
+  /** Stable variant kind used for this attempt. */
+  kind: BeforeTurnQueryVariantKind;
+  /** Actual query text issued to durable recall. */
+  query: string;
+  /** Count of durable candidates returned before final shaping. */
+  candidateCount: number;
+  /** Whether this variant supplied the final durable selection. */
+  selected: boolean;
+}
+
+/**
  * Normalized recent conversational turn supplied by the host adapter.
  */
 export interface BeforeTurnRecentTurn {
@@ -129,6 +153,10 @@ export interface BeforeTurnProcedureSuggestion {
 export interface BeforeTurnPatchDiagnostics {
   /** Effective bounded query text derived from the turn context. */
   query?: string;
+  /** Stable query policy used for the durable before-turn pass. */
+  queryPolicy?: BeforeTurnQueryPolicy;
+  /** Actual durable-query variants attempted during selection. */
+  queryVariants: BeforeTurnQueryVariant[];
   /** Number of recent turns actually used while building the query. */
   recentTurnCount: number;
   /** High-level labels describing the turn signal observed before recall. */

@@ -177,6 +177,155 @@ describe("runBeforeTurn", () => {
     });
   });
 
+  it("uses current-turn-only durable queries by default", async () => {
+    const entry = createEntry({
+      id: "entry-current-only",
+      subject: "feature branch workflow",
+      content: "Use a feature branch and merge back to master when the change is ready.",
+      importance: 9,
+    });
+    const deps = createDeps({
+      ftsCandidates: [toRecallCandidateEntry(entry)],
+      hydratedEntries: [entry],
+    });
+
+    const result = await runBeforeTurn(
+      {
+        currentTurnText: "Should I work on this directly on master or use a feature branch?",
+        recentTurns: [{ role: "assistant", text: "We are changing a shared runtime slice." }],
+        policy: {
+          enableProcedureSuggestion: false,
+          recallThreshold: 0,
+        },
+      },
+      deps,
+    );
+
+    expect(result.diagnostics.query).toBe("Should I work on this directly on master or use a feature branch?");
+    expect(result.diagnostics.queryPolicy).toBe("current_only");
+    expect(result.diagnostics.queryVariants).toEqual([
+      {
+        kind: "current_only",
+        query: "Should I work on this directly on master or use a feature branch?",
+        candidateCount: 1,
+        selected: true,
+      },
+    ]);
+    expect(result.diagnostics.query).not.toContain("Current turn:");
+    expect(result.diagnostics.query).not.toContain("We are changing a shared runtime slice.");
+  });
+
+  it("uses contextual fallback when a continuation turn needs topic recovery", async () => {
+    const entry = createEntry({
+      id: "entry-context-fallback",
+      subject: "before-turn release notes",
+      content: "The next step is to finish the release notes for the before-turn slice.",
+      importance: 8,
+    });
+    const ftsSearch = vi.fn<RecallPorts["ftsSearch"]>(async (params) => {
+      if (params.text === "What should we do next?") {
+        return [];
+      }
+
+      if (params.text.includes("Topic: Finish the release notes for the before-turn slice.")) {
+        return [
+          {
+            entry: toRecallCandidateEntry(entry),
+            rank: -1,
+            tier: "all_tokens",
+          },
+        ];
+      }
+
+      return [];
+    });
+    const deps = createDeps({
+      ftsSearchImplementation: ftsSearch,
+      hydratedEntries: [entry],
+    });
+
+    const result = await runBeforeTurn(
+      {
+        currentTurnText: "What should we do next?",
+        recentTurns: [{ role: "user", text: "Finish the release notes for the before-turn slice." }],
+        policy: {
+          enableProcedureSuggestion: false,
+          recallThreshold: 0,
+        },
+      },
+      deps,
+    );
+
+    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["entry-context-fallback"]);
+    expect(result.diagnostics.queryPolicy).toBe("contextual_fallback");
+    expect(result.diagnostics.query).toBe("What should we do next?\nTopic: Finish the release notes for the before-turn slice.");
+    expect(result.diagnostics.queryVariants).toEqual([
+      {
+        kind: "current_only",
+        query: "What should we do next?",
+        candidateCount: 0,
+        selected: false,
+      },
+      {
+        kind: "contextual_anchor",
+        query: "What should we do next?\nTopic: Finish the release notes for the before-turn slice.",
+        candidateCount: 1,
+        selected: true,
+      },
+    ]);
+    expect(ftsSearch).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses compact contextual anchors immediately for strongly underspecified turns", async () => {
+    const entry = createEntry({
+      id: "entry-context-required",
+      subject: "duke identity",
+      content: "Duke is Jim's dog.",
+      importance: 8,
+    });
+    const ftsSearch = vi.fn<RecallPorts["ftsSearch"]>(async (params) => {
+      if (params.text === "What about him?\nTopic: Duke is Jim's dog.") {
+        return [
+          {
+            entry: toRecallCandidateEntry(entry),
+            rank: -1,
+            tier: "all_tokens",
+          },
+        ];
+      }
+
+      return [];
+    });
+    const deps = createDeps({
+      ftsSearchImplementation: ftsSearch,
+      hydratedEntries: [entry],
+    });
+
+    const result = await runBeforeTurn(
+      {
+        currentTurnText: "What about him?",
+        recentTurns: [{ role: "assistant", text: "Duke is Jim's dog." }],
+        policy: {
+          enableProcedureSuggestion: false,
+          recallThreshold: 0,
+        },
+      },
+      deps,
+    );
+
+    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["entry-context-required"]);
+    expect(result.diagnostics.queryPolicy).toBe("contextual_required");
+    expect(result.diagnostics.queryVariants).toEqual([
+      {
+        kind: "contextual_anchor",
+        query: "What about him?\nTopic: Duke is Jim's dog.",
+        candidateCount: 1,
+        selected: true,
+      },
+    ]);
+    expect(ftsSearch).toHaveBeenCalledTimes(1);
+  });
+
   it("returns durable memory plus one canonical procedure suggestion when both are strong", async () => {
     const entry = createEntry({
       id: "entry-before-turn",

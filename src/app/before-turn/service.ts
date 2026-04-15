@@ -11,6 +11,9 @@ import type {
   BeforeTurnPatchItem,
   BeforeTurnPolicy,
   BeforeTurnProcedureSuggestion,
+  BeforeTurnQueryPolicy,
+  BeforeTurnQueryVariant,
+  BeforeTurnQueryVariantKind,
   BeforeTurnRecentTurn,
   BeforeTurnSignalLabel,
   BeforeTurnSuppressedTurnCategory,
@@ -36,6 +39,12 @@ const FACTUAL_SIGNAL_RE =
   /\b(?:what(?:'s|\s+is|\s+was|\s+were)?|which|where|who|when|how much|how many|what time|what day|did we|do we|previous|prior|earlier|before|last|again|decision|preference|fact|rule|policy|status|availability|location|address|phone|email|price|cost|budget|deadline|date|time|name|called|uses|used|change(?:d)?|order|reservation|appointment|account|contact)\b/iu;
 const PROCEDURAL_SIGNAL_RE =
   /\b(?:how do i|how should i|how can i|how to|what should i do|what do i need to do|steps|procedure|process|workflow|runbook|playbook|guide|guidance|instructions|checklist|recipe|template|walk me through|step by step|best way to|planning|arrange|prepare|book|reserve|schedule|rollout|migration|incident response)\b/iu;
+const CONTEXT_REFERENCE_RE =
+  /\b(?:it|its|that|this|they|them|their|those|these|he|him|his|she|her|hers|other one|other ones)\b/iu;
+const HARD_CONTEXT_PREFIX_RE = /^(?:and\b|also\b|what about\b|how about\b|same\b|same as\b)/iu;
+const SOFT_CONTEXT_FALLBACK_RE = /\b(?:next|follow up|follow-up|continue|continuation)\b/iu;
+const CONTEXT_QUESTION_PREFIX_RE = /^(?:when|where|why|should|does|is|are|what should)\b/iu;
+const MAX_CONTEXT_ANCHOR_CHARS = 120;
 
 /**
  * Builds one structured bounded before-turn patch from the current user turn
@@ -50,6 +59,7 @@ export async function runBeforeTurn(input: BeforeTurnInput, deps: BeforeTurnDeps
   const currentTurnText = normalizeOptionalString(input.currentTurnText);
   const recentTurns = normalizeRecentTurns(input.recentTurns, policy.maxRecentTurns, currentTurnText);
   const diagnostics: BeforeTurnPatchDiagnostics = {
+    queryVariants: [],
     recentTurnCount: recentTurns.length,
     turnSignalLabels: [],
     durableRecallUsed: false,
@@ -94,9 +104,9 @@ export async function runBeforeTurn(input: BeforeTurnInput, deps: BeforeTurnDeps
     };
   }
 
-  const query = buildBeforeTurnQuery(currentTurnText, recentTurns, policy.maxQueryChars);
+  const durableQueryPlan = buildDurableRecallQueryPlan(currentTurnText, recentTurns, policy.maxQueryChars);
   const procedureQuery = buildProcedureQuery(currentTurnText, recentTurns, policy.maxQueryChars);
-  if (!query) {
+  if (!durableQueryPlan) {
     diagnostics.abstained = true;
     diagnostics.abstentionReasons.push("No usable before-turn query could be derived from the turn context.");
     return {
@@ -105,10 +115,10 @@ export async function runBeforeTurn(input: BeforeTurnInput, deps: BeforeTurnDeps
     };
   }
 
-  diagnostics.query = query;
-
   const [durableMemory, procedure] = await Promise.all([
-    policy.enableDurableRecall ? runDurableRecallSelection(query, input.sessionKey, policy, deps, diagnostics) : Promise.resolve([]),
+    policy.enableDurableRecall
+      ? runDurableRecallSelection(durableQueryPlan, input.sessionKey, policy, deps, diagnostics)
+      : Promise.resolve([]),
     policy.enableProcedureSuggestion && procedureQuery ? runProcedureSelection(procedureQuery, policy, deps, diagnostics) : Promise.resolve(undefined),
   ]);
 
@@ -136,7 +146,7 @@ export async function runBeforeTurn(input: BeforeTurnInput, deps: BeforeTurnDeps
 /**
  * Runs bounded durable-memory recall anchored on the active turn context.
  *
- * @param query - Normalized turn-derived recall query.
+ * @param queryPlan - Normalized durable-query plan for the active turn.
  * @param sessionKey - Optional session key for recall telemetry.
  * @param policy - Effective before-turn policy.
  * @param deps - Shared durable recall dependencies.
@@ -144,13 +154,76 @@ export async function runBeforeTurn(input: BeforeTurnInput, deps: BeforeTurnDeps
  * @returns Ranked durable-memory patch items.
  */
 async function runDurableRecallSelection(
-  query: string,
+  queryPlan: DurableRecallQueryPlan,
   sessionKey: string | undefined,
   policy: Required<BeforeTurnPolicy>,
   deps: BeforeTurnDeps,
   diagnostics: BeforeTurnPatchDiagnostics,
 ): Promise<BeforeTurnPatchItem[]> {
   diagnostics.durableRecallUsed = true;
+  const attemptedVariants: BeforeTurnQueryVariant[] = [];
+  const primaryResult = await runDurableRecallAttempt(queryPlan.primary.query, sessionKey, policy, deps, diagnostics);
+  attemptedVariants.push({
+    kind: queryPlan.primary.kind,
+    query: queryPlan.primary.query,
+    candidateCount: primaryResult.candidateCount,
+    selected: primaryResult.items.length > 0 && queryPlan.fallback === undefined,
+  });
+
+  if (primaryResult.items.length > 0 || queryPlan.fallback === undefined) {
+    diagnostics.query = queryPlan.primary.query;
+    diagnostics.queryPolicy = queryPlan.policy;
+    diagnostics.queryVariants = attemptedVariants;
+    diagnostics.durableRecallTrace = primaryResult.durableRecallTrace;
+    diagnostics.durableRecallCandidateCount = primaryResult.candidateCount;
+    if (primaryResult.notices.length > 0) {
+      diagnostics.notices.push(...primaryResult.notices);
+    }
+    return primaryResult.items;
+  }
+
+  const fallbackResult = await runDurableRecallAttempt(queryPlan.fallback.query, sessionKey, policy, deps, diagnostics);
+  attemptedVariants[0] = {
+    ...attemptedVariants[0],
+    selected: false,
+  };
+  attemptedVariants.push({
+    kind: queryPlan.fallback.kind,
+    query: queryPlan.fallback.query,
+    candidateCount: fallbackResult.candidateCount,
+    selected: fallbackResult.items.length > 0,
+  });
+  diagnostics.query = queryPlan.fallback.query;
+  diagnostics.queryPolicy = "contextual_fallback";
+  diagnostics.queryVariants = attemptedVariants;
+  diagnostics.durableRecallTrace = fallbackResult.durableRecallTrace;
+  diagnostics.durableRecallCandidateCount = fallbackResult.candidateCount;
+  if (primaryResult.notices.length > 0) {
+    diagnostics.notices.push(...primaryResult.notices);
+  }
+  if (fallbackResult.notices.length > 0) {
+    diagnostics.notices.push(...fallbackResult.notices);
+  }
+  return fallbackResult.items;
+}
+
+/**
+ * One attempted durable-memory recall pass for one derived query string.
+ *
+ * @param query - Normalized turn-derived recall query.
+ * @param sessionKey - Optional session key for recall telemetry.
+ * @param policy - Effective before-turn policy.
+ * @param deps - Shared durable recall dependencies.
+ * @param diagnostics - Mutable diagnostics sink used by durable-item shaping.
+ * @returns Ranked durable-memory patch items plus candidate and trace metadata.
+ */
+async function runDurableRecallAttempt(
+  query: string,
+  sessionKey: string | undefined,
+  policy: Required<BeforeTurnPolicy>,
+  deps: BeforeTurnDeps,
+  diagnostics: BeforeTurnPatchDiagnostics,
+): Promise<DurableRecallAttemptResult> {
   const durableRecallLimit = Math.max(policy.maxDurableEntries, policy.maxHighConfidenceDurableEntries);
 
   let durableRecallTrace: RecallExecutionTraceSummary | undefined;
@@ -172,23 +245,24 @@ async function runDurableRecallSelection(
         slotPolicyConfig: deps.slotPolicyConfig,
       },
     );
-
-    diagnostics.durableRecallTrace = durableRecallTrace;
-    diagnostics.durableRecallCandidateCount = recalled.length;
-    if (durableRecallTrace?.degraded.notices.length) {
-      diagnostics.notices.push(...durableRecallTrace.degraded.notices);
-    }
-
-    const selected = selectDurablePatchItems(
-      recalled.map((item) => buildDurablePatchItem(item, deps)),
-      policy,
-      diagnostics,
-    );
-    return selected;
+    const notices = durableRecallTrace?.degraded.notices.length ? [...durableRecallTrace.degraded.notices] : [];
+    return {
+      items: selectDurablePatchItems(
+        recalled.map((item) => buildDurablePatchItem(item, deps)),
+        policy,
+        diagnostics,
+      ),
+      candidateCount: recalled.length,
+      durableRecallTrace,
+      notices,
+    };
   } catch (error) {
-    diagnostics.durableRecallTrace = durableRecallTrace;
-    diagnostics.notices.push(`Before-turn durable recall failed: ${formatErrorMessage(error)}`);
-    return [];
+    return {
+      items: [],
+      candidateCount: 0,
+      durableRecallTrace,
+      notices: [`Before-turn durable recall failed: ${formatErrorMessage(error)}`],
+    };
   }
 }
 
@@ -288,45 +362,190 @@ function buildDurablePatchItem(recalled: RecallOutput, deps: BeforeTurnDeps): Be
 }
 
 /**
- * Builds one bounded before-turn query from the current user turn plus a small
- * recent-turn window.
+ * One durable-query attempt emitted by the query planner.
+ */
+type DurableRecallQueryAttempt = {
+  kind: BeforeTurnQueryVariantKind;
+  query: string;
+};
+
+/**
+ * Query plan used by the before-turn durable-memory selector.
+ */
+type DurableRecallQueryPlan = {
+  policy: BeforeTurnQueryPolicy;
+  primary: DurableRecallQueryAttempt;
+  fallback?: DurableRecallQueryAttempt;
+};
+
+/**
+ * Result returned from one durable-memory recall attempt.
+ */
+type DurableRecallAttemptResult = {
+  items: BeforeTurnPatchItem[];
+  candidateCount: number;
+  durableRecallTrace?: RecallExecutionTraceSummary;
+  notices: string[];
+};
+
+/**
+ * Builds the durable-memory query plan for one before-turn selection pass.
+ *
+ * The default path stays current-turn-only. Compact context is added only when
+ * the turn looks context-dependent or continuation-oriented.
  *
  * @param currentTurnText - Current user-turn text after normalization.
  * @param recentTurns - Ordered recent turns preserved for extra context.
  * @param maxChars - Maximum character budget for the derived query.
- * @returns Normalized recall query, or `undefined` when empty.
+ * @returns Durable query plan, or `undefined` when no usable query exists.
  */
-function buildBeforeTurnQuery(currentTurnText: string, recentTurns: BeforeTurnRecentTurn[], maxChars: number): string | undefined {
+function buildDurableRecallQueryPlan(
+  currentTurnText: string,
+  recentTurns: BeforeTurnRecentTurn[],
+  maxChars: number,
+): DurableRecallQueryPlan | undefined {
+  const currentOnlyQuery = buildCurrentTurnOnlyQuery(currentTurnText, maxChars);
+  if (!currentOnlyQuery) {
+    return undefined;
+  }
+
+  const contextualQuery = buildContextualAnchorQuery(currentOnlyQuery, recentTurns, maxChars);
+  if (!contextualQuery) {
+    return {
+      policy: "current_only",
+      primary: {
+        kind: "current_only",
+        query: currentOnlyQuery,
+      },
+    };
+  }
+
+  if (requiresContextualQuery(currentTurnText)) {
+    return {
+      policy: "contextual_required",
+      primary: {
+        kind: "contextual_anchor",
+        query: contextualQuery,
+      },
+    };
+  }
+
+  if (shouldAllowContextualFallback(currentTurnText, recentTurns)) {
+    return {
+      policy: "current_only",
+      primary: {
+        kind: "current_only",
+        query: currentOnlyQuery,
+      },
+      fallback: {
+        kind: "contextual_anchor",
+        query: contextualQuery,
+      },
+    };
+  }
+
+  return {
+    policy: "current_only",
+    primary: {
+      kind: "current_only",
+      query: currentOnlyQuery,
+    },
+  };
+}
+
+/**
+ * Builds the default current-turn-only durable recall query.
+ *
+ * @param currentTurnText - Current user-turn text after normalization.
+ * @param maxChars - Maximum character budget for the derived query.
+ * @returns Current-turn-only query, or `undefined` when empty.
+ */
+function buildCurrentTurnOnlyQuery(currentTurnText: string, maxChars: number): string | undefined {
   if (maxChars <= 0) {
     return undefined;
   }
 
-  let remaining = maxChars;
-  const parts: string[] = [];
-  const currentTurnPart = truncate(`Current turn: ${normalizeWhitespace(currentTurnText)}`, remaining);
-  if (currentTurnPart.length === 0) {
+  const query = truncate(normalizeWhitespace(currentTurnText), maxChars);
+  return query.length > 0 ? query : undefined;
+}
+
+/**
+ * Builds the compact contextual fallback query using one recent-turn anchor.
+ *
+ * @param currentTurnQuery - Current-turn-only query text.
+ * @param recentTurns - Ordered recent turns preserved for extra context.
+ * @param maxChars - Maximum character budget for the full query.
+ * @returns Contextual query, or `undefined` when no compact anchor exists.
+ */
+function buildContextualAnchorQuery(currentTurnQuery: string, recentTurns: BeforeTurnRecentTurn[], maxChars: number): string | undefined {
+  const anchor = buildCompactContextAnchor(recentTurns);
+  if (!anchor || maxChars <= currentTurnQuery.length) {
     return undefined;
   }
-  parts.push(currentTurnPart);
-  remaining -= currentTurnPart.length;
 
-  for (const turn of recentTurns) {
-    if (remaining <= 0) {
-      break;
-    }
-
-    const labeled = `${turn.role === "user" ? "User" : "Assistant"}: ${normalizeWhitespace(turn.text)}`;
-    const truncated = truncate(labeled, remaining);
-    if (truncated.length === 0) {
-      continue;
-    }
-
-    parts.push(truncated);
-    remaining -= truncated.length;
+  const prefix = "Topic: ";
+  const separator = "\n";
+  const remaining = maxChars - currentTurnQuery.length - separator.length - prefix.length;
+  if (remaining <= 0) {
+    return undefined;
   }
 
-  const query = normalizeWhitespace(parts.join("\n"));
-  return query.length > 0 ? query : undefined;
+  return `${currentTurnQuery}${separator}${prefix}${truncate(anchor, remaining)}`;
+}
+
+/**
+ * Builds one compact contextual anchor from the most recent relevant turn.
+ *
+ * @param recentTurns - Ordered recent turns preserved for extra context.
+ * @returns Compact contextual anchor text, or `undefined` when unavailable.
+ */
+function buildCompactContextAnchor(recentTurns: BeforeTurnRecentTurn[]): string | undefined {
+  const recentTurn = recentTurns[recentTurns.length - 1];
+  if (!recentTurn) {
+    return undefined;
+  }
+
+  const normalized = normalizeWhitespace(recentTurn.text);
+  return normalized.length > 0 ? truncate(normalized, MAX_CONTEXT_ANCHOR_CHARS) : undefined;
+}
+
+/**
+ * Returns whether the current turn is too context-dependent for a bare query.
+ *
+ * @param currentTurnText - Current user-turn text after normalization.
+ * @returns `true` when recent context should be required immediately.
+ */
+function requiresContextualQuery(currentTurnText: string): boolean {
+  const normalizedTurn = normalizeWhitespace(currentTurnText);
+  const lowerTurn = normalizedTurn.toLowerCase();
+  const wordCount = normalizedTurn.split(/\s+/u).filter((token) => token.length > 0).length;
+  const hasContextReference = CONTEXT_REFERENCE_RE.test(lowerTurn);
+
+  if (HARD_CONTEXT_PREFIX_RE.test(lowerTurn) && (hasContextReference || lowerTurn.includes("other one"))) {
+    return true;
+  }
+
+  if (CONTEXT_QUESTION_PREFIX_RE.test(lowerTurn) && hasContextReference && wordCount <= 8) {
+    return true;
+  }
+
+  return hasContextReference && wordCount <= 6;
+}
+
+/**
+ * Returns whether the selector should retry with compact context after a weak
+ * current-turn-only attempt.
+ *
+ * @param currentTurnText - Current user-turn text after normalization.
+ * @param recentTurns - Ordered recent turns preserved for extra context.
+ * @returns `true` when a contextual fallback attempt is worth trying.
+ */
+function shouldAllowContextualFallback(currentTurnText: string, recentTurns: BeforeTurnRecentTurn[]): boolean {
+  if (recentTurns.length === 0 || requiresContextualQuery(currentTurnText)) {
+    return false;
+  }
+
+  return SOFT_CONTEXT_FALLBACK_RE.test(normalizeWhitespace(currentTurnText).toLowerCase());
 }
 
 /**
