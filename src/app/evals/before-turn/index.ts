@@ -1,6 +1,7 @@
 export { runBeforeTurnEvalCase } from "./run-before-turn-eval-case.js";
 export type {
   BeforeTurnEvalCaseError,
+  BeforeTurnEvalCaseDiagnostics,
   BeforeTurnEvalCaseOptions,
   BeforeTurnEvalCaseOutput,
   BeforeTurnEvalCaseRequest,

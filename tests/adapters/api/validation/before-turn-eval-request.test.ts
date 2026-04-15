@@ -56,9 +56,13 @@ describe("parseBeforeTurnEvalCaseRequest", () => {
           maxRecentTurns: 2,
           maxQueryChars: 450,
           maxDurableEntries: 1,
+          maxHighConfidenceDurableEntries: 2,
           maxProcedureCandidates: 3,
           recallThreshold: 0.25,
+          highConfidenceRecallThreshold: 0.9,
           procedureThreshold: 0.7,
+          skipTrivialTurns: false,
+          requireTurnSignal: false,
         },
       },
       options: {
@@ -107,9 +111,13 @@ describe("parseBeforeTurnEvalCaseRequest", () => {
           maxRecentTurns: 2,
           maxQueryChars: 450,
           maxDurableEntries: 1,
+          maxHighConfidenceDurableEntries: 2,
           maxProcedureCandidates: 3,
           recallThreshold: 0.25,
+          highConfidenceRecallThreshold: 0.9,
           procedureThreshold: 0.7,
+          skipTrivialTurns: false,
+          requireTurnSignal: false,
         },
       },
       options: {
@@ -123,6 +131,12 @@ describe("parseBeforeTurnEvalCaseRequest", () => {
       caseId: "case-001",
       beforeTurnInput: {
         currentTurnText: "  who is Duke?  ",
+        policy: {
+          maxHighConfidenceDurableEntries: 2,
+          highConfidenceRecallThreshold: 0.9,
+          skipTrivialTurns: false,
+          requireTurnSignal: false,
+        },
       },
       options: {
         includeRenderedPatch: true,

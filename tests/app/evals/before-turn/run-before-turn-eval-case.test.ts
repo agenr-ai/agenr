@@ -189,6 +189,127 @@ describe("runBeforeTurnEvalCase", () => {
     });
   });
 
+  it("returns directness diagnostics for a threshold-zero Duke identity case", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const response = await runBeforeTurnEvalCase({
+      caseId: "before-turn-directness",
+      memoryPool: [
+        {
+          id: "duke-cousins",
+          type: "fact",
+          subject: "duke cousins",
+          content: "Duke's cousins are Comet and Pepper.",
+          tags: ["dogs", "family"],
+        },
+        {
+          id: "duke-identity",
+          type: "fact",
+          subject: "duke identity",
+          content: "Duke is Jim's dog.",
+          tags: ["dogs", "identity"],
+        },
+      ],
+      beforeTurnInput: {
+        currentTurnText: "Who is Duke?",
+        policy: {
+          recallThreshold: 0,
+          enableProcedureSuggestion: false,
+        },
+      },
+      options: {
+        includeDiagnostics: true,
+      },
+    });
+
+    expect(response.status).toBe("ok");
+    expect(response.output?.selectedEntryIds).toEqual(["duke-identity"]);
+    expect(response.diagnostics).toMatchObject({
+      query: "Who is Duke?",
+      queryPolicy: "current_only",
+      queryVariants: [
+        {
+          kind: "current_only",
+          query: "Who is Duke?",
+          candidateCount: expect.any(Number),
+          selected: true,
+        },
+      ],
+      durableRecallUsed: true,
+      durableRecallCandidateCount: expect.any(Number),
+      procedureRecallUsed: false,
+      abstained: false,
+      directness: {
+        queryKind: "entity_definition",
+        entity: "Duke",
+        winnerEntryId: "duke-identity",
+        candidates: expect.arrayContaining([
+          expect.objectContaining({
+            entryId: "duke-identity",
+          }),
+          expect.objectContaining({
+            entryId: "duke-cousins",
+          }),
+        ]),
+      },
+    });
+    expect(["kept", "reranked"]).toContain(response.diagnostics?.directness?.decision ?? "");
+  });
+
+  it("returns contextual-required diagnostics for underspecified follow-up turns", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const response = await runBeforeTurnEvalCase({
+      caseId: "before-turn-context-required",
+      memoryPool: [
+        {
+          id: "duke-identity",
+          type: "fact",
+          subject: "duke identity",
+          content: "Duke is Jim's dog.",
+          tags: ["dogs", "identity"],
+        },
+      ],
+      beforeTurnInput: {
+        currentTurnText: "What about him?",
+        recentTurns: [
+          {
+            role: "assistant",
+            text: "Duke is Jim's dog.",
+          },
+        ],
+        policy: {
+          recallThreshold: 0,
+          enableProcedureSuggestion: false,
+        },
+      },
+      options: {
+        includeDiagnostics: true,
+      },
+    });
+
+    expect(response.status).toBe("ok");
+    expect(response.output?.selectedEntryIds).toEqual(["duke-identity"]);
+    expect(response.diagnostics).toMatchObject({
+      query: "What about him?\nTopic: Duke is Jim's dog.",
+      queryPolicy: "contextual_required",
+      queryVariants: [
+        {
+          kind: "contextual_anchor",
+          query: "What about him?\nTopic: Duke is Jim's dog.",
+          candidateCount: expect.any(Number),
+          selected: true,
+        },
+      ],
+      durableRecallUsed: true,
+      procedureRecallUsed: false,
+      abstained: false,
+    });
+    expect(response.diagnostics?.directness).toBeUndefined();
+  });
+
   it("keeps isolated eval state from leaking live database entries into results", async () => {
     const tempRoot = await createTempDirectory("agenr-before-turn-live-");
     const liveDbPath = path.join(tempRoot, "live.sqlite");

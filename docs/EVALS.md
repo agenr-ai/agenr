@@ -152,9 +152,13 @@ Top-level request shape:
       "maxRecentTurns": 2,
       "maxQueryChars": 450,
       "maxDurableEntries": 1,
+      "maxHighConfidenceDurableEntries": 2,
       "maxProcedureCandidates": 3,
       "recallThreshold": 0.25,
-      "procedureThreshold": 0.7
+      "highConfidenceRecallThreshold": 0.9,
+      "procedureThreshold": 0.7,
+      "skipTrivialTurns": false,
+      "requireTurnSignal": false
     }
   },
   "options": {
@@ -173,6 +177,10 @@ Successful responses include:
 - `output.patch`
 - optional `output.renderedPatchText`
 - optional `diagnostics`
+- `diagnostics.queryPolicy`
+- `diagnostics.queryVariants`
+- optional `diagnostics.directness`
+- `diagnostics.abstentionReasons`
 - optional `timings`
 - `sandbox`
 
@@ -182,7 +190,59 @@ Current explicit non-goals for this seam:
 - no raw candidate dumps
 - no scoring, manifests, or answer-lift logic inside `agenr`
 
-## Request contract
+### Before-turn request contract
+
+The request type is `BeforeTurnEvalCaseRequest` from [src/app/evals/before-turn/contracts.ts](../src/app/evals/before-turn/contracts.ts).
+
+Top-level request semantics:
+
+- `caseId` is required and echoed back whenever the boundary can safely do so
+- `description` is optional and informational only
+- `sandbox` is optional and controls where the isolated database lives and whether it is preserved
+- `memoryPool` is required but may be an empty array
+- `procedurePool` is optional and seeds isolated procedure fixtures for procedure-aware cases
+- `beforeTurnInput.currentTurnText` is required
+- `beforeTurnInput.recentTurns` is optional and preserves the compact recent-turn window forwarded to `runBeforeTurn()`
+- `options.includeDiagnostics` enables the top-level mirrored diagnostics payload
+- `options.includeRenderedPatch` enables adapter-format prompt rendering
+- `options.includeTimings` enables timing metadata
+
+Supported `beforeTurnInput.policy` fields at the HTTP boundary:
+
+- `enableDurableRecall`
+- `enableProcedureSuggestion`
+- `maxRecentTurns`
+- `maxQueryChars`
+- `maxDurableEntries`
+- `maxHighConfidenceDurableEntries`
+- `maxProcedureCandidates`
+- `recallThreshold`
+- `highConfidenceRecallThreshold`
+- `procedureThreshold`
+- `skipTrivialTurns`
+- `requireTurnSignal`
+
+Boundary validation details:
+
+- integer count fields must be non-negative integers
+- threshold fields must be numbers from `0-1`
+- boolean gates must be booleans
+- unexpected fields are rejected on the top-level request, `beforeTurnInput`, each recent turn, `beforeTurnInput.policy`, and `options`
+
+### Before-turn diagnostics
+
+When diagnostics are included, the seam mirrors the real `runBeforeTurn()` diagnostics. The stable fields most useful to `agenr-evals` are:
+
+- `diagnostics.query` - the final durable-recall query that actually ran
+- `diagnostics.queryPolicy` - whether the selector stayed `current_only`, required context immediately, or retried with contextual fallback
+- `diagnostics.queryVariants` - each attempted query variant with its candidate count and selection status
+- `diagnostics.directness` - optional directness rerank output including query kind, entity, decision, winner gap, and candidate-level signals
+- `diagnostics.abstentionReasons` - typed selector reasons for skipping, failing to find a stable winner, or disabling a retrieval path
+- `diagnostics.notices` - degraded-mode and expansion notices preserved from the live selector
+
+These diagnostics let `agenr-evals` compare current-only, contextual-required, contextual-fallback, rerank-only, and combined selector behavior without reading raw candidate dumps.
+
+## Recall Request Contract
 
 The request type is `RecallEvalCaseRequest` from [src/app/evals/recall/contracts.ts](../src/app/evals/recall/contracts.ts).
 

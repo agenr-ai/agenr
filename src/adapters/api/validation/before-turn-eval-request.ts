@@ -36,9 +36,13 @@ const BEFORE_TURN_POLICY_KEYS = new Set<string>([
   "maxRecentTurns",
   "maxQueryChars",
   "maxDurableEntries",
+  "maxHighConfidenceDurableEntries",
   "maxProcedureCandidates",
   "recallThreshold",
+  "highConfidenceRecallThreshold",
   "procedureThreshold",
+  "skipTrivialTurns",
+  "requireTurnSignal",
 ]);
 const OPTIONS_KEYS = new Set<string>(["includeDiagnostics", "includeRenderedPatch", "includeTimings"]);
 
@@ -71,12 +75,20 @@ export interface BeforeTurnPolicyDto {
   maxQueryChars?: number;
   /** Maximum durable-memory rows to return. */
   maxDurableEntries?: number;
+  /** Maximum durable rows allowed when all surfaced items are very high confidence. */
+  maxHighConfidenceDurableEntries?: number;
   /** Maximum procedure candidates to consider before canonical selection. */
   maxProcedureCandidates?: number;
   /** Optional score threshold used for durable-memory recall. */
   recallThreshold?: number;
+  /** Optional threshold required before expanding beyond the default durable cap. */
+  highConfidenceRecallThreshold?: number;
   /** Optional score threshold used for canonical procedure selection. */
   procedureThreshold?: number;
+  /** Enables or disables early skips for short or social turns. */
+  skipTrivialTurns?: boolean;
+  /** Enables or disables the factual, procedural, or task signal gate. */
+  requireTurnSignal?: boolean;
 }
 
 /**
@@ -314,11 +326,22 @@ function parseBeforeTurnPolicy(value: unknown, issues: BeforeTurnEvalValidationI
     maxDurableEntries: parseOptionalIntegerInRange(policy.maxDurableEntries, "beforeTurnInput.policy.maxDurableEntries", issues, {
       min: 0,
     }),
+    maxHighConfidenceDurableEntries: parseOptionalIntegerInRange(
+      policy.maxHighConfidenceDurableEntries,
+      "beforeTurnInput.policy.maxHighConfidenceDurableEntries",
+      issues,
+      {
+        min: 0,
+      },
+    ),
     maxProcedureCandidates: parseOptionalIntegerInRange(policy.maxProcedureCandidates, "beforeTurnInput.policy.maxProcedureCandidates", issues, {
       min: 0,
     }),
     recallThreshold: parseOptionalThreshold(policy.recallThreshold, "beforeTurnInput.policy.recallThreshold", issues),
+    highConfidenceRecallThreshold: parseOptionalThreshold(policy.highConfidenceRecallThreshold, "beforeTurnInput.policy.highConfidenceRecallThreshold", issues),
     procedureThreshold: parseOptionalThreshold(policy.procedureThreshold, "beforeTurnInput.policy.procedureThreshold", issues),
+    skipTrivialTurns: parseOptionalBoolean(policy.skipTrivialTurns, "beforeTurnInput.policy.skipTrivialTurns", issues),
+    requireTurnSignal: parseOptionalBoolean(policy.requireTurnSignal, "beforeTurnInput.policy.requireTurnSignal", issues),
   };
 }
 
@@ -384,9 +407,13 @@ function mapBeforeTurnPolicyDto(dto: BeforeTurnPolicyDto | undefined): BeforeTur
     maxRecentTurns: dto.maxRecentTurns,
     maxQueryChars: dto.maxQueryChars,
     maxDurableEntries: dto.maxDurableEntries,
+    maxHighConfidenceDurableEntries: dto.maxHighConfidenceDurableEntries,
     maxProcedureCandidates: dto.maxProcedureCandidates,
     recallThreshold: dto.recallThreshold,
+    highConfidenceRecallThreshold: dto.highConfidenceRecallThreshold,
     procedureThreshold: dto.procedureThreshold,
+    skipTrivialTurns: dto.skipTrivialTurns,
+    requireTurnSignal: dto.requireTurnSignal,
   };
 }
 

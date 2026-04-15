@@ -50,6 +50,14 @@ export interface BeforeTurnEvalCaseOutput {
 }
 
 /**
+ * Stable before-turn diagnostics surfaced through the eval seam when requested.
+ *
+ * This mirrors the app-layer before-turn diagnostics and includes query-policy,
+ * attempted query variants, directness decisions, and typed abstention reasons.
+ */
+export type BeforeTurnEvalCaseDiagnostics = BeforeTurnPatchDiagnostics;
+
+/**
  * Timing metadata emitted by the before-turn eval seam.
  */
 export interface BeforeTurnEvalCaseTimings {
@@ -88,7 +96,7 @@ export interface BeforeTurnEvalCaseResponse {
   /** Successful selector output when the case ran to completion. */
   output?: BeforeTurnEvalCaseOutput;
   /** Structured diagnostics emitted by the real before-turn service. */
-  diagnostics?: BeforeTurnPatchDiagnostics;
+  diagnostics?: BeforeTurnEvalCaseDiagnostics;
   /** Timing metadata for the isolated eval case. */
   timings?: BeforeTurnEvalCaseTimings;
   /** Isolated sandbox metadata when the sandbox was created successfully. */
