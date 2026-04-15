@@ -215,6 +215,57 @@ describe("runBeforeTurn", () => {
     expect(result.diagnostics.query).not.toContain("We are changing a shared runtime slice.");
   });
 
+  it("keeps the primary variant selected when fallback is available but not needed", async () => {
+    const entry = createEntry({
+      id: "entry-context-primary",
+      subject: "what should we do next",
+      content: "What should we do next?",
+      importance: 8,
+    });
+    const ftsSearch = vi.fn<RecallPorts["ftsSearch"]>(async (params) => {
+      if (params.text === "What should we do next?") {
+        return [
+          {
+            entry: toRecallCandidateEntry(entry),
+            rank: -1,
+            tier: "all_tokens",
+          },
+        ];
+      }
+
+      return [];
+    });
+    const deps = createDeps({
+      ftsSearchImplementation: ftsSearch,
+      hydratedEntries: [entry],
+    });
+
+    const result = await runBeforeTurn(
+      {
+        currentTurnText: "What should we do next?",
+        recentTurns: [{ role: "user", text: "Finish the release notes for the before-turn slice." }],
+        policy: {
+          enableProcedureSuggestion: false,
+          recallThreshold: 0,
+          highConfidenceRecallThreshold: 0,
+        },
+      },
+      deps,
+    );
+
+    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["entry-context-primary"]);
+    expect(result.diagnostics.queryPolicy).toBe("current_only");
+    expect(result.diagnostics.queryVariants).toEqual([
+      {
+        kind: "current_only",
+        query: "What should we do next?",
+        candidateCount: 1,
+        selected: true,
+      },
+    ]);
+    expect(ftsSearch).toHaveBeenCalledTimes(1);
+  });
+
   it("uses contextual fallback when a continuation turn needs topic recovery", async () => {
     const entry = createEntry({
       id: "entry-context-fallback",
@@ -224,7 +275,13 @@ describe("runBeforeTurn", () => {
     });
     const ftsSearch = vi.fn<RecallPorts["ftsSearch"]>(async (params) => {
       if (params.text === "What should we do next?") {
-        return [];
+        return [
+          {
+            entry: toRecallCandidateEntry(entry),
+            rank: -1,
+            tier: "all_tokens",
+          },
+        ];
       }
 
       if (params.text.includes("Topic: Finish the release notes for the before-turn slice.")) {
@@ -251,6 +308,7 @@ describe("runBeforeTurn", () => {
         policy: {
           enableProcedureSuggestion: false,
           recallThreshold: 0,
+          highConfidenceRecallThreshold: 1,
         },
       },
       deps,
@@ -263,7 +321,7 @@ describe("runBeforeTurn", () => {
       {
         kind: "current_only",
         query: "What should we do next?",
-        candidateCount: 0,
+        candidateCount: 1,
         selected: false,
       },
       {

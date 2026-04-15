@@ -198,10 +198,10 @@ async function runDurableRecallSelection(
     kind: queryPlan.primary.kind,
     query: queryPlan.primary.query,
     candidateCount: primaryResult.candidateCount,
-    selected: primaryResult.items.length > 0 && queryPlan.fallback === undefined,
+    selected: primaryResult.items.length > 0,
   });
 
-  if (primaryResult.items.length > 0 || queryPlan.fallback === undefined) {
+  if (queryPlan.fallback === undefined || (primaryResult.items.length > 0 && !shouldRetryWeakPrimaryWithContext(primaryResult, policy))) {
     diagnostics.query = queryPlan.primary.query;
     diagnostics.queryPolicy = queryPlan.policy;
     diagnostics.queryVariants = attemptedVariants;
@@ -217,33 +217,54 @@ async function runDurableRecallSelection(
     return primaryResult.items;
   }
 
-  const fallbackResult = await runDurableRecallAttempt(currentTurnText, queryPlan.fallback.query, sessionKey, policy, deps, diagnostics);
+  const fallbackPlan = queryPlan.fallback;
+  const primaryItems = primaryResult.items;
+  const fallbackResult = await runDurableRecallAttempt(currentTurnText, fallbackPlan.query, sessionKey, policy, deps, diagnostics);
+  const shouldUseFallback = fallbackResult.items.length > 0;
   attemptedVariants[0] = {
     ...attemptedVariants[0],
-    selected: false,
+    selected: primaryItems.length > 0 && !shouldUseFallback,
   };
   attemptedVariants.push({
-    kind: queryPlan.fallback.kind,
-    query: queryPlan.fallback.query,
+    kind: fallbackPlan.kind,
+    query: fallbackPlan.query,
     candidateCount: fallbackResult.candidateCount,
-    selected: fallbackResult.items.length > 0,
+    selected: shouldUseFallback,
   });
-  diagnostics.query = queryPlan.fallback.query;
-  diagnostics.queryPolicy = "contextual_fallback";
+
+  const selectedResult = shouldUseFallback ? fallbackResult : primaryResult;
+  const selectedQuery = shouldUseFallback ? fallbackPlan.query : queryPlan.primary.query;
+  const selectedPolicy = shouldUseFallback ? "contextual_fallback" : queryPlan.policy;
+
+  diagnostics.query = selectedQuery;
+  diagnostics.queryPolicy = selectedPolicy;
   diagnostics.queryVariants = attemptedVariants;
-  diagnostics.durableRecallTrace = fallbackResult.durableRecallTrace;
-  diagnostics.durableRecallCandidateCount = fallbackResult.candidateCount;
-  diagnostics.directness = fallbackResult.directness;
+  diagnostics.durableRecallTrace = selectedResult.durableRecallTrace;
+  diagnostics.durableRecallCandidateCount = selectedResult.candidateCount;
+  diagnostics.directness = selectedResult.directness;
   if (primaryResult.notices.length > 0) {
     diagnostics.notices.push(...primaryResult.notices);
   }
   if (fallbackResult.notices.length > 0) {
     diagnostics.notices.push(...fallbackResult.notices);
   }
-  if (fallbackResult.directness?.decision === "abstained") {
-    diagnostics.abstentionReasons.push(fallbackResult.directness.reason);
+  if (selectedResult.directness?.decision === "abstained") {
+    diagnostics.abstentionReasons.push(selectedResult.directness.reason);
   }
-  return fallbackResult.items;
+  return selectedResult.items;
+}
+
+/**
+ * Returns whether a continuation-style turn should retry with compact context
+ * even though the bare current-turn query surfaced a bounded result.
+ *
+ * @param primaryResult - Primary current-turn-only durable recall attempt.
+ * @param policy - Effective before-turn policy.
+ * @returns `true` when the primary winner is below the high-confidence bar.
+ */
+function shouldRetryWeakPrimaryWithContext(primaryResult: DurableRecallAttemptResult, policy: Required<BeforeTurnPolicy>): boolean {
+  const topScore = primaryResult.items[0]?.score;
+  return typeof topScore === "number" && topScore < policy.highConfidenceRecallThreshold;
 }
 
 /**
