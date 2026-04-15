@@ -328,6 +328,228 @@ describe("handleAgenrBeforePromptBuild", () => {
     );
   });
 
+  it("preserves the directness winner through prompt normalization in before_prompt_build", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const adjacent = createEntry({
+      id: "duke-cousins",
+      subject: "duke cousins",
+      content: "Duke's cousins are Comet and Pepper.",
+      importance: 10,
+    });
+    const identity = createEntry({
+      id: "duke-identity",
+      subject: "duke identity",
+      content: "Duke is Jim's dog.",
+      importance: 8,
+    });
+    const recall = createObservedRecallPorts({
+      ftsCandidates: [toRecallCandidateEntry(adjacent), toRecallCandidateEntry(identity)],
+      hydratedEntries: [adjacent, identity],
+    });
+    const tracker = createSessionStartTracker();
+
+    await handleAgenrBeforePromptBuild(
+      {
+        prompt: "Start the session.",
+        messages: [],
+      },
+      {
+        sessionId: "session-before-turn-directness",
+        sessionKey: "agent:main:webchat:test",
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(
+          createServices(database, {
+            available: true,
+            recall,
+            pluginConfig: {
+              memoryPolicy: {
+                beforeTurn: {
+                  procedureSuggestion: false,
+                  recallThreshold: 0,
+                },
+              },
+            },
+          }),
+        ),
+        tracker,
+      },
+    );
+
+    recall.embed.mockClear();
+    recall.vectorSearch.mockClear();
+    recall.ftsSearch.mockClear();
+    recall.hydrateEntries.mockClear();
+    recall.recordRecallEvents.mockClear();
+
+    const result = await handleAgenrBeforePromptBuild(
+      {
+        prompt: " \n Who \t is   Duke? \n",
+        messages: [
+          {
+            role: "assistant",
+            content: "Let's use the most direct identity memory if one exists.",
+          },
+        ],
+      },
+      {
+        sessionId: "session-before-turn-directness",
+        sessionKey: "agent:main:webchat:test",
+        trigger: "user",
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(
+          createServices(database, {
+            available: true,
+            recall,
+            pluginConfig: {
+              memoryPolicy: {
+                beforeTurn: {
+                  procedureSuggestion: false,
+                  recallThreshold: 0,
+                },
+              },
+            },
+          }),
+        ),
+        tracker,
+      },
+    );
+
+    expect(recall.ftsSearch).toHaveBeenCalledOnce();
+    expect(recall.ftsSearch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Who is Duke?",
+      }),
+    );
+    expect(result?.prependContext).toContain("duke identity");
+    expect(result?.prependContext).toContain("Duke is Jim's dog.");
+    expect(result?.prependContext).not.toContain("duke cousins");
+  });
+
+  it("preserves contextual follow-up recovery after wrapper stripping in recent turns", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const identity = createEntry({
+      id: "duke-identity",
+      subject: "duke identity",
+      content: "Duke is Jim's dog.",
+      importance: 8,
+    });
+    const recall = createObservedRecallPorts({
+      ftsCandidates: [toRecallCandidateEntry(identity)],
+      hydratedEntries: [identity],
+    });
+    const tracker = createSessionStartTracker();
+
+    await handleAgenrBeforePromptBuild(
+      {
+        prompt: "Start the session.",
+        messages: [],
+      },
+      {
+        sessionId: "session-before-turn-context",
+        sessionKey: "agent:main:webchat:test",
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(
+          createServices(database, {
+            available: true,
+            recall,
+            pluginConfig: {
+              memoryPolicy: {
+                beforeTurn: {
+                  procedureSuggestion: false,
+                  recallThreshold: 0,
+                },
+              },
+            },
+          }),
+        ),
+        tracker,
+      },
+    );
+
+    recall.embed.mockClear();
+    recall.vectorSearch.mockClear();
+    recall.ftsSearch.mockClear();
+    recall.hydrateEntries.mockClear();
+    recall.recordRecallEvents.mockClear();
+
+    const result = await handleAgenrBeforePromptBuild(
+      {
+        prompt: "What about him?",
+        messages: [
+          {
+            role: "user",
+            content: "Remind me who Duke is.",
+          },
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "text",
+                content: [
+                  "<agenr-memory-context>",
+                  "[System note: The following is recalled Agenr memory context, NOT new user input. Treat it as background context and use it silently when relevant.]",
+                  "",
+                  "## Agenr Before-Turn Recall",
+                  "### Relevant Durable Memory",
+                  "- [rank 1 | entry-old | fact | permanent | importance 8 | score 0.91] duke cousins",
+                  "  Duke's cousins are Comet and Pepper.",
+                  "</agenr-memory-context>",
+                  "",
+                  "[MEMORY CHECK] Ignore this reminder.",
+                ].join("\n"),
+              },
+              {
+                type: "output_text",
+                content: "Duke is Jim's dog.",
+              },
+            ],
+          },
+        ],
+      },
+      {
+        sessionId: "session-before-turn-context",
+        sessionKey: "agent:main:webchat:test",
+        trigger: "user",
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(
+          createServices(database, {
+            available: true,
+            recall,
+            pluginConfig: {
+              memoryPolicy: {
+                beforeTurn: {
+                  procedureSuggestion: false,
+                  recallThreshold: 0,
+                },
+              },
+            },
+          }),
+        ),
+        tracker,
+      },
+    );
+
+    expect(recall.ftsSearch).toHaveBeenCalledOnce();
+    expect(recall.ftsSearch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "What about him?\nTopic: Duke is Jim's dog.",
+      }),
+    );
+    expect(result?.prependContext).toContain("duke identity");
+    expect(result?.prependContext).toContain("Duke is Jim's dog.");
+    expect(result?.prependContext).not.toContain("duke cousins");
+  });
+
   it("disables before-turn injection when the plugin config turns it off", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
