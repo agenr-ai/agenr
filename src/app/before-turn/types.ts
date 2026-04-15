@@ -23,6 +23,61 @@ export type BeforeTurnQueryPolicy = "current_only" | "contextual_fallback" | "co
 export type BeforeTurnQueryVariantKind = "current_only" | "contextual_anchor";
 
 /**
+ * Narrow directness query category handled locally in before-turn selection.
+ */
+export type BeforeTurnDirectnessQueryKind = "entity_definition";
+
+/**
+ * Stable decision emitted by the before-turn directness pass.
+ */
+export type BeforeTurnDirectnessDecision = "kept" | "reranked" | "abstained";
+
+/**
+ * Stable directness signal attached to one candidate during rerank.
+ */
+export type BeforeTurnDirectnessSignal = "subject_entity_match" | "subject_identity_wrapper" | "definitional_content" | "adjacent_relationship" | "list_lore";
+
+/**
+ * Inspectable directness features for one top candidate.
+ */
+export interface BeforeTurnDirectnessCandidateDiagnostic {
+  /** Durable entry identifier for the inspected candidate. */
+  entryId: string;
+  /** Original recall rank before local directness reranking. */
+  baseRank: number;
+  /** Base durable recall score before local adjustments. */
+  baseScore: number;
+  /** Local directness delta added to the base score. */
+  directnessDelta: number;
+  /** Adjusted score after the local directness pass. */
+  adjustedScore: number;
+  /** Stable directness signals observed for this candidate. */
+  signals: BeforeTurnDirectnessSignal[];
+}
+
+/**
+ * Compact diagnostics describing one before-turn directness pass.
+ */
+export interface BeforeTurnDirectnessDiagnostics {
+  /** Directness query category that triggered the local rerank. */
+  queryKind: BeforeTurnDirectnessQueryKind;
+  /** Normalized entity string extracted from the current turn. */
+  entity: string;
+  /** Final local decision after reranking or abstention. */
+  decision: BeforeTurnDirectnessDecision;
+  /** Winning durable entry id after reranking when one remained stable enough. */
+  winnerEntryId?: string;
+  /** Runner-up durable entry id used for stability comparison when available. */
+  runnerUpEntryId?: string;
+  /** Adjusted winner gap against the runner-up when available. */
+  winnerGap?: number;
+  /** Short explanation describing why the pass kept, reranked, or abstained. */
+  reason: string;
+  /** Inspectable top candidate features used by the local decision. */
+  candidates: BeforeTurnDirectnessCandidateDiagnostic[];
+}
+
+/**
  * One attempted durable-memory query variant.
  */
 export interface BeforeTurnQueryVariant {
@@ -169,6 +224,8 @@ export interface BeforeTurnPatchDiagnostics {
   durableRecallCandidateCount: number;
   /** Typed trace emitted by the shared durable recall pipeline. */
   durableRecallTrace?: RecallExecutionTraceSummary;
+  /** Optional diagnostics for a local before-turn directness rerank pass. */
+  directness?: BeforeTurnDirectnessDiagnostics;
   /** Whether procedure recall was attempted. */
   procedureRecallUsed: boolean;
   /** Count of procedure candidates considered before canonical selection. */

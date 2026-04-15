@@ -5,6 +5,9 @@ import { projectClaimCentricRecallEntry } from "../recall/claim-centric.js";
 
 import type { BeforeTurnDeps } from "./ports.js";
 import type {
+  BeforeTurnDirectnessDiagnostics,
+  BeforeTurnDirectnessQueryKind,
+  BeforeTurnDirectnessSignal,
   BeforeTurnInput,
   BeforeTurnPatch,
   BeforeTurnPatchDiagnostics,
@@ -39,12 +42,39 @@ const FACTUAL_SIGNAL_RE =
   /\b(?:what(?:'s|\s+is|\s+was|\s+were)?|which|where|who|when|how much|how many|what time|what day|did we|do we|previous|prior|earlier|before|last|again|decision|preference|fact|rule|policy|status|availability|location|address|phone|email|price|cost|budget|deadline|date|time|name|called|uses|used|change(?:d)?|order|reservation|appointment|account|contact)\b/iu;
 const PROCEDURAL_SIGNAL_RE =
   /\b(?:how do i|how should i|how can i|how to|what should i do|what do i need to do|steps|procedure|process|workflow|runbook|playbook|guide|guidance|instructions|checklist|recipe|template|walk me through|step by step|best way to|planning|arrange|prepare|book|reserve|schedule|rollout|migration|incident response)\b/iu;
-const CONTEXT_REFERENCE_RE =
-  /\b(?:it|its|that|this|they|them|their|those|these|he|him|his|she|her|hers|other one|other ones)\b/iu;
+const CONTEXT_REFERENCE_RE = /\b(?:it|its|that|this|they|them|their|those|these|he|him|his|she|her|hers|other one|other ones)\b/iu;
 const HARD_CONTEXT_PREFIX_RE = /^(?:and\b|also\b|what about\b|how about\b|same\b|same as\b)/iu;
 const SOFT_CONTEXT_FALLBACK_RE = /\b(?:next|follow up|follow-up|continue|continuation)\b/iu;
 const CONTEXT_QUESTION_PREFIX_RE = /^(?:when|where|why|should|does|is|are|what should)\b/iu;
 const MAX_CONTEXT_ANCHOR_CHARS = 120;
+const DIRECTNESS_STABLE_GAP = 0.08;
+const DIRECTNESS_SUBJECT_ENTITY_MATCH_BONUS = 0.16;
+const DIRECTNESS_SUBJECT_IDENTITY_WRAPPER_BONUS = 0.12;
+const DIRECTNESS_DEFINITIONAL_CONTENT_BONUS = 0.22;
+const DIRECTNESS_ADJACENT_RELATIONSHIP_PENALTY = 0.18;
+const DIRECTNESS_LIST_LORE_PENALTY = 0.08;
+const ENTITY_DIRECTNESS_MAX_WORDS = 5;
+const DIRECTNESS_IDENTITY_WRAPPERS = new Set(["identity", "profile", "bio", "biography", "definition", "overview", "summary"]);
+const DIRECTNESS_RELATIONSHIP_KEYWORDS = new Set([
+  "cousin",
+  "cousins",
+  "family",
+  "brother",
+  "brothers",
+  "sister",
+  "sisters",
+  "mother",
+  "father",
+  "parent",
+  "parents",
+  "friend",
+  "friends",
+  "relationship",
+  "relationships",
+  "owner",
+  "owners",
+]);
+const DIRECTNESS_LIST_LORE_KEYWORDS = new Set(["list", "notes", "timeline", "history", "background", "facts", "lore"]);
 
 /**
  * Builds one structured bounded before-turn patch from the current user turn
@@ -117,7 +147,7 @@ export async function runBeforeTurn(input: BeforeTurnInput, deps: BeforeTurnDeps
 
   const [durableMemory, procedure] = await Promise.all([
     policy.enableDurableRecall
-      ? runDurableRecallSelection(durableQueryPlan, input.sessionKey, policy, deps, diagnostics)
+      ? runDurableRecallSelection(currentTurnText, durableQueryPlan, input.sessionKey, policy, deps, diagnostics)
       : Promise.resolve([]),
     policy.enableProcedureSuggestion && procedureQuery ? runProcedureSelection(procedureQuery, policy, deps, diagnostics) : Promise.resolve(undefined),
   ]);
@@ -154,6 +184,7 @@ export async function runBeforeTurn(input: BeforeTurnInput, deps: BeforeTurnDeps
  * @returns Ranked durable-memory patch items.
  */
 async function runDurableRecallSelection(
+  currentTurnText: string,
   queryPlan: DurableRecallQueryPlan,
   sessionKey: string | undefined,
   policy: Required<BeforeTurnPolicy>,
@@ -162,7 +193,7 @@ async function runDurableRecallSelection(
 ): Promise<BeforeTurnPatchItem[]> {
   diagnostics.durableRecallUsed = true;
   const attemptedVariants: BeforeTurnQueryVariant[] = [];
-  const primaryResult = await runDurableRecallAttempt(queryPlan.primary.query, sessionKey, policy, deps, diagnostics);
+  const primaryResult = await runDurableRecallAttempt(currentTurnText, queryPlan.primary.query, sessionKey, policy, deps, diagnostics);
   attemptedVariants.push({
     kind: queryPlan.primary.kind,
     query: queryPlan.primary.query,
@@ -176,13 +207,17 @@ async function runDurableRecallSelection(
     diagnostics.queryVariants = attemptedVariants;
     diagnostics.durableRecallTrace = primaryResult.durableRecallTrace;
     diagnostics.durableRecallCandidateCount = primaryResult.candidateCount;
+    diagnostics.directness = primaryResult.directness;
     if (primaryResult.notices.length > 0) {
       diagnostics.notices.push(...primaryResult.notices);
+    }
+    if (primaryResult.directness?.decision === "abstained") {
+      diagnostics.abstentionReasons.push(primaryResult.directness.reason);
     }
     return primaryResult.items;
   }
 
-  const fallbackResult = await runDurableRecallAttempt(queryPlan.fallback.query, sessionKey, policy, deps, diagnostics);
+  const fallbackResult = await runDurableRecallAttempt(currentTurnText, queryPlan.fallback.query, sessionKey, policy, deps, diagnostics);
   attemptedVariants[0] = {
     ...attemptedVariants[0],
     selected: false,
@@ -198,11 +233,15 @@ async function runDurableRecallSelection(
   diagnostics.queryVariants = attemptedVariants;
   diagnostics.durableRecallTrace = fallbackResult.durableRecallTrace;
   diagnostics.durableRecallCandidateCount = fallbackResult.candidateCount;
+  diagnostics.directness = fallbackResult.directness;
   if (primaryResult.notices.length > 0) {
     diagnostics.notices.push(...primaryResult.notices);
   }
   if (fallbackResult.notices.length > 0) {
     diagnostics.notices.push(...fallbackResult.notices);
+  }
+  if (fallbackResult.directness?.decision === "abstained") {
+    diagnostics.abstentionReasons.push(fallbackResult.directness.reason);
   }
   return fallbackResult.items;
 }
@@ -218,6 +257,7 @@ async function runDurableRecallSelection(
  * @returns Ranked durable-memory patch items plus candidate and trace metadata.
  */
 async function runDurableRecallAttempt(
+  currentTurnText: string,
   query: string,
   sessionKey: string | undefined,
   policy: Required<BeforeTurnPolicy>,
@@ -246,14 +286,15 @@ async function runDurableRecallAttempt(
       },
     );
     const notices = durableRecallTrace?.degraded.notices.length ? [...durableRecallTrace.degraded.notices] : [];
+    const directnessSelection = applyDirectnessSelection(
+      currentTurnText,
+      recalled.map((item) => buildDurablePatchItem(item, deps)),
+    );
     return {
-      items: selectDurablePatchItems(
-        recalled.map((item) => buildDurablePatchItem(item, deps)),
-        policy,
-        diagnostics,
-      ),
+      items: selectDurablePatchItems(directnessSelection.items, policy, diagnostics),
       candidateCount: recalled.length,
       durableRecallTrace,
+      directness: directnessSelection.diagnostics,
       notices,
     };
   } catch (error) {
@@ -385,7 +426,29 @@ type DurableRecallAttemptResult = {
   items: BeforeTurnPatchItem[];
   candidateCount: number;
   durableRecallTrace?: RecallExecutionTraceSummary;
+  directness?: BeforeTurnDirectnessDiagnostics;
   notices: string[];
+};
+
+/**
+ * Narrow directness turn shape extracted from the current user request.
+ */
+type DirectnessQueryMatch = {
+  kind: BeforeTurnDirectnessQueryKind;
+  entity: string;
+  normalizedEntity: string;
+};
+
+/**
+ * Candidate-level directness features computed after durable recall returns.
+ */
+type DirectnessCandidateScore = {
+  item: BeforeTurnPatchItem;
+  baseRank: number;
+  baseScore: number;
+  directnessDelta: number;
+  adjustedScore: number;
+  signals: BeforeTurnDirectnessSignal[];
 };
 
 /**
@@ -399,11 +462,7 @@ type DurableRecallAttemptResult = {
  * @param maxChars - Maximum character budget for the derived query.
  * @returns Durable query plan, or `undefined` when no usable query exists.
  */
-function buildDurableRecallQueryPlan(
-  currentTurnText: string,
-  recentTurns: BeforeTurnRecentTurn[],
-  maxChars: number,
-): DurableRecallQueryPlan | undefined {
+function buildDurableRecallQueryPlan(currentTurnText: string, recentTurns: BeforeTurnRecentTurn[], maxChars: number): DurableRecallQueryPlan | undefined {
   const currentOnlyQuery = buildCurrentTurnOnlyQuery(currentTurnText, maxChars);
   if (!currentOnlyQuery) {
     return undefined;
@@ -567,6 +626,345 @@ function buildProcedureQuery(currentTurnText: string, recentTurns: BeforeTurnRec
 
   const recentUserTurn = [...recentTurns].reverse().find((turn) => turn.role === "user");
   return recentUserTurn ? truncate(normalizeWhitespace(recentUserTurn.text), maxChars) : undefined;
+}
+
+/**
+ * Applies a narrow directness rerank for entity and definitional asks.
+ *
+ * @param currentTurnText - Current user-turn text after normalization.
+ * @param items - Ranked durable-memory candidates from the shared recall path.
+ * @returns Reordered candidates or an empty set when the winner stays unstable.
+ */
+function applyDirectnessSelection(
+  currentTurnText: string,
+  items: BeforeTurnPatchItem[],
+): {
+  items: BeforeTurnPatchItem[];
+  diagnostics?: BeforeTurnDirectnessDiagnostics;
+} {
+  if (items.length === 0) {
+    return { items };
+  }
+
+  const queryMatch = detectEntityDefinitionTurn(currentTurnText);
+  if (!queryMatch) {
+    return { items };
+  }
+
+  const scoredCandidates = items.map((item, index) => scoreDirectnessCandidate(queryMatch, item, index + 1));
+  const rerankedCandidates = [...scoredCandidates].sort(compareDirectnessCandidates);
+  const winner = rerankedCandidates[0];
+  const runnerUp = rerankedCandidates[1];
+  const winnerGap = runnerUp ? winner.adjustedScore - runnerUp.adjustedScore : undefined;
+  const winnerHasPositiveIdentitySignal = hasPositiveIdentitySignal(winner);
+  const winnerHasOnlyAdjacentSignals =
+    winner.signals.includes("adjacent_relationship") &&
+    !winner.signals.includes("definitional_content") &&
+    !winner.signals.includes("subject_entity_match") &&
+    !winner.signals.includes("subject_identity_wrapper");
+
+  if (!winnerHasPositiveIdentitySignal || winnerHasOnlyAdjacentSignals || (runnerUp && winnerGap !== undefined && winnerGap < DIRECTNESS_STABLE_GAP)) {
+    const reason =
+      !winnerHasPositiveIdentitySignal || winnerHasOnlyAdjacentSignals
+        ? `Before-turn directness check abstained for "${queryMatch.entity}" because the top candidate looked adjacent rather than definitional.`
+        : `Before-turn directness check abstained for "${queryMatch.entity}" because the top candidates remained too close after reranking.`;
+    return {
+      items: [],
+      diagnostics: buildDirectnessDiagnostics(queryMatch, "abstained", reason, rerankedCandidates, winnerGap),
+    };
+  }
+
+  const decision = winner.baseRank === 1 ? "kept" : "reranked";
+  const reason =
+    decision === "kept"
+      ? `Before-turn directness check kept ${winner.item.entry.id} because it stayed the clearest definitional match for "${queryMatch.entity}".`
+      : `Before-turn directness check reranked ${winner.item.entry.id} ahead of an adjacent match for "${queryMatch.entity}".`;
+  return {
+    items: [winner.item],
+    diagnostics: buildDirectnessDiagnostics(queryMatch, decision, reason, rerankedCandidates, winnerGap),
+  };
+}
+
+/**
+ * Detects narrow entity-definition ask patterns that deserve a local rerank.
+ *
+ * @param currentTurnText - Current user-turn text after normalization.
+ * @returns Extracted directness query shape, or `undefined` when not applicable.
+ */
+function detectEntityDefinitionTurn(currentTurnText: string): DirectnessQueryMatch | undefined {
+  const normalizedTurn = normalizeWhitespace(currentTurnText);
+  const patterns = [/^(?:who|what)\s+is\s+(.+?)(?:\s+again)?[?!.,]*$/iu, /^who'?s\s+(.+?)(?:\s+again)?[?!.,]*$/iu, /^tell\s+me\s+about\s+(.+?)[?!.,]*$/iu];
+
+  for (const pattern of patterns) {
+    const match = pattern.exec(normalizedTurn);
+    const candidateEntity = normalizeDirectnessEntity(match?.[1]);
+    if (candidateEntity) {
+      return {
+        kind: "entity_definition",
+        entity: candidateEntity,
+        normalizedEntity: normalizeDirectnessText(candidateEntity),
+      };
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Normalizes a candidate entity phrase and rejects obviously contextual or
+ * relational variants so the rerank stays narrow.
+ *
+ * @param entityText - Raw entity phrase captured from the current turn.
+ * @returns Normalized entity text, or `undefined` when the ask is too broad.
+ */
+function normalizeDirectnessEntity(entityText: string | undefined): string | undefined {
+  const cleaned = entityText
+    ? normalizeWhitespace(entityText)
+        .replace(/^[("'`]+/u, "")
+        .replace(/[)"'`?!.,]+$/u, "")
+        .replace(/^(?:the|a|an)\s+/iu, "")
+        .trim()
+    : "";
+  if (cleaned.length === 0) {
+    return undefined;
+  }
+
+  const wordCount = cleaned.split(/\s+/u).filter((token) => token.length > 0).length;
+  const normalized = normalizeDirectnessText(cleaned);
+  if (
+    wordCount === 0 ||
+    wordCount > ENTITY_DIRECTNESS_MAX_WORDS ||
+    CONTEXT_REFERENCE_RE.test(normalized) ||
+    normalized.includes("'s") ||
+    containsKeyword(normalized, DIRECTNESS_RELATIONSHIP_KEYWORDS)
+  ) {
+    return undefined;
+  }
+
+  return cleaned;
+}
+
+/**
+ * Scores one durable candidate using narrow directness features.
+ *
+ * @param queryMatch - Directness query shape extracted from the current turn.
+ * @param item - Durable candidate returned from shared recall.
+ * @param baseRank - One-based original candidate rank.
+ * @returns Candidate with directness deltas and stable signals.
+ */
+function scoreDirectnessCandidate(queryMatch: DirectnessQueryMatch, item: BeforeTurnPatchItem, baseRank: number): DirectnessCandidateScore {
+  const subject = normalizeDirectnessText(item.entry.subject);
+  const content = normalizeDirectnessText(item.entry.content);
+  const signals: BeforeTurnDirectnessSignal[] = [];
+  let directnessDelta = 0;
+
+  if (subject === queryMatch.normalizedEntity) {
+    signals.push("subject_entity_match");
+    directnessDelta += DIRECTNESS_SUBJECT_ENTITY_MATCH_BONUS;
+  } else if (isIdentityWrapperSubject(subject, queryMatch.normalizedEntity)) {
+    signals.push("subject_identity_wrapper");
+    directnessDelta += DIRECTNESS_SUBJECT_IDENTITY_WRAPPER_BONUS;
+  }
+
+  if (hasDefinitionalContent(content, queryMatch.normalizedEntity)) {
+    signals.push("definitional_content");
+    directnessDelta += DIRECTNESS_DEFINITIONAL_CONTENT_BONUS;
+  }
+
+  if (looksLikeAdjacentRelationship(subject, content, queryMatch.normalizedEntity)) {
+    signals.push("adjacent_relationship");
+    directnessDelta -= DIRECTNESS_ADJACENT_RELATIONSHIP_PENALTY;
+  }
+
+  if (looksLikeListLore(subject, content)) {
+    signals.push("list_lore");
+    directnessDelta -= DIRECTNESS_LIST_LORE_PENALTY;
+  }
+
+  return {
+    item,
+    baseRank,
+    baseScore: item.score,
+    directnessDelta,
+    adjustedScore: item.score + directnessDelta,
+    signals,
+  };
+}
+
+/**
+ * Converts the internal directness ranking pass into stable diagnostics.
+ *
+ * @param queryMatch - Directness query shape extracted from the turn.
+ * @param decision - Final directness decision.
+ * @param reason - Human-readable decision summary.
+ * @param candidates - Ranked candidate diagnostics after local reranking.
+ * @param winnerGap - Optional gap between the winner and runner-up.
+ * @returns Stable before-turn directness diagnostics.
+ */
+function buildDirectnessDiagnostics(
+  queryMatch: DirectnessQueryMatch,
+  decision: BeforeTurnDirectnessDiagnostics["decision"],
+  reason: string,
+  candidates: DirectnessCandidateScore[],
+  winnerGap: number | undefined,
+): BeforeTurnDirectnessDiagnostics {
+  const winner = decision === "abstained" ? undefined : candidates[0];
+  const runnerUp = candidates[1];
+  return {
+    queryKind: queryMatch.kind,
+    entity: queryMatch.entity,
+    decision,
+    winnerEntryId: winner?.item.entry.id,
+    runnerUpEntryId: runnerUp?.item.entry.id,
+    ...(winnerGap !== undefined ? { winnerGap: roundToThreeDecimals(winnerGap) } : {}),
+    reason,
+    candidates: candidates.map((candidate) => ({
+      entryId: candidate.item.entry.id,
+      baseRank: candidate.baseRank,
+      baseScore: roundToThreeDecimals(candidate.baseScore),
+      directnessDelta: roundToThreeDecimals(candidate.directnessDelta),
+      adjustedScore: roundToThreeDecimals(candidate.adjustedScore),
+      signals: candidate.signals,
+    })),
+  };
+}
+
+/**
+ * Returns whether the winning candidate has a positive definitional signal.
+ *
+ * @param candidate - Top reranked candidate.
+ * @returns `true` when the candidate looks direct enough to inject.
+ */
+function hasPositiveIdentitySignal(candidate: DirectnessCandidateScore): boolean {
+  return (
+    candidate.signals.includes("definitional_content") ||
+    candidate.signals.includes("subject_entity_match") ||
+    candidate.signals.includes("subject_identity_wrapper")
+  );
+}
+
+/**
+ * Returns whether the candidate subject is just the entity plus a small
+ * identity-style wrapper.
+ *
+ * @param subject - Normalized candidate subject.
+ * @param entity - Normalized entity extracted from the turn.
+ * @returns `true` when the subject is a minimal identity wrapper.
+ */
+function isIdentityWrapperSubject(subject: string, entity: string): boolean {
+  for (const wrapper of DIRECTNESS_IDENTITY_WRAPPERS) {
+    if (subject === `${entity} ${wrapper}` || subject === `${wrapper} ${entity}`) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Returns whether the candidate content opens with a definitional statement.
+ *
+ * @param content - Normalized candidate content.
+ * @param entity - Normalized entity extracted from the turn.
+ * @returns `true` when the candidate content is definition-like.
+ */
+function hasDefinitionalContent(content: string, entity: string): boolean {
+  const patterns = [new RegExp(`^${escapeRegExp(entity)}\\s+(?:is|was|means)\\b`, "u"), new RegExp(`^${escapeRegExp(entity)}\\s+refers\\s+to\\b`, "u")];
+  return patterns.some((pattern) => pattern.test(content));
+}
+
+/**
+ * Returns whether the candidate looks like adjacent relationship memory.
+ *
+ * @param subject - Normalized candidate subject.
+ * @param content - Normalized candidate content.
+ * @param entity - Normalized entity extracted from the turn.
+ * @returns `true` when the candidate looks relationship-adjacent.
+ */
+function looksLikeAdjacentRelationship(subject: string, content: string, entity: string): boolean {
+  if (!subject.includes(entity) && !content.includes(entity)) {
+    return false;
+  }
+
+  return containsKeyword(subject, DIRECTNESS_RELATIONSHIP_KEYWORDS) || containsKeyword(content, DIRECTNESS_RELATIONSHIP_KEYWORDS);
+}
+
+/**
+ * Returns whether the candidate looks like list or lore aggregation.
+ *
+ * @param subject - Normalized candidate subject.
+ * @param content - Normalized candidate content.
+ * @returns `true` when the candidate looks like indirect lore.
+ */
+function looksLikeListLore(subject: string, content: string): boolean {
+  return containsKeyword(subject, DIRECTNESS_LIST_LORE_KEYWORDS) || containsKeyword(content, DIRECTNESS_LIST_LORE_KEYWORDS);
+}
+
+/**
+ * Stable sort order for directness-scored candidates.
+ *
+ * @param left - Left candidate.
+ * @param right - Right candidate.
+ * @returns Negative when left should rank first.
+ */
+function compareDirectnessCandidates(left: DirectnessCandidateScore, right: DirectnessCandidateScore): number {
+  if (right.adjustedScore !== left.adjustedScore) {
+    return right.adjustedScore - left.adjustedScore;
+  }
+
+  if (right.baseScore !== left.baseScore) {
+    return right.baseScore - left.baseScore;
+  }
+
+  return left.baseRank - right.baseRank;
+}
+
+/**
+ * Normalizes text for the local directness heuristics.
+ *
+ * @param value - Raw text.
+ * @returns Lowercased whitespace-normalized text.
+ */
+function normalizeDirectnessText(value: string): string {
+  return normalizeWhitespace(value).toLocaleLowerCase();
+}
+
+/**
+ * Returns whether the normalized text contains any keyword as a whole token.
+ *
+ * @param text - Normalized text to inspect.
+ * @param keywords - Stable keyword set to look for.
+ * @returns `true` when at least one keyword is present.
+ */
+function containsKeyword(text: string, keywords: Set<string>): boolean {
+  const tokens = new Set(text.match(/[\p{L}\p{N}]+/gu) ?? []);
+  for (const keyword of keywords) {
+    if (tokens.has(keyword)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Escapes regular-expression metacharacters in a literal text fragment.
+ *
+ * @param value - Raw text.
+ * @returns Regex-safe literal text.
+ */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Rounds a floating-point value to three decimal places for diagnostics.
+ *
+ * @param value - Raw numeric value.
+ * @returns Rounded numeric value.
+ */
+function roundToThreeDecimals(value: number): number {
+  return Math.round(value * 1000) / 1000;
 }
 
 /**

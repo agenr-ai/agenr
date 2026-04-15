@@ -326,6 +326,131 @@ describe("runBeforeTurn", () => {
     expect(ftsSearch).toHaveBeenCalledTimes(1);
   });
 
+  it("reranks definitional entity memory ahead of adjacent relationship lore", async () => {
+    const adjacent = createEntry({
+      id: "duke-cousins",
+      subject: "duke cousins",
+      content: "Duke's cousins are Comet and Pepper.",
+      importance: 10,
+    });
+    const identity = createEntry({
+      id: "duke-identity",
+      subject: "duke identity",
+      content: "Duke is Jim's dog.",
+      importance: 8,
+    });
+    const deps = createDeps({
+      ftsCandidates: [toRecallCandidateEntry(adjacent), toRecallCandidateEntry(identity)],
+      hydratedEntries: [adjacent, identity],
+    });
+
+    const result = await runBeforeTurn(
+      {
+        currentTurnText: "Who is Duke?",
+        policy: {
+          enableProcedureSuggestion: false,
+          recallThreshold: 0,
+        },
+      },
+      deps,
+    );
+
+    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["duke-identity"]);
+    expect(result.diagnostics.directness).toMatchObject({
+      queryKind: "entity_definition",
+      entity: "Duke",
+      decision: "reranked",
+      winnerEntryId: "duke-identity",
+      runnerUpEntryId: "duke-cousins",
+    });
+    expect(result.diagnostics.directness?.candidates).toEqual([
+      expect.objectContaining({
+        entryId: "duke-identity",
+        signals: expect.arrayContaining(["subject_identity_wrapper", "definitional_content"]),
+      }),
+      expect.objectContaining({
+        entryId: "duke-cousins",
+        signals: expect.arrayContaining(["adjacent_relationship"]),
+      }),
+    ]);
+  });
+
+  it("abstains when definitional candidates stay indirect after directness rerank", async () => {
+    const notes = createEntry({
+      id: "duke-notes",
+      subject: "duke notes",
+      content: "Duke likes fetch and naps.",
+      importance: 9,
+    });
+    const background = createEntry({
+      id: "duke-background",
+      subject: "duke background",
+      content: "Duke enjoys long walks.",
+      importance: 9,
+    });
+    const deps = createDeps({
+      ftsCandidates: [toRecallCandidateEntry(notes), toRecallCandidateEntry(background)],
+      hydratedEntries: [notes, background],
+    });
+
+    const result = await runBeforeTurn(
+      {
+        currentTurnText: "Who is Duke again?",
+        policy: {
+          enableProcedureSuggestion: false,
+          recallThreshold: 0,
+        },
+      },
+      deps,
+    );
+
+    expect(result.durableMemory).toEqual([]);
+    expect(result.diagnostics.directness).toMatchObject({
+      queryKind: "entity_definition",
+      entity: "Duke",
+      decision: "abstained",
+    });
+    expect(result.diagnostics.abstentionReasons).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('Before-turn directness check abstained for "Duke"'),
+        "No durable memory entries cleared the before-turn threshold.",
+      ]),
+    );
+  });
+
+  it("does not apply definitional rerank to relationship questions", async () => {
+    const adjacent = createEntry({
+      id: "duke-cousins",
+      subject: "duke cousins",
+      content: "Duke's cousins are Comet and Pepper.",
+      importance: 10,
+    });
+    const identity = createEntry({
+      id: "duke-identity",
+      subject: "duke identity",
+      content: "Duke is Jim's dog.",
+      importance: 8,
+    });
+    const deps = createDeps({
+      ftsCandidates: [toRecallCandidateEntry(adjacent), toRecallCandidateEntry(identity)],
+      hydratedEntries: [adjacent, identity],
+    });
+
+    const result = await runBeforeTurn(
+      {
+        currentTurnText: "Who are Duke's cousins?",
+        policy: {
+          enableProcedureSuggestion: false,
+          recallThreshold: 0,
+        },
+      },
+      deps,
+    );
+
+    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["duke-cousins"]);
+    expect(result.diagnostics.directness).toBeUndefined();
+  });
+
   it("returns durable memory plus one canonical procedure suggestion when both are strong", async () => {
     const entry = createEntry({
       id: "entry-before-turn",
