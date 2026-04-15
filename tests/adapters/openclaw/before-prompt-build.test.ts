@@ -160,6 +160,9 @@ describe("handleAgenrBeforePromptBuild", () => {
         expect.stringContaining(
           "[agenr] before_prompt_build: session-start durable entries for session=session-1 key=agent:main:webchat:test: master branch workflow",
         ),
+        expect.stringContaining(
+          '"suppressedTurnCategory":"short_social"',
+        ),
       ]),
     );
     expect(
@@ -428,6 +431,14 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(result?.prependContext).toContain("duke identity");
     expect(result?.prependContext).toContain("Duke is Jim's dog.");
     expect(result?.prependContext).not.toContain("duke cousins");
+    expect(getMessages(logger.debug)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          '[agenr] before_prompt_build: before-turn diagnostics for session=session-before-turn-directness key=agent:main:webchat:test: {"query":"Who is Duke?","queryPolicy":"current_only"',
+        ),
+        expect.stringContaining('"directness":{"queryKind":"entity_definition","entity":"Duke","decision":"reranked","winnerEntryId":"duke-identity"'),
+      ]),
+    );
   });
 
   it("preserves contextual follow-up recovery after wrapper stripping in recent turns", async () => {
@@ -548,6 +559,116 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(result?.prependContext).toContain("duke identity");
     expect(result?.prependContext).toContain("Duke is Jim's dog.");
     expect(result?.prependContext).not.toContain("duke cousins");
+  });
+
+  it("strips inline OpenClaw metadata from the current-turn before-turn query", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const logsEntry = createEntry({
+      id: "sandbox-debug-logs",
+      subject: "sandbox debug logs",
+      content: "Sandbox before-turn debugging depends on visible terminal debug logs.",
+      importance: 8,
+    });
+    const recall = createObservedRecallPorts({
+      ftsCandidates: [toRecallCandidateEntry(logsEntry)],
+      hydratedEntries: [logsEntry],
+    });
+    const tracker = createSessionStartTracker();
+
+    await handleAgenrBeforePromptBuild(
+      {
+        prompt: "Start the session.",
+        messages: [],
+      },
+      {
+        sessionId: "session-before-turn-metadata-sanitize",
+        sessionKey: "agent:main:tui:test",
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(
+          createServices(database, {
+            available: true,
+            recall,
+            pluginConfig: {
+              memoryPolicy: {
+                beforeTurn: {
+                  procedureSuggestion: false,
+                  recallThreshold: 0,
+                },
+              },
+            },
+          }),
+        ),
+        tracker,
+      },
+    );
+
+    recall.embed.mockClear();
+    recall.vectorSearch.mockClear();
+    recall.ftsSearch.mockClear();
+    recall.hydrateEntries.mockClear();
+    recall.recordRecallEvents.mockClear();
+    logger.debug.mockClear();
+
+    const result = await handleAgenrBeforePromptBuild(
+      {
+        prompt: [
+          createMetadataBlock("Sender (untrusted metadata):", {
+            label: "openclaw-tui",
+            id: "openclaw-tui",
+            name: "openclaw-tui",
+            username: "openclaw-tui",
+          }),
+          "[Tue 2026-04-14 21:46 CDT] what did the logs show?",
+        ].join("\n\n"),
+        messages: [
+          {
+            role: "assistant",
+            content: "I checked the sandbox process state and log sinks.",
+          },
+        ],
+      },
+      {
+        sessionId: "session-before-turn-metadata-sanitize",
+        sessionKey: "agent:main:tui:test",
+        trigger: "user",
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(
+          createServices(database, {
+            available: true,
+            recall,
+            pluginConfig: {
+              memoryPolicy: {
+                beforeTurn: {
+                  procedureSuggestion: false,
+                  recallThreshold: 0,
+                },
+              },
+            },
+          }),
+        ),
+        tracker,
+      },
+    );
+
+    expect(recall.ftsSearch).toHaveBeenCalledOnce();
+    expect(recall.ftsSearch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "what did the logs show?",
+      }),
+    );
+    expect(result?.prependContext).toContain("sandbox debug logs");
+    expect(getMessages(logger.debug)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          '[agenr] before_prompt_build: before-turn diagnostics for session=session-before-turn-metadata-sanitize key=agent:main:tui:test: {"query":"what did the logs show?","queryPolicy":"current_only"',
+        ),
+      ]),
+    );
   });
 
   it("disables before-turn injection when the plugin config turns it off", async () => {

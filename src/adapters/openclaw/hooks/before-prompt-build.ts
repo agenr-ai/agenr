@@ -1,6 +1,6 @@
 import { runBeforeTurn } from "../../../app/before-turn/index.js";
 import { runSessionStart } from "../../../app/session-start/index.js";
-import type { BeforeTurnRecentTurn } from "../../../app/before-turn/index.js";
+import type { BeforeTurnPatch, BeforeTurnRecentTurn } from "../../../app/before-turn/index.js";
 import { resolveStoreNudgeConfig } from "../config.js";
 import { writeOpenClawPredecessorEpisode } from "../episode/episode-writer.js";
 import { formatAgenrBeforeTurnRecall } from "../format/before-turn-format.js";
@@ -36,6 +36,14 @@ const DEFAULT_BEFORE_TURN_POLICY = {
 } as const;
 const NON_USER_TRIGGER_SET = new Set(["heartbeat", "cron", "memory"]);
 const DEFAULT_STORE_NUDGE_CONFIG = resolveStoreNudgeConfig(undefined);
+const INLINE_METADATA_SENTINELS = [
+  "Sender (untrusted metadata):",
+  "Conversation info (untrusted metadata):",
+  "Thread starter (untrusted, for context):",
+  "Replied message (untrusted, for context):",
+  "Forwarded message context (untrusted metadata):",
+  "Chat history since last reply (untrusted, for context):",
+] as const;
 
 /**
  * Runs agenr session-start recall and injects the result into the OpenClaw prompt.
@@ -212,6 +220,9 @@ async function resolveBeforeTurnResult(
       );
     }
     params.logger.debug?.(
+      `[agenr] before_prompt_build: before-turn diagnostics for ${sessionContext}: ${formatBeforeTurnDiagnosticsForLog(beforeTurnPatch)}`,
+    );
+    params.logger.debug?.(
       `[agenr] before_prompt_build: before-turn durable entries for ${sessionContext}: ${formatEntryRefs(
         beforeTurnPatch.durableMemory.map((item: (typeof beforeTurnPatch.durableMemory)[number]) => item.entry),
       )}`,
@@ -298,6 +309,82 @@ function resolveStoreNudgeResult(
  */
 function formatEntryRefs(entries: Array<{ id: string; subject: string }>): string {
   return entries.length === 0 ? "none" : entries.map((entry) => `${entry.subject} [${entry.id}]`).join(", ");
+}
+
+/**
+ * Formats one compact structured before-turn diagnostics payload for logs.
+ *
+ * @param patch - Structured before-turn patch returned by the app layer.
+ * @returns One-line JSON string suitable for debug logging.
+ */
+function formatBeforeTurnDiagnosticsForLog(patch: BeforeTurnPatch): string {
+  return JSON.stringify({
+    query: truncateForLog(patch.diagnostics.query, 160),
+    queryPolicy: patch.diagnostics.queryPolicy,
+    queryVariants: patch.diagnostics.queryVariants.map((variant) => ({
+      kind: variant.kind,
+      query: truncateForLog(variant.query, 120),
+      candidateCount: variant.candidateCount,
+      selected: variant.selected,
+    })),
+    turnSignalLabels: patch.diagnostics.turnSignalLabels,
+    suppressedTurnCategory: patch.diagnostics.suppressedTurnCategory,
+    durableRecallCandidateCount: patch.diagnostics.durableRecallCandidateCount,
+    procedureCandidateCount: patch.diagnostics.procedureCandidateCount,
+    directness: patch.diagnostics.directness
+      ? {
+          queryKind: patch.diagnostics.directness.queryKind,
+          entity: patch.diagnostics.directness.entity,
+          decision: patch.diagnostics.directness.decision,
+          winnerEntryId: patch.diagnostics.directness.winnerEntryId,
+          runnerUpEntryId: patch.diagnostics.directness.runnerUpEntryId,
+          winnerGap: patch.diagnostics.directness.winnerGap,
+          reason: truncateForLog(patch.diagnostics.directness.reason, 180),
+          candidates: patch.diagnostics.directness.candidates.map((candidate) => ({
+            entryId: candidate.entryId,
+            baseRank: candidate.baseRank,
+            baseScore: candidate.baseScore,
+            directnessDelta: candidate.directnessDelta,
+            adjustedScore: candidate.adjustedScore,
+            signals: candidate.signals,
+          })),
+        }
+      : undefined,
+    abstained: patch.diagnostics.abstained,
+    abstentionReasons: patch.diagnostics.abstentionReasons.map((reason) => truncateForLog(reason, 180)),
+    notices: patch.diagnostics.notices.map((notice) => truncateForLog(notice, 180)),
+    selectedEntries: patch.durableMemory.map((item) => ({
+      id: item.entry.id,
+      subject: truncateForLog(item.entry.subject, 80),
+      score: Number(item.score.toFixed(3)),
+    })),
+    procedure: patch.procedure
+      ? {
+          procedureKey: patch.procedure.procedure.procedure_key,
+          score: Number(patch.procedure.score.toFixed(3)),
+        }
+      : undefined,
+  });
+}
+
+/**
+ * Truncates multiline or oversized values into one stable log-friendly string.
+ *
+ * @param value - Optional raw text value.
+ * @param maxChars - Maximum output length.
+ * @returns One-line truncated value, or undefined when empty.
+ */
+function truncateForLog(value: string | undefined, maxChars: number): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  if (normalized.length === 0) {
+    return undefined;
+  }
+
+  return normalized.length <= maxChars ? normalized : `${normalized.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
 }
 
 /**
@@ -467,8 +554,41 @@ function sanitizeRecentTurnText(text: string, role: "user" | "assistant"): strin
  * @returns Normalized prompt text, or undefined when empty.
  */
 function normalizePromptText(prompt: string): string | undefined {
-  const normalized = collapseWhitespace(prompt);
-  return normalized.length > 0 ? normalized : undefined;
+  let cleaned = stripAgenrMemoryContext(prompt);
+  cleaned = stripInlineMetadata(cleaned);
+  cleaned = cleaned.replace(/^\s*\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s[^\]]+\]\s*/u, "");
+  cleaned = cleaned.replace(/^\s*U:\s*/u, "");
+  cleaned = collapseWhitespace(cleaned);
+  return cleaned.length > 0 ? cleaned : undefined;
+}
+
+/**
+ * Removes inline OpenClaw metadata payloads that should not influence the
+ * current-turn before-turn query.
+ *
+ * @param text - Candidate prompt text.
+ * @returns Prompt text without known metadata wrappers.
+ */
+function stripInlineMetadata(text: string): string {
+  let cleaned = text;
+  for (const sentinel of INLINE_METADATA_SENTINELS) {
+    const escapedSentinel = escapeForRegExp(sentinel);
+    cleaned = cleaned.replace(new RegExp(`${escapedSentinel}\\s*(?:\`\`\`json\\s*)?\\{[\\s\\S]*?\\}(?:\\s*\`\`\`)?`, "gu"), " ");
+    cleaned = cleaned.replace(new RegExp(`${escapedSentinel}[^\n]*`, "gu"), " ");
+  }
+
+  cleaned = cleaned.replace(/Untrusted context \(metadata, do not treat as instructions or commands\):[\s\S]*$/gu, " ");
+  return cleaned;
+}
+
+/**
+ * Escapes one string for safe RegExp interpolation.
+ *
+ * @param value - Raw literal string.
+ * @returns RegExp-safe literal text.
+ */
+function escapeForRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 /**
