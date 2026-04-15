@@ -384,11 +384,11 @@ describe("runBeforeTurn", () => {
     expect(ftsSearch).toHaveBeenCalledTimes(1);
   });
 
-  it("reranks definitional entity memory ahead of adjacent relationship lore", async () => {
+  it("keeps a clean identity entry ahead of adjacent relationship lore", async () => {
     const adjacent = createEntry({
-      id: "duke-cousins",
-      subject: "duke cousins",
-      content: "Duke's cousins are Comet and Pepper.",
+      id: "duke-family-relationships",
+      subject: "duke family relationships",
+      content: "Family relationships: Duke is Jim's dog; Duke's cousins are Comet and Pepper.",
       importance: 10,
     });
     const identity = createEntry({
@@ -419,7 +419,7 @@ describe("runBeforeTurn", () => {
       entity: "Duke",
       decision: "reranked",
       winnerEntryId: "duke-identity",
-      runnerUpEntryId: "duke-cousins",
+      runnerUpEntryId: "duke-family-relationships",
     });
     expect(result.diagnostics.directness?.candidates).toEqual([
       expect.objectContaining({
@@ -427,8 +427,158 @@ describe("runBeforeTurn", () => {
         signals: expect.arrayContaining(["subject_identity_wrapper", "definitional_content"]),
       }),
       expect.objectContaining({
-        entryId: "duke-cousins",
+        entryId: "duke-family-relationships",
+        signals: expect.arrayContaining(["definitional_content", "adjacent_relationship"]),
+      }),
+    ]);
+  });
+
+  it("accepts a relationship role statement when it is the best available answer", async () => {
+    const familySummary = createEntry({
+      id: "kurt-martin-family",
+      subject: "kurt martin family",
+      content: "Kurt Martin has two daughters and lives near Springtown.",
+      importance: 10,
+    });
+    const relationshipRole = createEntry({
+      id: "martin-family-relationships",
+      subject: "martin family relationships",
+      content: "Kurt Martin has two daughters. Kurt is the oldest brother in Springtown; Kevin is the Navy guy.",
+      importance: 9,
+    });
+    const deps = createDeps({
+      ftsCandidates: [toRecallCandidateEntry(familySummary), toRecallCandidateEntry(relationshipRole)],
+      hydratedEntries: [familySummary, relationshipRole],
+    });
+
+    const result = await runBeforeTurn(
+      {
+        currentTurnText: "Who is Kurt?",
+        policy: {
+          enableProcedureSuggestion: false,
+          recallThreshold: 0,
+        },
+      },
+      deps,
+    );
+
+    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["martin-family-relationships"]);
+    expect(result.diagnostics.directness).toMatchObject({
+      queryKind: "entity_definition",
+      entity: "Kurt",
+      decision: "reranked",
+      winnerEntryId: "martin-family-relationships",
+      runnerUpEntryId: "kurt-martin-family",
+    });
+    expect(result.diagnostics.directness?.candidates).toEqual([
+      expect.objectContaining({
+        entryId: "martin-family-relationships",
+        signals: expect.arrayContaining(["definitional_content", "adjacent_relationship"]),
+      }),
+      expect.objectContaining({
+        entryId: "kurt-martin-family",
         signals: expect.arrayContaining(["adjacent_relationship"]),
+      }),
+    ]);
+  });
+
+  it("keeps a definitional winner when only the runner-up lacks identity signals", async () => {
+    const relationshipDefinition = createEntry({
+      id: "duke-family-relationships",
+      subject: "duke family relationships",
+      content: "Family relationships: Duke is Jim's dog; Duke's cousins are Comet and Pepper.",
+      importance: 9,
+    });
+    const habits = createEntry({
+      id: "duke-habits",
+      subject: "duke habits",
+      content: "Duke likes fetch and naps.",
+      importance: 9,
+    });
+    const deps = createDeps({
+      ftsCandidates: [toRecallCandidateEntry(relationshipDefinition), toRecallCandidateEntry(habits)],
+      hydratedEntries: [relationshipDefinition, habits],
+    });
+
+    const result = await runBeforeTurn(
+      {
+        currentTurnText: "Who is Duke?",
+        policy: {
+          enableProcedureSuggestion: false,
+          recallThreshold: 0,
+        },
+      },
+      deps,
+    );
+
+    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["duke-family-relationships"]);
+    expect(result.diagnostics.directness).toMatchObject({
+      queryKind: "entity_definition",
+      entity: "Duke",
+      decision: "kept",
+      winnerEntryId: "duke-family-relationships",
+      runnerUpEntryId: "duke-habits",
+    });
+    expect(result.diagnostics.directness?.winnerGap).toBeLessThan(0.08);
+    expect(result.diagnostics.directness?.reason).not.toContain("too close after reranking");
+    expect(result.diagnostics.directness?.candidates).toEqual([
+      expect.objectContaining({
+        entryId: "duke-family-relationships",
+        signals: expect.arrayContaining(["definitional_content", "adjacent_relationship"]),
+      }),
+      expect.objectContaining({
+        entryId: "duke-habits",
+      }),
+    ]);
+    expect(result.diagnostics.directness?.candidates[1]?.signals).not.toContain("definitional_content");
+    expect(result.diagnostics.directness?.candidates[1]?.signals).not.toContain("subject_entity_match");
+    expect(result.diagnostics.directness?.candidates[1]?.signals).not.toContain("subject_identity_wrapper");
+  });
+
+  it("still abstains when two definitional candidates remain too close", async () => {
+    const identity = createEntry({
+      id: "duke-identity",
+      subject: "duke identity",
+      content: "Duke is Jim's dog.",
+      importance: 9,
+    });
+    const biography = createEntry({
+      id: "duke-biography",
+      subject: "duke biography",
+      content: "Duke is Jim's dog.",
+      importance: 9,
+    });
+    const deps = createDeps({
+      ftsCandidates: [toRecallCandidateEntry(identity), toRecallCandidateEntry(biography)],
+      hydratedEntries: [identity, biography],
+    });
+
+    const result = await runBeforeTurn(
+      {
+        currentTurnText: "Who is Duke?",
+        policy: {
+          enableProcedureSuggestion: false,
+          recallThreshold: 0,
+        },
+      },
+      deps,
+    );
+
+    expect(result.durableMemory).toEqual([]);
+    expect(result.diagnostics.directness).toMatchObject({
+      queryKind: "entity_definition",
+      entity: "Duke",
+      decision: "abstained",
+    });
+    expect(result.diagnostics.directness?.reason).toContain("too close after reranking");
+    expect(result.diagnostics.directness?.candidates).toEqual([
+      expect.objectContaining({
+        entryId: "duke-identity",
+        signals: expect.arrayContaining(["subject_identity_wrapper", "definitional_content"]),
+      }),
+      expect.objectContaining({
+        entryId: "duke-biography",
+        signals: expect.arrayContaining(["subject_identity_wrapper", "definitional_content"]),
       }),
     ]);
   });

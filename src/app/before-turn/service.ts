@@ -678,13 +678,17 @@ function applyDirectnessSelection(
   const runnerUp = rerankedCandidates[1];
   const winnerGap = runnerUp ? winner.adjustedScore - runnerUp.adjustedScore : undefined;
   const winnerHasPositiveIdentitySignal = hasPositiveIdentitySignal(winner);
+  const runnerUpHasPositiveIdentitySignal = runnerUp ? hasPositiveIdentitySignal(runnerUp) : false;
   const winnerHasOnlyAdjacentSignals =
     winner.signals.includes("adjacent_relationship") &&
     !winner.signals.includes("definitional_content") &&
     !winner.signals.includes("subject_entity_match") &&
     !winner.signals.includes("subject_identity_wrapper");
+  const requiresStrictStableGap = runnerUpHasPositiveIdentitySignal;
+  const winnerGapTooSmall =
+    requiresStrictStableGap && runnerUp !== undefined && winnerGap !== undefined && winnerGap < DIRECTNESS_STABLE_GAP;
 
-  if (!winnerHasPositiveIdentitySignal || winnerHasOnlyAdjacentSignals || (runnerUp && winnerGap !== undefined && winnerGap < DIRECTNESS_STABLE_GAP)) {
+  if (!winnerHasPositiveIdentitySignal || winnerHasOnlyAdjacentSignals || winnerGapTooSmall) {
     const reason =
       !winnerHasPositiveIdentitySignal || winnerHasOnlyAdjacentSignals
         ? `Before-turn directness check abstained for "${queryMatch.entity}" because the top candidate looked adjacent rather than definitional.`
@@ -890,7 +894,33 @@ function isIdentityWrapperSubject(subject: string, entity: string): boolean {
  * @returns `true` when the candidate content is definition-like.
  */
 function hasDefinitionalContent(content: string, entity: string): boolean {
-  const patterns = [new RegExp(`^${escapeRegExp(entity)}\\s+(?:is|was|means)\\b`, "u"), new RegExp(`^${escapeRegExp(entity)}\\s+refers\\s+to\\b`, "u")];
+  const escapedEntity = escapeRegExp(entity);
+  const anchoredPatterns = [
+    new RegExp(`^${escapedEntity}\\s+(?:is|was|means)\\b`, "u"),
+    new RegExp(`^${escapedEntity}\\s+refers\\s+to\\b`, "u"),
+  ];
+  if (anchoredPatterns.some((pattern) => pattern.test(content))) {
+    return true;
+  }
+
+  return hasEmbeddedDefinitionalContent(content, escapedEntity);
+}
+
+/**
+ * Returns whether the candidate content contains a sentence- or clause-level
+ * identity statement for the queried entity, even when the entry subject is
+ * broader relationship lore.
+ *
+ * @param content - Normalized candidate content.
+ * @param escapedEntity - Regex-safe entity extracted from the turn.
+ * @returns `true` when the content contains an embedded identity-like clause.
+ */
+function hasEmbeddedDefinitionalContent(content: string, escapedEntity: string): boolean {
+  const embeddedLead = `(?:^|[.!?;:]\\s+)${escapedEntity}\\s+(?:is|was)\\s+`;
+  const patterns = [
+    new RegExp(`${embeddedLead}(?:a|an|the)\\b`, "u"),
+    new RegExp(`${embeddedLead}[\\p{L}\\p{N}]+(?:['’]s)\\b`, "u"),
+  ];
   return patterns.some((pattern) => pattern.test(content));
 }
 
