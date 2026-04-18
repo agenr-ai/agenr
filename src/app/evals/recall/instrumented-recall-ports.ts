@@ -83,6 +83,16 @@ export function createInstrumentedRecallPorts(
           },
         }
       : {}),
+    // Cross-encoder is an optional port: proxy it when available so the
+    // core recall pipeline sees the same rerank surface as in production,
+    // and the diagnostics collector can report the `crossEncoder` trace
+    // branch exactly as the core emits it. Dropping the proxy here would
+    // silently convert rerank-aware eval cases into rerank-disabled runs.
+    ...(ports.crossEncoder
+      ? {
+          crossEncoder: ports.crossEncoder,
+        }
+      : {}),
     async hydrateEntries(ids: string[]): Promise<Awaited<ReturnType<RecallPorts["hydrateEntries"]>>> {
       const startedAt = Date.now();
 

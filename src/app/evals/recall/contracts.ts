@@ -1,5 +1,14 @@
 import type { RecallInput, RecallOutput } from "../../../core/recall/types.js";
-import type { RecallClaimKeyTrace, RecallDegradedTrace, RecallNoResultReason } from "../../../core/recall/trace.js";
+import type {
+  RecallClaimKeyTrace,
+  RecallCrossEncoderTrace,
+  RecallDegradedTrace,
+  RecallMmrTrace,
+  RecallNeighborhoodTrace,
+  RecallNoResultReason,
+  RecallRankingPolicy,
+  RecallRrfTrace,
+} from "../../../core/recall/trace.js";
 import type { ClaimKeySource, ClaimKeyStatus, ClaimSupportMode, EntryType, Expiry, ProcedureSource, ProcedureStep } from "../../../core/types.js";
 import type { ClaimSlotPolicy, ClaimSlotPolicyConfig } from "../../../core/claim-slot-policy.js";
 import type {
@@ -132,7 +141,15 @@ export interface RecallEvalFixtureProcedure {
 export type RecallEvalQueryRequest = Pick<
   RecallInput,
   "text" | "limit" | "threshold" | "budget" | "types" | "tags" | "since" | "until" | "around" | "aroundRadius" | "asOf" | "rankingProfile"
->;
+> & {
+  /**
+   * Optional ranking-policy overrides applied for this case run. Mirrors
+   * `RecallExecutionOptions.rankingPolicy` so the eval harness can toggle
+   * RRF, neighborhood expansion, MMR, and cross-encoder rerank
+   * independently and A/B their effect on the same memory pool.
+   */
+  rankingPolicy?: RecallRankingPolicy;
+};
 
 /**
  * Narrow unified-recall memory-policy block aligned with the OpenClaw adapter.
@@ -527,6 +544,31 @@ export interface RecallEvalCaseDiagnostics {
   filtering?: RecallEvalFilteringDiagnostics;
   /** Claim-key lineage and trust shaping facts emitted by the core recall path. */
   claimKey?: RecallClaimKeyTrace;
+  /**
+   * Reciprocal rank fusion facts emitted by the core recall path. Present
+   * whenever the recall trace summary was observed, even if RRF was
+   * disabled via the ranking policy (in which case `applied` is `false`).
+   */
+  rrf?: RecallRrfTrace;
+  /**
+   * Neighborhood expansion and seeded rerank facts emitted by the core
+   * recall path. Present whenever the recall trace summary was observed,
+   * even when expansion is unavailable or disabled via the policy.
+   */
+  neighborhood?: RecallNeighborhoodTrace;
+  /**
+   * MMR diversification facts emitted by the core recall path. Present
+   * whenever the recall trace summary was observed, even if MMR did not
+   * run (in which case `applied` is `false`).
+   */
+  mmr?: RecallMmrTrace;
+  /**
+   * Cross-encoder rerank facts emitted by the core recall path. Present
+   * whenever the recall trace summary was observed, even if the rerank
+   * was skipped or fell back due to a missing port, an explicit disable,
+   * or a provider error.
+   */
+  crossEncoder?: RecallCrossEncoderTrace;
   /** Degraded-mode facts emitted by the core recall path. */
   degraded?: RecallEvalDegradedDiagnostics;
   /** Stage-by-stage candidate counts across the recall pipeline. Always present when diagnostics are included. */

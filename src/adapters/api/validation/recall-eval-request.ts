@@ -9,6 +9,7 @@ import type {
   RecallEvalUnifiedRequest,
 } from "../../../app/evals/recall/index.js";
 import type { ClaimSlotPolicyConfig, ClaimSlotPolicy } from "../../../core/claim-slot-policy.js";
+import type { RecallRankingPolicy } from "../../../core/recall/trace.js";
 import { ENTRY_TYPES } from "../../../core/types.js";
 import {
   extractParseableCaseId,
@@ -46,6 +47,17 @@ const RECALL_REQUEST_KEYS = new Set<string>([
   "aroundRadius",
   "asOf",
   "rankingProfile",
+  "rankingPolicy",
+]);
+const RANKING_POLICY_KEYS = new Set<string>([
+  "rrf",
+  "rrfRankConstant",
+  "neighborhood",
+  "mmr",
+  "mmrLambda",
+  "crossEncoder",
+  "crossEncoderTopK",
+  "crossEncoderAlpha",
 ]);
 const UNIFIED_REQUEST_KEYS = new Set<string>(["mode", "sessionKey", "memoryPolicy"]);
 const UNIFIED_MEMORY_POLICY_KEYS = new Set<string>(["slotPolicies"]);
@@ -54,6 +66,7 @@ const OPTIONS_KEYS = new Set<string>(["includeDiagnostics", "includeCandidates",
 const FAULT_INJECTION_KEYS = new Set<string>(["queryEmbeddingFailure", "vectorSearchFailure"]);
 const RECALL_PATHS = ["core", "unified"] as const;
 const RECALL_RANKING_PROFILES = ["historical_state"] as const;
+const RANKING_POLICY_TOGGLES = ["enabled", "disabled"] as const;
 const UNIFIED_RECALL_MODES = ["auto", "entries", "episodes"] as const;
 const CLAIM_SLOT_POLICIES = ["exclusive", "multivalued"] as const;
 
@@ -158,6 +171,8 @@ export interface RecallEvalQueryRequestDto {
   asOf?: string;
   /** Optional ranking profile selector. */
   rankingProfile?: RecallEvalQueryRequest["rankingProfile"];
+  /** Optional ranking-policy overrides plumbed into the core recall execution. */
+  rankingPolicy?: RecallRankingPolicy;
 }
 
 /**
@@ -349,7 +364,120 @@ function parseRecallRequest(value: unknown, issues: RecallEvalValidationIssue[])
     }),
     asOf: parseOptionalTrimmedString(recallRequest.asOf, "recallRequest.asOf", issues),
     rankingProfile: parseOptionalRankingProfile(recallRequest.rankingProfile, "recallRequest.rankingProfile", issues),
+    rankingPolicy: parseOptionalRankingPolicy(recallRequest.rankingPolicy, "recallRequest.rankingPolicy", issues),
   };
+}
+
+/**
+ * Parses the optional ranking policy block forwarded into the recall
+ * execution options. Each stage field is independently optional so evals
+ * can A/B a single stage without restating the rest of the policy.
+ *
+ * @param value - Raw ranking-policy field.
+ * @param path - Stable validation path.
+ * @param issues - Mutable validation issue collection.
+ * @returns Normalized ranking policy when valid.
+ */
+function parseOptionalRankingPolicy(value: unknown, path: string, issues: RecallEvalValidationIssue[]): RecallRankingPolicy | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const policy = parseObject(value, path, issues);
+  if (policy === undefined) {
+    return undefined;
+  }
+
+  pushUnexpectedFields(policy, RANKING_POLICY_KEYS, path, issues);
+
+  const parsed: RecallRankingPolicy = {};
+  const rrf = parseOptionalStageToggle(policy.rrf, `${path}.rrf`, issues);
+  if (rrf !== undefined) {
+    parsed.rrf = rrf;
+  }
+
+  const rrfRankConstant = parseOptionalIntegerInRange(policy.rrfRankConstant, `${path}.rrfRankConstant`, issues, {
+    min: 1,
+  });
+  if (rrfRankConstant !== undefined) {
+    parsed.rrfRankConstant = rrfRankConstant;
+  }
+
+  const neighborhood = parseOptionalStageToggle(policy.neighborhood, `${path}.neighborhood`, issues);
+  if (neighborhood !== undefined) {
+    parsed.neighborhood = neighborhood;
+  }
+
+  const mmr = parseOptionalStageToggle(policy.mmr, `${path}.mmr`, issues);
+  if (mmr !== undefined) {
+    parsed.mmr = mmr;
+  }
+
+  const mmrLambda = parseOptionalUnitInterval(policy.mmrLambda, `${path}.mmrLambda`, issues);
+  if (mmrLambda !== undefined) {
+    parsed.mmrLambda = mmrLambda;
+  }
+
+  const crossEncoder = parseOptionalStageToggle(policy.crossEncoder, `${path}.crossEncoder`, issues);
+  if (crossEncoder !== undefined) {
+    parsed.crossEncoder = crossEncoder;
+  }
+
+  const crossEncoderTopK = parseOptionalIntegerInRange(policy.crossEncoderTopK, `${path}.crossEncoderTopK`, issues, {
+    min: 1,
+  });
+  if (crossEncoderTopK !== undefined) {
+    parsed.crossEncoderTopK = crossEncoderTopK;
+  }
+
+  const crossEncoderAlpha = parseOptionalUnitInterval(policy.crossEncoderAlpha, `${path}.crossEncoderAlpha`, issues);
+  if (crossEncoderAlpha !== undefined) {
+    parsed.crossEncoderAlpha = crossEncoderAlpha;
+  }
+
+  return Object.keys(parsed).length > 0 ? parsed : undefined;
+}
+
+/**
+ * Parses a ranking-policy stage toggle value.
+ *
+ * @param value - Raw toggle value.
+ * @param path - Stable validation path.
+ * @param issues - Mutable validation issue collection.
+ * @returns Valid toggle when recognized.
+ */
+function parseOptionalStageToggle(value: unknown, path: string, issues: RecallEvalValidationIssue[]): "enabled" | "disabled" | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string" || !RANKING_POLICY_TOGGLES.includes(value as (typeof RANKING_POLICY_TOGGLES)[number])) {
+    pushIssue(issues, path, `Expected one of: ${RANKING_POLICY_TOGGLES.join(", ")}.`);
+    return undefined;
+  }
+
+  return value as "enabled" | "disabled";
+}
+
+/**
+ * Parses a finite numeric override in the inclusive 0-1 range.
+ *
+ * @param value - Raw override value.
+ * @param path - Stable validation path.
+ * @param issues - Mutable validation issue collection.
+ * @returns Numeric value in the 0-1 range when valid.
+ */
+function parseOptionalUnitInterval(value: unknown, path: string, issues: RecallEvalValidationIssue[]): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+    pushIssue(issues, path, "Expected a number from 0 to 1.");
+    return undefined;
+  }
+
+  return value;
 }
 
 /**
@@ -716,6 +844,7 @@ function mapRecallRequestDto(dto: RecallEvalQueryRequestDto): RecallEvalQueryReq
     aroundRadius: dto.aroundRadius,
     asOf: dto.asOf,
     rankingProfile: dto.rankingProfile,
+    rankingPolicy: dto.rankingPolicy,
   };
 }
 

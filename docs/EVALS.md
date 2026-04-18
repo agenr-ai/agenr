@@ -369,6 +369,7 @@ The boundary accepts these fields:
 - `around`
 - `aroundRadius`
 - `rankingProfile`
+- `rankingPolicy`
 
 Boundary validation details:
 
@@ -380,11 +381,37 @@ Boundary validation details:
 - `tags` must be a string array
 - `rankingProfile`, when present, must currently be `historical_state`
 - `since`, `until`, and `around` are only validated as non-empty strings at the HTTP boundary today
+- `rankingPolicy`, when present, must be an object with a bounded set of tuning knobs (see below)
+
+### `rankingPolicy` rules
+
+The `rankingPolicy` block surfaces the core ranking-stage controls on `RecallExecutionOptions.rankingPolicy` to the eval harness so `agenr-evals` can toggle each stage independently without rebuilding the rest of the policy.
+
+Supported fields:
+
+- `rrf` - reciprocal rank fusion stage toggle, either `"enabled"` or `"disabled"`
+- `rrfRankConstant` - RRF rank-constant override, positive integer
+- `neighborhood` - neighborhood expansion plus seeded-rerank stage toggle
+- `mmr` - MMR diversification stage toggle
+- `mmrLambda` - MMR balance parameter, number in `[0, 1]`
+- `crossEncoder` - cross-encoder rerank stage toggle
+- `crossEncoderTopK` - cross-encoder shortlist size, positive integer
+- `crossEncoderAlpha` - cross-encoder blend weight, number in `[0, 1]`
+
+Boundary validation details:
+
+- every stage toggle must be exactly `"enabled"` or `"disabled"`
+- `rrfRankConstant` and `crossEncoderTopK` must be positive integers
+- `mmrLambda` and `crossEncoderAlpha` must be numbers from `0-1`
+- an empty `rankingPolicy` object normalizes to omitted on the wire
+- unexpected fields are rejected
+
+The policy is forwarded as one `RecallRankingPolicy` object into `core/recall` and into `runUnifiedRecall()` so a single validated policy drives entry, episode, and procedure recall on every case.
 
 Execution-path nuance that matters:
 
-- on the `"core"` path, `runRecallEvalCase()` forwards the full validated `recallRequest` object to `core/recall`
-- on the `"unified"` path, the seam only accepts the subset that real unified callers use today: `text`, `limit`, `threshold`, `types`, `tags`, and `asOf`
+- on the `"core"` path, `runRecallEvalCase()` forwards the full validated `recallRequest` object to `core/recall`, including `rankingPolicy`
+- on the `"unified"` path, the seam only accepts the subset that real unified callers use today: `text`, `limit`, `threshold`, `types`, `tags`, `rankingPolicy`, and `asOf`
 - `budget`, `since`, `until`, `around`, `aroundRadius`, and caller-supplied `rankingProfile` are rejected on the unified path instead of being silently ignored
 
 ### `unified` rules
@@ -559,6 +586,10 @@ When diagnostics are included, the response can contain:
 - `diagnostics.ranking`
 - `diagnostics.filtering`
 - `diagnostics.claimKey`
+- `diagnostics.rrf`
+- `diagnostics.neighborhood`
+- `diagnostics.mmr`
+- `diagnostics.crossEncoder`
 - `diagnostics.degraded`
 - `diagnostics.candidateCounts`
 
@@ -570,6 +601,14 @@ Current guarantees:
 - `diagnostics.retrieval` appears only after retrieval-stage observation occurs
 - `diagnostics.ranking` and `diagnostics.filtering` appear only after the core trace summary is emitted
 - `diagnostics.degraded` appears only after the core trace summary is emitted
+- `diagnostics.rrf`, `diagnostics.neighborhood`, `diagnostics.mmr`, and `diagnostics.crossEncoder` appear alongside `diagnostics.ranking`
+
+Each ranking-stage branch mirrors the core `RecallExecutionTraceSummary`:
+
+- `diagnostics.rrf` reports `{ applied, channelCount, rankConstant, fusedCandidateCount, maxFusedScore }` so harnesses can assert channel fusion actually ran and ran with the expected rank constant
+- `diagnostics.neighborhood` reports `{ expansionRequested, expansionFamilies, expandedCandidateCount, strongSeedCount, strongSeedIds, rerankBoostedIds }` so harnesses can separate historical-state expansion from seeded rerank
+- `diagnostics.mmr` reports `{ applied, lambda, droppedDuplicateCount, reorderedIds }` so harnesses can verify diversification kicked in and that near-duplicate candidates were suppressed
+- `diagnostics.crossEncoder` reports `{ applied, k, alpha, rerankLatencyMs, reshapedIds, degradedReason? }` so harnesses can isolate cross-encoder effects and detect stage-level degradation separately from the overall degraded envelope. When `rankingPolicy.crossEncoder` is `"disabled"`, `degradedReason` is `"disabled"`; when no cross-encoder port is wired, `degradedReason` is `"not_configured"`.
 
 `diagnostics.degraded` is the stable place to assert:
 

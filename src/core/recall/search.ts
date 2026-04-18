@@ -2,7 +2,7 @@ import type { RecallPorts } from "../ports.js";
 import { resolveClaimSlotPolicy } from "../claim-slot-policy.js";
 
 import { applyCrossEncoderRerank, DEFAULT_CROSS_ENCODER_ALPHA, DEFAULT_CROSS_ENCODER_TOP_K } from "./cross-encoder.js";
-import { rrfFuse } from "./fusion.js";
+import { DEFAULT_RRF_RANK_CONSTANT, rrfFuse } from "./fusion.js";
 import { computeLexicalScore, tokenize } from "./lexical.js";
 import { DEFAULT_MMR_LAMBDA, maximalMarginalRelevance } from "./mmr.js";
 import {
@@ -27,6 +27,7 @@ import {
   type RecallNeighborhoodTrace,
   type RecallNoResultReason,
   type RecallRankingPolicy,
+  type RecallRrfTrace,
 } from "./trace.js";
 import type { EntryFilters, FtsCandidate, RecallCandidateEntry, RecallInput, RecallOutput, RecallRankingProfile, VectorCandidate } from "./types.js";
 
@@ -136,14 +137,26 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
 
     const mergeStartedAt = Date.now();
     const mergeOutcome = mergeCandidates(vectorCandidates, ftsCandidates);
-    const expansionRanks = await expandEntryNeighborhood(mergeOutcome.merged, queryEmbedding, ports, {
-      rankingProfile: query.rankingProfile,
-      neighborhoodTrace: summary.neighborhood,
-    });
+    const neighborhoodEnabled = options.rankingPolicy?.neighborhood !== "disabled";
+    const expansionRanks = neighborhoodEnabled
+      ? await expandEntryNeighborhood(mergeOutcome.merged, queryEmbedding, ports, {
+          rankingProfile: query.rankingProfile,
+          neighborhoodTrace: summary.neighborhood,
+        })
+      : [];
     // Fuse the ordered candidate rank lists from every active retrieval
     // channel into one normalized relevance map. Channels that produced no
     // candidates are ignored so RRF does not dilute the remaining signal.
-    const relevanceByEntryId = rrfFuse([mergeOutcome.vectorRanks, mergeOutcome.ftsRanks, expansionRanks]);
+    // When the caller disables RRF, fall back to single-channel vector ranking
+    // (with a lexical fallback when the vector channel is empty) so evals can
+    // isolate fusion effects without stripping channels from the pipeline.
+    const relevanceByEntryId = resolveEntryRelevance({
+      vectorRanks: mergeOutcome.vectorRanks,
+      ftsRanks: mergeOutcome.ftsRanks,
+      expansionRanks,
+      policy: options.rankingPolicy,
+      trace: summary.rrf,
+    });
     summary.candidateCounts.merged = mergeOutcome.merged.size;
     summary.timings.mergeCandidatesMs = elapsedMs(mergeStartedAt);
 
@@ -164,7 +177,7 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
       summary.claimKey,
       slotPolicyConfig,
     );
-    const rerankedCandidates = applySeededEntryRerank(historicallyBoosted, summary.neighborhood);
+    const rerankedCandidates = neighborhoodEnabled ? applySeededEntryRerank(historicallyBoosted, summary.neighborhood) : historicallyBoosted;
     const shaped = applyClaimKeyResultShaping(rerankedCandidates, summary.claimKey, slotPolicyConfig).sort((left, right) => right.score - left.score);
     // MMR diversifies the final shortlist after claim-key shaping so trust
     // penalties and redundancy shaping still have the last word on which
@@ -295,6 +308,13 @@ function buildRecallTraceSummary(params: {
       tentativeLineageSuppressed: 0,
       trustPenalized: 0,
       redundancyPenalized: 0,
+    },
+    rrf: {
+      applied: false,
+      channelCount: 0,
+      rankConstant: DEFAULT_RRF_RANK_CONSTANT,
+      fusedCandidateCount: 0,
+      maxFusedScore: 0,
     },
     neighborhood: {
       expansionRequested: false,
@@ -439,6 +459,80 @@ function scoreMergedCandidate(
       claimKeyRedundancyPenalty: 0,
     },
   };
+}
+
+/**
+ * Resolve the fused relevance score per entry id for the current policy.
+ *
+ * When RRF is enabled (the default), the three ordered channels (vector,
+ * lexical FTS, and optional neighborhood expansion) are fused into a single
+ * normalized 0-1 score using the configured rank constant. When RRF is
+ * explicitly disabled via `rankingPolicy.rrf === "disabled"`, the fallback
+ * ranks candidates using only the vector channel; if the vector channel is
+ * empty (degraded mode), the lexical channel takes over. Expansion ranks
+ * are ignored in the fallback because they cannot be attributed to either
+ * the query vector or its lexical form in isolation.
+ *
+ * The helper mutates `trace` in place with the same fused-candidate facts
+ * the rest of the pipeline wants to see whether or not RRF actually ran.
+ *
+ * @param params - Per-channel ordered rank lists, policy overrides, and the mutable RRF trace branch.
+ * @returns Map from entry id to normalized 0-1 relevance score.
+ */
+function resolveEntryRelevance(params: {
+  vectorRanks: readonly string[];
+  ftsRanks: readonly string[];
+  expansionRanks: readonly string[];
+  policy: RecallRankingPolicy | undefined;
+  trace: RecallRrfTrace;
+}): Map<string, number> {
+  const { vectorRanks, ftsRanks, expansionRanks, policy, trace } = params;
+  const rankConstant = resolveRrfRankConstant(policy);
+  trace.rankConstant = rankConstant;
+
+  if (policy?.rrf === "disabled") {
+    // Single-channel fallback: assign a shrinking relevance in vector-rank
+    // order (or lexical order when vectors degraded out), so downstream
+    // scoring still has a usable relevance signal without running RRF.
+    const fallbackChannel = vectorRanks.length > 0 ? vectorRanks : ftsRanks;
+    const fallback = new Map<string, number>();
+    fallbackChannel.forEach((id, index) => {
+      if (!fallback.has(id)) {
+        fallback.set(id, 1 / (index + 1));
+      }
+    });
+    trace.applied = false;
+    trace.channelCount = fallbackChannel.length > 0 ? 1 : 0;
+    trace.fusedCandidateCount = fallback.size;
+    trace.maxFusedScore = fallback.size > 0 ? Math.max(...fallback.values()) : 0;
+    return fallback;
+  }
+
+  const channels: readonly string[][] = [Array.from(vectorRanks), Array.from(ftsRanks), Array.from(expansionRanks)];
+  const activeChannels = channels.filter((channel) => channel.length > 0);
+  const fused = rrfFuse(channels, rankConstant);
+
+  trace.applied = fused.size > 0;
+  trace.channelCount = activeChannels.length;
+  trace.fusedCandidateCount = fused.size;
+  trace.maxFusedScore = fused.size > 0 ? Math.max(...fused.values()) : 0;
+
+  return fused;
+}
+
+/**
+ * Resolve the effective RRF rank constant from caller-supplied policy.
+ *
+ * @param policy - Optional ranking policy overrides.
+ * @returns Positive finite rank constant.
+ */
+function resolveRrfRankConstant(policy: RecallRankingPolicy | undefined): number {
+  const raw = policy?.rrfRankConstant;
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
+    return DEFAULT_RRF_RANK_CONSTANT;
+  }
+
+  return raw;
 }
 
 /**

@@ -121,6 +121,22 @@ export interface RecallClaimKeyTrace {
 }
 
 /**
+ * Reciprocal rank fusion facts observed during one recall execution.
+ */
+export interface RecallRrfTrace {
+  /** Whether RRF actually fused at least one non-empty channel. */
+  applied: boolean;
+  /** Number of non-empty channels supplied to the fusion helper. */
+  channelCount: number;
+  /** Effective rank constant `k` used for the fusion. */
+  rankConstant: number;
+  /** Number of unique candidates that received a fused RRF score. */
+  fusedCandidateCount: number;
+  /** Maximum normalized RRF score observed across fused candidates. */
+  maxFusedScore: number;
+}
+
+/**
  * MMR diversification facts observed during one recall execution.
  */
 export interface RecallMmrTrace {
@@ -199,6 +215,8 @@ export interface RecallExecutionTraceSummary {
   candidateCounts: RecallCoreCandidateCountsTrace;
   /** Claim-key lineage and diversity shaping facts observed during ranking. */
   claimKey: RecallClaimKeyTrace;
+  /** Reciprocal rank fusion facts observed during ranking. */
+  rrf: RecallRrfTrace;
   /** Neighborhood expansion and seeded rerank facts observed during ranking. */
   neighborhood: RecallNeighborhoodTrace;
   /** MMR diversification facts observed during ranking. */
@@ -231,6 +249,29 @@ export interface RecallTraceSink {
  * at a time rely on the per-stage kill switches here.
  */
 export interface RecallRankingPolicy {
+  /**
+   * Whether to apply reciprocal rank fusion across retrieval channels.
+   * Defaults to `"enabled"`. When set to `"disabled"`, the recall
+   * pipeline falls back to single-channel vector ordering (with a
+   * lexical fallback when vectors are unavailable) so evals can A/B
+   * the fusion stage without stripping channels from the pipeline.
+   */
+  rrf?: "enabled" | "disabled";
+  /**
+   * Optional override for the RRF rank constant `k`. Higher values
+   * flatten the contribution of the top ranks across channels; lower
+   * values sharpen them. Defaults to the canonical Cormack et al.
+   * constant `60`.
+   */
+  rrfRankConstant?: number;
+  /**
+   * Whether to apply the neighborhood expansion plus seeded rerank
+   * stage. Defaults to `"enabled"`. When set to `"disabled"`, the
+   * pipeline skips both the adapter-scoped `expandNeighborhood()` call
+   * and the `seededRerank()` pass so evals can isolate fusion from
+   * lineage-aware rerank effects.
+   */
+  neighborhood?: "enabled" | "disabled";
   /**
    * Whether to apply the MMR diversification stage. Defaults to
    * `"enabled"` so the default pipeline gets diversity out of the box.

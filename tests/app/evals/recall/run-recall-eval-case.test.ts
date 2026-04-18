@@ -944,6 +944,330 @@ describe("runRecallEvalCase", () => {
     );
   });
 
+  it("surfaces rrf/neighborhood/mmr/crossEncoder trace branches in diagnostics", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const response = await runRecallEvalCase({
+      caseId: "case-trace-branches",
+      memoryPool: [
+        {
+          id: "policy-current",
+          type: "decision",
+          subject: "pager policy",
+          content: "Taylor is on call this week.",
+          created_at: "2026-03-11T00:00:00.000Z",
+        },
+      ],
+      recallRequest: {
+        text: "who is on call",
+        limit: 3,
+      },
+      options: {
+        includeDiagnostics: true,
+      },
+    });
+
+    expect(response.status).toBe("ok");
+    expect(response.diagnostics?.rrf).toMatchObject({
+      applied: expect.any(Boolean),
+      channelCount: expect.any(Number),
+      rankConstant: expect.any(Number),
+      fusedCandidateCount: expect.any(Number),
+      maxFusedScore: expect.any(Number),
+    });
+    expect(response.diagnostics?.neighborhood).toMatchObject({
+      expansionRequested: expect.any(Boolean),
+      expansionAvailable: expect.any(Boolean),
+      familiesRequested: expect.any(Array),
+      includeRetired: expect.any(Boolean),
+      seedIds: expect.any(Array),
+      expansionCandidates: expect.any(Number),
+      strongSeedIds: expect.any(Array),
+      rerankBoostedIds: expect.any(Array),
+    });
+    expect(response.diagnostics?.mmr).toMatchObject({
+      applied: expect.any(Boolean),
+      lambda: expect.any(Number),
+      droppedDuplicateCount: expect.any(Number),
+      reorderedIds: expect.any(Array),
+    });
+    expect(response.diagnostics?.crossEncoder).toMatchObject({
+      applied: expect.any(Boolean),
+      k: expect.any(Number),
+      alpha: expect.any(Number),
+      latencyMs: expect.any(Number),
+      rescoredIds: expect.any(Array),
+    });
+  });
+
+  it("honors ranking-policy kill switches and surfaces their effects in diagnostics", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const response = await runRecallEvalCase({
+      caseId: "case-ranking-policy-kill-switches",
+      memoryPool: [
+        {
+          id: "policy-a",
+          type: "decision",
+          subject: "deployment approach",
+          content: "The deployment approach uses vite.",
+          created_at: "2026-03-20T00:00:00.000Z",
+        },
+        {
+          id: "policy-b",
+          type: "decision",
+          subject: "deployment approach",
+          content: "The deployment approach documentation was updated.",
+          created_at: "2026-03-21T00:00:00.000Z",
+        },
+      ],
+      recallRequest: {
+        text: "what is the deployment approach",
+        limit: 5,
+        rankingPolicy: {
+          rrf: "disabled",
+          neighborhood: "disabled",
+          mmr: "disabled",
+          crossEncoder: "disabled",
+        },
+      },
+      options: {
+        includeDiagnostics: true,
+      },
+    });
+
+    expect(response.status).toBe("ok");
+    expect(response.diagnostics?.rrf?.applied).toBe(false);
+    expect(response.diagnostics?.neighborhood?.expansionRequested).toBe(false);
+    expect(response.diagnostics?.neighborhood?.strongSeedIds).toEqual([]);
+    expect(response.diagnostics?.mmr?.applied).toBe(false);
+    expect(response.diagnostics?.crossEncoder?.applied).toBe(false);
+    expect(response.diagnostics?.crossEncoder?.degradedReason).toBe("disabled");
+  });
+
+  it("applies MMR diversification when the fixture seeds near-duplicate embeddings", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const baseEntries = [
+      {
+        id: "duplicate-a",
+        type: "fact" as const,
+        subject: "handoff checklist",
+        content: "Verify the deployment handoff checklist is complete.",
+        created_at: "2026-03-20T00:00:00.000Z",
+      },
+      {
+        id: "duplicate-b",
+        type: "fact" as const,
+        subject: "handoff checklist",
+        content: "Verify the deployment handoff checklist is complete.",
+        created_at: "2026-03-20T00:00:01.000Z",
+      },
+      {
+        id: "diverse",
+        type: "fact" as const,
+        subject: "runbook link",
+        content: "Link to the production runbook in the ops wiki.",
+        created_at: "2026-03-20T00:00:02.000Z",
+      },
+    ];
+
+    const withMmr = await runRecallEvalCase({
+      caseId: "case-mmr-applied",
+      memoryPool: baseEntries,
+      recallRequest: {
+        text: "handoff checklist",
+        limit: 3,
+      },
+      options: {
+        includeDiagnostics: true,
+      },
+    });
+
+    expect(withMmr.status).toBe("ok");
+    expect(withMmr.diagnostics?.mmr?.applied).toBe(true);
+    expect(withMmr.diagnostics?.mmr?.droppedDuplicateCount).toBeGreaterThanOrEqual(0);
+
+    const withoutMmr = await runRecallEvalCase({
+      caseId: "case-mmr-disabled",
+      memoryPool: baseEntries,
+      recallRequest: {
+        text: "handoff checklist",
+        limit: 3,
+        rankingPolicy: {
+          mmr: "disabled",
+        },
+      },
+      options: {
+        includeDiagnostics: true,
+      },
+    });
+
+    expect(withoutMmr.status).toBe("ok");
+    expect(withoutMmr.diagnostics?.mmr?.applied).toBe(false);
+  });
+
+  it("requests neighborhood expansion and seeded rerank on historical-state eval cases", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const fixture = [
+      {
+        id: "approach-old",
+        type: "decision" as const,
+        subject: "deployment approach",
+        content: "Webpack was the previous deployment approach.",
+        created_at: "2026-02-01T00:00:00.000Z",
+        claim_key: "deployment/approach",
+        claim_key_status: "trusted" as const,
+        valid_from: "2026-02-01T00:00:00.000Z",
+        valid_to: "2026-03-20T00:00:00.000Z",
+        superseded_by: "approach-new",
+      },
+      {
+        id: "approach-new",
+        type: "decision" as const,
+        subject: "deployment approach",
+        content: "Vite replaced webpack in the deployment pipeline.",
+        created_at: "2026-03-20T00:00:00.000Z",
+        claim_key: "deployment/approach",
+        claim_key_status: "trusted" as const,
+        valid_from: "2026-03-20T00:00:00.000Z",
+      },
+    ];
+
+    const withNeighborhood = await runRecallEvalCase({
+      caseId: "case-neighborhood-applied",
+      memoryPool: fixture,
+      recallRequest: {
+        text: "what was the previous deployment approach",
+        rankingProfile: "historical_state",
+        limit: 3,
+      },
+      options: {
+        includeDiagnostics: true,
+      },
+    });
+
+    expect(withNeighborhood.status).toBe("ok");
+    expect(withNeighborhood.diagnostics?.neighborhood?.expansionRequested).toBe(true);
+    expect(withNeighborhood.diagnostics?.neighborhood?.expansionAvailable).toBe(true);
+    expect(withNeighborhood.diagnostics?.neighborhood?.familiesRequested.length).toBeGreaterThan(0);
+
+    const withoutNeighborhood = await runRecallEvalCase({
+      caseId: "case-neighborhood-disabled",
+      memoryPool: fixture,
+      recallRequest: {
+        text: "what was the previous deployment approach",
+        rankingProfile: "historical_state",
+        limit: 3,
+        rankingPolicy: {
+          neighborhood: "disabled",
+        },
+      },
+      options: {
+        includeDiagnostics: true,
+      },
+    });
+
+    expect(withoutNeighborhood.status).toBe("ok");
+    expect(withoutNeighborhood.diagnostics?.neighborhood?.expansionRequested).toBe(false);
+    expect(withoutNeighborhood.diagnostics?.neighborhood?.strongSeedIds).toEqual([]);
+    expect(withoutNeighborhood.diagnostics?.neighborhood?.rerankBoostedIds).toEqual([]);
+  });
+
+  it("fuses multi-channel retrieval through RRF and falls back to single-channel when disabled", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const fixture = [
+      {
+        id: "fusion-a",
+        type: "fact" as const,
+        subject: "on-call schedule",
+        content: "Taylor owns the on-call rotation this week.",
+        created_at: "2026-03-20T00:00:00.000Z",
+      },
+      {
+        id: "fusion-b",
+        type: "fact" as const,
+        subject: "runbook note",
+        content: "The runbook points to Taylor for incident escalation.",
+        created_at: "2026-03-20T00:00:01.000Z",
+      },
+    ];
+
+    const fused = await runRecallEvalCase({
+      caseId: "case-rrf-fused",
+      memoryPool: fixture,
+      recallRequest: {
+        text: "who is on call",
+        limit: 3,
+      },
+      options: {
+        includeDiagnostics: true,
+      },
+    });
+
+    expect(fused.status).toBe("ok");
+    expect(fused.diagnostics?.rrf?.applied).toBe(true);
+    expect(fused.diagnostics?.rrf?.channelCount).toBeGreaterThanOrEqual(2);
+    expect(fused.diagnostics?.rrf?.fusedCandidateCount).toBeGreaterThanOrEqual(1);
+
+    const singleChannel = await runRecallEvalCase({
+      caseId: "case-rrf-disabled",
+      memoryPool: fixture,
+      recallRequest: {
+        text: "who is on call",
+        limit: 3,
+        rankingPolicy: {
+          rrf: "disabled",
+        },
+      },
+      options: {
+        includeDiagnostics: true,
+      },
+    });
+
+    expect(singleChannel.status).toBe("ok");
+    expect(singleChannel.diagnostics?.rrf?.applied).toBe(false);
+    expect(singleChannel.diagnostics?.rrf?.channelCount).toBeLessThanOrEqual(1);
+  });
+
+  it("accepts a policy rrfRankConstant override and reports it in diagnostics", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const response = await runRecallEvalCase({
+      caseId: "case-ranking-policy-rrf-k",
+      memoryPool: [
+        {
+          id: "entry-a",
+          type: "fact",
+          subject: "ops handoff",
+          content: "Taylor owns the deployment handoff.",
+          created_at: "2026-03-20T00:00:00.000Z",
+        },
+      ],
+      recallRequest: {
+        text: "who owns the deployment handoff",
+        limit: 3,
+        rankingPolicy: {
+          rrfRankConstant: 30,
+        },
+      },
+      options: {
+        includeDiagnostics: true,
+      },
+    });
+
+    expect(response.status).toBe("ok");
+    expect(response.diagnostics?.rrf?.rankConstant).toBe(30);
+  });
+
   it("preserves explicit as-of resolution metadata in claim-centric eval responses", async () => {
     process.env.OPENAI_API_KEY = "test-key";
     vi.stubGlobal("fetch", createEmbeddingFetchStub());

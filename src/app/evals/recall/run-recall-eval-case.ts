@@ -138,8 +138,14 @@ export async function runRecallEvalCase(request: RecallEvalCaseRequest): Promise
       const basePorts = applyRecallEvalFaultInjection(sandbox.createRecallPorts(recallEmbeddingPort), request);
       const recallPorts = diagnostics.isObservationEnabled() ? createInstrumentedRecallPorts(basePorts, diagnostics) : basePorts;
       const slotPolicyConfig = request.unified?.memoryPolicy?.slotPolicies;
+      const rankingPolicy = request.recallRequest.rankingPolicy;
       const unifiedRecallOptions = {
         ...(slotPolicyConfig ? { slotPolicyConfig } : {}),
+        ...(rankingPolicy ? { rankingPolicy } : {}),
+        ...(diagnostics.isObservationEnabled() ? { trace: diagnostics.traceSink } : {}),
+      };
+      const coreRecallOptions = {
+        ...(rankingPolicy ? { rankingPolicy } : {}),
         ...(diagnostics.isObservationEnabled() ? { trace: diagnostics.traceSink } : {}),
       };
       const results =
@@ -173,7 +179,7 @@ export async function runRecallEvalCase(request: RecallEvalCaseRequest): Promise
                 ...(Object.keys(unifiedRecallOptions).length > 0 ? { recallOptions: unifiedRecallOptions } : {}),
               },
             )
-          : await recall(request.recallRequest, recallPorts, diagnostics.isObservationEnabled() ? { trace: diagnostics.traceSink } : undefined);
+          : await recall(request.recallRequest, recallPorts, Object.keys(coreRecallOptions).length > 0 ? coreRecallOptions : undefined);
       diagnostics.recordRecall(elapsedMs(recallStartedAt));
       return buildRecallEvalSuccessResponse({
         request,
@@ -252,6 +258,16 @@ function applyRecallEvalFaultInjection(ports: RecallPorts, request: RecallEvalCa
           async expandNeighborhood(request) {
             return ports.expandNeighborhood!(request);
           },
+        }
+      : {}),
+    // Cross-encoder remains wired during fault injection so rerank-aware
+    // cases can still observe the rerank stage running after the core
+    // recall pipeline falls back to lexical-only retrieval. Preserving
+    // the port is safe because the core helper fails closed on adapter
+    // errors and honors the ranking policy kill switch.
+    ...(ports.crossEncoder
+      ? {
+          crossEncoder: ports.crossEncoder,
         }
       : {}),
     async hydrateEntries(ids: string[]) {

@@ -147,6 +147,10 @@ export function createRecallEvalDiagnosticsCollector(request: RecallEvalCaseRequ
   let ranking: RecallEvalRankingDiagnostics | undefined;
   let filtering: RecallEvalFilteringDiagnostics | undefined;
   let claimKey: RecallEvalCaseDiagnostics["claimKey"] | undefined;
+  let rrf: RecallEvalCaseDiagnostics["rrf"] | undefined;
+  let neighborhood: RecallEvalCaseDiagnostics["neighborhood"] | undefined;
+  let mmr: RecallEvalCaseDiagnostics["mmr"] | undefined;
+  let crossEncoder: RecallEvalCaseDiagnostics["crossEncoder"] | undefined;
   let degraded: RecallEvalCaseDiagnostics["degraded"] | undefined;
   let provisionObserved = false;
   let retrievalObserved = false;
@@ -184,6 +188,37 @@ export function createRecallEvalDiagnosticsCollector(request: RecallEvalCaseRequ
         tentativeLineageSuppressed: summary.claimKey.tentativeLineageSuppressed,
         trustPenalized: summary.claimKey.trustPenalized,
         redundancyPenalized: summary.claimKey.redundancyPenalized,
+      };
+      rrf = {
+        applied: summary.rrf.applied,
+        channelCount: summary.rrf.channelCount,
+        rankConstant: summary.rrf.rankConstant,
+        fusedCandidateCount: summary.rrf.fusedCandidateCount,
+        maxFusedScore: summary.rrf.maxFusedScore,
+      };
+      neighborhood = {
+        expansionRequested: summary.neighborhood.expansionRequested,
+        expansionAvailable: summary.neighborhood.expansionAvailable,
+        familiesRequested: [...summary.neighborhood.familiesRequested],
+        includeRetired: summary.neighborhood.includeRetired,
+        seedIds: [...summary.neighborhood.seedIds],
+        expansionCandidates: summary.neighborhood.expansionCandidates,
+        strongSeedIds: [...summary.neighborhood.strongSeedIds],
+        rerankBoostedIds: [...summary.neighborhood.rerankBoostedIds],
+      };
+      mmr = {
+        applied: summary.mmr.applied,
+        lambda: summary.mmr.lambda,
+        droppedDuplicateCount: summary.mmr.droppedDuplicateCount,
+        reorderedIds: [...summary.mmr.reorderedIds],
+      };
+      crossEncoder = {
+        applied: summary.crossEncoder.applied,
+        k: summary.crossEncoder.k,
+        alpha: summary.crossEncoder.alpha,
+        latencyMs: summary.crossEncoder.latencyMs,
+        rescoredIds: [...summary.crossEncoder.rescoredIds],
+        ...(summary.crossEncoder.degradedReason ? { degradedReason: summary.crossEncoder.degradedReason } : {}),
       };
       degraded = {
         active: summary.degraded.active,
@@ -278,6 +313,10 @@ export function createRecallEvalDiagnosticsCollector(request: RecallEvalCaseRequ
         ranking: traceObserved ? ranking : undefined,
         filtering: traceObserved ? filtering : undefined,
         claimKey: traceObserved ? claimKey : undefined,
+        rrf: traceObserved ? rrf : undefined,
+        neighborhood: traceObserved ? neighborhood : undefined,
+        mmr: traceObserved ? mmr : undefined,
+        crossEncoder: traceObserved ? crossEncoder : undefined,
         degraded: traceObserved ? degraded : undefined,
         candidateCounts,
       };

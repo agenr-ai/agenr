@@ -88,6 +88,7 @@ describe("parseRecallEvalCaseRequest", () => {
         aroundRadius: undefined,
         asOf: undefined,
         rankingProfile: "historical_state",
+        rankingPolicy: undefined,
       },
       unified: undefined,
       options: {
@@ -259,6 +260,7 @@ describe("parseRecallEvalCaseRequest", () => {
         aroundRadius: undefined,
         asOf: "2026-03-01T00:00:00.000Z",
         rankingProfile: undefined,
+        rankingPolicy: undefined,
       },
       unified: {
         mode: "entries",
@@ -535,6 +537,172 @@ describe("parseRecallEvalCaseRequest", () => {
         {
           path: "options.extraOption",
           message: "Unexpected field.",
+        },
+      ]);
+    }
+  });
+
+  it("accepts a full ranking-policy override with every stage toggle and tuning knob", () => {
+    const result = parseRecallEvalCaseRequest({
+      caseId: "case-ranking-policy-full",
+      memoryPool: [],
+      recallRequest: {
+        text: "how do we handle timeouts",
+        rankingPolicy: {
+          rrf: "enabled",
+          rrfRankConstant: 42,
+          neighborhood: "disabled",
+          mmr: "enabled",
+          mmrLambda: 0.4,
+          crossEncoder: "enabled",
+          crossEncoderTopK: 12,
+          crossEncoderAlpha: 0.7,
+        },
+      },
+    });
+
+    expect(result.recallRequest.rankingPolicy).toEqual({
+      rrf: "enabled",
+      rrfRankConstant: 42,
+      neighborhood: "disabled",
+      mmr: "enabled",
+      mmrLambda: 0.4,
+      crossEncoder: "enabled",
+      crossEncoderTopK: 12,
+      crossEncoderAlpha: 0.7,
+    });
+  });
+
+  it("accepts a partial ranking-policy override so evals can A/B a single stage", () => {
+    const result = parseRecallEvalCaseRequest({
+      caseId: "case-ranking-policy-partial",
+      memoryPool: [],
+      recallRequest: {
+        text: "who is on call",
+        rankingPolicy: {
+          mmr: "disabled",
+        },
+      },
+    });
+
+    expect(result.recallRequest.rankingPolicy).toEqual({
+      mmr: "disabled",
+    });
+  });
+
+  it("normalizes an empty ranking-policy block to undefined", () => {
+    const result = parseRecallEvalCaseRequest({
+      caseId: "case-ranking-policy-empty",
+      memoryPool: [],
+      recallRequest: {
+        text: "who is on call",
+        rankingPolicy: {},
+      },
+    });
+
+    expect(result.recallRequest.rankingPolicy).toBeUndefined();
+  });
+
+  it("surfaces ranking-policy fields through the unified path so evals can tune either surface", () => {
+    const result = parseRecallEvalCaseRequest({
+      caseId: "case-ranking-policy-unified",
+      recallPath: "unified",
+      memoryPool: [],
+      recallRequest: {
+        text: "how do we handle timeouts",
+        rankingPolicy: {
+          crossEncoder: "disabled",
+        },
+      },
+      unified: {
+        mode: "auto",
+      },
+    });
+
+    expect(result.recallRequest.rankingPolicy).toEqual({
+      crossEncoder: "disabled",
+    });
+  });
+
+  it("rejects malformed ranking-policy fields with stable paths", () => {
+    expect(() =>
+      parseRecallEvalCaseRequest({
+        caseId: "case-ranking-policy-invalid",
+        memoryPool: [],
+        recallRequest: {
+          text: "question",
+          rankingPolicy: {
+            rrf: "sometimes",
+            rrfRankConstant: 0,
+            neighborhood: true,
+            mmr: "bogus",
+            mmrLambda: 1.5,
+            crossEncoder: "yes",
+            crossEncoderTopK: -1,
+            crossEncoderAlpha: 2,
+            extra: true,
+          },
+        },
+      }),
+    ).toThrowError(RecallEvalRequestValidationError);
+
+    try {
+      parseRecallEvalCaseRequest({
+        caseId: "case-ranking-policy-invalid",
+        memoryPool: [],
+        recallRequest: {
+          text: "question",
+          rankingPolicy: {
+            rrf: "sometimes",
+            rrfRankConstant: 0,
+            neighborhood: true,
+            mmr: "bogus",
+            mmrLambda: 1.5,
+            crossEncoder: "yes",
+            crossEncoderTopK: -1,
+            crossEncoderAlpha: 2,
+            extra: true,
+          },
+        },
+      });
+    } catch (error) {
+      expect(error).toBeInstanceOf(RecallEvalRequestValidationError);
+      expect((error as RecallEvalRequestValidationError).issues).toEqual([
+        {
+          path: "recallRequest.rankingPolicy.extra",
+          message: "Unexpected field.",
+        },
+        {
+          path: "recallRequest.rankingPolicy.rrf",
+          message: "Expected one of: enabled, disabled.",
+        },
+        {
+          path: "recallRequest.rankingPolicy.rrfRankConstant",
+          message: "Expected a positive integer.",
+        },
+        {
+          path: "recallRequest.rankingPolicy.neighborhood",
+          message: "Expected one of: enabled, disabled.",
+        },
+        {
+          path: "recallRequest.rankingPolicy.mmr",
+          message: "Expected one of: enabled, disabled.",
+        },
+        {
+          path: "recallRequest.rankingPolicy.mmrLambda",
+          message: "Expected a number from 0 to 1.",
+        },
+        {
+          path: "recallRequest.rankingPolicy.crossEncoder",
+          message: "Expected one of: enabled, disabled.",
+        },
+        {
+          path: "recallRequest.rankingPolicy.crossEncoderTopK",
+          message: "Expected a positive integer.",
+        },
+        {
+          path: "recallRequest.rankingPolicy.crossEncoderAlpha",
+          message: "Expected a number from 0 to 1.",
         },
       ]);
     }

@@ -541,6 +541,13 @@ Relevance is now driven by **reciprocal rank fusion** (RRF) over per-channel ord
 
 `scoreCandidate()` consumes that precomputed `relevance` value directly. The raw vector similarity and raw lexical overlap still show up in the score breakdown as evidence-only signals but are no longer blended into the composite.
 
+RRF has two tuning knobs on `RecallExecutionOptions.rankingPolicy`:
+
+- `rankingPolicy.rrf = "disabled"` is a hard kill switch. When set, recall falls back to single-channel vector ordering (with a lexical fallback when the vector channel is empty) so evals can isolate fusion effects without stripping channels from the pipeline. The fallback still records a trace branch with `applied: false` and `channelCount: 0 or 1`.
+- `rankingPolicy.rrfRankConstant` overrides the Cormack et al. constant. Larger values flatten the contribution of the top ranks across channels; smaller values sharpen them. The default is `60`.
+
+Tracing gained a new `rrf` branch on `RecallExecutionTraceSummary` with `{ applied, channelCount, rankConstant, fusedCandidateCount, maxFusedScore }`. The branch is populated on every recall call so consumers can inspect channel counts even when fusion is disabled.
+
 ### Recency score
 
 Without an `around` anchor:
@@ -635,6 +642,25 @@ Two ideas matter:
 2. **Seeded rerank** (`seededRerank()`) sits on top of the ranked candidate list. It picks a tight top-N leader group through `selectStrongSeeds()`, then adds a small positive delta to any candidate that shares structural or topical lineage with at least one strong seed. The rerank never lifts a candidate that has no lineage relationship to any seed, so it cannot pull in unrelated material.
 
 Default-profile entry recall still filters retired and superseded rows out of the candidate pool and does not call the expansion port. It does run `seededRerank()` over the fused candidates so supersession-chain followers, claim-key siblings, and strong subject-prefix peers of the top leaders get a small coherence boost when they are already in the ranked pool.
+
+The stage has one kill switch on `RecallExecutionOptions.rankingPolicy`:
+
+- `rankingPolicy.neighborhood = "disabled"` skips both the adapter-scoped `expandNeighborhood()` call and the seeded-rerank pass so evals can isolate fusion and MMR effects from lineage-aware rerank. The trace branch still reports structured facts but records `expansionRequested: false` and empty `strongSeedIds` / `rerankBoostedIds` lists.
+
+### Ranking policy (RRF, neighborhood, MMR, cross-encoder toggles)
+
+The full ranking policy lives on `RecallExecutionOptions.rankingPolicy`. Every stage has an independent `"enabled" | "disabled"` toggle so evals can A/B one stage at a time without restating the rest of the policy. Numeric tuning knobs stay optional alongside the toggles. The policy fields are:
+
+- `rrf` - reciprocal rank fusion toggle (default `"enabled"`)
+- `rrfRankConstant` - RRF rank constant override (default `60`)
+- `neighborhood` - neighborhood expansion plus seeded rerank toggle (default `"enabled"`)
+- `mmr` - MMR diversification toggle (default `"enabled"`)
+- `mmrLambda` - MMR relevance-diversity balance (default `0.7`, clamped into `[0, 1]`)
+- `crossEncoder` - cross-encoder rerank toggle (default `"enabled"` when a port is wired)
+- `crossEncoderTopK` - shortlist size override (default `10`)
+- `crossEncoderAlpha` - cross-encoder blend weight (default `0.6`, clamped into `[0, 1]`)
+
+Unified recall forwards the same policy object into entry, episode, and procedure recall, and maps the cross-encoder and MMR fields into the per-surface option bundles `EpisodeCrossEncoderOptions`, `EpisodeMmrOptions`, `ProcedureCrossEncoderOptions`, and `ProcedureMmrOptions`. This keeps one policy as the single source of truth for every surface that the unified orchestrator touches.
 
 ### Historical-state expansion and claim-key shaping
 
@@ -786,6 +812,7 @@ The emitted `RecallExecutionTraceSummary` currently contains:
 - `ranking` - normalized `limit`, `threshold`, `budget`, and optional stable `noResultReason`
 - `candidateCounts` - merged, threshold-qualified, budget-accepted, final-ranked, and returned counts
 - `claimKey` - historical boosts, tentative-lineage suppression, trust penalties, and redundancy penalties
+- `rrf` - whether reciprocal rank fusion actually ran, the active channel count, the effective rank constant, the number of fused candidates, and the maximum normalized fused score
 - `neighborhood` - whether neighborhood expansion ran, the families requested, the expanded candidate count, the strong seed count, and the ids that received a seeded-rerank boost
 - `mmr` - whether MMR ran, the effective lambda, the dropped-near-duplicate count, and the ids whose position changed relative to the input order
 - `crossEncoder` - whether the cross-encoder rerank ran, the shortlist size `k`, the effective alpha, the rerank latency in milliseconds, the ids whose score was reshaped, and any stable `degradedReason` when the stage was skipped or failed closed
