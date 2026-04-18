@@ -36,13 +36,25 @@ export interface RecallInput {
 
 /**
  * A single scored recall result with signal breakdown metadata.
+ *
+ * The composite `score` is built from `relevance`, `recency`, and `importance`.
+ * `relevance` is the normalized reciprocal rank fusion (RRF) score computed in
+ * `src/core/recall/fusion.ts`. `vector` and `lexical` are retained as
+ * evidence-only diagnostics: they explain which retrieval channels admitted
+ * the candidate and let traces inspect raw similarity, but neither participates
+ * in the composite score directly now that RRF owns the fused signal.
  */
 export interface RecallOutput {
   entry: Entry;
   score: number;
   scores: {
+    /** Fused reciprocal rank fusion score used as the composite relevance signal. */
     relevance: number;
+    /** Alias of `relevance` that makes the RRF origin explicit in traces. */
+    rrf: number;
+    /** Evidence-only raw vector similarity score. Not part of the composite. */
     vector: number;
+    /** Evidence-only raw lexical overlap score. Not part of the composite. */
     lexical: number;
     recency: number;
     importance: number;
@@ -84,7 +96,10 @@ export interface VectorCandidate {
 /**
  * A candidate returned from lexical FTS search with ranking-time entry data.
  *
- * BM25 rank is used for admission only and is not part of the final score.
+ * BM25 rank controls admission order inside the lexical channel. That order
+ * is then folded into the reciprocal rank fusion pass in
+ * `src/core/recall/fusion.ts`, so the rank value itself is not part of the
+ * final composite score.
  */
 export interface FtsCandidate {
   entry: RecallCandidateEntry;

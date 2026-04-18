@@ -23,11 +23,13 @@ export interface ProcedureRecallCandidate {
   score: number;
   /** Score components retained for later shaping and diagnostics. */
   scores: {
-    /** Blended relevance signal across lexical and vector evidence. */
+    /** Fused reciprocal rank fusion relevance signal across vector and lexical channels. */
     relevance: number;
-    /** Lexical overlap score computed from title and recall text. */
+    /** Alias of `relevance` that makes the RRF origin explicit in traces. */
+    rrf: number;
+    /** Evidence-only lexical overlap score computed from title and recall text. */
     lexical: number;
-    /** Vector similarity score when semantic retrieval is available. */
+    /** Evidence-only vector similarity score when semantic retrieval is available. */
     vector: number;
   };
 }

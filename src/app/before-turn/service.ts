@@ -685,8 +685,7 @@ function applyDirectnessSelection(
     !winner.signals.includes("subject_entity_match") &&
     !winner.signals.includes("subject_identity_wrapper");
   const requiresStrictStableGap = runnerUpHasPositiveIdentitySignal;
-  const winnerGapTooSmall =
-    requiresStrictStableGap && runnerUp !== undefined && winnerGap !== undefined && winnerGap < DIRECTNESS_STABLE_GAP;
+  const winnerGapTooSmall = requiresStrictStableGap && runnerUp !== undefined && winnerGap !== undefined && winnerGap < DIRECTNESS_STABLE_GAP;
 
   if (!winnerHasPositiveIdentitySignal || winnerHasOnlyAdjacentSignals || winnerGapTooSmall) {
     const reason =
@@ -895,10 +894,7 @@ function isIdentityWrapperSubject(subject: string, entity: string): boolean {
  */
 function hasDefinitionalContent(content: string, entity: string): boolean {
   const escapedEntity = escapeRegExp(entity);
-  const anchoredPatterns = [
-    new RegExp(`^${escapedEntity}\\s+(?:is|was|means)\\b`, "u"),
-    new RegExp(`^${escapedEntity}\\s+refers\\s+to\\b`, "u"),
-  ];
+  const anchoredPatterns = [new RegExp(`^${escapedEntity}\\s+(?:is|was|means)\\b`, "u"), new RegExp(`^${escapedEntity}\\s+refers\\s+to\\b`, "u")];
   if (anchoredPatterns.some((pattern) => pattern.test(content))) {
     return true;
   }
@@ -917,10 +913,7 @@ function hasDefinitionalContent(content: string, entity: string): boolean {
  */
 function hasEmbeddedDefinitionalContent(content: string, escapedEntity: string): boolean {
   const embeddedLead = `(?:^|[.!?;:]\\s+)${escapedEntity}\\s+(?:is|was)\\s+`;
-  const patterns = [
-    new RegExp(`${embeddedLead}(?:a|an|the)\\b`, "u"),
-    new RegExp(`${embeddedLead}[\\p{L}\\p{N}]+(?:['’]s)\\b`, "u"),
-  ];
+  const patterns = [new RegExp(`${embeddedLead}(?:a|an|the)\\b`, "u"), new RegExp(`${embeddedLead}[\\p{L}\\p{N}]+(?:['’]s)\\b`, "u")];
   return patterns.some((pattern) => pattern.test(content));
 }
 

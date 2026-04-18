@@ -864,6 +864,9 @@ function createRecallPortsFixture(params: {
   const entriesById = new Map(params.entries.map((entry) => [entry.id, entry]));
   const recordRecallEvents = vi.fn(async () => undefined);
   const fetchPredecessors = vi.fn(async () => (params.predecessorCandidateIds ?? []).map((id) => toRecallCandidateEntry(requireEntry(entriesById, id))));
+  // Mirror the production adapter's ordering contract so RRF fusion sees the
+  // strongest vector candidate at rank 0 regardless of fixture declaration order.
+  const sortedVectorCandidates = params.vectorCandidates.slice().sort((left, right) => right.vectorSim - left.vectorSim || left.id.localeCompare(right.id));
   const ports: RecallPorts = {
     embed: async (): Promise<number[]> => {
       if (params.embedError) {
@@ -875,7 +878,7 @@ function createRecallPortsFixture(params: {
       if (params.vectorSearchError) {
         throw params.vectorSearchError;
       }
-      return params.vectorCandidates.map((candidate) => ({
+      return sortedVectorCandidates.map((candidate) => ({
         entry: toRecallCandidateEntry(requireEntry(entriesById, candidate.id)),
         vectorSim: candidate.vectorSim,
       }));

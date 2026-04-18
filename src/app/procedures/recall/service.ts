@@ -1,4 +1,4 @@
-import { combinedRelevance, computeLexicalScore } from "../../../core/recall/index.js";
+import { computeLexicalScore, rrfFuseVectorLexical } from "../../../core/recall/index.js";
 
 import type { Procedure } from "../../../core/types.js";
 
@@ -133,14 +133,24 @@ function rankProcedureCandidates(
     });
   }
 
+  // Build each RRF channel from our own per-candidate signal so ties resolve
+  // on locally-computed evidence rather than raw BM25 rank quirks. Candidates
+  // with zero evidence in a channel are excluded from that channel so they do
+  // not accidentally contribute near-top RRF mass there.
+  const lexicalRanks = rankByDescending(merged, (signals) => signals.lexical);
+  const vectorRanks = rankByDescending(merged, (signals) => signals.vector);
+
+  const relevanceByProcedureId = rrfFuseVectorLexical(vectorRanks, lexicalRanks);
+
   return Array.from(merged.values())
     .map((candidate) => {
-      const relevance = combinedRelevance(candidate.vector, candidate.lexical);
+      const relevance = relevanceByProcedureId.get(candidate.procedure.id) ?? 0;
       return {
         procedure: candidate.procedure,
         score: relevance,
         scores: {
           relevance,
+          rrf: relevance,
           lexical: candidate.lexical,
           vector: candidate.vector,
         },
@@ -162,7 +172,33 @@ function computeProcedureLexicalScore(query: string, procedure: Procedure): numb
 }
 
 /**
+ * Produces one RRF channel by sorting merged candidates on a per-candidate
+ * signal and filtering out zeros so they do not count as ranked in that channel.
+ *
+ * @param merged - Merged lexical and vector evidence keyed by procedure id.
+ * @param signalOf - Selector returning the positive signal to rank by.
+ * @returns Procedure ids sorted from strongest to weakest signal.
+ */
+function rankByDescending(merged: Map<string, ProcedureCandidateSignals>, signalOf: (signals: ProcedureCandidateSignals) => number): string[] {
+  return Array.from(merged.values())
+    .filter((signals) => signalOf(signals) > 0)
+    .sort((left, right) => {
+      const delta = signalOf(right) - signalOf(left);
+      if (delta !== 0) {
+        return delta;
+      }
+      return left.procedure.procedure_key.localeCompare(right.procedure.procedure_key);
+    })
+    .map((signals) => signals.procedure.id);
+}
+
+/**
  * Selects one canonical procedure only when the lead is clearly strong enough.
+ *
+ * The RRF-derived `score` drives candidate ordering. The canonical-selection
+ * margin check uses raw signal strength (`max(vector, lexical)`) so symmetric
+ * channel disagreements that produce tied RRF scores can still resolve to one
+ * canonical answer when the raw evidence clearly favors the leader.
  *
  * @param ranked - Ranked procedure candidates.
  * @param threshold - Optional caller-specified canonical threshold.
@@ -184,11 +220,26 @@ function selectCanonicalProcedure(ranked: ProcedureRecallCandidate[], threshold:
   }
 
   const runnerUp = ranked[1];
-  if (runnerUp && leader.score - runnerUp.score < DEFAULT_CANONICAL_MARGIN) {
+  if (runnerUp && signalStrength(leader) - signalStrength(runnerUp) < DEFAULT_CANONICAL_MARGIN) {
     return undefined;
   }
 
   return leader.procedure;
+}
+
+/**
+ * Compute a canonical-selection signal strength for one procedure candidate.
+ *
+ * Uses the strongest raw retrieval evidence available (vector similarity or
+ * lexical overlap) so canonical selection stays grounded in real retrieval
+ * scores even when reciprocal rank fusion produces tied relevance for
+ * symmetrically ranked candidates.
+ *
+ * @param candidate - Ranked procedure candidate.
+ * @returns Signal strength in the 0-1 range.
+ */
+function signalStrength(candidate: ProcedureRecallCandidate): number {
+  return Math.max(candidate.scores.vector, candidate.scores.lexical);
 }
 
 /**

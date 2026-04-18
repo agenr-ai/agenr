@@ -16,6 +16,7 @@ The current codebase also layers a unified agent-facing recall surface plus two 
 - `src/app/recall/types.ts` - agent-facing mode, routing, time-window, and split-result response types.
 - `src/core/recall/search.ts` - top-level recall pipeline orchestration.
 - `src/core/recall/scoring.ts` - vector, lexical, recency, importance, and final-score math.
+- `src/core/recall/fusion.ts` - pure reciprocal rank fusion helper used as the primary relevance signal across entry, episode, and procedure recall.
 - `src/core/recall/lexical.ts` - tokenization, lexical search-plan generation, and lexical overlap scoring.
 - `src/core/recall/temporal.ts` - explicit and inferred date parsing for temporal recall.
 - `src/core/recall/trace.ts` - typed per-call execution summaries for observability and recall-eval instrumentation.
@@ -211,7 +212,7 @@ Episode search has three actual modes inside `src/core/episode/search.ts`:
 
 1. **Pure temporal** - resolved time window, no embedding. Uses SQL overlap candidates plus `scoreEpisodeMatch()`.
 2. **Pure semantic** - embedding, no time window. Uses `episodeVectorSearch()` and ranks by cosine similarity first.
-3. **Hybrid** - resolved time window plus embedding. Uses a hard temporal filter first (`listEpisodesByTimeWindow()`), then reranks the overlapping candidates by semantic similarity with temporal/activity/recency as tie-break signals.
+3. **Hybrid** - resolved time window plus embedding. Uses a hard temporal filter first (`listEpisodesByTimeWindow()`), then fuses a temporal rank list and a semantic rank list through the shared `rrfFuse()` helper. The fused RRF score drives ordering; temporal, activity, and recency stay as tie-break signals. Episodes without embeddings only appear in the temporal channel so they still rank below embedded matches.
 
 The important design point is that hybrid episode search is **not** a broad vector search with a soft time bias. It is:
 
@@ -501,7 +502,7 @@ If the tokenized query is empty after stop-word removal, recall still runs the e
 
 FTS tier failures are swallowed per tier and the adapter continues to the next tier.
 
-BM25 rank is used only for admission ordering inside the lexical path. It is not part of the final recall score.
+BM25 rank anchors the ordered lexical channel that feeds reciprocal rank fusion. The raw lexical overlap score is still kept on the result as evidence-only, but the lexical rank is what influences the fused relevance signal.
 
 ## 6. Candidate merge and scoring
 
@@ -523,12 +524,18 @@ Each merged candidate is then rescored in core using the live scoring model.
 - phrase-match bonus for matching 2+ token sequences, capped at `0.4`
 - exact subject-match bonus of `0.3`
 
+The raw lexical score is now evidence-only. It still appears in the score breakdown for trace visibility but no longer feeds the composite relevance signal directly.
+
 ### Relevance score
 
-`combinedRelevance(vector, lexical)` behaves like this:
+Relevance is now driven by **reciprocal rank fusion** (RRF) over per-channel ordered candidate id lists. `mergeCandidates()` emits one list per retrieval channel (vector and FTS today, plus the historical predecessor expansion when `rankingProfile: "historical_state"` is active), and `rrfFuse()` in `src/core/recall/fusion.ts` combines them with the Cormack et al. default rank constant `k = 60`:
 
-- if both signals are positive: `vector * 0.6 + lexical * 0.4`
-- otherwise: `max(vector, lexical)`
+- each channel contributes `1 / (rankIndex + k)` to an id's raw score
+- the fused map is normalized by the theoretical maximum so an id that is top-ranked in every supplied channel maps to `1.0`
+- empty channels are ignored and do not count toward the normalizer
+- duplicate ids inside a single channel are compacted so they contribute exactly once
+
+`scoreCandidate()` consumes that precomputed `relevance` value directly. The raw vector similarity and raw lexical overlap still show up in the score breakdown as evidence-only signals but are no longer blended into the composite.
 
 ### Recency score
 
@@ -648,9 +655,10 @@ Each returned result contains:
 
 The current `scores` payload includes:
 
-- `relevance`
-- `vector`
-- `lexical`
+- `relevance` - the fused RRF score used as the composite relevance signal
+- `rrf` - alias of `relevance` that makes the RRF origin explicit in traces
+- `vector` - evidence-only raw vector similarity
+- `lexical` - evidence-only raw lexical overlap
 - `recency`
 - `importance`
 - `historicalLineage`

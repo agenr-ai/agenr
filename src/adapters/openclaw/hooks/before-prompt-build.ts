@@ -219,9 +219,7 @@ async function resolveBeforeTurnResult(
         } reasons=${beforeTurnPatch.diagnostics.abstentionReasons.join(" | ") || "none"}`,
       );
     }
-    params.logger.debug?.(
-      `[agenr] before_prompt_build: before-turn diagnostics for ${sessionContext}: ${formatBeforeTurnDiagnosticsForLog(beforeTurnPatch)}`,
-    );
+    params.logger.debug?.(`[agenr] before_prompt_build: before-turn diagnostics for ${sessionContext}: ${formatBeforeTurnDiagnosticsForLog(beforeTurnPatch)}`);
     params.logger.debug?.(
       `[agenr] before_prompt_build: before-turn durable entries for ${sessionContext}: ${formatEntryRefs(
         beforeTurnPatch.durableMemory.map((item: (typeof beforeTurnPatch.durableMemory)[number]) => item.entry),

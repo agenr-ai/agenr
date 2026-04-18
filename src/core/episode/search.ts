@@ -1,4 +1,5 @@
 import type { EpisodeDatabasePort } from "../ports.js";
+import { rrfFuse } from "../recall/fusion.js";
 import { cosineSimilarity } from "../recall/scoring.js";
 
 import { activityScore, compareEpisodeMatches, recencyScore, scoreEpisodeMatch } from "./scoring.js";
@@ -54,10 +55,60 @@ export async function searchEpisodes(query: EpisodeQuery, database: EpisodeDatab
   }
 
   const candidates = await database.listEpisodesByTimeWindow(query.timeWindow!, computeCandidateLimit(limit));
-  return candidates
-    .map((episode) => buildHybridResult(episode, normalizedEmbedding, bounds, now))
-    .sort(compareSemanticEpisodeResults)
-    .slice(0, limit);
+  const hybridResults = candidates.map((episode) => buildHybridResult(episode, normalizedEmbedding, bounds, now));
+  return fuseHybridResultsWithRrf(hybridResults).slice(0, limit);
+}
+
+/**
+ * Fuses temporal and semantic rank lists via reciprocal rank fusion for the
+ * hybrid episode recall mode. Candidates without embeddings only appear in the
+ * temporal channel, which naturally ranks them below embedded matches.
+ *
+ * @param hybridResults - Scored hybrid episode results.
+ * @returns Candidates ordered by fused RRF score with deterministic tie-breakers.
+ */
+function fuseHybridResultsWithRrf(hybridResults: EpisodeResult[]): EpisodeResult[] {
+  if (hybridResults.length === 0) {
+    return [];
+  }
+
+  const temporalRanks = [...hybridResults]
+    .sort((left, right) => compareDescending(left.scores.temporal, right.scores.temporal) || compareAscending(left.episode.id, right.episode.id))
+    .map((result) => result.episode.id);
+
+  const semanticRanks = [...hybridResults]
+    .filter((result) => result.scores.semantic > 0)
+    .sort((left, right) => compareDescending(left.scores.semantic, right.scores.semantic) || compareAscending(left.episode.id, right.episode.id))
+    .map((result) => result.episode.id);
+
+  const fusedScores = rrfFuse([temporalRanks, semanticRanks]);
+
+  const fused = hybridResults.map((result) => ({
+    ...result,
+    score: Number((fusedScores.get(result.episode.id) ?? 0).toFixed(6)),
+  }));
+
+  return fused.sort(compareFusedEpisodeResults);
+}
+
+/**
+ * Compares hybrid episode results using the fused RRF score as the primary
+ * signal, then falling back to the existing semantic and temporal tie-breakers.
+ *
+ * @param left - Left candidate.
+ * @param right - Right candidate.
+ * @returns Negative when left should sort first.
+ */
+function compareFusedEpisodeResults(left: EpisodeResult, right: EpisodeResult): number {
+  return (
+    compareDescending(left.score, right.score) ||
+    compareDescending(left.scores.semantic, right.scores.semantic) ||
+    compareDescending(left.scores.temporal, right.scores.temporal) ||
+    compareDescending(left.scores.activity, right.scores.activity) ||
+    compareDescending(left.scores.recency, right.scores.recency) ||
+    compareAscending(left.episode.startedAt, right.episode.startedAt) ||
+    compareAscending(left.episode.id, right.episode.id)
+  );
 }
 
 /**

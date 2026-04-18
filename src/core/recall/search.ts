@@ -1,6 +1,7 @@
 import type { RecallPorts } from "../ports.js";
 import { resolveClaimSlotPolicy } from "../claim-slot-policy.js";
 
+import { rrfFuse } from "./fusion.js";
 import { computeLexicalScore, tokenize } from "./lexical.js";
 import { cosineSimilarity, gaussianRecency, importanceScore, recencyScore, scoreCandidate } from "./scoring.js";
 import { inferAroundDate, parseRelativeDate } from "./temporal.js";
@@ -125,19 +126,23 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
     summary.degraded.lexicalOnly = summary.degraded.active && queryEmbedding.length === 0;
 
     const mergeStartedAt = Date.now();
-    const mergedCandidates = mergeCandidates(vectorCandidates, ftsCandidates);
-    await expandHistoricalCandidates(mergedCandidates, queryEmbedding, ports, {
-      activeEntryIds: Array.from(mergedCandidates.keys()),
+    const mergeOutcome = mergeCandidates(vectorCandidates, ftsCandidates);
+    const expansionRanks = await expandHistoricalCandidates(mergeOutcome.merged, queryEmbedding, ports, {
+      activeEntryIds: Array.from(mergeOutcome.merged.keys()),
       rankingProfile: query.rankingProfile,
     });
-    summary.candidateCounts.merged = mergedCandidates.size;
+    // Fuse the ordered candidate rank lists from every active retrieval
+    // channel into one normalized relevance map. Channels that produced no
+    // candidates are ignored so RRF does not dilute the remaining signal.
+    const relevanceByEntryId = rrfFuse([mergeOutcome.vectorRanks, mergeOutcome.ftsRanks, expansionRanks]);
+    summary.candidateCounts.merged = mergeOutcome.merged.size;
     summary.timings.mergeCandidatesMs = elapsedMs(mergeStartedAt);
 
     const scoreStartedAt = Date.now();
     const scored = applyClaimKeyResultShaping(
       applyHistoricalLineageBoosts(
-        Array.from(mergedCandidates.values()).map((candidate) =>
-          scoreMergedCandidate(candidate, text, queryEmbedding, {
+        Array.from(mergeOutcome.merged.values()).map((candidate) =>
+          scoreMergedCandidate(candidate, text, queryEmbedding, relevanceByEntryId.get(candidate.entry.id) ?? 0, {
             asOfDate,
             aroundDate,
             aroundRadius: query.aroundRadius,
@@ -347,19 +352,20 @@ function resolveNoResultReason(summary: RecallExecutionTraceSummary, reason: Rec
 }
 
 /**
- * Score a merged candidate using the v1 recall signal model.
+ * Score a merged candidate using the reciprocal rank fusion recall model.
  *
  * @param candidate - Merged candidate data from vector and FTS retrieval.
  * @param queryText - Raw recall query text.
  * @param queryEmbedding - Query embedding vector.
- * @param aroundDate - Optional temporal anchor for gaussian recency scoring.
- * @param aroundRadius - Optional gaussian radius override in days.
+ * @param rrfScore - Normalized RRF relevance score for this candidate.
+ * @param params - Temporal anchors and ranking profile for scoring.
  * @returns Ranked candidate with score breakdown metadata.
  */
 function scoreMergedCandidate(
   candidate: MergedCandidate,
   queryText: string,
   queryEmbedding: number[],
+  rrfScore: number,
   params: {
     asOfDate: Date | null;
     aroundDate: Date | null;
@@ -372,6 +378,7 @@ function scoreMergedCandidate(
   const recency = resolveRecencyScore(candidate.entry, params);
   const importance = importanceScore(candidate.entry.importance);
   const scored = scoreCandidate({
+    relevance: rrfScore,
     vectorSim: vector,
     lexical,
     recency,
@@ -383,6 +390,9 @@ function scoreMergedCandidate(
     score: scored.score,
     scores: {
       ...scored.scores,
+      // `rrf` mirrors `relevance` and makes the reciprocal rank fusion source
+      // explicit for trace summaries and cross-stage reasoning in later phases.
+      rrf: scored.scores.relevance,
       historicalLineage: 0,
       claimKeyTrustPenalty: 0,
       claimKeyRedundancyPenalty: 0,
@@ -393,35 +403,47 @@ function scoreMergedCandidate(
 /**
  * Expand the historical-state candidate pool with inactive lineage-linked rows.
  *
+ * The returned array is the ordered rank list for the expansion retrieval
+ * channel. Predecessors are ranked by cosine similarity against the query so
+ * stronger lineage matches dominate the channel contribution during RRF.
+ *
  * @param mergedCandidates - Current merged active candidate map.
  * @param queryEmbedding - Query embedding used to compute fallback vector scores.
  * @param ports - Recall ports that may expose historical expansion.
  * @param params - Active candidate IDs plus the active ranking profile.
- * @returns Promise that resolves after the candidate map has been updated in place.
+ * @returns Rank-ordered predecessor IDs for RRF, or an empty list when disabled.
  */
 async function expandHistoricalCandidates(
   mergedCandidates: Map<string, MergedCandidate>,
   queryEmbedding: number[],
   ports: RecallPorts,
   params: HistoricalPredecessorLookupParams & { rankingProfile?: RecallRankingProfile },
-): Promise<void> {
+): Promise<string[]> {
   if (params.rankingProfile !== "historical_state" || mergedCandidates.size === 0 || !ports.fetchPredecessors) {
-    return;
+    return [];
   }
 
   const predecessors = await ports.fetchPredecessors({
     activeEntryIds: params.activeEntryIds,
   });
-  for (const entry of predecessors) {
-    if (mergedCandidates.has(entry.id)) {
-      continue;
-    }
-
-    mergedCandidates.set(entry.id, {
+  // Collect predecessors with a computed cosine similarity so we can order
+  // them into a deterministic rank list feeding the expansion RRF channel.
+  const ranked = predecessors
+    .filter((entry) => !mergedCandidates.has(entry.id))
+    .map((entry) => ({
       entry,
       vectorSim: cosineSimilarity(entry.embedding ?? [], queryEmbedding),
+    }))
+    .sort((left, right) => right.vectorSim - left.vectorSim || left.entry.id.localeCompare(right.entry.id));
+
+  for (const candidate of ranked) {
+    mergedCandidates.set(candidate.entry.id, {
+      entry: candidate.entry,
+      vectorSim: candidate.vectorSim,
     });
   }
+
+  return ranked.map((candidate) => candidate.entry.id);
 }
 
 /**
@@ -898,18 +920,34 @@ function hasSufficientReturnEvidence(candidate: RankedCandidate): boolean {
 }
 
 /**
- * Merge vector and FTS candidate sets into a unique entry-id keyed map.
+ * Merge vector and FTS candidate sets into a unique entry-id keyed map and
+ * preserve the per-channel rank lists needed by reciprocal rank fusion.
  *
- * Vector similarity is preserved when an entry appears in both retrieval paths.
+ * Vector similarity is preserved when an entry appears in both retrieval
+ * paths. The returned rank lists are ordered most-relevant first and mirror
+ * the order produced by the retrieval adapters so RRF can treat channel
+ * position as the rank signal for each candidate.
  *
  * @param vectorCandidates - Candidates admitted by vector similarity search.
  * @param ftsCandidates - Candidates admitted by lexical FTS search.
- * @returns Unique candidate map keyed by entry ID.
+ * @returns Merged candidate map plus per-channel ordered rank lists.
  */
-function mergeCandidates(vectorCandidates: VectorCandidate[], ftsCandidates: FtsCandidate[]): Map<string, MergedCandidate> {
+function mergeCandidates(
+  vectorCandidates: VectorCandidate[],
+  ftsCandidates: FtsCandidate[],
+): {
+  merged: Map<string, MergedCandidate>;
+  vectorRanks: string[];
+  ftsRanks: string[];
+} {
   const merged = new Map<string, MergedCandidate>();
+  const vectorRanks: string[] = [];
+  const ftsRanks: string[] = [];
 
   for (const candidate of vectorCandidates) {
+    if (!merged.has(candidate.entry.id)) {
+      vectorRanks.push(candidate.entry.id);
+    }
     merged.set(candidate.entry.id, {
       entry: candidate.entry,
       vectorSim: candidate.vectorSim,
@@ -917,6 +955,7 @@ function mergeCandidates(vectorCandidates: VectorCandidate[], ftsCandidates: Fts
   }
 
   for (const candidate of ftsCandidates) {
+    ftsRanks.push(candidate.entry.id);
     const existing = merged.get(candidate.entry.id);
     if (existing) {
       existing.entry = existing.entry.embedding ? existing.entry : candidate.entry;
@@ -928,7 +967,11 @@ function mergeCandidates(vectorCandidates: VectorCandidate[], ftsCandidates: Fts
     });
   }
 
-  return merged;
+  return {
+    merged,
+    vectorRanks,
+    ftsRanks,
+  };
 }
 
 /**

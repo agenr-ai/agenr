@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { combinedRelevance, gaussianRecency, importanceScore, recencyScore, scoreCandidate } from "../../../src/core/recall/scoring.js";
+import { gaussianRecency, importanceScore, recencyScore, scoreCandidate } from "../../../src/core/recall/scoring.js";
 
 const NOW = new Date("2026-03-26T00:00:00.000Z");
 
@@ -61,27 +61,10 @@ describe("importanceScore", () => {
   });
 });
 
-describe("combinedRelevance", () => {
-  it("returns a weighted blend when both signals are present", () => {
-    expect(combinedRelevance(0.8, 0.5)).toBeCloseTo(0.68, 6);
-  });
-
-  it("returns the vector score when only vector similarity is present", () => {
-    expect(combinedRelevance(0.8, 0)).toBeCloseTo(0.8, 6);
-  });
-
-  it("returns the lexical score when only lexical overlap is present", () => {
-    expect(combinedRelevance(0, 0.5)).toBeCloseTo(0.5, 6);
-  });
-
-  it("returns zero when both signals are zero", () => {
-    expect(combinedRelevance(0, 0)).toBe(0);
-  });
-});
-
 describe("scoreCandidate", () => {
-  it("applies the configured weights", () => {
+  it("applies the configured weights to the fused relevance signal", () => {
     const result = scoreCandidate({
+      relevance: 0.68,
       vectorSim: 0.8,
       lexical: 0.5,
       recency: 0.6,
@@ -94,6 +77,7 @@ describe("scoreCandidate", () => {
   it("returns zero when all signals are zero", () => {
     expect(
       scoreCandidate({
+        relevance: 0,
         vectorSim: 0,
         lexical: 0,
         recency: 0,
@@ -105,6 +89,7 @@ describe("scoreCandidate", () => {
   it("returns 1.0 when all signals are 1", () => {
     expect(
       scoreCandidate({
+        relevance: 1,
         vectorSim: 1,
         lexical: 1,
         recency: 1,
@@ -115,6 +100,7 @@ describe("scoreCandidate", () => {
 
   it("returns a full signal breakdown", () => {
     const result = scoreCandidate({
+      relevance: 0.5,
       vectorSim: 0.6,
       lexical: 0.4,
       recency: 0.8,
@@ -133,14 +119,30 @@ describe("scoreCandidate", () => {
     });
   });
 
+  it("preserves raw vector and lexical evidence on the breakdown", () => {
+    const result = scoreCandidate({
+      relevance: 0.5,
+      vectorSim: 0.6,
+      lexical: 0.4,
+      recency: 0.8,
+      importance: 0.7,
+    });
+
+    expect(result.scores.vector).toBeCloseTo(0.6, 6);
+    expect(result.scores.lexical).toBeCloseTo(0.4, 6);
+    expect(result.scores.relevance).toBeCloseTo(0.5, 6);
+  });
+
   it("moves the final score by about 0.0167 for a one-step importance demotion", () => {
     const higher = scoreCandidate({
+      relevance: 0.68,
       vectorSim: 0.8,
       lexical: 0.5,
       recency: 0.6,
       importance: importanceScore(5),
     }).score;
     const lower = scoreCandidate({
+      relevance: 0.68,
       vectorSim: 0.8,
       lexical: 0.5,
       recency: 0.6,
@@ -153,6 +155,7 @@ describe("scoreCandidate", () => {
   it("treats NaN inputs as zero and clamps negative scores to zero", () => {
     expect(
       scoreCandidate({
+        relevance: Number.NaN,
         vectorSim: Number.NaN,
         lexical: -1,
         recency: Number.NaN,

@@ -81,35 +81,22 @@ export function importanceScore(importance: number): number {
 }
 
 /**
- * Combine vector and lexical relevance signals into a single query-relevance score.
- *
- * @param vectorSim - Vector similarity score.
- * @param lexical - Lexical overlap score.
- * @returns Combined relevance score in the 0-1 range.
- */
-export function combinedRelevance(vectorSim: number, lexical: number): number {
-  const normalizedVector = clampUnit(sanitizeNonNegative(vectorSim));
-  const normalizedLexical = clampUnit(sanitizeNonNegative(lexical));
-
-  if (normalizedVector > 0 && normalizedLexical > 0) {
-    return clampUnit(normalizedVector * 0.6 + normalizedLexical * 0.4);
-  }
-
-  return Math.max(normalizedVector, normalizedLexical);
-}
-
-/**
  * Compute the final recall score and its component breakdown for a candidate.
+ *
+ * Callers are expected to supply the fused `relevance` signal through
+ * reciprocal rank fusion. `vectorSim` and `lexical` are kept on the score
+ * breakdown as evidence-only diagnostics so trace summaries can still
+ * display the raw retrieval signals without influencing the composite.
  *
  * @param params - Candidate signal inputs.
  * @returns Final score plus signal breakdown.
  */
-export function scoreCandidate(params: { vectorSim: number; lexical: number; recency: number; importance: number }): CandidateScore {
+export function scoreCandidate(params: { relevance: number; vectorSim: number; lexical: number; recency: number; importance: number }): CandidateScore {
   const vector = clampUnit(sanitizeNonNegative(params.vectorSim));
   const lexical = clampUnit(sanitizeNonNegative(params.lexical));
   const recency = clampUnit(sanitizeNonNegative(params.recency));
   const importance = clampUnit(sanitizeNonNegative(params.importance));
-  const relevance = combinedRelevance(vector, lexical);
+  const relevance = clampUnit(sanitizeNonNegative(params.relevance));
   const score = clampUnit(relevance * RELEVANCE_WEIGHT + recency * RECENCY_WEIGHT + importance * IMPORTANCE_WEIGHT);
 
   return {

@@ -650,6 +650,11 @@ describe("runBeforeTurn", () => {
         policy: {
           enableProcedureSuggestion: false,
           recallThreshold: 0,
+          // Cap the durable window so the RRF-based high-confidence expansion
+          // cannot surface the related identity entry alongside the primary
+          // cousins hit; we only care that relationship questions skip the
+          // definitional rerank path.
+          maxHighConfidenceDurableEntries: 1,
         },
       },
       deps,

@@ -160,9 +160,7 @@ describe("handleAgenrBeforePromptBuild", () => {
         expect.stringContaining(
           "[agenr] before_prompt_build: session-start durable entries for session=session-1 key=agent:main:webchat:test: master branch workflow",
         ),
-        expect.stringContaining(
-          '"suppressedTurnCategory":"short_social"',
-        ),
+        expect.stringContaining('"suppressedTurnCategory":"short_social"'),
       ]),
     );
     expect(
