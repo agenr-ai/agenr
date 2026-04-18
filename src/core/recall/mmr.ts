@@ -4,9 +4,6 @@ import { cosineSimilarity } from "./scoring.js";
  * Maximal Marginal Relevance (MMR) diversification helper used by entry,
  * episode, and procedure recall.
  *
- * The implementation follows graphiti's one-shot MMR variant at
- * `graphiti_core/search/search_utils.py:1901`:
- *
  * - Compute pairwise cosine similarity between every candidate embedding.
  * - For each candidate, combine relevance (cosine similarity to the query)
  *   with a diversity penalty equal to the maximum pairwise similarity to

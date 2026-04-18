@@ -569,7 +569,7 @@ All component scores and the final score are clamped into `0-1`.
 
 ### MMR diversification
 
-A shared maximal-marginal-relevance stage sits between the claim-key shaping stage and the threshold filter on the entry recall pipeline, and between RRF fusion and the final `slice(limit)` on the episode and procedure pipelines. The helper lives in `src/core/recall/mmr.ts` and is a pure one-shot variant of the classic MMR ordering borrowed from graphiti's `maximal_marginal_relevance()`.
+A shared maximal-marginal-relevance stage sits between the claim-key shaping stage and the threshold filter on the entry recall pipeline, and between RRF fusion and the final `slice(limit)` on the episode and procedure pipelines. The helper lives in `src/core/recall/mmr.ts` and is a pure one-shot variant of the classic MMR ordering.
 
 Key design points:
 
