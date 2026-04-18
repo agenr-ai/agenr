@@ -2,9 +2,6 @@
  * Reciprocal rank fusion (RRF) helpers used by entry, episode, and procedure
  * recall to combine multiple retrieval channels into a single relevance signal.
  *
- * Modeled on graphiti's `rrf()` helper in
- * `graphiti_core/search/search_utils.py:1780`, with two local adaptations:
- *
  * - A larger default constant (`k = 60`) matching the canonical Cormack et al.
  *   RRF paper so early ranks do not dominate the fused score.
  * - A post-pass that normalizes scores into the `0-1` range so downstream
