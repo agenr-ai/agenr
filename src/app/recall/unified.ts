@@ -3,10 +3,10 @@ import type { ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
 import { recall } from "../../core/recall/search.js";
 import { parseTemporalWindow } from "../../core/episode/temporal-window.js";
 import { searchEpisodes } from "../../core/episode/search.js";
-import type { EpisodeMmrOptions } from "../../core/episode/types.js";
+import type { EpisodeCrossEncoderOptions, EpisodeMmrOptions } from "../../core/episode/types.js";
 import type { RecallExecutionOptions, RecallExecutionTraceSummary, RecallRankingPolicy, RecallTraceSink } from "../../core/recall/trace.js";
 import type { RecallInput } from "../../core/recall/types.js";
-import type { ProcedureMmrOptions } from "../procedures/recall/types.js";
+import type { ProcedureCrossEncoderOptions, ProcedureMmrOptions } from "../procedures/recall/types.js";
 import { runProcedureRecall } from "../procedures/recall/service.js";
 
 import { flattenClaimCentricRecallFamilies, projectClaimCentricRecallEntries } from "./claim-centric.js";
@@ -121,6 +121,7 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
         topicAnchor,
         embedQuery: deps.embedQuery,
         rankingPolicy: deps.recallOptions?.rankingPolicy,
+        crossEncoder: deps.recall.crossEncoder,
       })
     : {
         notices: [],
@@ -137,6 +138,7 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
   }
 
   const procedureMmr = resolveProcedureMmrOptions(deps.recallOptions?.rankingPolicy);
+  const procedureCrossEncoder = resolveProcedureCrossEncoderOptions(deps.recallOptions?.rankingPolicy, deps.recall.crossEncoder);
   const procedureResults = routing.queried.includes("procedures")
     ? await runProcedureRecall(
         {
@@ -144,6 +146,7 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
           ...(input.limit !== undefined ? { limit: input.limit } : {}),
           ...(input.threshold !== undefined ? { threshold: input.threshold } : {}),
           ...(procedureMmr ? { mmr: procedureMmr } : {}),
+          ...(procedureCrossEncoder ? { crossEncoder: procedureCrossEncoder } : {}),
         },
         {
           db: deps.procedures,
@@ -373,6 +376,7 @@ async function buildEpisodeQueryPlan(params: {
   topicAnchor: boolean;
   embedQuery?: (text: string) => Promise<number[]>;
   rankingPolicy?: RecallRankingPolicy;
+  crossEncoder?: RecallPorts["crossEncoder"];
 }): Promise<{
   query?: import("../../core/episode/types.js").EpisodeQuery;
   notices: string[];
@@ -395,6 +399,7 @@ async function buildEpisodeQueryPlan(params: {
   }
 
   const mmr = resolveEpisodeMmrOptions(params.detectedIntent, params.rankingPolicy);
+  const crossEncoder = resolveEpisodeCrossEncoderOptions(params.rankingPolicy, params.crossEncoder);
 
   return {
     query: {
@@ -403,6 +408,7 @@ async function buildEpisodeQueryPlan(params: {
       ...(params.parsedTimeWindow ? { timeWindow: params.parsedTimeWindow.window } : {}),
       ...(embedding ? { embedding } : {}),
       ...(mmr ? { mmr } : {}),
+      ...(crossEncoder ? { crossEncoder } : {}),
     },
     notices,
   };
@@ -456,6 +462,62 @@ function resolveProcedureMmrOptions(rankingPolicy: RecallRankingPolicy | undefin
   return {
     enabled: true,
     ...(typeof rankingPolicy?.mmrLambda === "number" ? { lambda: rankingPolicy.mmrLambda } : {}),
+  };
+}
+
+/**
+ * Resolve cross-encoder rerank options for hybrid episode recall.
+ *
+ * The rerank is enabled whenever a cross-encoder port is wired and the
+ * ranking policy does not explicitly disable the stage. Episodes keep
+ * the same policy-driven top-K and alpha overrides as entries so the
+ * surface stays uniform across result kinds.
+ *
+ * @param rankingPolicy - Optional ranking policy overrides.
+ * @param crossEncoder - Optional cross-encoder port from the recall ports.
+ * @returns Episode cross-encoder options when enabled, undefined otherwise.
+ */
+function resolveEpisodeCrossEncoderOptions(
+  rankingPolicy: RecallRankingPolicy | undefined,
+  crossEncoder: RecallPorts["crossEncoder"],
+): EpisodeCrossEncoderOptions | undefined {
+  if (!crossEncoder || rankingPolicy?.crossEncoder === "disabled") {
+    return undefined;
+  }
+
+  return {
+    enabled: true,
+    port: crossEncoder,
+    ...(typeof rankingPolicy?.crossEncoderTopK === "number" ? { topK: rankingPolicy.crossEncoderTopK } : {}),
+    ...(typeof rankingPolicy?.crossEncoderAlpha === "number" ? { alpha: rankingPolicy.crossEncoderAlpha } : {}),
+  };
+}
+
+/**
+ * Resolve cross-encoder rerank options for dedicated procedure recall.
+ *
+ * The rerank is enabled whenever a cross-encoder port is wired and the
+ * ranking policy does not explicitly disable the stage. Procedures
+ * reuse the entry top-K / alpha overrides so callers can tune every
+ * rerank stage with one policy.
+ *
+ * @param rankingPolicy - Optional ranking policy overrides.
+ * @param crossEncoder - Optional cross-encoder port from the recall ports.
+ * @returns Procedure cross-encoder options when enabled, undefined otherwise.
+ */
+function resolveProcedureCrossEncoderOptions(
+  rankingPolicy: RecallRankingPolicy | undefined,
+  crossEncoder: RecallPorts["crossEncoder"],
+): ProcedureCrossEncoderOptions | undefined {
+  if (!crossEncoder || rankingPolicy?.crossEncoder === "disabled") {
+    return undefined;
+  }
+
+  return {
+    enabled: true,
+    port: crossEncoder,
+    ...(typeof rankingPolicy?.crossEncoderTopK === "number" ? { topK: rankingPolicy.crossEncoderTopK } : {}),
+    ...(typeof rankingPolicy?.crossEncoderAlpha === "number" ? { alpha: rankingPolicy.crossEncoderAlpha } : {}),
   };
 }
 

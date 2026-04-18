@@ -116,6 +116,7 @@ export function toAgenrConfigInput(config: ResolvedAgenrConfig, options: Partial
     ...(hasModelConfig(config.extractionModel) ? { extractionModel: config.extractionModel } : {}),
     ...(hasModelConfig(config.dedupModel) ? { dedupModel: config.dedupModel } : {}),
     ...(hasModelConfig(config.episodeModel) ? { episodeModel: config.episodeModel } : {}),
+    ...(hasModelConfig(config.crossEncoderModel) ? { crossEncoderModel: config.crossEncoderModel } : {}),
   };
 
   const claimExtraction = toClaimExtractionInput(config.claimExtraction);
@@ -193,6 +194,7 @@ function normalizeAgenrConfig(value: unknown, options: ParseAgenrConfigOptions):
   const extractionModel = parseModelConfig(value.extractionModel, "extractionModel", issues);
   const dedupModel = parseModelConfig(value.dedupModel, "dedupModel", issues);
   const episodeModel = parseModelConfig(value.episodeModel, "episodeModel", issues);
+  const crossEncoderModel = parseModelConfig(value.crossEncoderModel, "crossEncoderModel", issues);
   const claimExtraction = parseClaimExtractionConfig(value.claimExtraction, "claimExtraction", issues);
   const surgeon = parseSurgeonConfig(value.surgeon, "surgeon", issues);
   const dbPath = parseOptionalTrimmedString(value.dbPath, "dbPath", issues);
@@ -222,6 +224,7 @@ function normalizeAgenrConfig(value: unknown, options: ParseAgenrConfigOptions):
     ...(extractionModel ? { extractionModel } : {}),
     ...(dedupModel ? { dedupModel } : {}),
     ...(episodeModel ? { episodeModel } : {}),
+    ...(crossEncoderModel ? { crossEncoderModel } : {}),
     ...(claimExtraction.input ? { claimExtraction: claimExtraction.input } : {}),
     ...(surgeon.input ? { surgeon: surgeon.input } : {}),
     ...(dbPath ? { dbPath } : {}),
@@ -241,6 +244,7 @@ function normalizeAgenrConfig(value: unknown, options: ParseAgenrConfigOptions):
       ...(extractionModel ? { extractionModel } : {}),
       ...(dedupModel ? { dedupModel } : {}),
       ...(episodeModel ? { episodeModel } : {}),
+      ...(crossEncoderModel ? { crossEncoderModel } : {}),
       claimExtraction: claimExtraction.resolved,
       surgeon: surgeon.resolved,
       dbPath: dbPath ?? options.defaultDbPath,
@@ -266,6 +270,7 @@ function pushTopLevelIssues(value: Record<string, unknown>, issues: ValidationIs
     "extractionModel",
     "dedupModel",
     "episodeModel",
+    "crossEncoderModel",
     "claimExtraction",
     "surgeon",
     "dbPath",

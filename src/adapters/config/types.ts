@@ -117,6 +117,15 @@ export interface AgenrConfigInput {
   dedupModel?: ModelConfig;
   /** Model override for episode summaries. */
   episodeModel?: ModelConfig;
+  /**
+   * Model override for the cross-encoder rerank stage.
+   *
+   * The cross-encoder requires OpenAI chat completions with
+   * `logprobs`/`logit_bias` support. Set `provider` to `openai` and
+   * `model` to any model with logprob support (for example
+   * `gpt-4.1-nano`).
+   */
+  crossEncoderModel?: ModelConfig;
   /** Best-effort claim-key extraction settings. */
   claimExtraction?: AgenrClaimExtractionConfig;
   /** Surgeon module configuration. */

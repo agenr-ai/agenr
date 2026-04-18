@@ -1,14 +1,17 @@
 import * as clack from "@clack/prompts";
 import { InvalidArgumentError, Option, type Command } from "commander";
 
+import { createOpenAICrossEncoder, resolveCrossEncoderApiKey } from "../../adapters/cross-encoder/openai-cross-encoder.js";
 import { createDatabase } from "../../adapters/db/client.js";
 import { createRecallAdapter } from "../../adapters/db/recall-adapter.js";
 import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
+import { resolveModel } from "../../adapters/llm.js";
 import { projectClaimCentricRecallEntry } from "../../app/recall/index.js";
 import { normalizeOptionalString, normalizeStringList, parseCsvList, parsePositiveInteger, parsePositiveNumber, parseUnitInterval } from "../shared/parse.js";
 import { readConfig } from "../../config.js";
+import type { CrossEncoderPort } from "../../core/ports.js";
 import { recall, type RecallInput, type RecallOutput } from "../../core/recall/index.js";
-import type { RecallExecutionTraceSummary } from "../../core/recall/trace.js";
+import type { RecallExecutionOptions, RecallExecutionTraceSummary, RecallRankingPolicy } from "../../core/recall/trace.js";
 import { ENTRY_TYPES, type EntryType } from "../../core/types.js";
 import { banner, ui } from "../../ui.js";
 
@@ -25,12 +28,16 @@ interface RecallCommandOptions {
   aroundRadius?: number;
   asOf?: string;
   verbose?: boolean;
+  crossEncoder?: "enabled" | "disabled";
+  crossEncoderTopK?: number;
+  crossEncoderAlpha?: number;
 }
 
 /** Normalized recall request assembled at the CLI boundary. */
 interface NormalizedRecallCommand {
   request: RecallInput;
   verbose: boolean;
+  rankingPolicy?: RecallRankingPolicy;
 }
 
 /**
@@ -52,6 +59,9 @@ export function registerRecallCommand(program: Command): void {
     .option("--around <date>", "Bias results toward this date")
     .option("--as-of <date>", "Resolve current vs prior state at this reference time")
     .addOption(new Option("--around-radius <n>", "Gaussian radius in days").argParser(parsePositiveNumber).default(14))
+    .addOption(new Option("--cross-encoder <state>", "Enable or disable the cross-encoder rerank stage").choices(["enabled", "disabled"]))
+    .addOption(new Option("--cross-encoder-top-k <n>", "Top-K shortlist size for cross-encoder rerank").argParser(parsePositiveInteger))
+    .addOption(new Option("--cross-encoder-alpha <n>", "Blend weight for cross-encoder vs prior score (0-1)").argParser(parseUnitInterval))
     .option("--verbose", "Show score breakdowns")
     .action(async (query: string, options: RecallCommandOptions) => {
       clack.intro(banner());
@@ -64,22 +74,36 @@ export function registerRecallCommand(program: Command): void {
         const dbPath = config.dbPath;
         const embeddingClient = createEmbeddingClient(resolveEmbeddingApiKey(config), resolveEmbeddingModel(config));
         db = await createDatabase(dbPath);
-        const adapter = createRecallAdapter(db, embeddingClient);
+        const recallPorts = createRecallAdapter(db, embeddingClient);
+        const crossEncoder = commandInput.rankingPolicy?.crossEncoder === "disabled" ? undefined : tryCreateCrossEncoder(config);
+        const adapter = crossEncoder ? { ...recallPorts, crossEncoder } : recallPorts;
         let lastTraceSummary: RecallExecutionTraceSummary | undefined;
 
         const spinner = clack.spinner();
         spinner.start("Searching knowledge...");
-        const results = await recall(commandInput.request, adapter, {
+        const recallOptions: RecallExecutionOptions = {
           trace: {
             reportSummary(summary): void {
               lastTraceSummary = summary;
             },
           },
-        });
+          ...(commandInput.rankingPolicy ? { rankingPolicy: commandInput.rankingPolicy } : {}),
+        };
+        const results = await recall(commandInput.request, adapter, recallOptions);
         spinner.stop(`Found ${results.length} ${pluralize(results.length, "result")}.`);
         if (lastTraceSummary?.degraded.active) {
           for (const notice of lastTraceSummary.degraded.notices) {
             clack.log.warn(notice);
+          }
+        }
+        if (commandInput.verbose && lastTraceSummary) {
+          const crossEncoder = lastTraceSummary.crossEncoder;
+          if (crossEncoder.applied) {
+            clack.log.info(
+              `Cross-encoder reranked top-${crossEncoder.k} (alpha=${crossEncoder.alpha.toFixed(2)}, latencyMs=${crossEncoder.latencyMs}, rescored=${crossEncoder.rescoredIds.length}).`,
+            );
+          } else if (crossEncoder.degradedReason) {
+            clack.log.info(`Cross-encoder skipped (${crossEncoder.degradedReason}).`);
           }
         }
 
@@ -116,6 +140,8 @@ function normalizeRecallCommand(query: string, options: RecallCommandOptions): N
     throw new InvalidArgumentError("Query cannot be empty.");
   }
 
+  const rankingPolicy = buildRankingPolicy(options);
+
   return {
     request: {
       text: normalizedQuery,
@@ -131,7 +157,51 @@ function normalizeRecallCommand(query: string, options: RecallCommandOptions): N
       asOf: normalizeOptionalString(options.asOf),
     },
     verbose: options.verbose === true,
+    ...(rankingPolicy ? { rankingPolicy } : {}),
   };
+}
+
+/**
+ * Builds the ranking policy from CLI-supplied cross-encoder options.
+ *
+ * @param options - Parsed commander options.
+ * @returns Ranking policy when any cross-encoder flag was provided.
+ */
+function buildRankingPolicy(options: RecallCommandOptions): RecallRankingPolicy | undefined {
+  const policy: RecallRankingPolicy = {};
+  if (options.crossEncoder !== undefined) {
+    policy.crossEncoder = options.crossEncoder;
+  }
+
+  if (typeof options.crossEncoderTopK === "number") {
+    policy.crossEncoderTopK = options.crossEncoderTopK;
+  }
+
+  if (typeof options.crossEncoderAlpha === "number") {
+    policy.crossEncoderAlpha = options.crossEncoderAlpha;
+  }
+
+  return Object.keys(policy).length > 0 ? policy : undefined;
+}
+
+/**
+ * Best-effort construction of an OpenAI cross-encoder adapter.
+ *
+ * The CLI wires the cross-encoder silently when an OpenAI credential is
+ * available. Credential resolution failures are swallowed so that missing
+ * keys simply leave the rerank disabled rather than aborting recall.
+ *
+ * @param config - Resolved agenr configuration loaded by the CLI.
+ * @returns Cross-encoder port when credentials are available.
+ */
+function tryCreateCrossEncoder(config: ReturnType<typeof readConfig>): CrossEncoderPort | undefined {
+  try {
+    const apiKey = resolveCrossEncoderApiKey(config);
+    const { modelId } = resolveModel(config, "cross_encoder");
+    return createOpenAICrossEncoder({ apiKey, model: modelId });
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -160,8 +230,9 @@ function formatResult(result: RecallOutput, verbose: boolean, asOf?: string): st
   lines.push(`  why=${projected.whySurfaced.summary}`);
 
   if (verbose) {
+    const crossEncoderFragment = typeof result.scores.crossEncoder === "number" ? `  crossEncoder=${result.scores.crossEncoder.toFixed(2)}` : "";
     lines.push(
-      `  vector=${result.scores.vector.toFixed(2)}  lexical=${result.scores.lexical.toFixed(2)}  recency=${result.scores.recency.toFixed(2)}  importance=${result.scores.importance.toFixed(2)}  relevance=${result.scores.relevance.toFixed(2)}  historicalLineage=${result.scores.historicalLineage.toFixed(2)}  claimKeyTrustPenalty=${result.scores.claimKeyTrustPenalty.toFixed(2)}  claimKeyRedundancyPenalty=${result.scores.claimKeyRedundancyPenalty.toFixed(2)}`,
+      `  vector=${result.scores.vector.toFixed(2)}  lexical=${result.scores.lexical.toFixed(2)}  recency=${result.scores.recency.toFixed(2)}  importance=${result.scores.importance.toFixed(2)}  relevance=${result.scores.relevance.toFixed(2)}  historicalLineage=${result.scores.historicalLineage.toFixed(2)}  claimKeyTrustPenalty=${result.scores.claimKeyTrustPenalty.toFixed(2)}  claimKeyRedundancyPenalty=${result.scores.claimKeyRedundancyPenalty.toFixed(2)}${crossEncoderFragment}`,
     );
   }
 

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 
 import { runProcedureRecall } from "../../../../src/app/procedures/recall/index.js";
+import type { CrossEncoderPort } from "../../../../src/core/ports.js";
 import { computeProcedureRevisionHash, computeProcedureSourceHash } from "../../../../src/core/procedures/hashing.js";
 import { composeProcedureRecallText } from "../../../../src/core/procedures/recall-text.js";
 import type { Procedure } from "../../../../src/core/types.js";
@@ -181,6 +182,120 @@ describe("runProcedureRecall", () => {
     expect(diverseIndex).toBeGreaterThanOrEqual(0);
     expect(revisionBIndex).toBeGreaterThanOrEqual(0);
     expect(diverseIndex).toBeLessThan(revisionBIndex);
+  });
+
+  it("reorders candidates when the cross-encoder is enabled", async () => {
+    const release = createProcedure({
+      procedure_key: "agenr/release",
+      title: "Release agenr and publish packages",
+      goal: "Release agenr and publish packages safely.",
+    });
+    const sandbox = createProcedure({
+      procedure_key: "agenr/sandbox-validation",
+      title: "Release agenr through sandbox validation",
+      goal: "Release agenr and validate in sandbox safely.",
+    });
+    const rank = vi.fn<CrossEncoderPort["rank"]>(async (_query, passages) =>
+      passages.map((passage) => ({
+        id: passage.id,
+        score: passage.id === sandbox.id ? 0.97 : 0.65,
+      })),
+    );
+    const db = createProcedureDatabase({
+      procedureFtsSearch: vi.fn(async () => [
+        { procedure: release, rank: -1.1 },
+        { procedure: sandbox, rank: -1.3 },
+      ]),
+    });
+
+    const result = await runProcedureRecall(
+      {
+        text: "release agenr",
+        limit: 2,
+        crossEncoder: {
+          enabled: true,
+          port: { rank },
+          alpha: 0.7,
+        },
+      },
+      { db },
+    );
+
+    expect(rank).toHaveBeenCalledTimes(1);
+    expect(result.candidates).toHaveLength(2);
+    expect(result.candidates.map((candidate) => candidate.procedure.id)).toEqual([sandbox.id, release.id]);
+    expect(result.candidates[0]?.scores.crossEncoder).toBeCloseTo(0.97, 6);
+  });
+
+  it("skips the cross-encoder rerank when the options bundle is disabled", async () => {
+    const release = createProcedure({
+      procedure_key: "agenr/release",
+      title: "Release agenr and publish packages",
+      goal: "Publish a new agenr release safely.",
+    });
+    const rank = vi.fn<CrossEncoderPort["rank"]>(async () => []);
+    const db = createProcedureDatabase({
+      procedureFtsSearch: vi.fn(async () => [{ procedure: release, rank: -1.1 }]),
+    });
+
+    await runProcedureRecall(
+      {
+        text: "release",
+        limit: 1,
+        crossEncoder: {
+          enabled: false,
+          port: { rank },
+        },
+      },
+      { db },
+    );
+
+    expect(rank).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the pre-rerank ordering when the cross-encoder port throws", async () => {
+    const release = createProcedure({
+      procedure_key: "agenr/release",
+      title: "Release agenr and publish packages",
+      goal: "Release agenr and publish packages safely.",
+    });
+    const sandbox = createProcedure({
+      procedure_key: "agenr/sandbox-validation",
+      title: "Release agenr through sandbox validation",
+      goal: "Release agenr and validate in sandbox safely.",
+    });
+    const rank = vi.fn<CrossEncoderPort["rank"]>(async () => {
+      throw new Error("provider error");
+    });
+    const db = createProcedureDatabase({
+      procedureFtsSearch: vi.fn(async () => [
+        { procedure: release, rank: -1.1 },
+        { procedure: sandbox, rank: -1.3 },
+      ]),
+    });
+
+    const baseline = await runProcedureRecall(
+      {
+        text: "release agenr",
+        limit: 2,
+      },
+      { db },
+    );
+    const result = await runProcedureRecall(
+      {
+        text: "release agenr",
+        limit: 2,
+        crossEncoder: {
+          enabled: true,
+          port: { rank },
+        },
+      },
+      { db },
+    );
+
+    expect(rank).toHaveBeenCalledTimes(1);
+    expect(result.candidates.map((candidate) => candidate.procedure.id)).toEqual(baseline.candidates.map((candidate) => candidate.procedure.id));
+    expect(result.candidates.every((candidate) => candidate.scores.crossEncoder === undefined)).toBe(true);
   });
 
   it("orders equal-score candidates deterministically by procedure key", async () => {

@@ -53,6 +53,13 @@ export interface RecallOutput {
     neighborhoodBoost: number;
     claimKeyTrustPenalty: number;
     claimKeyRedundancyPenalty: number;
+    /**
+     * Raw cross-encoder score in the 0-1 range when the rerank stage
+     * produced one for this candidate. Absent when the candidate fell
+     * outside the shortlist, when the stage was disabled, or when the
+     * provider failed.
+     */
+    crossEncoder?: number;
   };
 }
 

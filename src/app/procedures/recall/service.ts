@@ -1,4 +1,7 @@
 import {
+  applyCrossEncoderRerank,
+  DEFAULT_CROSS_ENCODER_ALPHA,
+  DEFAULT_CROSS_ENCODER_TOP_K,
   DEFAULT_MMR_LAMBDA,
   DEFAULT_SEEDED_RERANK_WEIGHT,
   DEFAULT_STRONG_SEED_SCORE_GAP,
@@ -13,7 +16,14 @@ import {
 
 import type { Procedure } from "../../../core/types.js";
 
-import type { ProcedureMmrOptions, ProcedureRecallCandidate, ProcedureRecallDeps, ProcedureRecallInput, ProcedureRecallResult } from "./types.js";
+import type {
+  ProcedureCrossEncoderOptions,
+  ProcedureMmrOptions,
+  ProcedureRecallCandidate,
+  ProcedureRecallDeps,
+  ProcedureRecallInput,
+  ProcedureRecallResult,
+} from "./types.js";
 
 const DEFAULT_LIMIT = 5;
 const DEFAULT_CANONICAL_THRESHOLD = 0.55;
@@ -73,7 +83,9 @@ export async function runProcedureRecall(input: ProcedureRecallInput, deps: Proc
           })
       : [];
 
-  const ranked = applyProcedureMmrDiversification(rankProcedureCandidates(text, lexicalMatches, vectorMatches), queryEmbedding, input.mmr).slice(0, limit);
+  const diversified = applyProcedureMmrDiversification(rankProcedureCandidates(text, lexicalMatches, vectorMatches), queryEmbedding, input.mmr);
+  const reranked = await applyProcedureCrossEncoderRerank(diversified, text, input.crossEncoder);
+  const ranked = reranked.slice(0, limit);
   const canonicalProcedure = selectCanonicalProcedure(ranked, input.threshold);
 
   return {
@@ -81,6 +93,84 @@ export async function runProcedureRecall(input: ProcedureRecallInput, deps: Proc
     candidates: ranked,
     notices: dedupePreservingOrder(notices),
   };
+}
+
+/**
+ * Apply the cross-encoder rerank stage over the procedure shortlist.
+ *
+ * The rerank runs after MMR diversification so the cross-encoder
+ * observes the post-diversity ordering, and before the final slice and
+ * canonical-selection checks so the rerank-adjusted composite score
+ * decides admission and stability. The helper fails closed on provider
+ * errors, so a broken cross-encoder can never drop procedure recall
+ * below its pre-rerank baseline.
+ *
+ * @param candidates - Procedure candidates after MMR diversification.
+ * @param query - Natural-language recall query text.
+ * @param options - Optional cross-encoder rerank options from the caller.
+ * @returns Procedure candidates in their post-rerank order.
+ */
+async function applyProcedureCrossEncoderRerank(
+  candidates: ProcedureRecallCandidate[],
+  query: string,
+  options: ProcedureCrossEncoderOptions | undefined,
+): Promise<ProcedureRecallCandidate[]> {
+  if (!options || !options.enabled || candidates.length === 0) {
+    return candidates;
+  }
+
+  const rerank = await applyCrossEncoderRerank({
+    query,
+    candidates: candidates.map((candidate) => ({
+      id: candidate.procedure.id,
+      text: buildProcedureCrossEncoderText(candidate.procedure),
+      score: candidate.score,
+      candidate,
+    })),
+    port: options.port,
+    topK: options.topK ?? DEFAULT_CROSS_ENCODER_TOP_K,
+    alpha: options.alpha ?? DEFAULT_CROSS_ENCODER_ALPHA,
+  });
+
+  return rerank.candidates.map((entry) => {
+    const base = entry.candidate;
+    const nextScore = entry.score;
+    if (typeof entry.crossEncoderScore !== "number" && nextScore === base.score) {
+      return base;
+    }
+
+    return {
+      ...base,
+      score: nextScore,
+      scores: {
+        ...base.scores,
+        relevance: nextScore,
+        rrf: nextScore,
+        ...(typeof entry.crossEncoderScore === "number" ? { crossEncoder: entry.crossEncoderScore } : {}),
+      },
+    };
+  });
+}
+
+/**
+ * Build the free-form text a procedure passes into the cross-encoder.
+ *
+ * Procedures concentrate their meaning in `title` + `recall_text`, which
+ * is also what the lexical channel already scores. Using the same text
+ * keeps the rerank observable against the other ranking stages.
+ */
+function buildProcedureCrossEncoderText(procedure: Procedure): string {
+  const title = procedure.title?.trim() ?? "";
+  const recallText = procedure.recall_text?.trim() ?? "";
+  if (title.length === 0) {
+    return recallText;
+  }
+
+  if (recallText.length === 0) {
+    return title;
+  }
+
+  return `${title}\n\n${recallText}`;
 }
 
 /**

@@ -70,6 +70,25 @@ export interface EpisodeMmrOptions {
 }
 
 /**
+ * Optional cross-encoder rerank controls plumbed through to episode recall.
+ *
+ * Unified recall wires this whenever a cross-encoder port is available
+ * and the ranking policy leaves the stage enabled. The helper itself
+ * fails closed on provider errors, so a broken cross-encoder cannot
+ * drop episode recall below its pre-rerank baseline.
+ */
+export interface EpisodeCrossEncoderOptions {
+  /** Whether to run the cross-encoder rerank stage. */
+  enabled: boolean;
+  /** Cross-encoder adapter to invoke when the stage is enabled. */
+  port: import("../ports.js").CrossEncoderPort;
+  /** Optional top-K shortlist override. */
+  topK?: number;
+  /** Optional blend alpha override in the inclusive 0-1 range. */
+  alpha?: number;
+}
+
+/**
  * Episode-query shape accepted by the episodic recall pipeline.
  */
 export interface EpisodeQuery {
@@ -79,6 +98,8 @@ export interface EpisodeQuery {
   embedding?: number[];
   /** Optional MMR diversification knobs applied to hybrid ranking. */
   mmr?: EpisodeMmrOptions;
+  /** Optional cross-encoder rerank knobs applied to hybrid ranking. */
+  crossEncoder?: EpisodeCrossEncoderOptions;
 }
 
 /**
@@ -92,6 +113,13 @@ export interface EpisodeResult {
     semantic: number;
     activity: number;
     recency: number;
+    /**
+     * Raw cross-encoder score in the 0-1 range when the rerank stage
+     * produced one for this episode. Absent when the candidate fell
+     * outside the shortlist, when the stage was disabled, or when the
+     * provider failed.
+     */
+    crossEncoder?: number;
   };
 }
 

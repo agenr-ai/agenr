@@ -138,6 +138,34 @@ export interface RecallMmrTrace {
 }
 
 /**
+ * Cross-encoder rerank facts observed during one recall execution.
+ */
+export interface RecallCrossEncoderTrace {
+  /** Whether the cross-encoder rerank stage actually ran. */
+  applied: boolean;
+  /** Effective top-K size handed to the cross-encoder. */
+  k: number;
+  /** Blend weight between `crossEncoderScore` and the prior composite score. */
+  alpha: number;
+  /** Wall-clock latency of the cross-encoder rerank stage in milliseconds. */
+  latencyMs: number;
+  /** Stable degraded-mode reason when the rerank was skipped or failed. */
+  degradedReason?: RecallCrossEncoderDegradedReason;
+  /** Candidate IDs whose composite score was reshaped by the rerank. */
+  rescoredIds: string[];
+}
+
+/**
+ * Stable reasons a cross-encoder rerank may skip or degrade.
+ *
+ * - `not_configured`: no `CrossEncoderPort` was wired on the ports bundle.
+ * - `disabled`: the caller's `rankingPolicy.crossEncoder` is `"disabled"`.
+ * - `no_candidates`: the input shortlist was empty after earlier stages.
+ * - `provider_error`: the port threw or returned malformed data.
+ */
+export type RecallCrossEncoderDegradedReason = "not_configured" | "disabled" | "no_candidates" | "provider_error";
+
+/**
  * Neighborhood expansion and seeded rerank facts observed during one recall execution.
  */
 export interface RecallNeighborhoodTrace {
@@ -175,6 +203,8 @@ export interface RecallExecutionTraceSummary {
   neighborhood: RecallNeighborhoodTrace;
   /** MMR diversification facts observed during ranking. */
   mmr: RecallMmrTrace;
+  /** Cross-encoder rerank facts observed during ranking. */
+  crossEncoder: RecallCrossEncoderTrace;
   /** Whether recall had to degrade into lexical-only ranking. */
   degraded: RecallDegradedTrace;
   /** Core-only timings observed inside the ranking flow. */
@@ -208,6 +238,25 @@ export interface RecallRankingPolicy {
   mmr?: "enabled" | "disabled";
   /** Effective MMR lambda in the inclusive 0-1 range. */
   mmrLambda?: number;
+  /**
+   * Whether to apply the cross-encoder rerank stage when a
+   * `CrossEncoderPort` is wired. Defaults to `"enabled"`; evals can pass
+   * `"disabled"` to A/B the stage without unwiring the port.
+   */
+  crossEncoder?: "enabled" | "disabled";
+  /**
+   * Optional top-K override for the cross-encoder shortlist. The stage
+   * reranks only the first K candidates after claim-key shaping and MMR
+   * diversification, so smaller values keep provider cost predictable.
+   */
+  crossEncoderTopK?: number;
+  /**
+   * Blend weight for the cross-encoder score against the prior composite
+   * score. Final relevance becomes
+   * `alpha * crossEncoderScore + (1 - alpha) * compositeScore`.
+   * Clamped into the inclusive 0-1 range; defaults to `0.6`.
+   */
+  crossEncoderAlpha?: number;
 }
 
 /**

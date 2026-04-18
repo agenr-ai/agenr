@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { searchEpisodes } from "../../../src/core/episode/search.js";
 import type { EpisodeQuery } from "../../../src/core/episode/types.js";
-import type { EpisodeDatabasePort } from "../../../src/core/ports.js";
+import type { CrossEncoderPort, EpisodeDatabasePort } from "../../../src/core/ports.js";
 import type { Episode } from "../../../src/core/types.js";
 
 describe("searchEpisodes", () => {
@@ -191,6 +191,164 @@ describe("searchEpisodes", () => {
     // slightly higher composite score.
     expect(diversifiedIds.indexOf("session-b")).toBeLessThan(diversifiedIds.indexOf("session-a-2"));
     expect(diversifiedIds).toEqual(expect.arrayContaining(["session-a-1", "session-a-2", "session-b"]));
+  });
+
+  it("applies the cross-encoder rerank to the hybrid shortlist when enabled", async () => {
+    const rank = vi.fn<CrossEncoderPort["rank"]>(async (_query, passages) =>
+      passages.map((passage) => ({
+        id: passage.id,
+        score: passage.id === "runner-up" ? 0.98 : 0.1,
+      })),
+    );
+    const database = createDatabase({
+      async listEpisodesByTimeWindow() {
+        return [
+          createEpisode({
+            id: "leader",
+            startedAt: "2026-03-29T08:00:00.000Z",
+            endedAt: "2026-03-29T09:00:00.000Z",
+            summary: "Leader session led the standup review.",
+            embedding: [1, 0],
+          }),
+          createEpisode({
+            id: "runner-up",
+            startedAt: "2026-03-29T10:00:00.000Z",
+            endedAt: "2026-03-29T11:00:00.000Z",
+            summary: "Runner-up session resolved the outage.",
+            embedding: [0.9, 0.2],
+          }),
+        ];
+      },
+    });
+
+    const results = await searchEpisodes(
+      {
+        text: "what happened during the outage",
+        limit: 2,
+        timeWindow: {
+          kind: "interval",
+          start: new Date("2026-03-29T00:00:00.000Z"),
+          end: new Date("2026-03-29T23:59:59.999Z"),
+          source: "inferred",
+        },
+        embedding: [1, 0],
+        crossEncoder: {
+          enabled: true,
+          port: { rank },
+          alpha: 1,
+        },
+      },
+      database,
+      new Date("2026-03-30T00:00:00.000Z"),
+    );
+
+    expect(rank).toHaveBeenCalledTimes(1);
+    expect(results.map((result) => result.episode.id)).toEqual(["runner-up", "leader"]);
+    expect(results[0]?.scores.crossEncoder).toBeCloseTo(0.98, 6);
+  });
+
+  it("skips the cross-encoder rerank when the options bundle is disabled", async () => {
+    const rank = vi.fn<CrossEncoderPort["rank"]>(async () => []);
+    const database = createDatabase({
+      async listEpisodesByTimeWindow() {
+        return [
+          createEpisode({
+            id: "leader",
+            startedAt: "2026-03-29T08:00:00.000Z",
+            endedAt: "2026-03-29T09:00:00.000Z",
+            summary: "Leader session led the standup review.",
+            embedding: [1, 0],
+          }),
+        ];
+      },
+    });
+
+    await searchEpisodes(
+      {
+        text: "what happened",
+        limit: 2,
+        timeWindow: {
+          kind: "interval",
+          start: new Date("2026-03-29T00:00:00.000Z"),
+          end: new Date("2026-03-29T23:59:59.999Z"),
+          source: "inferred",
+        },
+        embedding: [1, 0],
+        crossEncoder: {
+          enabled: false,
+          port: { rank },
+        },
+      },
+      database,
+      new Date("2026-03-30T00:00:00.000Z"),
+    );
+
+    expect(rank).not.toHaveBeenCalled();
+  });
+
+  it("keeps the pre-rerank order when the cross-encoder port throws", async () => {
+    const rank = vi.fn<CrossEncoderPort["rank"]>(async () => {
+      throw new Error("provider error");
+    });
+    const database = createDatabase({
+      async listEpisodesByTimeWindow() {
+        return [
+          createEpisode({
+            id: "leader",
+            startedAt: "2026-03-29T08:00:00.000Z",
+            endedAt: "2026-03-29T09:00:00.000Z",
+            summary: "Leader session led the standup review.",
+            embedding: [1, 0],
+          }),
+          createEpisode({
+            id: "runner-up",
+            startedAt: "2026-03-29T10:00:00.000Z",
+            endedAt: "2026-03-29T11:00:00.000Z",
+            summary: "Runner-up session resolved the outage.",
+            embedding: [0.9, 0.2],
+          }),
+        ];
+      },
+    });
+
+    const withoutRerank = await searchEpisodes(
+      {
+        text: "what happened",
+        limit: 2,
+        timeWindow: {
+          kind: "interval",
+          start: new Date("2026-03-29T00:00:00.000Z"),
+          end: new Date("2026-03-29T23:59:59.999Z"),
+          source: "inferred",
+        },
+        embedding: [1, 0],
+      },
+      database,
+      new Date("2026-03-30T00:00:00.000Z"),
+    );
+    const withFailingRerank = await searchEpisodes(
+      {
+        text: "what happened",
+        limit: 2,
+        timeWindow: {
+          kind: "interval",
+          start: new Date("2026-03-29T00:00:00.000Z"),
+          end: new Date("2026-03-29T23:59:59.999Z"),
+          source: "inferred",
+        },
+        embedding: [1, 0],
+        crossEncoder: {
+          enabled: true,
+          port: { rank },
+        },
+      },
+      database,
+      new Date("2026-03-30T00:00:00.000Z"),
+    );
+
+    expect(rank).toHaveBeenCalledTimes(1);
+    expect(withFailingRerank.map((result) => result.episode.id)).toEqual(withoutRerank.map((result) => result.episode.id));
+    expect(withFailingRerank.every((result) => result.scores.crossEncoder === undefined)).toBe(true);
   });
 
   it("re-ranks temporal candidates semantically and keeps missing embeddings below embedded matches", async () => {

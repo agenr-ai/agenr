@@ -1,4 +1,5 @@
 import type { EpisodeDatabasePort } from "../ports.js";
+import { applyCrossEncoderRerank, DEFAULT_CROSS_ENCODER_ALPHA, DEFAULT_CROSS_ENCODER_TOP_K } from "../recall/cross-encoder.js";
 import { rrfFuse } from "../recall/fusion.js";
 import { DEFAULT_MMR_LAMBDA, maximalMarginalRelevance } from "../recall/mmr.js";
 import {
@@ -13,7 +14,7 @@ import { cosineSimilarity } from "../recall/scoring.js";
 
 import { activityScore, compareEpisodeMatches, recencyScore, scoreEpisodeMatch } from "./scoring.js";
 import { resolveTemporalWindowBounds } from "./temporal-window.js";
-import type { EpisodeMmrOptions, EpisodeQuery, EpisodeResult } from "./types.js";
+import type { EpisodeCrossEncoderOptions, EpisodeMmrOptions, EpisodeQuery, EpisodeResult } from "./types.js";
 
 const DEFAULT_LIMIT = 10;
 const MIN_CANDIDATE_LIMIT = 25;
@@ -67,7 +68,82 @@ export async function searchEpisodes(query: EpisodeQuery, database: EpisodeDatab
   const hybridResults = candidates.map((episode) => buildHybridResult(episode, normalizedEmbedding, bounds, now));
   const fused = fuseHybridResultsWithRrf(hybridResults);
   const diversified = applyEpisodeMmrDiversification(fused, normalizedEmbedding, query.mmr);
-  return diversified.slice(0, limit);
+  const reranked = await applyEpisodeCrossEncoderRerank(diversified, query.text, query.crossEncoder);
+  return reranked.slice(0, limit);
+}
+
+/**
+ * Apply the cross-encoder rerank stage over the episode shortlist.
+ *
+ * The rerank runs after MMR diversification so the cross-encoder
+ * observes the post-diversity ordering, and before the final slice so
+ * the rerank-adjusted composite score decides which episodes ride into
+ * the caller-visible shortlist. The helper fails closed on provider
+ * errors, which means a broken cross-encoder can never drop episode
+ * recall below its pre-rerank baseline.
+ *
+ * @param results - Episode results after MMR diversification.
+ * @param query - Natural-language recall query text.
+ * @param options - Optional cross-encoder rerank options from the caller.
+ * @returns Episode results in their post-rerank order.
+ */
+async function applyEpisodeCrossEncoderRerank(
+  results: EpisodeResult[],
+  query: string,
+  options: EpisodeCrossEncoderOptions | undefined,
+): Promise<EpisodeResult[]> {
+  if (!options || !options.enabled || results.length === 0) {
+    return results;
+  }
+
+  const rerank = await applyCrossEncoderRerank({
+    query,
+    candidates: results.map((result) => ({
+      id: result.episode.id,
+      text: buildEpisodeCrossEncoderText(result.episode),
+      score: result.score,
+      candidate: result,
+    })),
+    port: options.port,
+    topK: options.topK ?? DEFAULT_CROSS_ENCODER_TOP_K,
+    alpha: options.alpha ?? DEFAULT_CROSS_ENCODER_ALPHA,
+  });
+
+  return rerank.candidates.map((entry) => {
+    const base = entry.candidate;
+    const nextScore = Number(entry.score.toFixed(6));
+    if (typeof entry.crossEncoderScore !== "number" && nextScore === base.score) {
+      return base;
+    }
+
+    return {
+      ...base,
+      score: nextScore,
+      scores: {
+        ...base.scores,
+        ...(typeof entry.crossEncoderScore === "number" ? { crossEncoder: Number(entry.crossEncoderScore.toFixed(6)) } : {}),
+      },
+    };
+  });
+}
+
+/**
+ * Build the free-form text an episode passes into the cross-encoder.
+ *
+ * The episode summary already captures the distilled "what happened"
+ * signal that matters for rerank. When the summary is empty we fall
+ * back to the source pointer so the classifier has at least a minimal
+ * context.
+ */
+function buildEpisodeCrossEncoderText(episode: EpisodeResult["episode"]): string {
+  const summary = episode.summary?.trim() ?? "";
+  if (summary.length > 0) {
+    return summary;
+  }
+
+  const source = episode.source ?? "";
+  const ref = episode.sourceRef ?? episode.sourceId ?? "";
+  return `${source} ${ref}`.trim();
 }
 
 /**

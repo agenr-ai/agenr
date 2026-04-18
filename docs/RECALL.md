@@ -19,6 +19,8 @@ The current codebase also layers a unified agent-facing recall surface plus two 
 - `src/core/recall/fusion.ts` - pure reciprocal rank fusion helper used as the primary relevance signal across entry, episode, and procedure recall.
 - `src/core/recall/neighborhood.ts` - pure neighborhood-expansion request types, seeded-rerank helpers, and the domain lineage predicates used by entry, episode, and procedure recall.
 - `src/core/recall/mmr.ts` - pure maximal-marginal-relevance helper used to diversify the final shortlist across entry, episode, and procedure recall.
+- `src/core/recall/cross-encoder.ts` - pure cross-encoder rerank orchestration helper shared by entry, episode, and procedure recall.
+- `src/adapters/cross-encoder/openai-cross-encoder.ts` - OpenAI-backed `CrossEncoderPort` implementation using a boolean-classifier prompt plus `logit_bias` and `top_logprobs`.
 - `src/core/recall/lexical.ts` - tokenization, lexical search-plan generation, and lexical overlap scoring.
 - `src/core/recall/temporal.ts` - explicit and inferred date parsing for temporal recall.
 - `src/core/recall/trace.ts` - typed per-call execution summaries for observability and recall-eval instrumentation.
@@ -591,6 +593,33 @@ Per-surface behavior:
 
 Tracing gained a new `mmr` branch on `RecallExecutionTraceSummary` with `{ applied, lambda, droppedDuplicateCount, reorderedIds }`. `droppedDuplicateCount` counts candidates whose max pairwise similarity to another candidate is at or above `0.95` and whose MMR rank slid below their input rank. `reorderedIds` lists every candidate whose final position differs from the input order, empty when MMR was skipped.
 
+### Cross-encoder rerank
+
+A shared cross-encoder rerank stage sits after MMR diversification and before the threshold filter on entry recall, and between RRF fusion and the final `slice(limit)` on episode and procedure recall. The orchestration helper lives in `src/core/recall/cross-encoder.ts` and is pure: it only needs a `CrossEncoderPort` from `src/core/ports.ts` plus the caller's shortlist. The OpenAI adapter lives in `src/adapters/cross-encoder/openai-cross-encoder.ts` and runs a boolean-classifier chat completion (`"Respond with 'True' if PASSAGE is relevant to QUERY and 'False' otherwise"`) using `logit_bias` and `top_logprobs` to extract a normalized relevance score per passage, modeled on graphiti's `openai_reranker_client.py`.
+
+Key design points:
+
+- The rerank only touches the top-K shortlist. Candidates past the shortlist keep their input order and their prior composite score, so a slow or noisy reranker cannot drop a long tail of valid matches.
+- The cross-encoder score is blended with the prior composite through a linear alpha: `alpha * crossEncoderScore + (1 - alpha) * priorScore`. This keeps earlier shaping (RRF fusion, historical lineage boosts, claim-key trust and redundancy penalties, seeded rerank, MMR) participating in the final ordering.
+- The helper fails closed. Any thrown adapter error, malformed provider payload, empty shortlist, or empty query short-circuits into a pass-through and records a stable `degradedReason` on the trace branch (`not_configured`, `disabled`, `no_candidates`, or `provider_error`). A broken cross-encoder can never drop recall below its pre-rerank baseline.
+- The OpenAI adapter caps concurrency (default 4), retries retryable statuses (408, 409, 425, 429, 5xx) with exponential backoff, and fails closed on non-retryable errors so recall stays usable even when the reranker is flaky.
+
+Tuning knobs live on `RecallExecutionOptions.rankingPolicy`:
+
+- `rankingPolicy.crossEncoder = "disabled"` is a hard kill switch for A/B evaluation. When set, the rerank never runs even if a port is wired.
+- `rankingPolicy.crossEncoderTopK` overrides the top-K shortlist. Default is `10` for entries and episodes and `10` for procedures through the shared `DEFAULT_CROSS_ENCODER_TOP_K`.
+- `rankingPolicy.crossEncoderAlpha` overrides the blend weight. Default is `0.6` through the shared `DEFAULT_CROSS_ENCODER_ALPHA`. Values are clamped into `[0, 1]`.
+
+Per-surface behavior:
+
+- Entry recall runs the rerank whenever `RecallPorts.crossEncoder` is wired and the policy leaves it enabled.
+- Episode recall runs the rerank inside hybrid mode only, mirroring the MMR placement. Unified recall plumbs `EpisodeCrossEncoderOptions` through based on the wired port.
+- Procedure recall runs the rerank after MMR on the full shortlist whenever unified recall wires `ProcedureCrossEncoderOptions`, since revisions of the same `procedure_key` often share embedding and lexical mass.
+
+Tracing gained a new `crossEncoder` branch on `RecallExecutionTraceSummary` with `{ applied, k, alpha, latencyMs, rescoredIds, degradedReason? }`. `rescoredIds` lists candidates whose composite score was reshaped by the rerank, empty when the stage was skipped.
+
+Model configuration uses the standard `ModelConfig` pattern through `config.crossEncoderModel` and resolves through `resolveModel(config, "cross_encoder")`. The adapter requires an OpenAI chat model with `logit_bias` and `top_logprobs` support. The stage default is `gpt-5.4-nano`, and the provider defaults to `"openai"` even when the global provider is `"openai-codex"`, since the adapter calls `https://api.openai.com/v1/chat/completions` directly. The API key is resolved through `resolveCrossEncoderApiKey(config)` which prefers `config.credentials.openaiApiKey` and falls back to `OPENAI_API_KEY`.
+
 ### Neighborhood expansion and seeded rerank
 
 Entry, episode, and procedure recall now share a generalized post-retrieval stage inspired by a layered ranking pipeline. The helpers live in `src/core/recall/neighborhood.ts`.
@@ -759,6 +788,7 @@ The emitted `RecallExecutionTraceSummary` currently contains:
 - `claimKey` - historical boosts, tentative-lineage suppression, trust penalties, and redundancy penalties
 - `neighborhood` - whether neighborhood expansion ran, the families requested, the expanded candidate count, the strong seed count, and the ids that received a seeded-rerank boost
 - `mmr` - whether MMR ran, the effective lambda, the dropped-near-duplicate count, and the ids whose position changed relative to the input order
+- `crossEncoder` - whether the cross-encoder rerank ran, the shortlist size `k`, the effective alpha, the rerank latency in milliseconds, the ids whose score was reshaped, and any stable `degradedReason` when the stage was skipped or failed closed
 - `degraded` - whether recall fell back away from the normal vector-backed path, the stable causes, whether the run was lexical-only, and the user-facing notices
 - `timings` - merge, score, threshold, budget, and result-shaping timings
 
@@ -817,6 +847,7 @@ A minimal recall-relevant config looks like this:
     "openaiApiKey": "<OpenAI API key>"
   },
   "embeddingModel": "text-embedding-3-small",
+  "crossEncoderModel": { "provider": "openai", "model": "gpt-5.4-nano" },
   "dbPath": "/absolute/path/to/knowledge.db"
 }
 ```
@@ -826,6 +857,7 @@ Notes:
 - embeddings use `credentials.openaiApiKey`, then `OPENAI_API_KEY`
 - if extraction uses Anthropic auth or OpenAI subscription auth, embeddings still require an OpenAI API key
 - `embeddingModel` falls back to `text-embedding-3-small`
+- `crossEncoderModel` is optional and follows the same `ModelConfig` shape as other per-stage overrides; it defaults to `{ provider: "openai", model: "gpt-5.4-nano" }` through `resolveModel(config, "cross_encoder")` and falls back to the OpenAI API key in `credentials.openaiApiKey` or `OPENAI_API_KEY`
 - `AGENR_DB_PATH` overrides `dbPath`
 - `AGENR_CONFIG_PATH` overrides the config file location
 
@@ -843,6 +875,8 @@ Notes:
 - `src/core/recall/lexical.ts`
 - `src/core/recall/neighborhood.ts`
 - `src/core/recall/mmr.ts`
+- `src/core/recall/cross-encoder.ts`
+- `src/adapters/cross-encoder/openai-cross-encoder.ts`
 - `src/core/recall/temporal.ts`
 - `src/core/recall/trace.ts`
 - `src/core/recall/types.ts`

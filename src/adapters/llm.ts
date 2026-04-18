@@ -207,26 +207,68 @@ export function createLlmClient(provider: string, modelId: string, options: Crea
 }
 
 /**
+ * Pipeline stages that can carry per-stage model overrides.
+ */
+export type LlmStage = "extraction" | "dedup" | "episode" | "claim" | "cross_encoder";
+
+/**
  * Resolves the provider and model configured for a pipeline stage.
  *
  * @param config - Optional agenr runtime configuration.
  * @param stage - Pipeline stage that needs an LLM model.
  * @returns Provider and model ID to use for the requested stage.
  */
-export function resolveModel(config: AgenrConfig | undefined, stage: "extraction" | "dedup" | "episode" | "claim"): { provider: string; modelId: string } {
-  const override =
-    stage === "extraction"
-      ? config?.extractionModel
-      : stage === "dedup"
-        ? config?.dedupModel
-        : stage === "episode"
-          ? config?.episodeModel
-          : (config?.claimExtraction?.model ?? config?.extractionModel);
+export function resolveModel(config: AgenrConfig | undefined, stage: LlmStage): { provider: string; modelId: string } {
+  const override = resolveStageOverride(config, stage);
 
   return {
-    provider: normalizeOptionalString(override?.provider) ?? normalizeOptionalString(config?.provider) ?? "openai",
-    modelId: normalizeOptionalString(override?.model) ?? normalizeOptionalString(config?.model) ?? defaultModelForStage(stage),
+    provider: normalizeOptionalString(override?.provider) ?? resolveStageDefaultProvider(config, stage),
+    modelId: normalizeOptionalString(override?.model) ?? resolveStageDefaultModel(config, stage),
   };
+}
+
+/** Returns the persisted per-stage model override for one pipeline stage. */
+function resolveStageOverride(config: AgenrConfig | undefined, stage: LlmStage): { provider?: string; model?: string } | undefined {
+  switch (stage) {
+    case "extraction":
+      return config?.extractionModel;
+    case "dedup":
+      return config?.dedupModel;
+    case "episode":
+      return config?.episodeModel;
+    case "claim":
+      return config?.claimExtraction?.model ?? config?.extractionModel;
+    case "cross_encoder":
+      return config?.crossEncoderModel;
+  }
+}
+
+/** Returns the default provider for one pipeline stage when no override is set. */
+function resolveStageDefaultProvider(config: AgenrConfig | undefined, stage: LlmStage): string {
+  // The cross-encoder adapter talks to OpenAI's chat completions directly to
+  // use `logprobs` + `logit_bias`. Fall back to `openai` for that stage when
+  // the top-level provider is something pi-ai-specific like `openai-codex`.
+  if (stage === "cross_encoder") {
+    const topLevel = normalizeOptionalString(config?.provider);
+    if (!topLevel || topLevel === "openai-codex") {
+      return "openai";
+    }
+    return topLevel;
+  }
+
+  return normalizeOptionalString(config?.provider) ?? "openai";
+}
+
+/** Returns the default model ID for one pipeline stage when no override is set. */
+function resolveStageDefaultModel(config: AgenrConfig | undefined, stage: LlmStage): string {
+  // Cross-encoder does not inherit the top-level default model because that
+  // model may not support `logprobs`/`logit_bias`. Always use the stage
+  // default unless the caller sets `crossEncoderModel.model` explicitly.
+  if (stage === "cross_encoder") {
+    return defaultModelForStage(stage);
+  }
+
+  return normalizeOptionalString(config?.model) ?? defaultModelForStage(stage);
 }
 
 /**
@@ -293,13 +335,18 @@ export function stripCodeFence(text: string): string {
 }
 
 /** Returns the default model ID for a given ingestion pipeline stage. */
-function defaultModelForStage(stage: "extraction" | "dedup" | "episode" | "claim"): string {
+function defaultModelForStage(stage: LlmStage): string {
   switch (stage) {
     case "extraction":
     case "episode":
     case "claim":
       return "gpt-5.4-mini";
     case "dedup":
+    case "cross_encoder":
+      // The cross-encoder needs an OpenAI chat model that supports
+      // `logprobs` + `logit_bias` for the True/False relevance classifier.
+      // `gpt-5.4-nano` aligns with agenr's preferred gpt-5.4 family and
+      // shares the dedup stage default.
       return "gpt-5.4-nano";
   }
 }

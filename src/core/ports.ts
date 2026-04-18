@@ -172,6 +172,15 @@ export interface RecallPorts {
 
   /** Persist recall events for the returned entry set. */
   recordRecallEvents(params: { entryIds: string[]; query: string; sessionKey?: string }): Promise<void>;
+
+  /**
+   * Optional cross-encoder rerank port. When present, recall calls the
+   * port for the top-K shortlist after MMR diversification and before
+   * thresholding. The recall pipeline fails closed on adapter errors so
+   * the cross-encoder can never drop recall below its pre-rerank
+   * baseline.
+   */
+  crossEncoder?: CrossEncoderPort;
 }
 
 // ── LLM ──────────────────────────────────────────────────────────────
@@ -185,6 +194,48 @@ export interface LlmPort {
 
   /** Generate a structured completion (JSON output). */
   completeJson<T>(systemPrompt: string, userMessage: string): Promise<T>;
+}
+
+// ── Cross-Encoder ────────────────────────────────────────────────────
+
+/**
+ * One passage handed to the cross-encoder for relevance scoring.
+ */
+export interface CrossEncoderPassage {
+  /** Stable identifier used to correlate scores back to the caller. */
+  id: string;
+  /** Free-form text representation of the passage. */
+  text: string;
+}
+
+/**
+ * One scored passage returned by a cross-encoder ranker.
+ */
+export interface CrossEncoderScore {
+  /** Stable identifier matching the input passage. */
+  id: string;
+  /** Relevance score in the inclusive 0-1 range. */
+  score: number;
+}
+
+/**
+ * Cross-encoder contract used by the recall pipeline to rerank a small
+ * top-K shortlist. Implementations must be safe to call concurrently and
+ * should bound provider concurrency internally so recall latency does
+ * not spiral under load.
+ *
+ * Identifiers are passed through explicitly so core recall never has to
+ * correlate by list position.
+ */
+export interface CrossEncoderPort {
+  /**
+   * Score each passage against the query.
+   *
+   * @param query - Natural-language recall query.
+   * @param passages - Passages ordered in their caller-preferred order.
+   * @returns Each passage's relevance score keyed by passage ID.
+   */
+  rank(query: string, passages: readonly CrossEncoderPassage[]): Promise<CrossEncoderScore[]>;
 }
 
 // ── Transcript ───────────────────────────────────────────────────────

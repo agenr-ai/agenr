@@ -1,11 +1,13 @@
-import type { DatabasePort, EmbeddingPort, EpisodeDatabasePort, LlmPort, ProcedureDatabasePort, RecallPorts } from "../../core/ports.js";
+import type { CrossEncoderPort, DatabasePort, EmbeddingPort, EpisodeDatabasePort, LlmPort, ProcedureDatabasePort, RecallPorts } from "../../core/ports.js";
 import type { AgenrConfig } from "../../config.js";
 import { readConfig, resolveClaimExtractionConfig, resolveConfigPath, resolveDbPath } from "../../config.js";
+import { createOpenAICrossEncoder, resolveCrossEncoderApiKey } from "../../adapters/cross-encoder/openai-cross-encoder.js";
 import { createDatabase } from "../../adapters/db/client.js";
 import { createOpenClawRepository } from "../../adapters/db/openclaw-repository.js";
 import { createSessionStartRepository } from "../../adapters/db/session-start-repository.js";
 import { createRecallAdapter } from "../../adapters/db/recall-adapter.js";
 import { createEmbeddingClient, EMBEDDING_MODEL, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
+import { resolveModel } from "../../adapters/llm.js";
 import { createOpenClawLlmClient } from "../../adapters/openclaw/llm/openclaw-llm-client.js";
 import type {
   AgenrOpenClawEmbeddingStatus,
@@ -138,7 +140,9 @@ async function createRuntimeServices(
   const embedding = embeddingStatus.available
     ? createEmbeddingClient(requireApiKey(embeddingStatus), embeddingStatus.model)
     : createUnavailableEmbeddingPort(embeddingStatus.error ?? "Embeddings are unavailable.");
-  const recall = createRecallAdapter(database, embedding);
+  const baseRecall = createRecallAdapter(database, embedding);
+  const crossEncoder = resolveCrossEncoder(config);
+  const recall: RecallPorts = crossEncoder ? { ...baseRecall, crossEncoder } : baseRecall;
   const claimExtraction = await createClaimExtractionRuntime(config, openClawContext.openClaw, openClawContext.pluginConfig);
   let closed = false;
 
@@ -274,6 +278,29 @@ function requireApiKey(status: ResolvedEmbeddingStatus): string {
   }
 
   return status.apiKey;
+}
+
+/**
+ * Best-effort construction of an OpenAI-backed cross-encoder port.
+ *
+ * The OpenClaw runtime wires the cross-encoder silently when an OpenAI
+ * credential is available. Credential resolution failures leave the
+ * rerank disabled rather than aborting plugin startup. The cross-encoder
+ * model mirrors the convention used for other per-stage models: read the
+ * `crossEncoderModel` override from agenr config through `resolveModel`,
+ * with a stage default baked into the adapter.
+ *
+ * @param config - Resolved agenr configuration loaded for the plugin.
+ * @returns Cross-encoder port when credentials are available.
+ */
+function resolveCrossEncoder(config: AgenrConfig): CrossEncoderPort | undefined {
+  try {
+    const apiKey = resolveCrossEncoderApiKey(config);
+    const { modelId } = resolveModel(config, "cross_encoder");
+    return createOpenAICrossEncoder({ apiKey, model: modelId });
+  } catch {
+    return undefined;
+  }
 }
 
 /**

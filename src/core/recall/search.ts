@@ -1,6 +1,7 @@
 import type { RecallPorts } from "../ports.js";
 import { resolveClaimSlotPolicy } from "../claim-slot-policy.js";
 
+import { applyCrossEncoderRerank, DEFAULT_CROSS_ENCODER_ALPHA, DEFAULT_CROSS_ENCODER_TOP_K } from "./cross-encoder.js";
 import { rrfFuse } from "./fusion.js";
 import { computeLexicalScore, tokenize } from "./lexical.js";
 import { DEFAULT_MMR_LAMBDA, maximalMarginalRelevance } from "./mmr.js";
@@ -18,6 +19,7 @@ import { cosineSimilarity, gaussianRecency, importanceScore, recencyScore, score
 import { inferAroundDate, parseRelativeDate } from "./temporal.js";
 import {
   createNoopRecallTraceSink,
+  type RecallCrossEncoderTrace,
   type RecallDegradedReason,
   type RecallExecutionOptions,
   type RecallExecutionTraceSummary,
@@ -168,7 +170,12 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
     // penalties and redundancy shaping still have the last word on which
     // rows dominate. MMR only reorders; it never mutates the composite
     // score, keeping the threshold check grounded in the shaped score.
-    const scored = applyMmrDiversification(shaped, queryEmbedding, options.rankingPolicy, summary.mmr);
+    const diversified = applyMmrDiversification(shaped, queryEmbedding, options.rankingPolicy, summary.mmr);
+    // Cross-encoder reranks the top-K shortlist after diversification so
+    // it observes the post-MMR ordering, and before thresholding so the
+    // rerank-adjusted composite score is what decides admission to the
+    // final result set. The helper fails closed on adapter errors.
+    const scored = await applyEntryCrossEncoderRerank(diversified, text, ports.crossEncoder, options.rankingPolicy, summary.crossEncoder);
     summary.timings.scoreCandidatesMs = elapsedMs(scoreStartedAt);
 
     const thresholdStartedAt = Date.now();
@@ -304,6 +311,13 @@ function buildRecallTraceSummary(params: {
       lambda: DEFAULT_MMR_LAMBDA,
       droppedDuplicateCount: 0,
       reorderedIds: [],
+    },
+    crossEncoder: {
+      applied: false,
+      k: 0,
+      alpha: DEFAULT_CROSS_ENCODER_ALPHA,
+      latencyMs: 0,
+      rescoredIds: [],
     },
     timings: {
       mergeCandidatesMs: 0,
@@ -922,6 +936,98 @@ function applyMmrDiversification(
     const candidate = candidatesById.get(id);
     return candidate ? [candidate] : [];
   });
+}
+
+/**
+ * Apply the cross-encoder rerank stage over the top-K shortlist of
+ * entry candidates. The helper fails closed on adapter errors and
+ * records trace-visible facts for diagnostics, so the rerank can never
+ * drop recall below its pre-rerank baseline.
+ *
+ * The stage runs after MMR diversification so the cross-encoder
+ * observes the post-diversity ordering. It runs before thresholding so
+ * the rerank-adjusted composite score decides admission to the final
+ * result set. When the stage reorders candidates, the relevant
+ * `scores.crossEncoder` fields are populated and the composite
+ * `score` is blended per policy.
+ *
+ * @param candidates - Candidates after MMR diversification.
+ * @param query - Normalized recall query text.
+ * @param crossEncoder - Optional cross-encoder port from `RecallPorts`.
+ * @param policy - Optional ranking policy overrides from the caller.
+ * @param trace - Mutable cross-encoder trace branch for the execution.
+ * @returns Candidates in their post-rerank order.
+ */
+async function applyEntryCrossEncoderRerank(
+  candidates: RankedCandidate[],
+  query: string,
+  crossEncoder: RecallPorts["crossEncoder"],
+  policy: RecallRankingPolicy | undefined,
+  trace: RecallCrossEncoderTrace,
+): Promise<RankedCandidate[]> {
+  const result = await applyCrossEncoderRerank({
+    query,
+    candidates: candidates.map((candidate) => ({
+      id: candidate.entry.id,
+      text: buildCrossEncoderPassageText(candidate.entry),
+      score: candidate.score,
+      candidate,
+    })),
+    port: crossEncoder,
+    disabled: policy?.crossEncoder === "disabled",
+    topK: policy?.crossEncoderTopK ?? DEFAULT_CROSS_ENCODER_TOP_K,
+    alpha: policy?.crossEncoderAlpha ?? DEFAULT_CROSS_ENCODER_ALPHA,
+  });
+
+  trace.applied = result.applied;
+  trace.k = result.k;
+  trace.alpha = result.alpha;
+  trace.latencyMs = result.latencyMs;
+  trace.rescoredIds = [...result.rescoredIds];
+  if (result.degradedReason) {
+    trace.degradedReason = result.degradedReason;
+  } else {
+    delete trace.degradedReason;
+  }
+
+  return result.candidates.map((entry) => {
+    const scoredCandidate = entry.candidate;
+    const nextScore = entry.score;
+    if (typeof entry.crossEncoderScore !== "number" && nextScore === scoredCandidate.score) {
+      return scoredCandidate;
+    }
+
+    return {
+      ...scoredCandidate,
+      score: nextScore,
+      scores: {
+        ...scoredCandidate.scores,
+        ...(typeof entry.crossEncoderScore === "number" ? { crossEncoder: entry.crossEncoderScore } : {}),
+      },
+    };
+  });
+}
+
+/**
+ * Build the free-form passage text fed into the cross-encoder for one
+ * candidate entry.
+ *
+ * Combining subject and content gives the rerank classifier enough
+ * context to decide relevance without burning tokens on metadata the
+ * classifier does not need.
+ */
+function buildCrossEncoderPassageText(entry: RecallCandidateEntry): string {
+  const subject = entry.subject.trim();
+  const content = entry.content.trim();
+  if (subject.length === 0) {
+    return content;
+  }
+
+  if (content.length === 0) {
+    return subject;
+  }
+
+  return `${subject}\n\n${content}`;
 }
 
 /**

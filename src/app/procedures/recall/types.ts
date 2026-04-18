@@ -1,4 +1,4 @@
-import type { ProcedureDatabasePort } from "../../../core/ports.js";
+import type { CrossEncoderPort, ProcedureDatabasePort } from "../../../core/ports.js";
 import type { Procedure } from "../../../core/types.js";
 
 /**
@@ -9,6 +9,25 @@ export interface ProcedureMmrOptions {
   enabled: boolean;
   /** Optional lambda override in the inclusive 0-1 range. */
   lambda?: number;
+}
+
+/**
+ * Optional cross-encoder rerank controls plumbed through to procedure recall.
+ *
+ * Unified recall wires this whenever a cross-encoder port is available
+ * and the ranking policy leaves the stage enabled. The helper fails
+ * closed on provider errors, so a broken cross-encoder cannot drop
+ * procedure recall below its pre-rerank baseline.
+ */
+export interface ProcedureCrossEncoderOptions {
+  /** Whether to run the cross-encoder rerank stage. */
+  enabled: boolean;
+  /** Cross-encoder adapter to invoke when the stage is enabled. */
+  port: CrossEncoderPort;
+  /** Optional top-K shortlist override. */
+  topK?: number;
+  /** Optional blend alpha override in the inclusive 0-1 range. */
+  alpha?: number;
 }
 
 /**
@@ -23,6 +42,8 @@ export interface ProcedureRecallInput {
   threshold?: number;
   /** Optional MMR diversification knobs applied to the procedure shortlist. */
   mmr?: ProcedureMmrOptions;
+  /** Optional cross-encoder rerank knobs applied to the procedure shortlist. */
+  crossEncoder?: ProcedureCrossEncoderOptions;
 }
 
 /**
@@ -43,6 +64,13 @@ export interface ProcedureRecallCandidate {
     lexical: number;
     /** Evidence-only vector similarity score when semantic retrieval is available. */
     vector: number;
+    /**
+     * Raw cross-encoder score in the 0-1 range when the rerank stage
+     * produced one for this candidate. Absent when the candidate fell
+     * outside the shortlist, when the stage was disabled, or when the
+     * provider failed.
+     */
+    crossEncoder?: number;
   };
 }
 

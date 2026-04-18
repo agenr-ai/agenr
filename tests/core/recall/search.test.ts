@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { RecallPorts } from "../../../src/core/ports.js";
+import type { CrossEncoderPort, RecallPorts } from "../../../src/core/ports.js";
 import type { Entry } from "../../../src/core/types.js";
 import { recall } from "../../../src/core/recall/search.js";
 import type { RecallExecutionTraceSummary } from "../../../src/core/recall/trace.js";
@@ -950,6 +950,256 @@ describe("recall raw evidence gating", () => {
     expect(traceSummaries[0]?.mmr.reorderedIds).toEqual([]);
   });
 
+  it("reorders the shortlist and records a trace when the cross-encoder is wired", async () => {
+    const traceSummaries: RecallExecutionTraceSummary[] = [];
+    const rank = vi.fn<CrossEncoderPort["rank"]>(async (_query, passages) =>
+      passages.map((passage) => ({
+        // Favor the candidate the RRF ordering would otherwise place second.
+        id: passage.id,
+        score: passage.id === "runner-up" ? 0.95 : 0.1,
+      })),
+    );
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "leader",
+          subject: "on call rotation",
+          content: "Taylor is on call this week.",
+        }),
+        buildEntry({
+          id: "runner-up",
+          subject: "on call rotation swap",
+          content: "The on call rotation swapped to Taylor last Monday.",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "leader", vectorSim: 0.71 },
+        { id: "runner-up", vectorSim: 0.69 },
+      ],
+      ftsCandidates: [
+        { id: "leader", rank: 1, tier: "all_tokens" },
+        { id: "runner-up", rank: 2, tier: "all_tokens" },
+      ],
+      crossEncoder: { rank },
+    });
+
+    const results = await recall(
+      {
+        text: "who is on call this week",
+        limit: 5,
+      },
+      fixture.ports,
+      {
+        trace: {
+          reportSummary(summary): void {
+            traceSummaries.push(summary);
+          },
+        },
+        rankingPolicy: { crossEncoderAlpha: 1 },
+      },
+    );
+
+    expect(results.map((result) => result.entry.id)).toEqual(["runner-up", "leader"]);
+    expect(results[0]?.scores.crossEncoder).toBeCloseTo(0.95, 6);
+    expect(results[1]?.scores.crossEncoder).toBeCloseTo(0.1, 6);
+    expect(rank).toHaveBeenCalledTimes(1);
+    expect(traceSummaries).toHaveLength(1);
+    expect(traceSummaries[0]?.crossEncoder).toEqual(
+      expect.objectContaining({
+        applied: true,
+        k: 2,
+        alpha: expect.closeTo(1, 6),
+        rescoredIds: expect.arrayContaining(["leader", "runner-up"]),
+      }),
+    );
+    expect(traceSummaries[0]?.crossEncoder.degradedReason).toBeUndefined();
+  });
+
+  it("records `not_configured` in the cross-encoder trace when no port is wired", async () => {
+    const traceSummaries: RecallExecutionTraceSummary[] = [];
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "lone-entry",
+          subject: "on call rotation",
+          content: "Taylor is on call this week.",
+        }),
+      ],
+      vectorCandidates: [{ id: "lone-entry", vectorSim: 0.7 }],
+      ftsCandidates: [{ id: "lone-entry", rank: 1, tier: "all_tokens" }],
+    });
+
+    await recall(
+      {
+        text: "who is on call this week",
+        limit: 5,
+      },
+      fixture.ports,
+      {
+        trace: {
+          reportSummary(summary): void {
+            traceSummaries.push(summary);
+          },
+        },
+      },
+    );
+
+    expect(traceSummaries).toHaveLength(1);
+    expect(traceSummaries[0]?.crossEncoder).toEqual(
+      expect.objectContaining({
+        applied: false,
+        degradedReason: "not_configured",
+        rescoredIds: [],
+      }),
+    );
+  });
+
+  it("short-circuits the cross-encoder when rankingPolicy.crossEncoder is disabled", async () => {
+    const traceSummaries: RecallExecutionTraceSummary[] = [];
+    const rank = vi.fn<CrossEncoderPort["rank"]>(async () => []);
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "leader",
+          subject: "on call rotation",
+          content: "Taylor is on call this week.",
+        }),
+        buildEntry({
+          id: "runner-up",
+          subject: "on call rotation swap",
+          content: "The on call rotation swapped to Taylor last Monday.",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "leader", vectorSim: 0.71 },
+        { id: "runner-up", vectorSim: 0.69 },
+      ],
+      crossEncoder: { rank },
+    });
+
+    const results = await recall(
+      {
+        text: "who is on call this week",
+        limit: 5,
+      },
+      fixture.ports,
+      {
+        trace: {
+          reportSummary(summary): void {
+            traceSummaries.push(summary);
+          },
+        },
+        rankingPolicy: { crossEncoder: "disabled" },
+      },
+    );
+
+    expect(rank).not.toHaveBeenCalled();
+    expect(results.map((result) => result.entry.id)).toEqual(["leader", "runner-up"]);
+    expect(traceSummaries[0]?.crossEncoder).toEqual(
+      expect.objectContaining({
+        applied: false,
+        degradedReason: "disabled",
+      }),
+    );
+    expect(results[0]?.scores.crossEncoder).toBeUndefined();
+  });
+
+  it("falls back to the pre-rerank ordering when the cross-encoder port throws", async () => {
+    const traceSummaries: RecallExecutionTraceSummary[] = [];
+    const rank = vi.fn<CrossEncoderPort["rank"]>(async () => {
+      throw new Error("rate limit");
+    });
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "leader",
+          subject: "on call rotation",
+          content: "Taylor is on call this week.",
+        }),
+        buildEntry({
+          id: "runner-up",
+          subject: "on call rotation swap",
+          content: "The on call rotation swapped to Taylor last Monday.",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "leader", vectorSim: 0.71 },
+        { id: "runner-up", vectorSim: 0.69 },
+      ],
+      ftsCandidates: [
+        { id: "leader", rank: 1, tier: "all_tokens" },
+        { id: "runner-up", rank: 2, tier: "all_tokens" },
+      ],
+      crossEncoder: { rank },
+    });
+
+    const results = await recall(
+      {
+        text: "who is on call this week",
+        limit: 5,
+      },
+      fixture.ports,
+      {
+        trace: {
+          reportSummary(summary): void {
+            traceSummaries.push(summary);
+          },
+        },
+      },
+    );
+
+    expect(rank).toHaveBeenCalledTimes(1);
+    expect(results.map((result) => result.entry.id)).toEqual(["leader", "runner-up"]);
+    expect(results.every((result) => result.scores.crossEncoder === undefined)).toBe(true);
+    expect(traceSummaries[0]?.crossEncoder).toEqual(
+      expect.objectContaining({
+        applied: false,
+        degradedReason: "provider_error",
+      }),
+    );
+  });
+
+  it("only reranks the configured top-K shortlist", async () => {
+    const traceSummaries: RecallExecutionTraceSummary[] = [];
+    const rankedIds: string[][] = [];
+    const rank = vi.fn<CrossEncoderPort["rank"]>(async (_query, passages) => {
+      rankedIds.push(passages.map((passage) => passage.id));
+      return passages.map((passage) => ({ id: passage.id, score: 0.5 }));
+    });
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({ id: "a", subject: "topic a", content: "Taylor is on call this week a." }),
+        buildEntry({ id: "b", subject: "topic b", content: "Taylor is on call this week b." }),
+        buildEntry({ id: "c", subject: "topic c", content: "Taylor is on call this week c." }),
+      ],
+      vectorCandidates: [
+        { id: "a", vectorSim: 0.72 },
+        { id: "b", vectorSim: 0.7 },
+        { id: "c", vectorSim: 0.68 },
+      ],
+      crossEncoder: { rank },
+    });
+
+    await recall(
+      {
+        text: "who is on call this week",
+        limit: 5,
+      },
+      fixture.ports,
+      {
+        trace: {
+          reportSummary(summary): void {
+            traceSummaries.push(summary);
+          },
+        },
+        rankingPolicy: { crossEncoderTopK: 2 },
+      },
+    );
+
+    expect(rankedIds).toEqual([["a", "b"]]);
+    expect(traceSummaries[0]?.crossEncoder.k).toBe(2);
+  });
+
   it("falls back to support observation time before created-at for explicit as-of ranking", async () => {
     const fixture = createRecallPortsFixture({
       entries: [
@@ -1003,6 +1253,7 @@ function createRecallPortsFixture(params: {
   predecessorCandidateIds?: string[];
   embedError?: Error;
   vectorSearchError?: Error;
+  crossEncoder?: CrossEncoderPort;
 }): {
   ports: RecallPorts;
   recordRecallEvents: ReturnType<typeof vi.fn>;
@@ -1039,6 +1290,7 @@ function createRecallPortsFixture(params: {
     expandNeighborhood,
     hydrateEntries: async (ids: string[]): Promise<Entry[]> => ids.map((id) => requireEntry(entriesById, id)),
     recordRecallEvents,
+    ...(params.crossEncoder ? { crossEncoder: params.crossEncoder } : {}),
   };
 
   return {
