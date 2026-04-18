@@ -247,10 +247,10 @@ function applyRecallEvalFaultInjection(ports: RecallPorts, request: RecallEvalCa
     async ftsSearch(params) {
       return ports.ftsSearch(params);
     },
-    ...(ports.fetchPredecessors
+    ...(ports.expandNeighborhood
       ? {
-          async fetchPredecessors(params) {
-            return ports.fetchPredecessors!(params);
+          async expandNeighborhood(request) {
+            return ports.expandNeighborhood!(request);
           },
         }
       : {}),

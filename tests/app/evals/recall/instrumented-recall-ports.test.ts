@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createInstrumentedRecallPorts } from "../../../../src/app/evals/recall/instrumented-recall-ports.js";
 import type { RecallPorts } from "../../../../src/core/ports.js";
-import type { HistoricalPredecessorLookupParams } from "../../../../src/core/recall/types.js";
+import type { EntryNeighborhoodRequest } from "../../../../src/core/recall/neighborhood.js";
 import type { Entry } from "../../../../src/core/types.js";
 
 describe("createInstrumentedRecallPorts", () => {
@@ -61,14 +61,17 @@ describe("createInstrumentedRecallPorts", () => {
         tier: "exact" as const,
       },
     ];
-    const predecessorParams: HistoricalPredecessorLookupParams = {
-      activeEntryIds: ["entry-1"],
+    const neighborhoodRequest: EntryNeighborhoodRequest = {
+      seedIds: ["entry-1"],
+      budget: 24,
+      families: ["supersession_chain"],
+      includeRetired: false,
     };
     const basePorts: RecallPorts = {
       embed: vi.fn(async () => [0.1, 0.2]),
       vectorSearch: vi.fn(async () => vectorResults),
       ftsSearch: vi.fn(async () => lexicalResults),
-      fetchPredecessors: vi.fn(async () => []),
+      expandNeighborhood: vi.fn(async () => []),
       hydrateEntries: vi.fn(async () => [hydratedEntry]),
       recordRecallEvents: vi.fn(async () => undefined),
     };
@@ -85,7 +88,7 @@ describe("createInstrumentedRecallPorts", () => {
     await expect(instrumented.embed("query")).resolves.toEqual([0.1, 0.2]);
     await expect(instrumented.vectorSearch({ embedding: [0.1, 0.2], limit: 8 })).resolves.toEqual(vectorResults);
     await expect(instrumented.ftsSearch({ text: "query", limit: 4 })).resolves.toEqual(lexicalResults);
-    await expect(instrumented.fetchPredecessors?.(predecessorParams)).resolves.toEqual([]);
+    await expect(instrumented.expandNeighborhood?.(neighborhoodRequest)).resolves.toEqual([]);
     await expect(instrumented.hydrateEntries(["entry-1"])).resolves.toEqual([hydratedEntry]);
     await expect(instrumented.recordRecallEvents({ entryIds: ["entry-1"], query: "query" })).resolves.toBeUndefined();
 
@@ -98,7 +101,7 @@ describe("createInstrumentedRecallPorts", () => {
       text: "query",
       limit: 4,
     });
-    expect(basePorts.fetchPredecessors).toHaveBeenCalledWith(predecessorParams);
+    expect(basePorts.expandNeighborhood).toHaveBeenCalledWith(neighborhoodRequest);
     expect(basePorts.hydrateEntries).toHaveBeenCalledWith(["entry-1"]);
     expect(basePorts.recordRecallEvents).toHaveBeenCalledWith({
       entryIds: ["entry-1"],

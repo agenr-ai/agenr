@@ -354,9 +354,15 @@ describe("recall raw evidence gating", () => {
 
     expect(currentResults.map((result) => result.entry.id)).toEqual(["dev-recall-command"]);
     expect(historicalResults.map((result) => result.entry.id)).toEqual(["manual-http-shim", "dev-recall-command"]);
-    expect(fixture.fetchPredecessors).toHaveBeenCalledTimes(1);
-    expect(fixture.fetchPredecessors).toHaveBeenCalledWith({
-      activeEntryIds: ["dev-recall-command"],
+    // Only the historical profile requests neighborhood expansion. The default
+    // profile already filters superseded rows out during retrieval, so there
+    // is nothing useful to expand toward.
+    expect(fixture.expandNeighborhood).toHaveBeenCalledTimes(1);
+    expect(fixture.expandNeighborhood).toHaveBeenCalledWith({
+      seedIds: ["dev-recall-command"],
+      budget: expect.any(Number),
+      families: ["supersession_chain", "claim_key_sibling", "topic_family"],
+      includeRetired: true,
     });
   });
 
@@ -859,11 +865,11 @@ function createRecallPortsFixture(params: {
 }): {
   ports: RecallPorts;
   recordRecallEvents: ReturnType<typeof vi.fn>;
-  fetchPredecessors: ReturnType<typeof vi.fn>;
+  expandNeighborhood: ReturnType<typeof vi.fn>;
 } {
   const entriesById = new Map(params.entries.map((entry) => [entry.id, entry]));
   const recordRecallEvents = vi.fn(async () => undefined);
-  const fetchPredecessors = vi.fn(async () => (params.predecessorCandidateIds ?? []).map((id) => toRecallCandidateEntry(requireEntry(entriesById, id))));
+  const expandNeighborhood = vi.fn(async () => (params.predecessorCandidateIds ?? []).map((id) => toRecallCandidateEntry(requireEntry(entriesById, id))));
   // Mirror the production adapter's ordering contract so RRF fusion sees the
   // strongest vector candidate at rank 0 regardless of fixture declaration order.
   const sortedVectorCandidates = params.vectorCandidates.slice().sort((left, right) => right.vectorSim - left.vectorSim || left.id.localeCompare(right.id));
@@ -889,7 +895,7 @@ function createRecallPortsFixture(params: {
         rank: candidate.rank,
         tier: candidate.tier,
       })),
-    fetchPredecessors,
+    expandNeighborhood,
     hydrateEntries: async (ids: string[]): Promise<Entry[]> => ids.map((id) => requireEntry(entriesById, id)),
     recordRecallEvents,
   };
@@ -897,7 +903,7 @@ function createRecallPortsFixture(params: {
   return {
     ports,
     recordRecallEvents,
-    fetchPredecessors,
+    expandNeighborhood,
   };
 }
 

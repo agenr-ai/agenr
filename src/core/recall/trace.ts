@@ -121,6 +121,28 @@ export interface RecallClaimKeyTrace {
 }
 
 /**
+ * Neighborhood expansion and seeded rerank facts observed during one recall execution.
+ */
+export interface RecallNeighborhoodTrace {
+  /** Whether the adapter was asked to expand a lineage neighborhood. */
+  expansionRequested: boolean;
+  /** Whether the adapter exposes the expandNeighborhood port at all. */
+  expansionAvailable: boolean;
+  /** Family kinds requested from the adapter for this execution. */
+  familiesRequested: string[];
+  /** Whether retired rows were allowed into the expansion. */
+  includeRetired: boolean;
+  /** Seed entry IDs chosen before the adapter expansion. */
+  seedIds: string[];
+  /** Unique candidates returned by the adapter expansion. */
+  expansionCandidates: number;
+  /** Strong seed IDs chosen for seededRerank. */
+  strongSeedIds: string[];
+  /** Candidate IDs that received a seededRerank boost. */
+  rerankBoostedIds: string[];
+}
+
+/**
  * Small typed execution summary emitted by the recall core.
  */
 export interface RecallExecutionTraceSummary {
@@ -132,6 +154,8 @@ export interface RecallExecutionTraceSummary {
   candidateCounts: RecallCoreCandidateCountsTrace;
   /** Claim-key lineage and diversity shaping facts observed during ranking. */
   claimKey: RecallClaimKeyTrace;
+  /** Neighborhood expansion and seeded rerank facts observed during ranking. */
+  neighborhood: RecallNeighborhoodTrace;
   /** Whether recall had to degrade into lexical-only ranking. */
   degraded: RecallDegradedTrace;
   /** Core-only timings observed inside the ranking flow. */

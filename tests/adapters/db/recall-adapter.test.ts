@@ -130,8 +130,11 @@ describe("createRecallAdapter historical expansion", () => {
     await database.insertEntry(retiredTracking, createEmbedding(1, 0.9), "tracking-retired");
     await database.insertEntry(unrelated, createEmbedding(2, 1), "artifact");
 
-    const predecessors = await adapter.fetchPredecessors!({
-      activeEntryIds: [currentWorkflow.id, currentTracking.id],
+    const predecessors = await adapter.expandNeighborhood!({
+      seedIds: [currentWorkflow.id, currentTracking.id],
+      budget: 40,
+      families: ["supersession_chain", "claim_key_sibling", "topic_family"],
+      includeRetired: true,
     });
 
     expect(predecessors.map((entry) => entry.id)).toEqual(["manual-http-shim", "express-proxy-bridge", "cli-wrapper", "kanban-tracking"]);
@@ -175,8 +178,11 @@ describe("createRecallAdapter historical expansion", () => {
     await database.insertEntry(tentativeOlder, createEmbedding(0, 0.9), "packaging-tentative");
     await database.insertEntry(trustedOlder, createEmbedding(0, 0.85), "packaging-trusted");
 
-    const predecessors = await adapter.fetchPredecessors!({
-      activeEntryIds: [current.id],
+    const predecessors = await adapter.expandNeighborhood!({
+      seedIds: [current.id],
+      budget: 40,
+      families: ["supersession_chain", "claim_key_sibling", "topic_family"],
+      includeRetired: true,
     });
 
     expect(predecessors.map((entry) => entry.id)).toEqual(["trusted-older", "tentative-older"]);
@@ -210,8 +216,11 @@ describe("createRecallAdapter historical expansion", () => {
       );
     }
 
-    const predecessors = await adapter.fetchPredecessors!({
-      activeEntryIds: [current.id],
+    const predecessors = await adapter.expandNeighborhood!({
+      seedIds: [current.id],
+      budget: 40,
+      families: ["supersession_chain", "claim_key_sibling", "topic_family"],
+      includeRetired: true,
     });
 
     expect(predecessors).toHaveLength(8);

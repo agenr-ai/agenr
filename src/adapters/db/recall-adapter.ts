@@ -2,7 +2,8 @@ import type { ResultSet, Row } from "@libsql/client";
 
 import { parseClaimKeyStatus } from "../../core/claim-key-lifecycle.js";
 import { buildLexicalPlan, type LexicalSearchTier } from "../../core/recall/lexical.js";
-import type { EntryFilters, FtsCandidate, HistoricalPredecessorLookupParams, RecallCandidateEntry } from "../../core/recall/types.js";
+import type { EntryNeighborhoodRequest, NeighborhoodFamily } from "../../core/recall/neighborhood.js";
+import type { EntryFilters, FtsCandidate, RecallCandidateEntry } from "../../core/recall/types.js";
 import type { EmbeddingPort, RecallPorts } from "../../core/ports.js";
 import type { Entry } from "../../core/types.js";
 import { recordRecallEvent, type SqlExecutor } from "./queries.js";
@@ -37,8 +38,8 @@ const RECALL_CANDIDATE_SELECT_COLUMNS = `
 `;
 
 const FTS_TIERS = ["exact", "all_tokens", "any_tokens"] as const;
-const PREDECESSOR_EXPANSION_LIMIT_PER_SEED = 8;
-const PREDECESSOR_EXPANSION_MAX_RESULTS = 40;
+const NEIGHBORHOOD_DEFAULT_BUDGET_CAP = 40;
+const NEIGHBORHOOD_PER_SEED_BUDGET = 8;
 
 /**
  * Creates a libSQL-backed recall adapter by composing SQL execution and embeddings.
@@ -174,24 +175,36 @@ class LibsqlRecallAdapter implements RecallPorts {
   }
 
   /**
-   * Finds historical predecessors scoped to a seed set of active candidate IDs.
+   * Expand a typed entry neighborhood around a seed set of candidate IDs.
    *
-   * Direct supersession links are preferred. Same-claim-key siblings are used as
-   * the structural lineage path, with retired same-subject entries preserved as
-   * a weaker fallback when explicit slot identity is unavailable.
+   * Honors the requested `families` exactly. `supersession_chain` adds rows
+   * that either supersede or are superseded by a seed. `claim_key_sibling`
+   * adds rows sharing a claim key with any seed. `topic_family` adds rows
+   * that share an exact subject with a seed and is the weakest fallback.
+   * `includeRetired` is applied as a hard gate so the default ranking
+   * profile never pulls retired rows into its candidate pool.
    */
-  public async fetchPredecessors(params: HistoricalPredecessorLookupParams): Promise<RecallCandidateEntry[]> {
-    const normalizedIds = normalizeStrings(params.activeEntryIds);
+  public async expandNeighborhood(request: EntryNeighborhoodRequest): Promise<RecallCandidateEntry[]> {
+    const normalizedIds = normalizeStrings(request.seedIds);
     if (normalizedIds.length === 0) {
       return [];
     }
 
+    const families = dedupeFamilies(request.families);
+    if (families.length === 0) {
+      return [];
+    }
+
+    const includeRetired = request.includeRetired === true;
+    const budget = normalizeNeighborhoodBudget(request.budget, normalizedIds.length);
     const placeholders = normalizedIds.map(() => "?").join(", ");
-    const expansionLimit = normalizePredecessorExpansionLimit(normalizedIds.length);
+    const retiredGate = includeRetired ? "" : "AND e.retired = 0";
+    const priorityExpression = buildNeighborhoodPriorityExpression(families, includeRetired);
+    const membershipExpression = buildNeighborhoodMembershipExpression(families);
     const result = await this.executor.execute({
       sql: `
         WITH seed AS (
-          SELECT id, subject, claim_key
+          SELECT id, subject, claim_key, superseded_by
           FROM entries
           WHERE id IN (${placeholders})
         ),
@@ -205,47 +218,26 @@ class LibsqlRecallAdapter implements RecallPorts {
           FROM seed
           WHERE claim_key IS NOT NULL
         ),
-        lineage AS (
+        seed_supersessions AS (
+          SELECT DISTINCT superseded_by AS target_id
+          FROM seed
+          WHERE superseded_by IS NOT NULL
+        ),
+        neighborhood AS (
           SELECT
             ${RECALL_CANDIDATE_SELECT_COLUMNS},
-            CASE
-              WHEN e.superseded_by IN (SELECT id FROM seed) THEN 0
-              WHEN e.claim_key IS NOT NULL
-                AND e.claim_key IN (SELECT claim_key FROM seed_claim_keys)
-                AND e.claim_key_status = 'trusted'
-                AND (e.retired = 1 OR e.superseded_by IS NOT NULL) THEN 1
-              WHEN e.claim_key IS NOT NULL
-                AND e.claim_key IN (SELECT claim_key FROM seed_claim_keys)
-                AND e.claim_key_status = 'trusted' THEN 2
-              WHEN e.claim_key IS NOT NULL
-                AND e.claim_key IN (SELECT claim_key FROM seed_claim_keys)
-                AND (e.retired = 1 OR e.superseded_by IS NOT NULL) THEN 3
-              WHEN e.claim_key IS NOT NULL
-                AND e.claim_key IN (SELECT claim_key FROM seed_claim_keys) THEN 4
-              WHEN e.retired = 1
-                AND e.subject IN (SELECT subject FROM seed_subjects) THEN 5
-              ELSE 6
-            END AS lineage_priority
+            ${priorityExpression} AS family_priority
           FROM entries AS e
           WHERE e.id NOT IN (SELECT id FROM seed)
-            AND (
-              e.superseded_by IN (SELECT id FROM seed)
-              OR (
-                e.claim_key IS NOT NULL
-                AND e.claim_key IN (SELECT claim_key FROM seed_claim_keys)
-              )
-              OR (
-                e.retired = 1
-                AND e.subject IN (SELECT subject FROM seed_subjects)
-              )
-            )
+            ${retiredGate}
+            AND (${membershipExpression})
         )
         SELECT *
-        FROM lineage
-        ORDER BY lineage_priority ASC, created_at ASC, id ASC
+        FROM neighborhood
+        ORDER BY family_priority ASC, created_at ASC, id ASC
         LIMIT ?
       `,
-      args: [...normalizedIds, expansionLimit],
+      args: [...normalizedIds, budget],
     });
 
     return result.rows.map((row) => mapRecallCandidateRow(row));
@@ -424,9 +416,95 @@ function readOptionalClaimKeyStatus(row: Row): RecallCandidateEntry["claim_key_s
   return parsed;
 }
 
-/** Resolves a bounded predecessor expansion size from the active seed count. */
-function normalizePredecessorExpansionLimit(seedCount: number): number {
-  return Math.min(PREDECESSOR_EXPANSION_MAX_RESULTS, seedCount * PREDECESSOR_EXPANSION_LIMIT_PER_SEED);
+/**
+ * Resolve the final row budget for one neighborhood expansion call.
+ *
+ * The budget is the smallest of: the caller-supplied budget, the cap set by
+ * the per-seed heuristic, and the adapter-level absolute cap. Falling back
+ * to the adapter-level cap protects the database from pathological large
+ * seed sets while still honoring the caller when it sets a tighter budget.
+ *
+ * @param requestedBudget - Budget supplied by the caller.
+ * @param seedCount - Normalized seed ID count for this expansion.
+ * @returns The final row limit used by the expansion query.
+ */
+function normalizeNeighborhoodBudget(requestedBudget: number, seedCount: number): number {
+  const perSeedCap = seedCount * NEIGHBORHOOD_PER_SEED_BUDGET;
+  const safeRequested = Number.isFinite(requestedBudget) && requestedBudget > 0 ? Math.floor(requestedBudget) : perSeedCap;
+  return Math.max(1, Math.min(NEIGHBORHOOD_DEFAULT_BUDGET_CAP, perSeedCap, safeRequested));
+}
+
+/** Deduplicate and order requested neighborhood families for deterministic SQL. */
+function dedupeFamilies(families: readonly NeighborhoodFamily[]): NeighborhoodFamily[] {
+  return Array.from(new Set(families));
+}
+
+/**
+ * Build the SQL CASE expression that prioritizes rows by requested family kind.
+ *
+ * Lower priorities win. The ordering matches the plan's lineage strength
+ * preference: direct supersessions, then trusted same-slot siblings, then
+ * untrusted same-slot siblings, then retired same-subject fallbacks.
+ */
+function buildNeighborhoodPriorityExpression(families: readonly NeighborhoodFamily[], includeRetired: boolean): string {
+  const branches: string[] = [];
+  if (families.includes("supersession_chain")) {
+    branches.push(`WHEN e.superseded_by IN (SELECT id FROM seed) THEN 0`);
+    branches.push(`WHEN e.id IN (SELECT target_id FROM seed_supersessions) THEN 1`);
+  }
+
+  if (families.includes("claim_key_sibling")) {
+    const retiredOrReplacedGuard = includeRetired ? "(e.retired = 1 OR e.superseded_by IS NOT NULL)" : "e.superseded_by IS NOT NULL";
+    branches.push(
+      `WHEN e.claim_key IS NOT NULL
+         AND e.claim_key IN (SELECT claim_key FROM seed_claim_keys)
+         AND e.claim_key_status = 'trusted'
+         AND ${retiredOrReplacedGuard} THEN 2`,
+    );
+    branches.push(
+      `WHEN e.claim_key IS NOT NULL
+         AND e.claim_key IN (SELECT claim_key FROM seed_claim_keys)
+         AND e.claim_key_status = 'trusted' THEN 3`,
+    );
+    branches.push(
+      `WHEN e.claim_key IS NOT NULL
+         AND e.claim_key IN (SELECT claim_key FROM seed_claim_keys)
+         AND ${retiredOrReplacedGuard} THEN 4`,
+    );
+    branches.push(
+      `WHEN e.claim_key IS NOT NULL
+         AND e.claim_key IN (SELECT claim_key FROM seed_claim_keys) THEN 5`,
+    );
+  }
+
+  if (families.includes("topic_family")) {
+    if (includeRetired) {
+      branches.push(`WHEN e.retired = 1 AND e.subject IN (SELECT subject FROM seed_subjects) THEN 6`);
+    } else {
+      branches.push(`WHEN e.subject IN (SELECT subject FROM seed_subjects) THEN 6`);
+    }
+  }
+
+  return `CASE ${branches.join("\n              ")} ELSE 9 END`;
+}
+
+/** Build the SQL membership disjunction used to admit rows into the neighborhood. */
+function buildNeighborhoodMembershipExpression(families: readonly NeighborhoodFamily[]): string {
+  const clauses: string[] = [];
+  if (families.includes("supersession_chain")) {
+    clauses.push(`e.superseded_by IN (SELECT id FROM seed)`);
+    clauses.push(`e.id IN (SELECT target_id FROM seed_supersessions)`);
+  }
+
+  if (families.includes("claim_key_sibling")) {
+    clauses.push(`(e.claim_key IS NOT NULL AND e.claim_key IN (SELECT claim_key FROM seed_claim_keys))`);
+  }
+
+  if (families.includes("topic_family")) {
+    clauses.push(`e.subject IN (SELECT subject FROM seed_subjects)`);
+  }
+
+  return clauses.length === 0 ? "0" : clauses.join("\n              OR ");
 }
 
 /** Wraps vector-search failures in a consistent adapter error. */

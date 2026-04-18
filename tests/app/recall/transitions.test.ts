@@ -141,11 +141,13 @@ function createRecallOutput(entry: Entry, score: number): RecallOutput {
     score,
     scores: {
       relevance: score,
+      rrf: score,
       vector: 0,
       lexical: 0,
       recency: 0,
       importance: 0,
       historicalLineage: 0,
+      neighborhoodBoost: 0,
       claimKeyTrustPenalty: 0,
       claimKeyRedundancyPenalty: 0,
     },

@@ -3,6 +3,16 @@ import { resolveClaimSlotPolicy } from "../claim-slot-policy.js";
 
 import { rrfFuse } from "./fusion.js";
 import { computeLexicalScore, tokenize } from "./lexical.js";
+import {
+  DEFAULT_NEIGHBORHOOD_BUDGET,
+  DEFAULT_SEEDED_RERANK_WEIGHT,
+  DEFAULT_STRONG_SEED_SCORE_GAP,
+  DEFAULT_STRONG_SEED_TOP_N,
+  type NeighborhoodFamily,
+  seededRerank,
+  selectStrongSeeds,
+  sharesEntryLineage,
+} from "./neighborhood.js";
 import { cosineSimilarity, gaussianRecency, importanceScore, recencyScore, scoreCandidate } from "./scoring.js";
 import { inferAroundDate, parseRelativeDate } from "./temporal.js";
 import {
@@ -10,18 +20,12 @@ import {
   type RecallDegradedReason,
   type RecallExecutionOptions,
   type RecallExecutionTraceSummary,
+  type RecallNeighborhoodTrace,
   type RecallNoResultReason,
 } from "./trace.js";
-import type {
-  EntryFilters,
-  FtsCandidate,
-  HistoricalPredecessorLookupParams,
-  RecallCandidateEntry,
-  RecallInput,
-  RecallOutput,
-  RecallRankingProfile,
-  VectorCandidate,
-} from "./types.js";
+import type { EntryFilters, FtsCandidate, RecallCandidateEntry, RecallInput, RecallOutput, RecallRankingProfile, VectorCandidate } from "./types.js";
+
+const HISTORICAL_NEIGHBORHOOD_FAMILIES: readonly NeighborhoodFamily[] = ["supersession_chain", "claim_key_sibling", "topic_family"];
 
 const MIN_VECTOR_ONLY_EVIDENCE = 0.3;
 const HISTORICAL_STATE_FLAT_RECENCY = 0.5;
@@ -127,9 +131,9 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
 
     const mergeStartedAt = Date.now();
     const mergeOutcome = mergeCandidates(vectorCandidates, ftsCandidates);
-    const expansionRanks = await expandHistoricalCandidates(mergeOutcome.merged, queryEmbedding, ports, {
-      activeEntryIds: Array.from(mergeOutcome.merged.keys()),
+    const expansionRanks = await expandEntryNeighborhood(mergeOutcome.merged, queryEmbedding, ports, {
       rankingProfile: query.rankingProfile,
+      neighborhoodTrace: summary.neighborhood,
     });
     // Fuse the ordered candidate rank lists from every active retrieval
     // channel into one normalized relevance map. Channels that produced no
@@ -139,26 +143,24 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
     summary.timings.mergeCandidatesMs = elapsedMs(mergeStartedAt);
 
     const scoreStartedAt = Date.now();
-    const scored = applyClaimKeyResultShaping(
-      applyHistoricalLineageBoosts(
-        Array.from(mergeOutcome.merged.values()).map((candidate) =>
-          scoreMergedCandidate(candidate, text, queryEmbedding, relevanceByEntryId.get(candidate.entry.id) ?? 0, {
-            asOfDate,
-            aroundDate,
-            aroundRadius: query.aroundRadius,
-            rankingProfile: query.rankingProfile,
-          }),
-        ),
-        {
+    const historicallyBoosted = applyHistoricalLineageBoosts(
+      Array.from(mergeOutcome.merged.values()).map((candidate) =>
+        scoreMergedCandidate(candidate, text, queryEmbedding, relevanceByEntryId.get(candidate.entry.id) ?? 0, {
+          asOfDate,
           aroundDate,
+          aroundRadius: query.aroundRadius,
           rankingProfile: query.rankingProfile,
-        },
-        summary.claimKey,
-        slotPolicyConfig,
+        }),
       ),
+      {
+        aroundDate,
+        rankingProfile: query.rankingProfile,
+      },
       summary.claimKey,
       slotPolicyConfig,
-    ).sort((left, right) => right.score - left.score);
+    );
+    const rerankedCandidates = applySeededEntryRerank(historicallyBoosted, summary.neighborhood);
+    const scored = applyClaimKeyResultShaping(rerankedCandidates, summary.claimKey, slotPolicyConfig).sort((left, right) => right.score - left.score);
     summary.timings.scoreCandidatesMs = elapsedMs(scoreStartedAt);
 
     const thresholdStartedAt = Date.now();
@@ -279,6 +281,16 @@ function buildRecallTraceSummary(params: {
       trustPenalized: 0,
       redundancyPenalized: 0,
     },
+    neighborhood: {
+      expansionRequested: false,
+      expansionAvailable: false,
+      familiesRequested: [],
+      includeRetired: false,
+      seedIds: [],
+      expansionCandidates: 0,
+      strongSeedIds: [],
+      rerankBoostedIds: [],
+    },
     timings: {
       mergeCandidatesMs: 0,
       scoreCandidatesMs: 0,
@@ -394,6 +406,7 @@ function scoreMergedCandidate(
       // explicit for trace summaries and cross-stage reasoning in later phases.
       rrf: scored.scores.relevance,
       historicalLineage: 0,
+      neighborhoodBoost: 0,
       claimKeyTrustPenalty: 0,
       claimKeyRedundancyPenalty: 0,
     },
@@ -401,34 +414,62 @@ function scoreMergedCandidate(
 }
 
 /**
- * Expand the historical-state candidate pool with inactive lineage-linked rows.
+ * Expand the candidate pool with bounded typed-neighborhood lineage.
  *
- * The returned array is the ordered rank list for the expansion retrieval
- * channel. Predecessors are ranked by cosine similarity against the query so
- * stronger lineage matches dominate the channel contribution during RRF.
+ * This is the generalized successor of the original historical-state
+ * predecessor expansion. Only the `historical_state` ranking profile
+ * asks the adapter for expansion today, since the default profile's
+ * vector and FTS retrieval already excludes superseded and retired
+ * rows, and therefore has nothing active left to expand to. Keeping
+ * expansion historical-only preserves the phase 1 behavior that default
+ * recall never surfaces retired or predecessor material while still
+ * routing the historical profile through the generalized port.
+ *
+ * Returned candidates are ranked by cosine similarity against the query
+ * so stronger lineage matches dominate the expansion RRF channel. The
+ * function mutates `params.neighborhoodTrace` in place with the facts
+ * needed for the neighborhood trace branch.
  *
  * @param mergedCandidates - Current merged active candidate map.
- * @param queryEmbedding - Query embedding used to compute fallback vector scores.
- * @param ports - Recall ports that may expose historical expansion.
- * @param params - Active candidate IDs plus the active ranking profile.
- * @returns Rank-ordered predecessor IDs for RRF, or an empty list when disabled.
+ * @param queryEmbedding - Query embedding used to rank adapter output.
+ * @param ports - Recall ports that may expose neighborhood expansion.
+ * @param params - Ranking profile plus mutable neighborhood trace branch.
+ * @returns Rank-ordered expansion IDs for RRF, or an empty list when disabled.
  */
-async function expandHistoricalCandidates(
+async function expandEntryNeighborhood(
   mergedCandidates: Map<string, MergedCandidate>,
   queryEmbedding: number[],
   ports: RecallPorts,
-  params: HistoricalPredecessorLookupParams & { rankingProfile?: RecallRankingProfile },
+  params: {
+    rankingProfile?: RecallRankingProfile;
+    neighborhoodTrace: RecallNeighborhoodTrace;
+  },
 ): Promise<string[]> {
-  if (params.rankingProfile !== "historical_state" || mergedCandidates.size === 0 || !ports.fetchPredecessors) {
+  const trace = params.neighborhoodTrace;
+  trace.expansionAvailable = Boolean(ports.expandNeighborhood);
+  if (mergedCandidates.size === 0 || !ports.expandNeighborhood || params.rankingProfile !== "historical_state") {
     return [];
   }
 
-  const predecessors = await ports.fetchPredecessors({
-    activeEntryIds: params.activeEntryIds,
+  const families = HISTORICAL_NEIGHBORHOOD_FAMILIES;
+  const includeRetired = true;
+  const seedIds = Array.from(mergedCandidates.keys());
+
+  trace.expansionRequested = true;
+  trace.familiesRequested = [...families];
+  trace.includeRetired = includeRetired;
+  trace.seedIds = seedIds;
+
+  const expanded = await ports.expandNeighborhood({
+    seedIds,
+    budget: DEFAULT_NEIGHBORHOOD_BUDGET,
+    families,
+    includeRetired,
   });
-  // Collect predecessors with a computed cosine similarity so we can order
-  // them into a deterministic rank list feeding the expansion RRF channel.
-  const ranked = predecessors
+  // Rank the adapter-returned rows by cosine similarity against the
+  // query so the expansion channel contributes a meaningful order to
+  // RRF rather than an arbitrary adapter sort.
+  const ranked = expanded
     .filter((entry) => !mergedCandidates.has(entry.id))
     .map((entry) => ({
       entry,
@@ -443,7 +484,66 @@ async function expandHistoricalCandidates(
     });
   }
 
+  trace.expansionCandidates = ranked.length;
   return ranked.map((candidate) => candidate.entry.id);
+}
+
+/**
+ * Apply a bounded seeded rerank over entry candidates using lineage matches.
+ *
+ * The rerank runs after historical lineage boosts so the historical profile
+ * can still produce its strongest signals before lineage proximity is
+ * considered, and it runs before claim-key shaping so trust or redundancy
+ * penalties still have the final say on which rows dominate the answer.
+ *
+ * @param candidates - Ranked candidates after historical lineage boosts.
+ * @param trace - Mutable neighborhood trace branch for the execution.
+ * @returns Candidates with seeded lineage rerank boosts applied.
+ */
+function applySeededEntryRerank(candidates: RankedCandidate[], trace: RecallNeighborhoodTrace): RankedCandidate[] {
+  if (candidates.length === 0) {
+    return candidates;
+  }
+
+  const seeds = selectStrongSeeds(
+    candidates.map((candidate) => ({ id: candidate.entry.id, score: candidate.score, entry: candidate.entry })),
+    {
+      topN: DEFAULT_STRONG_SEED_TOP_N,
+      scoreGapFloor: DEFAULT_STRONG_SEED_SCORE_GAP,
+    },
+  );
+  if (seeds.length === 0) {
+    return candidates;
+  }
+
+  trace.strongSeedIds = seeds.map((seed) => seed.id);
+  const payloads = candidates.map((candidate) => ({
+    id: candidate.entry.id,
+    score: candidate.score,
+    entry: candidate.entry,
+  }));
+  const reranked = seededRerank(payloads, seeds, (candidate, seed) => sharesEntryLineage(candidate.entry, seed.entry), {
+    weight: DEFAULT_SEEDED_RERANK_WEIGHT,
+  });
+  trace.rerankBoostedIds = reranked.boostedIds;
+
+  const scoreById = new Map(reranked.candidates.map((candidate) => [candidate.id, candidate.score]));
+  return candidates.map((candidate) => {
+    const nextScore = scoreById.get(candidate.entry.id) ?? candidate.score;
+    const delta = nextScore - candidate.score;
+    if (delta <= 0) {
+      return candidate;
+    }
+
+    return {
+      ...candidate,
+      score: nextScore,
+      scores: {
+        ...candidate.scores,
+        neighborhoodBoost: candidate.scores.neighborhoodBoost + delta,
+      },
+    };
+  });
 }
 
 /**

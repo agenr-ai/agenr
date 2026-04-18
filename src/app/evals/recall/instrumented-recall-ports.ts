@@ -76,10 +76,10 @@ export function createInstrumentedRecallPorts(
         throw error;
       }
     },
-    ...(ports.fetchPredecessors
+    ...(ports.expandNeighborhood
       ? {
-          async fetchPredecessors(params): Promise<Awaited<ReturnType<NonNullable<RecallPorts["fetchPredecessors"]>>>> {
-            return ports.fetchPredecessors!(params);
+          async expandNeighborhood(request): Promise<Awaited<ReturnType<NonNullable<RecallPorts["expandNeighborhood"]>>>> {
+            return ports.expandNeighborhood!(request);
           },
         }
       : {}),

@@ -1,4 +1,13 @@
-import { computeLexicalScore, rrfFuseVectorLexical } from "../../../core/recall/index.js";
+import {
+  DEFAULT_SEEDED_RERANK_WEIGHT,
+  DEFAULT_STRONG_SEED_SCORE_GAP,
+  DEFAULT_STRONG_SEED_TOP_N,
+  computeLexicalScore,
+  rrfFuseVectorLexical,
+  seededRerank,
+  selectStrongSeeds,
+  sharesProcedureLineage,
+} from "../../../core/recall/index.js";
 
 import type { Procedure } from "../../../core/types.js";
 
@@ -142,7 +151,7 @@ function rankProcedureCandidates(
 
   const relevanceByProcedureId = rrfFuseVectorLexical(vectorRanks, lexicalRanks);
 
-  return Array.from(merged.values())
+  const ranked = Array.from(merged.values())
     .map((candidate) => {
       const relevance = relevanceByProcedureId.get(candidate.procedure.id) ?? 0;
       return {
@@ -156,8 +165,65 @@ function rankProcedureCandidates(
         },
       };
     })
-    .filter((candidate) => candidate.score > 0)
-    .sort(compareProcedureCandidates);
+    .filter((candidate) => candidate.score > 0);
+
+  return applySeededProcedureRerank(ranked).sort(compareProcedureCandidates);
+}
+
+/**
+ * Apply a bounded seeded rerank over procedure candidates by lineage.
+ *
+ * When multiple rows share one `procedure_key` (rare in the live pipeline
+ * but possible across fixture or future revision-surfacing queries), this
+ * stage groups them near each other without overturning a clear RRF leader
+ * that lives on its own lineage. The added delta is always smaller than
+ * the canonical-selection margin so it can never manufacture a canonical
+ * answer on its own.
+ *
+ * @param candidates - Ranked procedure candidates after RRF.
+ * @returns Candidates with seeded lineage rerank applied.
+ */
+function applySeededProcedureRerank(candidates: ProcedureRecallCandidate[]): ProcedureRecallCandidate[] {
+  if (candidates.length === 0) {
+    return candidates;
+  }
+
+  const seeds = selectStrongSeeds(
+    candidates.map((candidate) => ({ id: candidate.procedure.id, score: candidate.score, procedure: candidate.procedure })),
+    {
+      topN: DEFAULT_STRONG_SEED_TOP_N,
+      scoreGapFloor: DEFAULT_STRONG_SEED_SCORE_GAP,
+    },
+  );
+  if (seeds.length === 0) {
+    return candidates;
+  }
+
+  const payloads = candidates.map((candidate) => ({
+    id: candidate.procedure.id,
+    score: candidate.score,
+    procedure: candidate.procedure,
+  }));
+  const reranked = seededRerank(payloads, seeds, (candidate, seed) => sharesProcedureLineage(candidate.procedure, seed.procedure), {
+    weight: DEFAULT_SEEDED_RERANK_WEIGHT,
+  });
+  const scoreById = new Map(reranked.candidates.map((candidate) => [candidate.id, candidate.score]));
+  return candidates.map((candidate) => {
+    const nextScore = scoreById.get(candidate.procedure.id);
+    if (nextScore === undefined || nextScore === candidate.score) {
+      return candidate;
+    }
+
+    return {
+      ...candidate,
+      score: nextScore,
+      scores: {
+        ...candidate.scores,
+        relevance: nextScore,
+        rrf: nextScore,
+      },
+    };
+  });
 }
 
 /**

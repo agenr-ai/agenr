@@ -8,7 +8,8 @@
 import type { EntryUpdateInput, Episode, EpisodeSource, Entry, Procedure } from "./types.js";
 import type { ClaimKeyEntityPrefixStats } from "./claim-key-entity-family.js";
 import type { EpisodeInput, EpisodeUpsertResult, TemporalWindow } from "./episode/types.js";
-import type { EntryFilters, FtsCandidate, HistoricalPredecessorLookupParams, RecallCandidateEntry, VectorCandidate } from "./recall/types.js";
+import type { EntryNeighborhoodRequest } from "./recall/neighborhood.js";
+import type { EntryFilters, FtsCandidate, RecallCandidateEntry, VectorCandidate } from "./recall/types.js";
 
 // ── Database ─────────────────────────────────────────────────────────
 
@@ -156,12 +157,15 @@ export interface RecallPorts {
   ftsSearch(params: { text: string; limit: number; filters?: EntryFilters }): Promise<FtsCandidate[]>;
 
   /**
-   * Fetch inactive lineage-linked candidates for historical-state expansion.
+   * Expand a typed neighborhood of entries around the provided seed IDs.
    *
-   * The adapter should keep this scoped to the provided active entry IDs and
-   * only return historical candidates that are plausibly about the same slot.
+   * The adapter honors `families` exactly and treats `includeRetired` as a
+   * hard gate. This is the generalized successor of the phase 1
+   * `fetchPredecessors` lookup and is used by every entry ranking profile.
+   * The default profile passes `includeRetired: false`; historical-state
+   * passes `includeRetired: true` with a wider family set.
    */
-  fetchPredecessors?(params: HistoricalPredecessorLookupParams): Promise<RecallCandidateEntry[]>;
+  expandNeighborhood?(request: EntryNeighborhoodRequest): Promise<RecallCandidateEntry[]>;
 
   /** Hydrate fully populated entries for the final ranked result set. */
   hydrateEntries(ids: string[]): Promise<Entry[]>;

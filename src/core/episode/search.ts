@@ -1,5 +1,13 @@
 import type { EpisodeDatabasePort } from "../ports.js";
 import { rrfFuse } from "../recall/fusion.js";
+import {
+  DEFAULT_SEEDED_RERANK_WEIGHT,
+  DEFAULT_STRONG_SEED_SCORE_GAP,
+  DEFAULT_STRONG_SEED_TOP_N,
+  seededRerank,
+  selectStrongSeeds,
+  sharesEpisodeLineage,
+} from "../recall/neighborhood.js";
 import { cosineSimilarity } from "../recall/scoring.js";
 
 import { activityScore, compareEpisodeMatches, recencyScore, scoreEpisodeMatch } from "./scoring.js";
@@ -64,6 +72,11 @@ export async function searchEpisodes(query: EpisodeQuery, database: EpisodeDatab
  * hybrid episode recall mode. Candidates without embeddings only appear in the
  * temporal channel, which naturally ranks them below embedded matches.
  *
+ * A light seeded rerank runs after RRF: candidates that share a session
+ * family with one of the current top-ranked episodes receive a small
+ * positive boost, keeping related turns in the same session grouped near
+ * each other without ever promoting an unrelated row.
+ *
  * @param hybridResults - Scored hybrid episode results.
  * @returns Candidates ordered by fused RRF score with deterministic tie-breakers.
  */
@@ -88,7 +101,57 @@ function fuseHybridResultsWithRrf(hybridResults: EpisodeResult[]): EpisodeResult
     score: Number((fusedScores.get(result.episode.id) ?? 0).toFixed(6)),
   }));
 
-  return fused.sort(compareFusedEpisodeResults);
+  const reranked = applySeededEpisodeRerank(fused);
+  return reranked.sort(compareFusedEpisodeResults);
+}
+
+/**
+ * Apply a bounded seeded lineage rerank to hybrid episode results.
+ *
+ * The rerank boosts episodes that share a session family with any of the
+ * current top-ranked episodes. The delta is intentionally small so it
+ * cannot overturn a strong RRF signal; it only helps when multiple
+ * episodes in the same session compete for the last few slots.
+ *
+ * @param results - Episode results after RRF fusion.
+ * @returns Candidates with seeded lineage boosts applied in place.
+ */
+function applySeededEpisodeRerank(results: EpisodeResult[]): EpisodeResult[] {
+  if (results.length === 0) {
+    return results;
+  }
+
+  const seeds = selectStrongSeeds(
+    results.map((result) => ({ id: result.episode.id, score: result.score, episode: result.episode })),
+    {
+      topN: DEFAULT_STRONG_SEED_TOP_N,
+      scoreGapFloor: DEFAULT_STRONG_SEED_SCORE_GAP,
+    },
+  );
+  if (seeds.length === 0) {
+    return results;
+  }
+
+  const payloads = results.map((result) => ({
+    id: result.episode.id,
+    score: result.score,
+    episode: result.episode,
+  }));
+  const reranked = seededRerank(payloads, seeds, (candidate, seed) => sharesEpisodeLineage(candidate.episode, seed.episode), {
+    weight: DEFAULT_SEEDED_RERANK_WEIGHT,
+  });
+  const scoreById = new Map(reranked.candidates.map((candidate) => [candidate.id, candidate.score]));
+  return results.map((result) => {
+    const nextScore = scoreById.get(result.episode.id);
+    if (nextScore === undefined || nextScore === result.score) {
+      return result;
+    }
+
+    return {
+      ...result,
+      score: Number(nextScore.toFixed(6)),
+    };
+  });
 }
 
 /**

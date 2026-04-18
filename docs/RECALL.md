@@ -17,6 +17,7 @@ The current codebase also layers a unified agent-facing recall surface plus two 
 - `src/core/recall/search.ts` - top-level recall pipeline orchestration.
 - `src/core/recall/scoring.ts` - vector, lexical, recency, importance, and final-score math.
 - `src/core/recall/fusion.ts` - pure reciprocal rank fusion helper used as the primary relevance signal across entry, episode, and procedure recall.
+- `src/core/recall/neighborhood.ts` - pure neighborhood-expansion request types, seeded-rerank helpers, and the domain lineage predicates used by entry, episode, and procedure recall.
 - `src/core/recall/lexical.ts` - tokenization, lexical search-plan generation, and lexical overlap scoring.
 - `src/core/recall/temporal.ts` - explicit and inferred date parsing for temporal recall.
 - `src/core/recall/trace.ts` - typed per-call execution summaries for observability and recall-eval instrumentation.
@@ -26,7 +27,7 @@ The current codebase also layers a unified agent-facing recall surface plus two 
 - `src/core/episode/temporal-window.ts` - calendar-aware time-phrase parsing for episodic recall.
 - `src/core/episode/types.ts` - episode query/result and temporal window types.
 - `src/core/ports.ts` - `RecallPorts` plus episode database interfaces used by the pure core pipelines.
-- `src/adapters/db/recall-adapter.ts` - libSQL implementation of vector search, FTS search, historical predecessor expansion, hydration, and recall-event recording.
+- `src/adapters/db/recall-adapter.ts` - libSQL implementation of vector search, FTS search, bounded entry neighborhood expansion, hydration, and recall-event recording.
 - `src/adapters/db/episode-queries.ts` - SQL overlap lookup and episode vector search.
 - `src/adapters/db/queries.ts` - `recordRecallEvent()` write path that updates counters and inserts `recall_events` rows.
 - `src/adapters/openclaw/tools/recall.ts` - `agenr_recall` schema, unified recall execution, and structured tool result shaping.
@@ -45,8 +46,8 @@ The current codebase also layers a unified agent-facing recall surface plus two 
 
 Recall is split cleanly between core and adapter concerns:
 
-- `src/core/recall/` owns query parsing, candidate merge, historical-state ranking, claim-key-aware result shaping, thresholding, token budgeting, tracing, and final ranking.
-- `src/adapters/db/recall-adapter.ts` owns retrieval, SQL-pushable filters, historical predecessor lookup, full-entry hydration, and telemetry writes.
+- `src/core/recall/` owns query parsing, candidate merge, historical-state ranking, claim-key-aware result shaping, thresholding, token budgeting, tracing, and final ranking. It also owns neighborhood-expansion request shapes and the seeded-rerank helpers that run over ranked candidates.
+- `src/adapters/db/recall-adapter.ts` owns retrieval, SQL-pushable filters, bounded entry neighborhood expansion, full-entry hydration, and telemetry writes.
 
 That split means the current recall implementation is already adapter-shaped:
 
@@ -57,7 +58,7 @@ That split means the current recall implementation is already adapter-shaped:
 Four current-runtime details matter:
 
 - runtime query-embedding failures and vector-search failures degrade entry recall into an explicitly labeled lexical path instead of aborting the whole call
-- historical-state entry recall is still the same core pipeline, but it can ask the adapter for inactive predecessor candidates through the optional `fetchPredecessors()` port
+- historical-state entry recall is still the same core pipeline, but it asks the adapter for a bounded sweep over supersession chains, claim-key siblings, and retired same-topic fallbacks through the optional `expandNeighborhood()` port
 - typed recall tracing is opt-in and no-op by default, so observability can be added without changing ranking behavior
 - recall telemetry is awaited as part of `recall()`, but the adapter serializes the writes internally and swallows telemetry failures
 
@@ -565,22 +566,39 @@ score = relevance * 0.5 + recency * 0.25 + importance * 0.25
 
 All component scores and the final score are clamped into `0-1`.
 
+### Neighborhood expansion and seeded rerank
+
+Entry, episode, and procedure recall now share a generalized post-retrieval stage inspired by a layered ranking pipeline. The helpers live in `src/core/recall/neighborhood.ts`.
+
+Two ideas matter:
+
+1. **Bounded neighborhood expansion** is a typed sweep over lineage families the adapter can cheaply reach from SQL. Each expansion call passes a `families` list, a hard `budget`, and an `includeRetired` gate. The supported families are:
+   - `supersession_chain` - direct `superseded_by` links in both directions
+   - `claim_key_sibling` - rows sharing the same claim-key slot
+   - `procedure_revision` - retired revisions of the same `procedure_key` (surfaced through the procedure recall path)
+   - `session_family` - episodes from the same `source + sourceId` (or transcript hash fallback)
+   - `topic_family` - retired-only fallback that reaches across strong shared subject prefixes for entries
+2. **Seeded rerank** (`seededRerank()`) sits on top of the ranked candidate list. It picks a tight top-N leader group through `selectStrongSeeds()`, then adds a small positive delta to any candidate that shares structural or topical lineage with at least one strong seed. The rerank never lifts a candidate that has no lineage relationship to any seed, so it cannot pull in unrelated material.
+
+Default-profile entry recall still filters retired and superseded rows out of the candidate pool and does not call the expansion port. It does run `seededRerank()` over the fused candidates so supersession-chain followers, claim-key siblings, and strong subject-prefix peers of the top leaders get a small coherence boost when they are already in the ranked pool.
+
 ### Historical-state expansion and claim-key shaping
 
-Entry recall has one important ranking variant that older docs did not cover: `rankingProfile: "historical_state"`.
+Entry recall has one important ranking variant: `rankingProfile: "historical_state"`.
 
-Today that profile is set by unified recall when the router detects a prior-state question such as "what was the previous approach". The core pipeline then changes behavior in four ways:
+Today that profile is set by unified recall when the router detects a prior-state question such as "what was the previous approach". The core pipeline then changes behavior in five ways:
 
-1. it asks the adapter for inactive predecessor candidates through `fetchPredecessors()`
+1. it calls the adapter's `expandNeighborhood()` port with `families: ["supersession_chain", "claim_key_sibling", "topic_family"]` and `includeRetired: true` so retired predecessors, claim-key siblings, and retired same-topic fallbacks merge into the candidate pool
 2. it flattens recency to a neutral `0.5` when there is no explicit `around` anchor
 3. it applies additive lineage bonuses for likely prior-state matches
 4. it applies light claim-key penalties to reduce redundant or low-trust current-state answers
+5. it then runs `seededRerank()` with the historical weight so siblings and predecessors of strong historical-state leaders get a small coherence bump
 
-`fetchPredecessors()` is adapter-scoped to the active candidate set. The current libSQL adapter expands by:
+`expandNeighborhood()` is adapter-scoped. The current libSQL adapter builds a single SQL union that prioritizes:
 
 - direct `superseded_by` links first
 - same `claim_key` lineage next, preferring trusted historical siblings
-- retired same-subject rows as a weaker fallback
+- retired same-subject rows as a weaker topic-family fallback
 
 Historical bonuses are additive and clamp back into `0-1`:
 
@@ -597,6 +615,7 @@ Claim-key trust also changes how lineage is interpreted:
 These shaping signals are returned in the final score breakdown and are now surfaced in the CLI verbose view plus the OpenClaw claim-centric entry formatter:
 
 - `historicalLineage`
+- `neighborhoodBoost`
 - `claimKeyTrustPenalty`
 - `claimKeyRedundancyPenalty`
 
@@ -662,6 +681,7 @@ The current `scores` payload includes:
 - `recency`
 - `importance`
 - `historicalLineage`
+- `neighborhoodBoost` - additive delta applied by the seeded rerank stage when the row shares lineage with a strong seed
 - `claimKeyTrustPenalty`
 - `claimKeyRedundancyPenalty`
 
@@ -684,6 +704,7 @@ In verbose mode it also prints:
 - `importance`
 - `relevance`
 - `historicalLineage`
+- `neighborhoodBoost`
 - `claimKeyTrustPenalty`
 - `claimKeyRedundancyPenalty`
 
@@ -711,6 +732,7 @@ The emitted `RecallExecutionTraceSummary` currently contains:
 - `ranking` - normalized `limit`, `threshold`, `budget`, and optional stable `noResultReason`
 - `candidateCounts` - merged, threshold-qualified, budget-accepted, final-ranked, and returned counts
 - `claimKey` - historical boosts, tentative-lineage suppression, trust penalties, and redundancy penalties
+- `neighborhood` - whether neighborhood expansion ran, the families requested, the expanded candidate count, the strong seed count, and the ids that received a seeded-rerank boost
 - `degraded` - whether recall fell back away from the normal vector-backed path, the stable causes, whether the run was lexical-only, and the user-facing notices
 - `timings` - merge, score, threshold, budget, and result-shaping timings
 
@@ -793,6 +815,7 @@ Notes:
 - `src/core/recall/search.ts`
 - `src/core/recall/scoring.ts`
 - `src/core/recall/lexical.ts`
+- `src/core/recall/neighborhood.ts`
 - `src/core/recall/temporal.ts`
 - `src/core/recall/trace.ts`
 - `src/core/recall/types.ts`

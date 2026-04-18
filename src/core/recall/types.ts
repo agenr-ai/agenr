@@ -6,16 +6,6 @@ import type { Entry, EntryType } from "../types.js";
 export type RecallRankingProfile = "historical_state";
 
 /**
- * Input payload for historical-state predecessor expansion.
- *
- * The params object can grow over time with additional lineage signals such as
- * claim keys without changing the recall port signature.
- */
-export interface HistoricalPredecessorLookupParams {
-  activeEntryIds: string[];
-}
-
-/**
  * Input to the v1 recall pipeline.
  */
 export interface RecallInput {
@@ -59,6 +49,8 @@ export interface RecallOutput {
     recency: number;
     importance: number;
     historicalLineage: number;
+    /** Seeded neighborhood rerank boost applied after RRF and historical lineage. */
+    neighborhoodBoost: number;
     claimKeyTrustPenalty: number;
     claimKeyRedundancyPenalty: number;
   };

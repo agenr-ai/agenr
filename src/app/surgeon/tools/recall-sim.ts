@@ -81,19 +81,19 @@ function createSimulationRecallPorts(inner: RecallPorts, excludeEntryId?: string
 
       return results.filter((result) => result.entry.id !== excludeEntryId);
     },
-    async fetchPredecessors(params) {
-      if (!inner.fetchPredecessors) {
+    async expandNeighborhood(request) {
+      if (!inner.expandNeighborhood) {
         return [];
       }
 
-      const activeEntryIds = excludeEntryId ? params.activeEntryIds.filter((id) => id !== excludeEntryId) : params.activeEntryIds;
-      if (activeEntryIds.length === 0) {
+      const seedIds = excludeEntryId ? request.seedIds.filter((id) => id !== excludeEntryId) : request.seedIds;
+      if (seedIds.length === 0) {
         return [];
       }
 
-      const results = await inner.fetchPredecessors({
-        ...params,
-        activeEntryIds,
+      const results = await inner.expandNeighborhood({
+        ...request,
+        seedIds,
       });
       if (!excludeEntryId) {
         return results;
