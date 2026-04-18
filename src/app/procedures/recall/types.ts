@@ -2,6 +2,16 @@ import type { ProcedureDatabasePort } from "../../../core/ports.js";
 import type { Procedure } from "../../../core/types.js";
 
 /**
+ * Optional MMR diversification controls plumbed through to procedure recall.
+ */
+export interface ProcedureMmrOptions {
+  /** Whether to diversify the procedure shortlist with MMR. */
+  enabled: boolean;
+  /** Optional lambda override in the inclusive 0-1 range. */
+  lambda?: number;
+}
+
+/**
  * Agent-facing request for the dedicated procedure recall pipeline.
  */
 export interface ProcedureRecallInput {
@@ -11,6 +21,8 @@ export interface ProcedureRecallInput {
   limit?: number;
   /** Minimum score required for a canonical procedure answer. */
   threshold?: number;
+  /** Optional MMR diversification knobs applied to the procedure shortlist. */
+  mmr?: ProcedureMmrOptions;
 }
 
 /**

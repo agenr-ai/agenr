@@ -117,6 +117,82 @@ describe("searchEpisodes", () => {
     ]);
   });
 
+  it("diversifies near-duplicate hybrid episodes when MMR is enabled", async () => {
+    const database = createDatabase({
+      async listEpisodesByTimeWindow() {
+        return [
+          createEpisode({
+            id: "session-a-1",
+            startedAt: "2026-03-29T08:00:00.000Z",
+            endedAt: "2026-03-29T09:00:00.000Z",
+            summary: "Session A reviewed the weekly rollups.",
+            embedding: [1, 0],
+          }),
+          createEpisode({
+            id: "session-a-2",
+            startedAt: "2026-03-29T09:00:00.000Z",
+            endedAt: "2026-03-29T10:00:00.000Z",
+            summary: "Session A continued the weekly rollup review.",
+            embedding: [1, 0],
+          }),
+          createEpisode({
+            id: "session-b",
+            startedAt: "2026-03-29T11:00:00.000Z",
+            endedAt: "2026-03-29T12:00:00.000Z",
+            summary: "Session B investigated an unrelated outage.",
+            embedding: [0, 1],
+          }),
+        ];
+      },
+    });
+
+    const baseline = await searchEpisodes(
+      {
+        text: "weekly rollups and outage investigations",
+        limit: 3,
+        timeWindow: {
+          kind: "interval",
+          start: new Date("2026-03-29T00:00:00.000Z"),
+          end: new Date("2026-03-29T23:59:59.999Z"),
+          source: "inferred",
+        },
+        embedding: [1, 0],
+      },
+      database,
+      new Date("2026-03-30T00:00:00.000Z"),
+    );
+
+    const diversified = await searchEpisodes(
+      {
+        text: "weekly rollups and outage investigations",
+        limit: 3,
+        timeWindow: {
+          kind: "interval",
+          start: new Date("2026-03-29T00:00:00.000Z"),
+          end: new Date("2026-03-29T23:59:59.999Z"),
+          source: "inferred",
+        },
+        embedding: [1, 0],
+        mmr: { enabled: true, lambda: 0.2 },
+      },
+      database,
+      new Date("2026-03-30T00:00:00.000Z"),
+    );
+
+    const baselineIds = baseline.map((result) => result.episode.id);
+    const diversifiedIds = diversified.map((result) => result.episode.id);
+
+    // Without MMR the two near-identical session-A episodes dominate the
+    // top of the list and push session-B further down.
+    expect(baselineIds.slice(0, 2)).toEqual(["session-a-1", "session-a-2"]);
+    expect(baselineIds.indexOf("session-b")).toBeGreaterThan(1);
+    // With MMR the diverse session-B candidate gets promoted ahead of the
+    // duplicate session-A follow-up even though the duplicate carries a
+    // slightly higher composite score.
+    expect(diversifiedIds.indexOf("session-b")).toBeLessThan(diversifiedIds.indexOf("session-a-2"));
+    expect(diversifiedIds).toEqual(expect.arrayContaining(["session-a-1", "session-a-2", "session-b"]));
+  });
+
   it("re-ranks temporal candidates semantically and keeps missing embeddings below embedded matches", async () => {
     const database = createDatabase({
       async listEpisodesByTimeWindow() {

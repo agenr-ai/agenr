@@ -1,8 +1,10 @@
 import {
+  DEFAULT_MMR_LAMBDA,
   DEFAULT_SEEDED_RERANK_WEIGHT,
   DEFAULT_STRONG_SEED_SCORE_GAP,
   DEFAULT_STRONG_SEED_TOP_N,
   computeLexicalScore,
+  maximalMarginalRelevance,
   rrfFuseVectorLexical,
   seededRerank,
   selectStrongSeeds,
@@ -11,7 +13,7 @@ import {
 
 import type { Procedure } from "../../../core/types.js";
 
-import type { ProcedureRecallCandidate, ProcedureRecallDeps, ProcedureRecallInput, ProcedureRecallResult } from "./types.js";
+import type { ProcedureMmrOptions, ProcedureRecallCandidate, ProcedureRecallDeps, ProcedureRecallInput, ProcedureRecallResult } from "./types.js";
 
 const DEFAULT_LIMIT = 5;
 const DEFAULT_CANONICAL_THRESHOLD = 0.55;
@@ -71,7 +73,7 @@ export async function runProcedureRecall(input: ProcedureRecallInput, deps: Proc
           })
       : [];
 
-  const ranked = rankProcedureCandidates(text, lexicalMatches, vectorMatches).slice(0, limit);
+  const ranked = applyProcedureMmrDiversification(rankProcedureCandidates(text, lexicalMatches, vectorMatches), queryEmbedding, input.mmr).slice(0, limit);
   const canonicalProcedure = selectCanonicalProcedure(ranked, input.threshold);
 
   return {
@@ -168,6 +170,58 @@ function rankProcedureCandidates(
     .filter((candidate) => candidate.score > 0);
 
   return applySeededProcedureRerank(ranked).sort(compareProcedureCandidates);
+}
+
+/**
+ * Apply MMR diversification over the ranked procedure candidates.
+ *
+ * Procedures keyed by the same `procedure_key` share their recall text
+ * across revisions, which can produce near-identical embeddings for the
+ * top handful of candidates when a revision chain surfaces together.
+ * MMR demotes those near-duplicates so the shortlist stays useful even
+ * when many revisions of one procedure compete for the same slot.
+ *
+ * @param candidates - Procedure candidates after RRF and seeded rerank.
+ * @param queryEmbedding - Query embedding used as the MMR relevance signal.
+ * @param options - Optional MMR toggle and lambda override.
+ * @returns Candidates reordered by MMR when enabled, unchanged otherwise.
+ */
+function applyProcedureMmrDiversification(
+  candidates: ProcedureRecallCandidate[],
+  queryEmbedding: number[],
+  options: ProcedureMmrOptions | undefined,
+): ProcedureRecallCandidate[] {
+  if (!options || !options.enabled || candidates.length < 2 || queryEmbedding.length === 0) {
+    return candidates;
+  }
+
+  const reorder = maximalMarginalRelevance({
+    queryVector: queryEmbedding,
+    candidates: candidates.map((candidate) => ({
+      id: candidate.procedure.id,
+      relevance: candidate.score,
+      ...(candidate.procedure.embedding ? { embedding: candidate.procedure.embedding } : {}),
+    })),
+    lambda: resolveProcedureMmrLambda(options.lambda),
+  });
+  if (!reorder.applied) {
+    return candidates;
+  }
+
+  const candidatesById = new Map(candidates.map((candidate) => [candidate.procedure.id, candidate]));
+  return reorder.orderedIds.flatMap((id) => {
+    const candidate = candidatesById.get(id);
+    return candidate ? [candidate] : [];
+  });
+}
+
+/** Resolve the effective procedure MMR lambda from caller overrides. */
+function resolveProcedureMmrLambda(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_MMR_LAMBDA;
+  }
+
+  return Math.max(0, Math.min(1, value));
 }
 
 /**

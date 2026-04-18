@@ -18,6 +18,7 @@ The current codebase also layers a unified agent-facing recall surface plus two 
 - `src/core/recall/scoring.ts` - vector, lexical, recency, importance, and final-score math.
 - `src/core/recall/fusion.ts` - pure reciprocal rank fusion helper used as the primary relevance signal across entry, episode, and procedure recall.
 - `src/core/recall/neighborhood.ts` - pure neighborhood-expansion request types, seeded-rerank helpers, and the domain lineage predicates used by entry, episode, and procedure recall.
+- `src/core/recall/mmr.ts` - pure maximal-marginal-relevance helper used to diversify the final shortlist across entry, episode, and procedure recall.
 - `src/core/recall/lexical.ts` - tokenization, lexical search-plan generation, and lexical overlap scoring.
 - `src/core/recall/temporal.ts` - explicit and inferred date parsing for temporal recall.
 - `src/core/recall/trace.ts` - typed per-call execution summaries for observability and recall-eval instrumentation.
@@ -566,6 +567,30 @@ score = relevance * 0.5 + recency * 0.25 + importance * 0.25
 
 All component scores and the final score are clamped into `0-1`.
 
+### MMR diversification
+
+A shared maximal-marginal-relevance stage sits between the claim-key shaping stage and the threshold filter on the entry recall pipeline, and between RRF fusion and the final `slice(limit)` on the episode and procedure pipelines. The helper lives in `src/core/recall/mmr.ts` and is a pure one-shot variant of the classic MMR ordering borrowed from graphiti's `maximal_marginal_relevance()`.
+
+Key design points:
+
+- MMR never rederives relevance from the query embedding. Each pipeline passes its already-shaped composite score as the MMR `relevance` signal, which preserves RRF fusion, historical lineage boosts, claim-key trust and redundancy penalties, and any seeded-rerank lift.
+- Candidates without embeddings are not run through the MMR similarity math. They are appended after the embedded candidates in their original relative order, so missing-embedding fallbacks degrade to pass-through rather than crashing.
+- When the query vector is empty or fewer than two candidates have usable embeddings, MMR is skipped and the input order is returned unchanged. The trace records this as `applied: false`.
+- Ties on the MMR score are broken in input order so the diversified list stays stable across runs.
+
+Tuning knobs live on `RecallExecutionOptions.rankingPolicy`:
+
+- `rankingPolicy.mmrLambda` is the lambda balance between relevance (`lambda`) and diversity (`1 - lambda`). The default is `0.7`, which keeps relevance dominant but gives the diversity penalty enough room to demote near duplicates. Values are clamped into `[0, 1]`.
+- `rankingPolicy.mmr = "disabled"` is a hard kill switch for A/B evaluation. When set, MMR never runs for any surface regardless of intent.
+
+Per-surface behavior:
+
+- Entry recall runs MMR on every call unless the kill switch disables it.
+- Episode recall runs MMR inside hybrid mode only, and only when the routed intent is `factual` or `mixed`. Narrative, procedural, temporal, and historical-state intents keep the temporal-first ordering untouched. Pure-temporal and pure-semantic episode modes skip MMR entirely.
+- Procedure recall runs MMR after RRF and seeded rerank, regardless of intent, because revisions of the same `procedure_key` routinely share both recall text and embeddings.
+
+Tracing gained a new `mmr` branch on `RecallExecutionTraceSummary` with `{ applied, lambda, droppedDuplicateCount, reorderedIds }`. `droppedDuplicateCount` counts candidates whose max pairwise similarity to another candidate is at or above `0.95` and whose MMR rank slid below their input rank. `reorderedIds` lists every candidate whose final position differs from the input order, empty when MMR was skipped.
+
 ### Neighborhood expansion and seeded rerank
 
 Entry, episode, and procedure recall now share a generalized post-retrieval stage inspired by a layered ranking pipeline. The helpers live in `src/core/recall/neighborhood.ts`.
@@ -733,6 +758,7 @@ The emitted `RecallExecutionTraceSummary` currently contains:
 - `candidateCounts` - merged, threshold-qualified, budget-accepted, final-ranked, and returned counts
 - `claimKey` - historical boosts, tentative-lineage suppression, trust penalties, and redundancy penalties
 - `neighborhood` - whether neighborhood expansion ran, the families requested, the expanded candidate count, the strong seed count, and the ids that received a seeded-rerank boost
+- `mmr` - whether MMR ran, the effective lambda, the dropped-near-duplicate count, and the ids whose position changed relative to the input order
 - `degraded` - whether recall fell back away from the normal vector-backed path, the stable causes, whether the run was lexical-only, and the user-facing notices
 - `timings` - merge, score, threshold, budget, and result-shaping timings
 
@@ -816,6 +842,7 @@ Notes:
 - `src/core/recall/scoring.ts`
 - `src/core/recall/lexical.ts`
 - `src/core/recall/neighborhood.ts`
+- `src/core/recall/mmr.ts`
 - `src/core/recall/temporal.ts`
 - `src/core/recall/trace.ts`
 - `src/core/recall/types.ts`

@@ -3,6 +3,7 @@ import { resolveClaimSlotPolicy } from "../claim-slot-policy.js";
 
 import { rrfFuse } from "./fusion.js";
 import { computeLexicalScore, tokenize } from "./lexical.js";
+import { DEFAULT_MMR_LAMBDA, maximalMarginalRelevance } from "./mmr.js";
 import {
   DEFAULT_NEIGHBORHOOD_BUDGET,
   DEFAULT_SEEDED_RERANK_WEIGHT,
@@ -20,8 +21,10 @@ import {
   type RecallDegradedReason,
   type RecallExecutionOptions,
   type RecallExecutionTraceSummary,
+  type RecallMmrTrace,
   type RecallNeighborhoodTrace,
   type RecallNoResultReason,
+  type RecallRankingPolicy,
 } from "./trace.js";
 import type { EntryFilters, FtsCandidate, RecallCandidateEntry, RecallInput, RecallOutput, RecallRankingProfile, VectorCandidate } from "./types.js";
 
@@ -160,7 +163,12 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
       slotPolicyConfig,
     );
     const rerankedCandidates = applySeededEntryRerank(historicallyBoosted, summary.neighborhood);
-    const scored = applyClaimKeyResultShaping(rerankedCandidates, summary.claimKey, slotPolicyConfig).sort((left, right) => right.score - left.score);
+    const shaped = applyClaimKeyResultShaping(rerankedCandidates, summary.claimKey, slotPolicyConfig).sort((left, right) => right.score - left.score);
+    // MMR diversifies the final shortlist after claim-key shaping so trust
+    // penalties and redundancy shaping still have the last word on which
+    // rows dominate. MMR only reorders; it never mutates the composite
+    // score, keeping the threshold check grounded in the shaped score.
+    const scored = applyMmrDiversification(shaped, queryEmbedding, options.rankingPolicy, summary.mmr);
     summary.timings.scoreCandidatesMs = elapsedMs(scoreStartedAt);
 
     const thresholdStartedAt = Date.now();
@@ -290,6 +298,12 @@ function buildRecallTraceSummary(params: {
       expansionCandidates: 0,
       strongSeedIds: [],
       rerankBoostedIds: [],
+    },
+    mmr: {
+      applied: false,
+      lambda: DEFAULT_MMR_LAMBDA,
+      droppedDuplicateCount: 0,
+      reorderedIds: [],
     },
     timings: {
       mergeCandidatesMs: 0,
@@ -853,6 +867,76 @@ function countSharedPrefixTokens(leftTokens: string[], rightTokens: string[]): n
   }
 
   return sharedPrefixCount;
+}
+
+/**
+ * Apply MMR diversification over the shaped shortlist when enabled.
+ *
+ * The function reorders candidates without mutating their composite
+ * score: MMR only changes which candidates ride the final shortlist into
+ * the threshold, budget, and limit slice steps. When the caller disables
+ * MMR through `rankingPolicy.mmr === "disabled"` or when fewer than two
+ * candidates have embeddings, the input order is preserved and the
+ * trace records `applied: false` so downstream consumers can tell the
+ * diversification stage ran and no-op'd.
+ *
+ * @param candidates - Candidates after claim-key shaping, sorted by score.
+ * @param queryEmbedding - Query embedding used as the MMR relevance signal.
+ * @param policy - Optional ranking policy overrides from the caller.
+ * @param trace - Mutable MMR trace branch for the execution.
+ * @returns Candidates in their new MMR-driven order.
+ */
+function applyMmrDiversification(
+  candidates: RankedCandidate[],
+  queryEmbedding: number[],
+  policy: RecallRankingPolicy | undefined,
+  trace: RecallMmrTrace,
+): RankedCandidate[] {
+  if (candidates.length < 2 || policy?.mmr === "disabled") {
+    trace.applied = false;
+    trace.lambda = resolveMmrLambda(policy);
+    return candidates;
+  }
+
+  const reorder = maximalMarginalRelevance({
+    queryVector: queryEmbedding,
+    candidates: candidates.map((candidate) => ({
+      id: candidate.entry.id,
+      relevance: candidate.score,
+      ...(candidate.entry.embedding ? { embedding: candidate.entry.embedding } : {}),
+    })),
+    lambda: resolveMmrLambda(policy),
+  });
+
+  trace.applied = reorder.applied;
+  trace.lambda = reorder.lambda;
+  trace.droppedDuplicateCount = reorder.droppedDuplicateCount;
+  trace.reorderedIds = reorder.reorderedIds;
+
+  if (!reorder.applied) {
+    return candidates;
+  }
+
+  const candidatesById = new Map(candidates.map((candidate) => [candidate.entry.id, candidate]));
+  return reorder.orderedIds.flatMap((id) => {
+    const candidate = candidatesById.get(id);
+    return candidate ? [candidate] : [];
+  });
+}
+
+/**
+ * Resolve the effective MMR lambda from caller-supplied policy.
+ *
+ * @param policy - Optional ranking policy overrides.
+ * @returns Lambda in the inclusive 0-1 range.
+ */
+function resolveMmrLambda(policy: RecallRankingPolicy | undefined): number {
+  const rawLambda = policy?.mmrLambda;
+  if (typeof rawLambda !== "number" || !Number.isFinite(rawLambda)) {
+    return DEFAULT_MMR_LAMBDA;
+  }
+
+  return Math.max(0, Math.min(1, rawLambda));
 }
 
 /**

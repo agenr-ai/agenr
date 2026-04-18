@@ -55,6 +55,21 @@ export interface ResolvedTemporalWindow {
 }
 
 /**
+ * Optional MMR diversification controls plumbed through to episode recall.
+ *
+ * Unified recall enables this for broad factual and mixed intents, where
+ * same-session episodes can otherwise crowd the shortlist. The hybrid
+ * ranking path is the only path that applies MMR; temporal-only and
+ * pure-semantic modes already have sufficient diversity.
+ */
+export interface EpisodeMmrOptions {
+  /** Whether to diversify the hybrid shortlist with MMR. */
+  enabled: boolean;
+  /** Optional lambda override in the inclusive 0-1 range. */
+  lambda?: number;
+}
+
+/**
  * Episode-query shape accepted by the episodic recall pipeline.
  */
 export interface EpisodeQuery {
@@ -62,6 +77,8 @@ export interface EpisodeQuery {
   limit?: number;
   timeWindow?: TemporalWindow;
   embedding?: number[];
+  /** Optional MMR diversification knobs applied to hybrid ranking. */
+  mmr?: EpisodeMmrOptions;
 }
 
 /**

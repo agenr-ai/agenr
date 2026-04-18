@@ -1,6 +1,8 @@
 export { DEFAULT_RRF_RANK_CONSTANT, rrfFuse, rrfFuseVectorLexical } from "./fusion.js";
 export type { RrfChannel } from "./fusion.js";
 export { buildLexicalPlan, computeLexicalScore, tokenize } from "./lexical.js";
+export { DEFAULT_MMR_LAMBDA, NEAR_DUPLICATE_SIMILARITY, maximalMarginalRelevance } from "./mmr.js";
+export type { MmrCandidate, MmrOptions, MmrReorderResult } from "./mmr.js";
 export {
   DEFAULT_NEIGHBORHOOD_BUDGET,
   DEFAULT_SEEDED_RERANK_WEIGHT,

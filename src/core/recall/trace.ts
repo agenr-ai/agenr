@@ -121,6 +121,23 @@ export interface RecallClaimKeyTrace {
 }
 
 /**
+ * MMR diversification facts observed during one recall execution.
+ */
+export interface RecallMmrTrace {
+  /** Whether MMR actually reordered the shortlist for this execution. */
+  applied: boolean;
+  /** Effective lambda used when MMR ran, or the configured default when skipped. */
+  lambda: number;
+  /**
+   * Candidates that MMR identified as near duplicates and demoted below
+   * their input position. A zero count means no redundancy was observed.
+   */
+  droppedDuplicateCount: number;
+  /** Candidate IDs whose position shifted relative to the input order. */
+  reorderedIds: string[];
+}
+
+/**
  * Neighborhood expansion and seeded rerank facts observed during one recall execution.
  */
 export interface RecallNeighborhoodTrace {
@@ -156,6 +173,8 @@ export interface RecallExecutionTraceSummary {
   claimKey: RecallClaimKeyTrace;
   /** Neighborhood expansion and seeded rerank facts observed during ranking. */
   neighborhood: RecallNeighborhoodTrace;
+  /** MMR diversification facts observed during ranking. */
+  mmr: RecallMmrTrace;
   /** Whether recall had to degrade into lexical-only ranking. */
   degraded: RecallDegradedTrace;
   /** Core-only timings observed inside the ranking flow. */
@@ -175,6 +194,23 @@ export interface RecallTraceSink {
 }
 
 /**
+ * Tunable ranking policy applied to one recall execution.
+ *
+ * Every field is optional so callers can opt into individual stages
+ * without having to restate the full policy. Evals that A/B one stage
+ * at a time rely on the per-stage kill switches here.
+ */
+export interface RecallRankingPolicy {
+  /**
+   * Whether to apply the MMR diversification stage. Defaults to
+   * `"enabled"` so the default pipeline gets diversity out of the box.
+   */
+  mmr?: "enabled" | "disabled";
+  /** Effective MMR lambda in the inclusive 0-1 range. */
+  mmrLambda?: number;
+}
+
+/**
  * Optional execution controls for one recall call.
  */
 export interface RecallExecutionOptions {
@@ -182,6 +218,8 @@ export interface RecallExecutionOptions {
   trace?: RecallTraceSink;
   /** Optional runtime slot-policy overrides used during claim-aware ranking. */
   slotPolicyConfig?: ClaimSlotPolicyConfig;
+  /** Optional ranking policy overrides, including MMR toggles. */
+  rankingPolicy?: RecallRankingPolicy;
 }
 
 const NOOP_RECALL_TRACE_SINK: RecallTraceSink = {

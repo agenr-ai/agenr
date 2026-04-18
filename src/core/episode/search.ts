@@ -1,5 +1,6 @@
 import type { EpisodeDatabasePort } from "../ports.js";
 import { rrfFuse } from "../recall/fusion.js";
+import { DEFAULT_MMR_LAMBDA, maximalMarginalRelevance } from "../recall/mmr.js";
 import {
   DEFAULT_SEEDED_RERANK_WEIGHT,
   DEFAULT_STRONG_SEED_SCORE_GAP,
@@ -12,7 +13,7 @@ import { cosineSimilarity } from "../recall/scoring.js";
 
 import { activityScore, compareEpisodeMatches, recencyScore, scoreEpisodeMatch } from "./scoring.js";
 import { resolveTemporalWindowBounds } from "./temporal-window.js";
-import type { EpisodeQuery, EpisodeResult } from "./types.js";
+import type { EpisodeMmrOptions, EpisodeQuery, EpisodeResult } from "./types.js";
 
 const DEFAULT_LIMIT = 10;
 const MIN_CANDIDATE_LIMIT = 25;
@@ -64,7 +65,57 @@ export async function searchEpisodes(query: EpisodeQuery, database: EpisodeDatab
 
   const candidates = await database.listEpisodesByTimeWindow(query.timeWindow!, computeCandidateLimit(limit));
   const hybridResults = candidates.map((episode) => buildHybridResult(episode, normalizedEmbedding, bounds, now));
-  return fuseHybridResultsWithRrf(hybridResults).slice(0, limit);
+  const fused = fuseHybridResultsWithRrf(hybridResults);
+  const diversified = applyEpisodeMmrDiversification(fused, normalizedEmbedding, query.mmr);
+  return diversified.slice(0, limit);
+}
+
+/**
+ * Apply MMR diversification across the fused hybrid episode shortlist.
+ *
+ * Same-session episodes often share both the summary embedding and the
+ * temporal window, so the default hybrid ranking can return a visually
+ * homogeneous slate when a long session overlaps a broad query. MMR
+ * demotes those near-duplicates in favor of episodes that widen the
+ * coverage.
+ *
+ * @param results - Episode results after RRF fusion and seeded rerank.
+ * @param queryEmbedding - Query embedding used as the MMR relevance signal.
+ * @param options - Optional MMR toggle and lambda override.
+ * @returns Episode results in their new diversified order.
+ */
+function applyEpisodeMmrDiversification(results: EpisodeResult[], queryEmbedding: number[], options: EpisodeMmrOptions | undefined): EpisodeResult[] {
+  if (!options || !options.enabled || results.length < 2 || queryEmbedding.length === 0) {
+    return results;
+  }
+
+  const reorder = maximalMarginalRelevance({
+    queryVector: queryEmbedding,
+    candidates: results.map((result) => ({
+      id: result.episode.id,
+      relevance: result.score,
+      ...(result.episode.embedding ? { embedding: result.episode.embedding } : {}),
+    })),
+    lambda: resolveEpisodeMmrLambda(options.lambda),
+  });
+  if (!reorder.applied) {
+    return results;
+  }
+
+  const resultsById = new Map(results.map((result) => [result.episode.id, result]));
+  return reorder.orderedIds.flatMap((id) => {
+    const result = resultsById.get(id);
+    return result ? [result] : [];
+  });
+}
+
+/** Resolve the effective episode MMR lambda from caller overrides. */
+function resolveEpisodeMmrLambda(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_MMR_LAMBDA;
+  }
+
+  return Math.max(0, Math.min(1, value));
 }
 
 /**

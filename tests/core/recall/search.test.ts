@@ -809,6 +809,147 @@ describe("recall raw evidence gating", () => {
     expect(results[0]?.scores.recency).toBeGreaterThan(results[1]?.scores.recency ?? 0);
   });
 
+  it("records a default mmr trace branch when no embeddings are available on candidates", async () => {
+    const traceSummaries: RecallExecutionTraceSummary[] = [];
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "plain-entry",
+          subject: "team rotation",
+          content: "Taylor is on call this week.",
+        }),
+      ],
+      vectorCandidates: [{ id: "plain-entry", vectorSim: 0.7 }],
+      ftsCandidates: [{ id: "plain-entry", rank: 1, tier: "all_tokens" }],
+    });
+
+    await recall(
+      {
+        text: "who is on call this week",
+        limit: 5,
+      },
+      fixture.ports,
+      {
+        trace: {
+          reportSummary(summary): void {
+            traceSummaries.push(summary);
+          },
+        },
+      },
+    );
+
+    expect(traceSummaries).toHaveLength(1);
+    expect(traceSummaries[0]?.mmr).toEqual({
+      applied: false,
+      lambda: expect.closeTo(0.7, 6),
+      droppedDuplicateCount: 0,
+      reorderedIds: [],
+    });
+  });
+
+  it("diversifies near-duplicate embeddings with MMR when lambda is low", async () => {
+    const traceSummaries: RecallExecutionTraceSummary[] = [];
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "primary",
+          subject: "repeat finding",
+          content: "First write-up of the finding.",
+          embedding: createCosineEmbedding(0.9),
+        }),
+        buildEntry({
+          id: "duplicate",
+          subject: "repeat finding",
+          content: "Slightly reworded write-up of the same finding.",
+          embedding: createCosineEmbedding(0.9),
+        }),
+        buildEntry({
+          id: "diverse",
+          subject: "diverse finding",
+          content: "A note on a different but related topic.",
+          embedding: [0, 1, 0],
+        }),
+      ],
+      vectorCandidates: [
+        { id: "primary", vectorSim: 0.9 },
+        { id: "duplicate", vectorSim: 0.9 },
+        { id: "diverse", vectorSim: 0.4 },
+      ],
+    });
+
+    await recall(
+      {
+        text: "repeat finding",
+        limit: 5,
+      },
+      fixture.ports,
+      {
+        trace: {
+          reportSummary(summary): void {
+            traceSummaries.push(summary);
+          },
+        },
+        rankingPolicy: {
+          mmrLambda: 0.1,
+        },
+      },
+    );
+
+    expect(traceSummaries).toHaveLength(1);
+    expect(traceSummaries[0]?.mmr.applied).toBe(true);
+    expect(traceSummaries[0]?.mmr.lambda).toBeCloseTo(0.1, 6);
+    expect(traceSummaries[0]?.mmr.droppedDuplicateCount).toBeGreaterThan(0);
+    expect(traceSummaries[0]?.mmr.reorderedIds.length).toBeGreaterThan(0);
+  });
+
+  it("treats rankingPolicy.mmr = disabled as a kill switch", async () => {
+    const traceSummaries: RecallExecutionTraceSummary[] = [];
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "primary",
+          subject: "repeat finding",
+          content: "First write-up of the finding.",
+          embedding: createCosineEmbedding(0.9),
+        }),
+        buildEntry({
+          id: "duplicate",
+          subject: "repeat finding",
+          content: "Slightly reworded write-up of the same finding.",
+          embedding: createCosineEmbedding(0.9),
+        }),
+      ],
+      vectorCandidates: [
+        { id: "primary", vectorSim: 0.9 },
+        { id: "duplicate", vectorSim: 0.9 },
+      ],
+    });
+
+    await recall(
+      {
+        text: "repeat finding",
+        limit: 5,
+      },
+      fixture.ports,
+      {
+        trace: {
+          reportSummary(summary): void {
+            traceSummaries.push(summary);
+          },
+        },
+        rankingPolicy: {
+          mmr: "disabled",
+          mmrLambda: 0.1,
+        },
+      },
+    );
+
+    expect(traceSummaries).toHaveLength(1);
+    expect(traceSummaries[0]?.mmr.applied).toBe(false);
+    expect(traceSummaries[0]?.mmr.droppedDuplicateCount).toBe(0);
+    expect(traceSummaries[0]?.mmr.reorderedIds).toEqual([]);
+  });
+
   it("falls back to support observation time before created-at for explicit as-of ranking", async () => {
     const fixture = createRecallPortsFixture({
       entries: [

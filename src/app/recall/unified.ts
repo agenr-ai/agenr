@@ -3,8 +3,10 @@ import type { ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
 import { recall } from "../../core/recall/search.js";
 import { parseTemporalWindow } from "../../core/episode/temporal-window.js";
 import { searchEpisodes } from "../../core/episode/search.js";
-import type { RecallExecutionOptions, RecallExecutionTraceSummary, RecallTraceSink } from "../../core/recall/trace.js";
+import type { EpisodeMmrOptions } from "../../core/episode/types.js";
+import type { RecallExecutionOptions, RecallExecutionTraceSummary, RecallRankingPolicy, RecallTraceSink } from "../../core/recall/trace.js";
 import type { RecallInput } from "../../core/recall/types.js";
+import type { ProcedureMmrOptions } from "../procedures/recall/types.js";
 import { runProcedureRecall } from "../procedures/recall/service.js";
 
 import { flattenClaimCentricRecallFamilies, projectClaimCentricRecallEntries } from "./claim-centric.js";
@@ -118,6 +120,7 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
         parsedTimeWindow,
         topicAnchor,
         embedQuery: deps.embedQuery,
+        rankingPolicy: deps.recallOptions?.rankingPolicy,
       })
     : {
         notices: [],
@@ -133,12 +136,14 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
     notices.push(ENTRY_FILTER_NOTICE);
   }
 
+  const procedureMmr = resolveProcedureMmrOptions(deps.recallOptions?.rankingPolicy);
   const procedureResults = routing.queried.includes("procedures")
     ? await runProcedureRecall(
         {
           text: input.text,
           ...(input.limit !== undefined ? { limit: input.limit } : {}),
           ...(input.threshold !== undefined ? { threshold: input.threshold } : {}),
+          ...(procedureMmr ? { mmr: procedureMmr } : {}),
         },
         {
           db: deps.procedures,
@@ -367,6 +372,7 @@ async function buildEpisodeQueryPlan(params: {
   parsedTimeWindow: ReturnType<typeof parseTemporalWindow>;
   topicAnchor: boolean;
   embedQuery?: (text: string) => Promise<number[]>;
+  rankingPolicy?: RecallRankingPolicy;
 }): Promise<{
   query?: import("../../core/episode/types.js").EpisodeQuery;
   notices: string[];
@@ -388,14 +394,68 @@ async function buildEpisodeQueryPlan(params: {
     };
   }
 
+  const mmr = resolveEpisodeMmrOptions(params.detectedIntent, params.rankingPolicy);
+
   return {
     query: {
       text: params.text,
       ...(params.limit !== undefined ? { limit: params.limit } : {}),
       ...(params.parsedTimeWindow ? { timeWindow: params.parsedTimeWindow.window } : {}),
       ...(embedding ? { embedding } : {}),
+      ...(mmr ? { mmr } : {}),
     },
     notices,
+  };
+}
+
+/**
+ * Decide whether to apply MMR diversification to episode hybrid ranking.
+ *
+ * MMR is enabled for factual and mixed intents, where broad queries can
+ * pull many same-session episodes into the shortlist. Narrative-only or
+ * historical-state intents skip MMR so temporal ordering can dominate.
+ * The kill switch on `rankingPolicy.mmr === "disabled"` always wins.
+ *
+ * @param detectedIntent - Intent derived by the unified recall router.
+ * @param rankingPolicy - Optional ranking policy overrides.
+ * @returns Episode MMR options when enabled, undefined otherwise.
+ */
+function resolveEpisodeMmrOptions(
+  detectedIntent: UnifiedRecallRouting["detectedIntent"],
+  rankingPolicy: RecallRankingPolicy | undefined,
+): EpisodeMmrOptions | undefined {
+  if (rankingPolicy?.mmr === "disabled") {
+    return undefined;
+  }
+
+  if (detectedIntent !== "factual" && detectedIntent !== "mixed") {
+    return undefined;
+  }
+
+  return {
+    enabled: true,
+    ...(typeof rankingPolicy?.mmrLambda === "number" ? { lambda: rankingPolicy.mmrLambda } : {}),
+  };
+}
+
+/**
+ * Resolve MMR diversification options for dedicated procedure recall.
+ *
+ * Procedure recall runs MMR unconditionally when the policy does not
+ * disable it. Procedures routinely share recall text across revisions,
+ * so diversification is useful even for narrow procedural queries.
+ *
+ * @param rankingPolicy - Optional ranking policy overrides.
+ * @returns Procedure MMR options when enabled, undefined otherwise.
+ */
+function resolveProcedureMmrOptions(rankingPolicy: RecallRankingPolicy | undefined): ProcedureMmrOptions | undefined {
+  if (rankingPolicy?.mmr === "disabled") {
+    return undefined;
+  }
+
+  return {
+    enabled: true,
+    ...(typeof rankingPolicy?.mmrLambda === "number" ? { lambda: rankingPolicy.mmrLambda } : {}),
   };
 }
 

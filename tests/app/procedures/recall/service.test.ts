@@ -132,6 +132,57 @@ describe("runProcedureRecall", () => {
     expect(result.candidates.map((candidate) => candidate.procedure.id)).toEqual([pluginCheck.id, sandbox.id]);
   });
 
+  it("reorders near-duplicate procedure candidates when MMR is enabled", async () => {
+    const releaseRevisionA = createProcedure({
+      procedure_key: "agenr/release",
+      title: "Release agenr and publish packages",
+      goal: "Cut an agenr release safely.",
+      embedding: createEmbedding(0, 1),
+    });
+    const releaseRevisionB = createProcedure({
+      procedure_key: "agenr/release",
+      title: "Release agenr and publish packages",
+      goal: "Cut an agenr release safely - revision b.",
+      embedding: createEmbedding(0, 1),
+    });
+    const diverseProcedure = createProcedure({
+      procedure_key: "agenr/sandbox-validation",
+      title: "Validate the sandbox plugin locally",
+      goal: "Run the local sandbox plugin validation workflow.",
+      embedding: createEmbedding(1, 1),
+    });
+    const db = createProcedureDatabase({
+      procedureFtsSearch: vi.fn(async () => [
+        { procedure: releaseRevisionA, rank: -1.3 },
+        { procedure: releaseRevisionB, rank: -1.35 },
+        { procedure: diverseProcedure, rank: -1.4 },
+      ]),
+      procedureVectorSearch: vi.fn(async () => [
+        { procedure: releaseRevisionA, vectorSim: 0.95 },
+        { procedure: releaseRevisionB, vectorSim: 0.94 },
+        { procedure: diverseProcedure, vectorSim: 0.6 },
+      ]),
+    });
+
+    const result = await runProcedureRecall(
+      {
+        text: "how should I publish agenr",
+        limit: 3,
+        mmr: { enabled: true, lambda: 0.1 },
+      },
+      {
+        db,
+        embedQuery: async () => createEmbedding(0, 1),
+      },
+    );
+
+    const diverseIndex = result.candidates.findIndex((candidate) => candidate.procedure.id === diverseProcedure.id);
+    const revisionBIndex = result.candidates.findIndex((candidate) => candidate.procedure.id === releaseRevisionB.id);
+    expect(diverseIndex).toBeGreaterThanOrEqual(0);
+    expect(revisionBIndex).toBeGreaterThanOrEqual(0);
+    expect(diverseIndex).toBeLessThan(revisionBIndex);
+  });
+
   it("orders equal-score candidates deterministically by procedure key", async () => {
     const alpha = createProcedure({
       procedure_key: "agenr/alpha",
