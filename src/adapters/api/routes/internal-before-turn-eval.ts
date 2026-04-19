@@ -1,4 +1,9 @@
-import { runBeforeTurnEvalCase, type BeforeTurnEvalCaseRequest, type BeforeTurnEvalCaseResponse } from "../../../app/evals/before-turn/index.js";
+import {
+  runBeforeTurnEvalCase,
+  type BeforeTurnEvalCaseDependencies,
+  type BeforeTurnEvalCaseRequest,
+  type BeforeTurnEvalCaseResponse,
+} from "../../../app/evals/before-turn/index.js";
 import type { InternalApiRoute } from "../internal-api-route.js";
 import {
   mapBeforeTurnEvalCaseRequestDto,
@@ -16,6 +21,22 @@ export { INTERNAL_BEFORE_TURN_EVAL_ROUTE_PATH };
  * App-layer runner signature used by the internal before-turn eval route.
  */
 export type BeforeTurnEvalCaseRunner = (request: BeforeTurnEvalCaseRequest) => Promise<BeforeTurnEvalCaseResponse>;
+
+/**
+ * Construction options for the internal before-turn eval HTTP route.
+ */
+export interface InternalBeforeTurnEvalRouteOptions {
+  /** App-layer runner used to execute the validated before-turn eval case. */
+  runner?: BeforeTurnEvalCaseRunner;
+  /**
+   * Optional cross-encoder port attached to the default runner so phase 4
+   * rerank is actually exercised through the HTTP seam. Ignored when a
+   * custom `runner` is supplied (callers that mock the runner own the
+   * dependency graph themselves). Typed through the app-layer contract
+   * so the route handler stays thin and does not import core ports.
+   */
+  crossEncoder?: BeforeTurnEvalCaseDependencies["crossEncoder"];
+}
 
 /**
  * Structured boundary error response returned from the HTTP adapter.
@@ -44,10 +65,19 @@ export type InternalBeforeTurnEvalRouteResponse = BeforeTurnEvalCaseResponse | B
 /**
  * Creates the narrow internal before-turn eval HTTP route.
  *
- * @param runner - App-layer service used to execute the validated before-turn eval case.
+ * Accepts either a bare runner (legacy positional form used by tests that
+ * mock the runner) or an options object with an optional cross-encoder
+ * port that the default runner will wire into the recall ports for every
+ * case executed through this route.
+ *
+ * @param optionsOrRunner - Runner override or options bundle.
  * @returns Route definition with a thin JSON handler.
  */
-export function createInternalBeforeTurnEvalRoute(runner: BeforeTurnEvalCaseRunner = runBeforeTurnEvalCase): InternalApiRoute {
+export function createInternalBeforeTurnEvalRoute(optionsOrRunner: BeforeTurnEvalCaseRunner | InternalBeforeTurnEvalRouteOptions = {}): InternalApiRoute {
+  const options: InternalBeforeTurnEvalRouteOptions = typeof optionsOrRunner === "function" ? { runner: optionsOrRunner } : optionsOrRunner;
+  const crossEncoder = options.crossEncoder;
+  const runner: BeforeTurnEvalCaseRunner = options.runner ?? ((request: BeforeTurnEvalCaseRequest) => runBeforeTurnEvalCase(request, { crossEncoder }));
+
   return {
     method: "POST",
     path: INTERNAL_BEFORE_TURN_EVAL_ROUTE_PATH,

@@ -808,9 +808,10 @@ Important notes:
 ## Cross-encoder Wiring Through The Eval Seam
 
 The internal eval HTTP seam resolves an OpenAI-backed cross-encoder port
-at server startup and forwards it to the recall route. This makes the
-phase-4 rerank stage observable through `agenr-evals` without any
-harness-side changes.
+at server startup and forwards it to both the recall and before-turn
+routes. This makes the phase-4 rerank stage observable through
+`agenr-evals` without any harness-side changes, regardless of which
+route an individual case hits.
 
 Behavior:
 
@@ -832,6 +833,10 @@ Fail-closed behavior when the key is absent:
 - Every recall case records
   `diagnostics.crossEncoder.applied = false` and
   `diagnostics.crossEncoder.degradedReason = "not_configured"`
+- Every before-turn case records the same degraded trace on
+  `diagnostics.durableRecallTrace.crossEncoder` because the durable
+  recall stage of before-turn runs through the same core `recall`
+  helper
 - All existing recall manifests (`agenr-recall-http`,
   `agenr-recall-http-initial-corpus`, the claim-centric, degraded,
   memory-freshness, and temporal-slot-policy manifests) keep producing
@@ -843,9 +848,11 @@ When the key resolves:
 - `server.crossEncoder.status` is `"configured"`
 - `src/internal-eval-server.ts` prints
   `Cross-encoder enabled: OpenAI credential resolved at startup.`
-- `diagnostics.crossEncoder.applied` becomes `true` on cases whose
-  retrieved pool exercises the rerank stage and whose
+- `diagnostics.crossEncoder.applied` becomes `true` on recall cases
+  whose retrieved pool exercises the rerank stage and whose
   `rankingPolicy.crossEncoder` is not `"disabled"`
+- `diagnostics.durableRecallTrace.crossEncoder.applied` becomes `true`
+  on before-turn cases under the same conditions
 - `diagnostics.crossEncoder.degradedReason` is absent on successful
   reranks and becomes `"disabled"`, `"provider_error"`, or
   `"no_candidates"` on the explicit degraded paths

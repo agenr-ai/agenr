@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDatabase } from "../../../../src/adapters/db/client.js";
 import { runBeforeTurnEvalCase } from "../../../../src/app/evals/before-turn/index.js";
+import type { CrossEncoderPassage, CrossEncoderPort, CrossEncoderScore } from "../../../../src/core/ports.js";
 
 const tempPaths: string[] = [];
 
@@ -308,6 +309,88 @@ describe("runBeforeTurnEvalCase", () => {
       abstained: false,
     });
     expect(response.diagnostics?.directness).toBeUndefined();
+  });
+
+  it("invokes an injected cross-encoder port for phase-4 rerank when dependencies supply one", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const rankSpy = vi.fn<(query: string, passages: readonly CrossEncoderPassage[]) => Promise<CrossEncoderScore[]>>(async (_query, passages) =>
+      passages.map((passage, index) => ({ id: passage.id, score: 1 - index * 0.1 })),
+    );
+    const crossEncoder: CrossEncoderPort = { rank: rankSpy };
+
+    const response = await runBeforeTurnEvalCase(
+      {
+        caseId: "before-turn-cross-encoder-injection",
+        memoryPool: [
+          {
+            id: "duke-identity",
+            type: "fact",
+            subject: "duke identity",
+            content: "Duke is Jim's dog.",
+            tags: ["dogs", "identity"],
+          },
+          {
+            id: "duke-cousins",
+            type: "fact",
+            subject: "duke cousins",
+            content: "Duke's cousins are Comet and Pepper.",
+            tags: ["dogs", "family"],
+          },
+        ],
+        beforeTurnInput: {
+          currentTurnText: "who is Duke?",
+          policy: {
+            recallThreshold: 0,
+            enableProcedureSuggestion: false,
+          },
+        },
+        options: {
+          includeDiagnostics: true,
+        },
+      },
+      { crossEncoder },
+    );
+
+    expect(response.status).toBe("ok");
+    expect(rankSpy).toHaveBeenCalled();
+    expect(response.diagnostics?.durableRecallTrace?.crossEncoder).toMatchObject({
+      applied: true,
+    });
+    expect(response.diagnostics?.durableRecallTrace?.crossEncoder?.degradedReason).toBeUndefined();
+  });
+
+  it("records durable-recall cross-encoder degradedReason not_configured when no port is injected", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const response = await runBeforeTurnEvalCase({
+      caseId: "before-turn-cross-encoder-absent",
+      memoryPool: [
+        {
+          id: "duke-identity",
+          type: "fact",
+          subject: "duke identity",
+          content: "Duke is Jim's dog.",
+          tags: ["dogs", "identity"],
+        },
+      ],
+      beforeTurnInput: {
+        currentTurnText: "who is Duke?",
+        policy: {
+          recallThreshold: 0,
+          enableProcedureSuggestion: false,
+        },
+      },
+      options: {
+        includeDiagnostics: true,
+      },
+    });
+
+    expect(response.status).toBe("ok");
+    expect(response.diagnostics?.durableRecallTrace?.crossEncoder?.applied).toBe(false);
+    expect(response.diagnostics?.durableRecallTrace?.crossEncoder?.degradedReason).toBe("not_configured");
   });
 
   it("keeps isolated eval state from leaking live database entries into results", async () => {

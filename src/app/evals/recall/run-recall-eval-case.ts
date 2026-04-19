@@ -3,6 +3,7 @@ import { readConfig } from "../../../config.js";
 import type { CrossEncoderPort, EmbeddingPort, RecallPorts } from "../../../core/ports.js";
 import { recall } from "../../../core/recall/index.js";
 import { runUnifiedRecall } from "../../recall/index.js";
+import { attachCrossEncoderPort } from "./attach-cross-encoder.js";
 import { createRecallEvalDiagnosticsCollector } from "./collect-diagnostics.js";
 import type { RecallEvalCaseRequest, RecallEvalCaseResponse } from "./contracts.js";
 import { createInstrumentedRecallPorts } from "./instrumented-recall-ports.js";
@@ -243,45 +244,6 @@ function toErrorDetails(error: unknown): { cause: string } {
 
   return {
     cause: String(error),
-  };
-}
-
-/**
- * Merges an optional cross-encoder port into the recall ports returned
- * from the sandbox. Returns the ports unchanged when no port is supplied
- * so existing behavior (and the `not_configured` trace) is preserved.
- * Uses explicit method delegation because the sandbox returns a class
- * instance and spreading would drop the prototype-bound methods.
- */
-function attachCrossEncoderPort(ports: RecallPorts, crossEncoder: CrossEncoderPort | undefined): RecallPorts {
-  if (!crossEncoder) {
-    return ports;
-  }
-
-  return {
-    async embed(text: string): Promise<number[]> {
-      return ports.embed(text);
-    },
-    async vectorSearch(params) {
-      return ports.vectorSearch(params);
-    },
-    async ftsSearch(params) {
-      return ports.ftsSearch(params);
-    },
-    ...(ports.expandNeighborhood
-      ? {
-          async expandNeighborhood(request) {
-            return ports.expandNeighborhood!(request);
-          },
-        }
-      : {}),
-    crossEncoder,
-    async hydrateEntries(ids: string[]) {
-      return ports.hydrateEntries(ids);
-    },
-    async recordRecallEvents(params) {
-      return ports.recordRecallEvents(params);
-    },
   };
 }
 

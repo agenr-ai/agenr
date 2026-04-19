@@ -107,6 +107,36 @@ describe("startInternalEvalServer", () => {
 
     expect(response.status).toBe(400);
   });
+
+  it("forwards the injected cross-encoder port to the before-turn route for phase-4 rerank", async () => {
+    process.env.OPENAI_API_KEY = "test-key-routes";
+
+    const rankSpy = vi.fn<(query: string, passages: readonly CrossEncoderPassage[]) => Promise<CrossEncoderScore[]>>(async () => []);
+    const crossEncoder: CrossEncoderPort = {
+      rank: rankSpy,
+    };
+
+    const server = await startInternalEvalServer({
+      host: "127.0.0.1",
+      port: 0,
+      crossEncoder,
+    });
+    servers.push(server);
+
+    expect(server.crossEncoder).toEqual({ status: "configured" });
+
+    const response = await fetch(`${server.baseUrl}/internal/evals/before-turn/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        caseId: "before-turn-cross-encoder-wiring",
+        memoryPool: [],
+        beforeTurnInput: {},
+      }),
+    });
+
+    expect(response.status).toBe(400);
+  });
 });
 
 /**

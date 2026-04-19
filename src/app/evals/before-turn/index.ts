@@ -1,4 +1,4 @@
-export { runBeforeTurnEvalCase } from "./run-before-turn-eval-case.js";
+export { runBeforeTurnEvalCase, type BeforeTurnEvalCaseDependencies } from "./run-before-turn-eval-case.js";
 export type {
   BeforeTurnEvalCaseError,
   BeforeTurnEvalCaseDiagnostics,

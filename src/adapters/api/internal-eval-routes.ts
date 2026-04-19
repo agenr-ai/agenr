@@ -8,9 +8,11 @@ import type { InternalApiRoute } from "./internal-api-route.js";
  */
 export interface InternalEvalRoutesOptions {
   /**
-   * Optional cross-encoder port forwarded to the recall route so phase 4
-   * rerank is exercised through the HTTP seam. Omitting the port leaves
-   * the recall pipeline wired exactly as before.
+   * Optional cross-encoder port forwarded to both the recall and
+   * before-turn routes so phase 4 rerank is exercised through the HTTP
+   * seam. Omitting the port leaves both pipelines wired exactly as
+   * before and lets the durable-recall trace record
+   * `degradedReason: "not_configured"` for each route.
    */
   crossEncoder?: CrossEncoderPort;
 }
@@ -22,5 +24,5 @@ export interface InternalEvalRoutesOptions {
  * @returns Stable internal eval routes in deterministic order.
  */
 export function createInternalEvalRoutes(options: InternalEvalRoutesOptions = {}): InternalApiRoute[] {
-  return [createInternalRecallEvalRoute({ crossEncoder: options.crossEncoder }), createInternalBeforeTurnEvalRoute()];
+  return [createInternalRecallEvalRoute({ crossEncoder: options.crossEncoder }), createInternalBeforeTurnEvalRoute({ crossEncoder: options.crossEncoder })];
 }

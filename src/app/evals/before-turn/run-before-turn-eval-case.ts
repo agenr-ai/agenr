@@ -1,7 +1,8 @@
 import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../../adapters/embeddings.js";
 import { readConfig } from "../../../config.js";
 import { runBeforeTurn } from "../../before-turn/index.js";
-import type { EmbeddingPort } from "../../../core/ports.js";
+import type { CrossEncoderPort, EmbeddingPort } from "../../../core/ports.js";
+import { attachCrossEncoderPort } from "../recall/attach-cross-encoder.js";
 import { provisionRecallEvalFixtures } from "../recall/provision-fixtures.js";
 import { provisionRecallEvalProcedureFixtures } from "../recall/provision-procedure-fixtures.js";
 import { setupRecallEvalSandbox } from "../recall/sandbox.js";
@@ -9,12 +10,34 @@ import type { BeforeTurnEvalCaseRequest, BeforeTurnEvalCaseResponse, BeforeTurnE
 import { buildBeforeTurnEvalErrorResponse, buildBeforeTurnEvalSuccessResponse, maybeRenderBeforeTurnPatch } from "./normalize-response.js";
 
 /**
+ * Optional runtime dependencies injected by the HTTP adapter.
+ *
+ * The eval server constructs these once at startup so every before-turn
+ * case shares the same cross-encoder port without rebuilding it
+ * per-request. Mirrors the recall runner's dependency shape so both eval
+ * flows exercise phase-4 rerank through the same wiring seam.
+ */
+export interface BeforeTurnEvalCaseDependencies {
+  /**
+   * Optional cross-encoder port merged into the recall ports produced by
+   * the sandbox before being handed to `runBeforeTurn`. When omitted, the
+   * durable-recall trace records `degradedReason: "not_configured"` on
+   * its cross-encoder branch just like the recall runner.
+   */
+  crossEncoder?: CrossEncoderPort;
+}
+
+/**
  * Executes one before-turn eval case behind a stable app-layer service seam.
  *
  * @param request - Typed before-turn eval case request from the HTTP adapter.
+ * @param dependencies - Optional runtime dependencies wired by the HTTP adapter.
  * @returns Stable response envelope for the requested before-turn eval case.
  */
-export async function runBeforeTurnEvalCase(request: BeforeTurnEvalCaseRequest): Promise<BeforeTurnEvalCaseResponse> {
+export async function runBeforeTurnEvalCase(
+  request: BeforeTurnEvalCaseRequest,
+  dependencies: BeforeTurnEvalCaseDependencies = {},
+): Promise<BeforeTurnEvalCaseResponse> {
   const startedAt = Date.now();
   const provisionedAt = new Date(startedAt).toISOString();
   let sandbox: Awaited<ReturnType<typeof setupRecallEvalSandbox>> | undefined;
@@ -126,8 +149,12 @@ export async function runBeforeTurnEvalCase(request: BeforeTurnEvalCaseRequest):
     const beforeTurnStartedAt = Date.now();
     try {
       const embeddingSupport = getEmbeddingSupport();
+      const sandboxRecallPorts = sandbox.createRecallPorts(
+        embeddingSupport.port ?? createUnavailableEmbeddingPort(embeddingSupport.error ?? "Embeddings are unavailable."),
+      );
+      const recallPorts = attachCrossEncoderPort(sandboxRecallPorts, dependencies.crossEncoder);
       const patch = await runBeforeTurn(request.beforeTurnInput, {
-        recall: sandbox.createRecallPorts(embeddingSupport.port ?? createUnavailableEmbeddingPort(embeddingSupport.error ?? "Embeddings are unavailable.")),
+        recall: recallPorts,
         procedures: sandbox.procedureDatabase,
         embedQuery: embeddingSupport.port
           ? async (text: string) => {

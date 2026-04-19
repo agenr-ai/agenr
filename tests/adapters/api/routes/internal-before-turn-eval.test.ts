@@ -5,6 +5,7 @@ import {
   type BeforeTurnEvalCaseRunner,
   INTERNAL_BEFORE_TURN_EVAL_ROUTE_PATH,
 } from "../../../../src/adapters/api/routes/internal-before-turn-eval.js";
+import type { CrossEncoderPort, CrossEncoderScore } from "../../../../src/core/ports.js";
 
 describe("createInternalBeforeTurnEvalRoute", () => {
   it("exposes the expected internal POST route and returns JSON from the runner", async () => {
@@ -19,6 +20,8 @@ describe("createInternalBeforeTurnEvalRoute", () => {
           durableMemory: [],
           diagnostics: {
             recentTurnCount: 0,
+            queryVariants: [],
+            turnSignalLabels: [],
             durableRecallUsed: false,
             durableRecallCandidateCount: 0,
             procedureRecallUsed: false,
@@ -78,6 +81,8 @@ describe("createInternalBeforeTurnEvalRoute", () => {
           durableMemory: [],
           diagnostics: {
             recentTurnCount: 0,
+            queryVariants: [],
+            turnSignalLabels: [],
             durableRecallUsed: false,
             durableRecallCandidateCount: 0,
             procedureRecallUsed: false,
@@ -89,6 +94,84 @@ describe("createInternalBeforeTurnEvalRoute", () => {
         },
       },
     });
+  });
+
+  it("accepts the options-form constructor with a custom runner for legacy test wiring", async () => {
+    const runner = vi.fn<BeforeTurnEvalCaseRunner>(async (request) => ({
+      status: "ok",
+      caseId: request.caseId,
+      output: {
+        abstained: true,
+        selectedEntryIds: [],
+        selectedProcedureKey: null,
+        patch: {
+          durableMemory: [],
+          diagnostics: {
+            recentTurnCount: 0,
+            queryVariants: [],
+            turnSignalLabels: [],
+            durableRecallUsed: false,
+            durableRecallCandidateCount: 0,
+            procedureRecallUsed: false,
+            procedureCandidateCount: 0,
+            abstained: true,
+            abstentionReasons: ["stub"],
+            notices: [],
+          },
+        },
+      },
+    }));
+    const route = createInternalBeforeTurnEvalRoute({ runner });
+
+    const response = await route.handler(
+      new Request(`http://localhost${INTERNAL_BEFORE_TURN_EVAL_ROUTE_PATH}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          caseId: "case-options-form",
+          memoryPool: [],
+          beforeTurnInput: {
+            currentTurnText: "hello",
+          },
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(runner).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts the options-form constructor with an optional cross-encoder port", async () => {
+    const crossEncoder: CrossEncoderPort = {
+      async rank(): Promise<CrossEncoderScore[]> {
+        return [];
+      },
+    };
+    const route = createInternalBeforeTurnEvalRoute({ crossEncoder });
+
+    expect(route.method).toBe("POST");
+    expect(route.path).toBe(INTERNAL_BEFORE_TURN_EVAL_ROUTE_PATH);
+
+    const response = await route.handler(
+      new Request(`http://localhost${INTERNAL_BEFORE_TURN_EVAL_ROUTE_PATH}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          caseId: "case-cross-encoder-options",
+          memoryPool: [],
+          beforeTurnInput: {},
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { status: string; caseId?: string };
+    expect(body.status).toBe("error");
+    expect(body.caseId).toBe("case-cross-encoder-options");
   });
 
   it("maps invalid requests into a 400 boundary response", async () => {
