@@ -1,4 +1,9 @@
-import { runRecallEvalCase, type RecallEvalCaseRequest, type RecallEvalCaseResponse } from "../../../app/evals/recall/index.js";
+import {
+  runRecallEvalCase,
+  type RecallEvalCaseDependencies,
+  type RecallEvalCaseRequest,
+  type RecallEvalCaseResponse,
+} from "../../../app/evals/recall/index.js";
 import type { InternalApiRoute } from "../internal-api-route.js";
 import {
   mapRecallEvalCaseRequestDto,
@@ -16,6 +21,22 @@ export { INTERNAL_RECALL_EVAL_ROUTE_PATH };
  * App-layer runner signature used by the internal recall eval route.
  */
 export type RecallEvalCaseRunner = (request: RecallEvalCaseRequest) => Promise<RecallEvalCaseResponse>;
+
+/**
+ * Construction options for the internal recall eval HTTP route.
+ */
+export interface InternalRecallEvalRouteOptions {
+  /** App-layer runner used to execute the validated recall eval case. */
+  runner?: RecallEvalCaseRunner;
+  /**
+   * Optional cross-encoder port attached to the default runner so phase 4
+   * rerank is actually exercised through the HTTP seam. Ignored when a
+   * custom `runner` is supplied (callers that mock the runner own the
+   * dependency graph themselves). Typed through the app-layer contract
+   * so the route handler stays thin and does not import core ports.
+   */
+  crossEncoder?: RecallEvalCaseDependencies["crossEncoder"];
+}
 
 /**
  * Structured boundary error response returned from the HTTP adapter.
@@ -49,10 +70,19 @@ const INTERNAL_RECALL_EVAL_ROUTE: Pick<InternalApiRoute, "method" | "path"> = {
 /**
  * Creates the narrow internal recall eval HTTP route.
  *
- * @param runner - App-layer service used to execute the validated recall eval case.
+ * Accepts either a bare runner (legacy positional form used by tests that
+ * mock the runner) or an options object with an optional cross-encoder
+ * port that the default runner will wire into the recall ports for every
+ * case executed through this route.
+ *
+ * @param optionsOrRunner - Runner override or options bundle.
  * @returns Route definition with a thin JSON handler.
  */
-export function createInternalRecallEvalRoute(runner: RecallEvalCaseRunner = runRecallEvalCase): InternalApiRoute {
+export function createInternalRecallEvalRoute(optionsOrRunner: RecallEvalCaseRunner | InternalRecallEvalRouteOptions = {}): InternalApiRoute {
+  const options: InternalRecallEvalRouteOptions = typeof optionsOrRunner === "function" ? { runner: optionsOrRunner } : optionsOrRunner;
+  const crossEncoder = options.crossEncoder;
+  const runner: RecallEvalCaseRunner = options.runner ?? ((request: RecallEvalCaseRequest) => runRecallEvalCase(request, { crossEncoder }));
+
   return {
     ...INTERNAL_RECALL_EVAL_ROUTE,
     handler: async (request: Request): Promise<Response> => {

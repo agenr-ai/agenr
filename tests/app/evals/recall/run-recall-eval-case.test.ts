@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDatabase } from "../../../../src/adapters/db/client.js";
 import { runRecallEvalCase } from "../../../../src/app/evals/recall/index.js";
+import type { CrossEncoderPassage, CrossEncoderPort, CrossEncoderScore } from "../../../../src/core/ports.js";
 
 const tempPaths: string[] = [];
 
@@ -1266,6 +1267,82 @@ describe("runRecallEvalCase", () => {
 
     expect(response.status).toBe("ok");
     expect(response.diagnostics?.rrf?.rankConstant).toBe(30);
+  });
+
+  it("invokes an injected cross-encoder port for phase-4 rerank when dependencies supply one", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const rankSpy = vi.fn<(query: string, passages: readonly CrossEncoderPassage[]) => Promise<CrossEncoderScore[]>>(async (_query, passages) =>
+      passages.map((passage, index) => ({ id: passage.id, score: 1 - index * 0.1 })),
+    );
+    const crossEncoder: CrossEncoderPort = { rank: rankSpy };
+
+    const response = await runRecallEvalCase(
+      {
+        caseId: "case-cross-encoder-injection",
+        memoryPool: [
+          {
+            id: "policy-a",
+            type: "decision",
+            subject: "pager policy",
+            content: "Jordan is on call.",
+            created_at: "2026-03-10T00:00:00.000Z",
+          },
+          {
+            id: "policy-b",
+            type: "decision",
+            subject: "pager policy",
+            content: "Taylor is on call.",
+            created_at: "2026-03-11T00:00:00.000Z",
+          },
+        ],
+        recallRequest: {
+          text: "who is on call this week",
+          limit: 3,
+        },
+        options: {
+          includeDiagnostics: true,
+        },
+      },
+      { crossEncoder },
+    );
+
+    expect(response.status).toBe("ok");
+    expect(rankSpy).toHaveBeenCalled();
+    expect(response.diagnostics?.crossEncoder).toMatchObject({
+      applied: true,
+    });
+    expect(response.diagnostics?.crossEncoder?.degradedReason).toBeUndefined();
+  });
+
+  it("records degradedReason not_configured when the dependencies omit a cross-encoder port", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const response = await runRecallEvalCase({
+      caseId: "case-cross-encoder-absent",
+      memoryPool: [
+        {
+          id: "policy-a",
+          type: "decision",
+          subject: "pager policy",
+          content: "Jordan is on call.",
+          created_at: "2026-03-10T00:00:00.000Z",
+        },
+      ],
+      recallRequest: {
+        text: "who is on call",
+        limit: 3,
+      },
+      options: {
+        includeDiagnostics: true,
+      },
+    });
+
+    expect(response.status).toBe("ok");
+    expect(response.diagnostics?.crossEncoder?.applied).toBe(false);
+    expect(response.diagnostics?.crossEncoder?.degradedReason).toBe("not_configured");
   });
 
   it("preserves explicit as-of resolution metadata in claim-centric eval responses", async () => {

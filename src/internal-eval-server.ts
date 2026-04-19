@@ -16,6 +16,14 @@ const server = await startInternalEvalServer({ host, port });
 console.log(`Internal eval dev server listening at ${server.baseUrl}`);
 console.log(`Serving routes: ${server.routePaths.join(", ")}`);
 
+if (server.crossEncoder.status === "configured") {
+  console.log("Cross-encoder enabled: OpenAI credential resolved at startup.");
+} else if (server.crossEncoder.status === "not_configured") {
+  console.log("Cross-encoder disabled: OPENAI_API_KEY not configured.");
+} else {
+  console.warn(`Cross-encoder unavailable: ${server.crossEncoder.reason ?? "construction failed"}.`);
+}
+
 installSignalHandler("SIGINT");
 installSignalHandler("SIGTERM");
 

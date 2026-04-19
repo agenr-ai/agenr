@@ -1,6 +1,6 @@
 import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../../adapters/embeddings.js";
 import { readConfig } from "../../../config.js";
-import type { EmbeddingPort, RecallPorts } from "../../../core/ports.js";
+import type { CrossEncoderPort, EmbeddingPort, RecallPorts } from "../../../core/ports.js";
 import { recall } from "../../../core/recall/index.js";
 import { runUnifiedRecall } from "../../recall/index.js";
 import { createRecallEvalDiagnosticsCollector } from "./collect-diagnostics.js";
@@ -13,12 +13,28 @@ import { provisionRecallEvalProcedureFixtures } from "./provision-procedure-fixt
 import { setupRecallEvalSandbox } from "./sandbox.js";
 
 /**
+ * Optional runtime dependencies injected by the HTTP adapter.
+ *
+ * The eval server constructs these once at startup so every case shares
+ * the same cross-encoder port without rebuilding it per-request.
+ */
+export interface RecallEvalCaseDependencies {
+  /**
+   * Optional cross-encoder port merged into the recall ports produced by
+   * the sandbox. When omitted, recall still runs but the core helper
+   * records `degradedReason: "not_configured"` on its cross-encoder trace.
+   */
+  crossEncoder?: CrossEncoderPort;
+}
+
+/**
  * Executes one recall eval case behind a stable app-layer service seam.
  *
  * @param request - Typed recall eval case request from the HTTP adapter.
+ * @param dependencies - Optional runtime dependencies wired by the HTTP adapter.
  * @returns Stable response envelope for the requested recall eval case.
  */
-export async function runRecallEvalCase(request: RecallEvalCaseRequest): Promise<RecallEvalCaseResponse> {
+export async function runRecallEvalCase(request: RecallEvalCaseRequest, dependencies: RecallEvalCaseDependencies = {}): Promise<RecallEvalCaseResponse> {
   const startedAt = Date.now();
   const provisionedAt = new Date(startedAt).toISOString();
   const diagnostics = createRecallEvalDiagnosticsCollector(request);
@@ -135,7 +151,9 @@ export async function runRecallEvalCase(request: RecallEvalCaseRequest): Promise
         request.options?.faultInjection?.queryEmbeddingFailure === true
           ? createUnavailableEmbeddingPort("Injected recall eval query embedding failure.")
           : (embeddingSupport.port ?? createUnavailableEmbeddingPort(embeddingSupport.error ?? "Embeddings are unavailable."));
-      const basePorts = applyRecallEvalFaultInjection(sandbox.createRecallPorts(recallEmbeddingPort), request);
+      const sandboxPorts = sandbox.createRecallPorts(recallEmbeddingPort);
+      const portsWithCrossEncoder = attachCrossEncoderPort(sandboxPorts, dependencies.crossEncoder);
+      const basePorts = applyRecallEvalFaultInjection(portsWithCrossEncoder, request);
       const recallPorts = diagnostics.isObservationEnabled() ? createInstrumentedRecallPorts(basePorts, diagnostics) : basePorts;
       const slotPolicyConfig = request.unified?.memoryPolicy?.slotPolicies;
       const rankingPolicy = request.recallRequest.rankingPolicy;
@@ -225,6 +243,45 @@ function toErrorDetails(error: unknown): { cause: string } {
 
   return {
     cause: String(error),
+  };
+}
+
+/**
+ * Merges an optional cross-encoder port into the recall ports returned
+ * from the sandbox. Returns the ports unchanged when no port is supplied
+ * so existing behavior (and the `not_configured` trace) is preserved.
+ * Uses explicit method delegation because the sandbox returns a class
+ * instance and spreading would drop the prototype-bound methods.
+ */
+function attachCrossEncoderPort(ports: RecallPorts, crossEncoder: CrossEncoderPort | undefined): RecallPorts {
+  if (!crossEncoder) {
+    return ports;
+  }
+
+  return {
+    async embed(text: string): Promise<number[]> {
+      return ports.embed(text);
+    },
+    async vectorSearch(params) {
+      return ports.vectorSearch(params);
+    },
+    async ftsSearch(params) {
+      return ports.ftsSearch(params);
+    },
+    ...(ports.expandNeighborhood
+      ? {
+          async expandNeighborhood(request) {
+            return ports.expandNeighborhood!(request);
+          },
+        }
+      : {}),
+    crossEncoder,
+    async hydrateEntries(ids: string[]) {
+      return ports.hydrateEntries(ids);
+    },
+    async recordRecallEvents(params) {
+      return ports.recordRecallEvents(params);
+    },
   };
 }
 

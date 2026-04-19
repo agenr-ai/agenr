@@ -282,6 +282,81 @@ describe("createInternalRecallEvalRoute", () => {
     });
   });
 
+  it("surfaces rrf/neighborhood/mmr/crossEncoder diagnostics branches through the HTTP route for attribution sweeps", async () => {
+    const tempRoot = await createTempDirectory("agenr-eval-route-attribution-");
+
+    process.env.OPENAI_API_KEY = "test-key";
+    process.env.AGENR_DB_PATH = path.join(tempRoot, "live.sqlite");
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const route = createInternalRecallEvalRoute();
+    const response = await route.handler(
+      new Request("http://localhost/internal/evals/recall/run", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          caseId: "case-route-attribution-branches",
+          sandbox: {
+            root: path.join(tempRoot, "sandbox"),
+            preserve: false,
+          },
+          memoryPool: [
+            {
+              id: "policy-current",
+              type: "decision",
+              subject: "pager policy",
+              content: "Taylor is on call this week.",
+              created_at: "2026-03-11T00:00:00.000Z",
+            },
+          ],
+          recallRequest: {
+            text: "who is on call this week",
+            limit: 3,
+          },
+          options: {
+            includeDiagnostics: true,
+          },
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { diagnostics?: Record<string, unknown> };
+
+    expect(body.diagnostics?.rrf).toMatchObject({
+      applied: expect.any(Boolean),
+      channelCount: expect.any(Number),
+      rankConstant: expect.any(Number),
+      fusedCandidateCount: expect.any(Number),
+      maxFusedScore: expect.any(Number),
+    });
+    expect(body.diagnostics?.neighborhood).toMatchObject({
+      expansionRequested: expect.any(Boolean),
+      expansionAvailable: expect.any(Boolean),
+      familiesRequested: expect.any(Array),
+      includeRetired: expect.any(Boolean),
+      seedIds: expect.any(Array),
+      expansionCandidates: expect.any(Number),
+      strongSeedIds: expect.any(Array),
+      rerankBoostedIds: expect.any(Array),
+    });
+    expect(body.diagnostics?.mmr).toMatchObject({
+      applied: expect.any(Boolean),
+      lambda: expect.any(Number),
+      droppedDuplicateCount: expect.any(Number),
+      reorderedIds: expect.any(Array),
+    });
+    expect(body.diagnostics?.crossEncoder).toMatchObject({
+      applied: expect.any(Boolean),
+      k: expect.any(Number),
+      alpha: expect.any(Number),
+      latencyMs: expect.any(Number),
+      rescoredIds: expect.any(Array),
+    });
+  });
+
   it("forwards internal fault-injection options through the HTTP boundary", async () => {
     const runner = vi.fn<RecallEvalCaseRunner>(async (request) => ({
       status: "ok",

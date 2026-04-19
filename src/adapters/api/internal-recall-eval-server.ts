@@ -1,4 +1,5 @@
-import { startInternalEvalServer, type InternalEvalServerOptions } from "./internal-eval-server.js";
+import type { CrossEncoderPort } from "../../core/ports.js";
+import { startInternalEvalServer, type CrossEncoderResolution, type InternalEvalServerOptions } from "./internal-eval-server.js";
 import { INTERNAL_RECALL_EVAL_ROUTE_PATH } from "./routes/internal-recall-eval.js";
 
 /**
@@ -23,6 +24,10 @@ export interface InternalRecallEvalServerOptions {
   port?: number;
   /** Optional shared-route override used by tests. */
   routes?: InternalEvalServerOptions["routes"];
+  /** Optional cross-encoder port override forwarded to the shared server. */
+  crossEncoder?: CrossEncoderPort;
+  /** When false, skip best-effort OpenAI cross-encoder construction. */
+  autoResolveCrossEncoder?: boolean;
 }
 
 /**
@@ -39,6 +44,8 @@ export interface InternalRecallEvalServerHandle {
   routePaths: string[];
   /** Base URL developers should point `agenr-evals` at. */
   baseUrl: string;
+  /** Cross-encoder resolution outcome captured at startup. */
+  crossEncoder: CrossEncoderResolution;
   /** Stops the HTTP server and releases the port. */
   close(): Promise<void>;
 }
@@ -54,6 +61,8 @@ export async function startInternalRecallEvalServer(options: InternalRecallEvalS
     host: options.host ?? DEFAULT_INTERNAL_RECALL_EVAL_HOST,
     port: options.port ?? DEFAULT_INTERNAL_RECALL_EVAL_PORT,
     routes: options.routes,
+    ...(options.crossEncoder ? { crossEncoder: options.crossEncoder } : {}),
+    ...(options.autoResolveCrossEncoder === false ? { autoResolveCrossEncoder: false } : {}),
   });
 
   return {
@@ -62,6 +71,7 @@ export async function startInternalRecallEvalServer(options: InternalRecallEvalS
     routePath: INTERNAL_RECALL_EVAL_ROUTE_PATH,
     routePaths: server.routePaths,
     baseUrl: server.baseUrl,
+    crossEncoder: server.crossEncoder,
     close: server.close,
   };
 }

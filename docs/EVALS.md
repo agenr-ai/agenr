@@ -462,6 +462,7 @@ The runtime entry point:
 - resolves host and port from the environment
 - starts the local-only HTTP server
 - prints the base URL plus served route paths
+- prints a single-line cross-encoder status reflecting the startup resolution (`configured`, `not_configured`, or `unavailable`)
 - installs `SIGINT` and `SIGTERM` handlers for graceful shutdown
 
 ### 2. HTTP boundary validation
@@ -800,6 +801,72 @@ Important notes:
 - `embeddingModel` falls back to `text-embedding-3-small`
 - `AGENR_CONFIG_PATH` overrides the config file location
 - the normal configured `dbPath` is not used for case execution because each eval case creates its own isolated sandbox database
+- the eval server also resolves an OpenAI cross-encoder port at startup to exercise the phase-4 rerank stage; see the next section for the exact rules
+
+## Cross-encoder Wiring Through The Eval Seam
+
+The internal eval HTTP seam resolves an OpenAI-backed cross-encoder port
+at server startup and forwards it to the recall route. This makes the
+phase-4 rerank stage observable through `agenr-evals` without any
+harness-side changes.
+
+Behavior:
+
+- `startInternalEvalServer` calls `resolveCrossEncoderApiKey(config)` and
+  `createOpenAICrossEncoder({ apiKey, model: resolveModel(config, "cross_encoder").modelId })`
+- The credential search order mirrors embeddings:
+  `config.credentials.openaiApiKey`, then `OPENAI_API_KEY`
+- The cross-encoder model is driven by `config.crossEncoderModel` through
+  `resolveModel(config, "cross_encoder")`, with the adapter fallback
+  baked into `createOpenAICrossEncoder`
+- The construction is best-effort. Any resolution failure leaves the
+  port undefined so recall execution keeps working
+
+Fail-closed behavior when the key is absent:
+
+- `server.crossEncoder.status` is `"not_configured"` on the server handle
+- `src/internal-eval-server.ts` prints
+  `Cross-encoder disabled: OPENAI_API_KEY not configured.`
+- Every recall case records
+  `diagnostics.crossEncoder.applied = false` and
+  `diagnostics.crossEncoder.degradedReason = "not_configured"`
+- All existing recall manifests (`agenr-recall-http`,
+  `agenr-recall-http-initial-corpus`, the claim-centric, degraded,
+  memory-freshness, and temporal-slot-policy manifests) keep producing
+  the same response shape; only the `crossEncoder` trace branch
+  degrades to `not_configured`
+
+When the key resolves:
+
+- `server.crossEncoder.status` is `"configured"`
+- `src/internal-eval-server.ts` prints
+  `Cross-encoder enabled: OpenAI credential resolved at startup.`
+- `diagnostics.crossEncoder.applied` becomes `true` on cases whose
+  retrieved pool exercises the rerank stage and whose
+  `rankingPolicy.crossEncoder` is not `"disabled"`
+- `diagnostics.crossEncoder.degradedReason` is absent on successful
+  reranks and becomes `"disabled"`, `"provider_error"`, or
+  `"no_candidates"` on the explicit degraded paths
+
+Practical implications for harness authors:
+
+- Harnesses that want to A/B the rerank should send
+  `rankingPolicy.crossEncoder = "disabled"` rather than unsetting
+  `OPENAI_API_KEY`, because the global key also gates embeddings
+- Harnesses that want to gauge cross-encoder latency should read
+  `diagnostics.crossEncoder.rerankLatencyMs` (or `latencyMs` in the core
+  trace, which feeds the diagnostics branch)
+- Running the full eval suite with the key configured costs more than
+  running it with the key absent because every qualifying case now makes
+  additional chat-completions calls; plan for the extra wall-clock
+
+Eval-corpus reminder:
+
+- The recall corpus is the decision surface for every knob tuned in the
+  `recall-regression-resolution` plan. If production traffic exercises
+  patterns the corpus does not cover, cross-encoder (and MMR, and RRF)
+  defaults can overfit to the corpus. Track this explicitly when
+  interpreting aggregate pass rates.
 
 ## Good files to read before changing evals
 

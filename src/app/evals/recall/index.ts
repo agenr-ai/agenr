@@ -1,4 +1,4 @@
-export { runRecallEvalCase } from "./run-recall-eval-case.js";
+export { runRecallEvalCase, type RecallEvalCaseDependencies } from "./run-recall-eval-case.js";
 export type {
   RecallEvalCandidateCounts,
   RecallEvalCaseDiagnostics,

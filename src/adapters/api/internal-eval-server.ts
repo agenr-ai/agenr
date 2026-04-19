@@ -1,5 +1,9 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
+import { readConfig, type AgenrConfig } from "../../config.js";
+import type { CrossEncoderPort } from "../../core/ports.js";
+import { createOpenAICrossEncoder, resolveCrossEncoderApiKey } from "../cross-encoder/openai-cross-encoder.js";
+import { resolveModel } from "../llm.js";
 import { createInternalEvalRoutes } from "./internal-eval-routes.js";
 import type { InternalApiRoute } from "./internal-api-route.js";
 
@@ -16,6 +20,28 @@ const DEFAULT_INTERNAL_EVAL_PORT = 4010;
 export { DEFAULT_INTERNAL_EVAL_HOST, DEFAULT_INTERNAL_EVAL_PORT };
 
 /**
+ * Discriminated outcome of cross-encoder resolution at server startup.
+ *
+ * `configured` - OpenAI credential resolved and port constructed.
+ * `not_configured` - No credential available; recall reports
+ *   `degradedReason: "not_configured"` for every case.
+ * `error` - A credential was present but construction failed; the server
+ *   continues without the port so eval execution is never blocked.
+ */
+export type CrossEncoderResolutionStatus = "configured" | "not_configured" | "error";
+
+/**
+ * Cross-encoder resolution result surfaced on the server handle so CLI
+ * entry points can print a deterministic startup message.
+ */
+export interface CrossEncoderResolution {
+  /** Stable status code for logging and assertions. */
+  status: CrossEncoderResolutionStatus;
+  /** Human-readable reason for non-configured or error statuses. */
+  reason?: string;
+}
+
+/**
  * Startup options for the internal eval dev server.
  */
 export interface InternalEvalServerOptions {
@@ -25,6 +51,19 @@ export interface InternalEvalServerOptions {
   port?: number;
   /** Optional route override used by tests. */
   routes?: InternalApiRoute[];
+  /**
+   * Optional cross-encoder port override. When provided, the server skips
+   * its own `OPENAI_API_KEY` resolution and wires the injected port
+   * instead. Tests use this to pin behavior without relying on process
+   * environment variables.
+   */
+  crossEncoder?: CrossEncoderPort;
+  /**
+   * When false, skip the best-effort OpenAI cross-encoder construction at
+   * startup. Defaults to true so production `node dist/internal-eval-server.js`
+   * invocations wire the rerank stage automatically when the key is set.
+   */
+  autoResolveCrossEncoder?: boolean;
 }
 
 /**
@@ -39,6 +78,12 @@ export interface InternalEvalServerHandle {
   routePaths: string[];
   /** Base URL developers should point eval harnesses at. */
   baseUrl: string;
+  /**
+   * Cross-encoder resolution outcome captured at startup. Exposed so the
+   * CLI entry point can emit a single-line status message without
+   * adapters writing to process-global logs.
+   */
+  crossEncoder: CrossEncoderResolution;
   /** Stops the HTTP server and releases the port. */
   close(): Promise<void>;
 }
@@ -52,7 +97,8 @@ export interface InternalEvalServerHandle {
 export async function startInternalEvalServer(options: InternalEvalServerOptions = {}): Promise<InternalEvalServerHandle> {
   const host = options.host ?? DEFAULT_INTERNAL_EVAL_HOST;
   const port = options.port ?? DEFAULT_INTERNAL_EVAL_PORT;
-  const routes = options.routes ?? createInternalEvalRoutes();
+  const crossEncoderResolution = resolveCrossEncoderPort(options);
+  const routes = options.routes ?? createInternalEvalRoutes({ crossEncoder: crossEncoderResolution.port });
   const server = createServer((request, response) => {
     void handleRequest(request, response, routes, host, port).catch(() => {
       if (response.headersSent !== true) {
@@ -77,10 +123,93 @@ export async function startInternalEvalServer(options: InternalEvalServerOptions
     port: address.port,
     routePaths: routes.map((route) => route.path),
     baseUrl: `http://${formatHostForUrl(host)}:${address.port}`,
+    crossEncoder: crossEncoderResolution.result,
     close: async (): Promise<void> => {
       await closeServer(server);
     },
   };
+}
+
+/**
+ * Resolves the cross-encoder port used by the recall route at startup.
+ *
+ * Honors an explicit `options.crossEncoder` override first, then falls
+ * back to a best-effort `OPENAI_API_KEY` resolution that mirrors the CLI
+ * and OpenClaw runtime paths. Fails closed: any resolution failure
+ * downgrades to `undefined` so missing credentials never break eval
+ * execution.
+ */
+function resolveCrossEncoderPort(options: InternalEvalServerOptions): {
+  port: CrossEncoderPort | undefined;
+  result: CrossEncoderResolution;
+} {
+  if (options.crossEncoder) {
+    return {
+      port: options.crossEncoder,
+      result: { status: "configured" },
+    };
+  }
+
+  if (options.autoResolveCrossEncoder === false) {
+    return {
+      port: undefined,
+      result: {
+        status: "not_configured",
+        reason: "Auto-resolution disabled by caller.",
+      },
+    };
+  }
+
+  let config: AgenrConfig;
+  try {
+    config = readConfig();
+  } catch (error) {
+    return {
+      port: undefined,
+      result: {
+        status: "error",
+        reason: toReason(error, "Failed to read agenr config for cross-encoder resolution."),
+      },
+    };
+  }
+
+  let apiKey: string;
+  try {
+    apiKey = resolveCrossEncoderApiKey(config);
+  } catch (error) {
+    return {
+      port: undefined,
+      result: {
+        status: "not_configured",
+        reason: toReason(error, "OPENAI_API_KEY not configured."),
+      },
+    };
+  }
+
+  try {
+    const { modelId } = resolveModel(config, "cross_encoder");
+    return {
+      port: createOpenAICrossEncoder({ apiKey, model: modelId }),
+      result: { status: "configured" },
+    };
+  } catch (error) {
+    return {
+      port: undefined,
+      result: {
+        status: "error",
+        reason: toReason(error, "Failed to construct OpenAI cross-encoder adapter."),
+      },
+    };
+  }
+}
+
+/** Normalizes thrown errors into a stable reason string for server-start logs. */
+function toReason(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.length > 0) {
+    return error.message;
+  }
+
+  return fallback;
 }
 
 const handleRequest = async (
