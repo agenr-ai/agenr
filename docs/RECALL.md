@@ -317,7 +317,9 @@ Important boundaries:
 - durable memory uses the same shared entry recall engine described in this document
 - proactive procedure suggestion reuses the dedicated procedure recall service and only surfaces a canonical leader
 - before-turn recall now requires stronger factual, procedural, or task signal before it runs at all
-- before-turn durable recall normally surfaces a single durable item and only expands when all surfaced items are very high confidence
+- before-turn durable recall normally surfaces a single durable item and only expands when all surfaced items clear the recalibrated high-confidence score gate
+- the high-confidence gate also controls whether continuation-style turns like "what should we do next?" retry with a compact contextual anchor when the bare current-turn query surfaces a borderline leader
+- both behaviors share `DEFAULT_HIGH_CONFIDENCE_RECALL_THRESHOLD` in `src/app/before-turn/service.ts`; see the "Ranking policy tuning history" section below for the pre- and post-RRF values
 - before-turn prompt sections stay visibly separate from session-start continuity and durable-memory sections
 - when embeddings are unavailable, durable and procedure selection degrade to lexical-only ranking instead of failing the turn
 
@@ -860,6 +862,24 @@ Telemetry failures do not fail recall:
 - the core recall function also wraps the telemetry call in `.catch(() => undefined)`
 
 So the user still gets results even when telemetry writes fail.
+
+## Ranking policy tuning history
+
+This section records before/after values for ranking-policy defaults that have been intentionally tuned after the graphiti-recall-borrows work landed. Every change cites the regression it targets so future tuning passes start from a documented state.
+
+### `DEFAULT_HIGH_CONFIDENCE_RECALL_THRESHOLD` (before-turn)
+
+- File: `src/app/before-turn/service.ts`
+- Gates: `shouldRetryWeakPrimaryWithContext()` contextual-fallback retry, and the `selectDurablePatchItems()` expansion past the one-item cap.
+- Before: `0.85` (tuned for the pre-RRF continuous relevance blend).
+- After: `0.92` (tuned for the new RRF-driven composite score distribution).
+- Reason: reciprocal rank fusion in `src/core/recall/fusion.ts` normalizes rank-based contributions so a top-1 candidate in a single channel already lands at `1.0` after normalization. With `score = 0.5 * relevance + 0.25 * recency + 0.25 * importance`, moderately important and reasonably recent single-channel leaders already composed above the old `0.85` gate, which suppressed the contextual-fallback retry on continuation-style turns like "what should we do next?" and over-expanded the durable patch past the normal one-item cap. The `0.92` gate keeps the high-confidence behavior gated on candidates that behave like top-1 in both retrieval channels with strong recency and importance.
+- Regressions targeted: the `contextual-follow-up.fallback.inject` cases in both `before-turn-section-4-ablations` and `before-turn-section-5-ablations` as tracked in `docs/internal/recall/regression-attribution.md`.
+- Phase: phase 2 of the recall-regression-resolution plan.
+- Regression tests: `tests/app/before-turn/service.test.ts` - "retries with contextual fallback when the primary score clears the old 0.85 gate but not the recalibrated default" and "keeps the current-turn-only variant when the primary score clears the recalibrated default" pin the recalibrated default on both sides of the gate.
+- Not changed in the same pass: `DEFAULT_RECALL_THRESHOLD = 0.6` and `DEFAULT_PROCEDURE_THRESHOLD = 0.72`. Neither was implicated in the threshold-induced regressions, and moving them without attribution evidence would risk widening or narrowing the before-turn surface in ways the regression table does not authorize.
+
+Later phases of the same plan will extend this section as they land. Each entry should cite the regression rows it targets before changing a default.
 
 ## Config relevant to recall
 

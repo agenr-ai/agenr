@@ -334,6 +334,115 @@ describe("runBeforeTurn", () => {
     expect(ftsSearch).toHaveBeenCalledTimes(2);
   });
 
+  it("retries with contextual fallback when the primary score clears the old 0.85 gate but not the recalibrated default", async () => {
+    // Regression guard for before-turn.contextual-follow-up.fallback.inject. Pin
+    // "now" so recency math is deterministic. A permanent importance-6 entry
+    // that is 100 days old and the only RRF leader composes to ~0.890, which
+    // passes the pre-RRF 0.85 gate but stays below the recalibrated 0.92 gate,
+    // so the selector must escalate to the contextual variant.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-19T12:00:00.000Z"));
+
+    try {
+      const entry = createEntry({
+        id: "entry-threshold-recalibration-moderate",
+        subject: "before-turn release notes",
+        content: "The next step is to finish the release notes for the before-turn slice.",
+        importance: 6,
+        expiry: "permanent",
+        created_at: "2026-01-09T12:00:00.000Z",
+      });
+      const ftsSearch = vi.fn<RecallPorts["ftsSearch"]>(async () => [
+        {
+          entry: toRecallCandidateEntry(entry),
+          rank: -1,
+          tier: "all_tokens",
+        },
+      ]);
+      const deps = createDeps({
+        ftsSearchImplementation: ftsSearch,
+        hydratedEntries: [entry],
+      });
+
+      const result = await runBeforeTurn(
+        {
+          currentTurnText: "What should we do next?",
+          recentTurns: [{ role: "user", text: "Finish the release notes for the before-turn slice." }],
+          policy: {
+            enableProcedureSuggestion: false,
+            recallThreshold: 0,
+          },
+        },
+        deps,
+      );
+
+      const topScore = result.durableMemory[0]?.score;
+      expect(topScore).toBeDefined();
+      expect(topScore as number).toBeGreaterThan(0.85);
+      expect(topScore as number).toBeLessThan(0.92);
+      expect(result.diagnostics.queryPolicy).toBe("contextual_fallback");
+      expect(result.diagnostics.queryVariants).toEqual([
+        expect.objectContaining({ kind: "current_only", selected: false }),
+        expect.objectContaining({ kind: "contextual_anchor", selected: true }),
+      ]);
+      expect(ftsSearch).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the current-turn-only variant when the primary score clears the recalibrated default", async () => {
+    // Precision floor for the recalibrated 0.92 default. A very recent
+    // importance-10 entry that is the single RRF leader composes to ~0.999,
+    // which clears the new default so the selector must not fire the
+    // contextual fallback retry on continuation-style turns.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-19T12:00:00.000Z"));
+
+    try {
+      const entry = createEntry({
+        id: "entry-threshold-recalibration-high",
+        subject: "before-turn release notes",
+        content: "The next step is to finish the release notes for the before-turn slice.",
+        importance: 10,
+        expiry: "permanent",
+        created_at: "2026-04-18T12:00:00.000Z",
+      });
+      const ftsSearch = vi.fn<RecallPorts["ftsSearch"]>(async () => [
+        {
+          entry: toRecallCandidateEntry(entry),
+          rank: -1,
+          tier: "all_tokens",
+        },
+      ]);
+      const deps = createDeps({
+        ftsSearchImplementation: ftsSearch,
+        hydratedEntries: [entry],
+      });
+
+      const result = await runBeforeTurn(
+        {
+          currentTurnText: "What should we do next?",
+          recentTurns: [{ role: "user", text: "Finish the release notes for the before-turn slice." }],
+          policy: {
+            enableProcedureSuggestion: false,
+            recallThreshold: 0,
+          },
+        },
+        deps,
+      );
+
+      const topScore = result.durableMemory[0]?.score;
+      expect(topScore).toBeDefined();
+      expect(topScore as number).toBeGreaterThan(0.92);
+      expect(result.diagnostics.queryPolicy).toBe("current_only");
+      expect(result.diagnostics.queryVariants).toEqual([expect.objectContaining({ kind: "current_only", selected: true })]);
+      expect(ftsSearch).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("uses compact contextual anchors immediately for strongly underspecified turns", async () => {
     const entry = createEntry({
       id: "entry-context-required",

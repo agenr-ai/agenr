@@ -28,7 +28,38 @@ const DEFAULT_MAX_RECENT_TURNS = 2;
 const DEFAULT_MAX_QUERY_CHARS = 450;
 const DEFAULT_MAX_PROCEDURE_CANDIDATES = 3;
 const DEFAULT_RECALL_THRESHOLD = 0.6;
-const DEFAULT_HIGH_CONFIDENCE_RECALL_THRESHOLD = 0.85;
+/**
+ * Minimum composite recall score treated as "high confidence" by the
+ * before-turn selector.
+ *
+ * This gate decides two things:
+ * 1. Whether `shouldRetryWeakPrimaryWithContext` accepts the current-turn-only
+ *    winner as strong enough to skip the contextual-fallback retry.
+ * 2. Whether `selectDurablePatchItems` may expand past the normal one-item
+ *    cap up to `maxHighConfidenceDurableEntries`.
+ *
+ * The prior default of `0.85` was tuned for the pre-RRF continuous blend,
+ * where composite scores rarely cleared `0.85` without a dominant-on-both-
+ * channels top candidate. Reciprocal rank fusion (see
+ * `src/core/recall/fusion.ts`) normalizes rank-based contributions so a
+ * top-1 in one channel alone already maps to an RRF relevance of `0.5`, and
+ * top-3 in both channels maps to ~`0.968`. With
+ * `score = 0.5 * relevance + 0.25 * recency + 0.25 * importance`, even
+ * moderately good single-channel leaders with strong recency and importance
+ * can clear `0.85`, which suppresses the contextual-fallback retry on
+ * continuation-style turns like `"what should we do next?"`.
+ *
+ * Raising the gate to `0.92` keeps the high-confidence behavior gated on
+ * candidates that are effectively top-1 in both retrieval channels with
+ * strong recency and importance. Borderline single-channel leaders now
+ * escalate to the contextual variant when the turn shape allows it,
+ * restoring the `contextual-follow-up.fallback.inject` eval cases that
+ * regressed after the graphiti-recall-borrows pipeline landed. See the
+ * threshold-induced rows in
+ * `docs/internal/recall/regression-attribution.md` for the cases this
+ * recalibration targets.
+ */
+const DEFAULT_HIGH_CONFIDENCE_RECALL_THRESHOLD = 0.92;
 const DEFAULT_PROCEDURE_THRESHOLD = 0.72;
 const DEFAULT_SKIP_TRIVIAL_TURNS = true;
 const DEFAULT_REQUIRE_TURN_SIGNAL = true;

@@ -229,6 +229,8 @@ Boundary validation details:
 - boolean gates must be booleans
 - unexpected fields are rejected on the top-level request, `beforeTurnInput`, each recent turn, `beforeTurnInput.policy`, and `options`
 
+Current production defaults for the threshold knobs live in `src/app/before-turn/service.ts`. They are also recorded in the "Ranking policy tuning history" section of [docs/RECALL.md](./RECALL.md), so harness authors running A/B comparisons can see what the seam falls back to when a case omits a policy field. The `highConfidenceRecallThreshold` value shown in the example above is illustrative; cases that want the live default should simply omit the field.
+
 ### Before-turn diagnostics
 
 When diagnostics are included, the seam mirrors the real `runBeforeTurn()` diagnostics. The stable fields most useful to `agenr-evals` are:
