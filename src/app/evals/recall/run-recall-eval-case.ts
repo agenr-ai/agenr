@@ -154,7 +154,8 @@ export async function runRecallEvalCase(request: RecallEvalCaseRequest, dependen
           : (embeddingSupport.port ?? createUnavailableEmbeddingPort(embeddingSupport.error ?? "Embeddings are unavailable."));
       const sandboxPorts = sandbox.createRecallPorts(recallEmbeddingPort);
       const portsWithCrossEncoder = attachCrossEncoderPort(sandboxPorts, dependencies.crossEncoder);
-      const basePorts = applyRecallEvalFaultInjection(portsWithCrossEncoder, request);
+      const telemetryGatedPorts = applyTelemetryWriteGate(portsWithCrossEncoder, sandbox);
+      const basePorts = applyRecallEvalFaultInjection(telemetryGatedPorts, request);
       const recallPorts = diagnostics.isObservationEnabled() ? createInstrumentedRecallPorts(basePorts, diagnostics) : basePorts;
       const slotPolicyConfig = request.unified?.memoryPolicy?.slotPolicies;
       const rankingPolicy = request.recallRequest.rankingPolicy;
@@ -252,6 +253,50 @@ function createUnavailableEmbeddingPort(message: string): EmbeddingPort {
   return {
     async embed(): Promise<number[][]> {
       throw new Error(message);
+    },
+  };
+}
+
+/**
+ * Wraps the recall ports with a telemetry-write gate so snapshot-copy
+ * replays stay read-only-like at the telemetry layer unless the caller
+ * explicitly opted in via `allowTelemetryWrites`. Fixture-only sandboxes
+ * keep the historical behavior of letting normal telemetry run against
+ * the isolated database.
+ */
+function applyTelemetryWriteGate(ports: RecallPorts, sandbox: RecallEvalSandboxContext): RecallPorts {
+  const snapshot = sandbox.snapshot;
+  if (snapshot === undefined || snapshot.allowedTelemetryWrites) {
+    return ports;
+  }
+
+  return {
+    async embed(text: string): Promise<number[]> {
+      return ports.embed(text);
+    },
+    async vectorSearch(params) {
+      return ports.vectorSearch(params);
+    },
+    async ftsSearch(params) {
+      return ports.ftsSearch(params);
+    },
+    ...(ports.expandNeighborhood
+      ? {
+          async expandNeighborhood(request) {
+            return ports.expandNeighborhood!(request);
+          },
+        }
+      : {}),
+    ...(ports.crossEncoder
+      ? {
+          crossEncoder: ports.crossEncoder,
+        }
+      : {}),
+    async hydrateEntries(ids: string[]) {
+      return ports.hydrateEntries(ids);
+    },
+    async recordRecallEvents(): Promise<void> {
+      return undefined;
     },
   };
 }

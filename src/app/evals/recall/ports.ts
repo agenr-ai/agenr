@@ -1,5 +1,6 @@
 import type { EmbeddingPort, EpisodeDatabasePort, ProcedureDatabasePort, RecallPorts } from "../../../core/ports.js";
 import type { Entry, Procedure } from "../../../core/types.js";
+import type { RecallEvalSnapshotMetadata } from "./contracts.js";
 
 /**
  * Narrow write surface used by recall eval fixture provisioning.
@@ -48,6 +49,11 @@ export interface RecallEvalSandboxContext {
   episodeDatabase: EpisodeDatabasePort;
   /** Procedure database surface backed by the isolated sandbox database. */
   procedureDatabase: ProcedureDatabasePort;
+  /**
+   * Snapshot provenance metadata when the sandbox was seeded by copying
+   * a corpus snapshot. Omitted for fixture-only sandboxes.
+   */
+  snapshot?: RecallEvalSnapshotMetadata;
   /**
    * Creates real recall ports against the isolated database.
    *

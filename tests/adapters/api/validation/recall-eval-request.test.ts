@@ -44,6 +44,7 @@ describe("parseRecallEvalCaseRequest", () => {
       sandbox: {
         root: "/tmp/evals/case-001",
         preserve: false,
+        corpusSeed: undefined,
       },
       memoryPool: [
         {
@@ -703,6 +704,223 @@ describe("parseRecallEvalCaseRequest", () => {
         {
           path: "recallRequest.rankingPolicy.crossEncoderAlpha",
           message: "Expected a number from 0 to 1.",
+        },
+      ]);
+    }
+  });
+
+  it("accepts an explicit fixture corpus-seed mode", () => {
+    const result = parseRecallEvalCaseRequest({
+      caseId: "case-corpus-seed-fixture",
+      sandbox: {
+        corpusSeed: { mode: "fixture" },
+      },
+      memoryPool: [],
+      recallRequest: {
+        text: "who is on call",
+      },
+    });
+
+    expect(result.sandbox).toEqual({
+      root: undefined,
+      preserve: undefined,
+      corpusSeed: { mode: "fixture" },
+    });
+  });
+
+  it("accepts a snapshot_copy corpus-seed block with full provenance hints", () => {
+    const result = parseRecallEvalCaseRequest({
+      caseId: "case-corpus-seed-snapshot-copy",
+      sandbox: {
+        root: "/tmp/evals/case-snapshot",
+        preserve: false,
+        corpusSeed: {
+          mode: "snapshot_copy",
+          snapshotDbPath: "  /tmp/snapshots/knowledge-2026-04-18.db  ",
+          snapshotId: "  nightly-2026-04-18  ",
+          snapshotLabel: "  nightly corpus snapshot  ",
+          allowTelemetryWrites: true,
+        },
+      },
+      memoryPool: [],
+      recallRequest: {
+        text: "who is on call",
+      },
+    });
+
+    expect(result.sandbox).toEqual({
+      root: "/tmp/evals/case-snapshot",
+      preserve: false,
+      corpusSeed: {
+        mode: "snapshot_copy",
+        snapshotDbPath: "/tmp/snapshots/knowledge-2026-04-18.db",
+        snapshotId: "nightly-2026-04-18",
+        snapshotLabel: "nightly corpus snapshot",
+        allowTelemetryWrites: true,
+      },
+    });
+  });
+
+  it("accepts a snapshot_copy corpus-seed block without optional provenance hints", () => {
+    const result = parseRecallEvalCaseRequest({
+      caseId: "case-corpus-seed-snapshot-minimal",
+      sandbox: {
+        corpusSeed: {
+          mode: "snapshot_copy",
+          snapshotDbPath: "/tmp/snapshots/knowledge.db",
+        },
+      },
+      memoryPool: [],
+      recallRequest: {
+        text: "who is on call",
+      },
+    });
+
+    expect(result.sandbox?.corpusSeed).toEqual({
+      mode: "snapshot_copy",
+      snapshotDbPath: "/tmp/snapshots/knowledge.db",
+    });
+  });
+
+  it("rejects malformed corpus-seed blocks with stable paths", () => {
+    expect(() =>
+      parseRecallEvalCaseRequest({
+        caseId: "case-corpus-seed-invalid",
+        sandbox: {
+          corpusSeed: {
+            mode: "snapshot_copy",
+            snapshotDbPath: "   ",
+            snapshotId: 42,
+            allowTelemetryWrites: "yes",
+            extraField: true,
+          },
+        },
+        memoryPool: [],
+        recallRequest: {
+          text: "who is on call",
+        },
+      }),
+    ).toThrowError(RecallEvalRequestValidationError);
+
+    try {
+      parseRecallEvalCaseRequest({
+        caseId: "case-corpus-seed-invalid",
+        sandbox: {
+          corpusSeed: {
+            mode: "snapshot_copy",
+            snapshotDbPath: "   ",
+            snapshotId: 42,
+            allowTelemetryWrites: "yes",
+            extraField: true,
+          },
+        },
+        memoryPool: [],
+        recallRequest: {
+          text: "who is on call",
+        },
+      });
+    } catch (error) {
+      expect(error).toBeInstanceOf(RecallEvalRequestValidationError);
+      expect((error as RecallEvalRequestValidationError).issues).toEqual([
+        {
+          path: "sandbox.corpusSeed.extraField",
+          message: "Unexpected field.",
+        },
+        {
+          path: "sandbox.corpusSeed.snapshotDbPath",
+          message: "Expected a non-empty string.",
+        },
+        {
+          path: "sandbox.corpusSeed.snapshotId",
+          message: "Expected a string.",
+        },
+        {
+          path: "sandbox.corpusSeed.allowTelemetryWrites",
+          message: "Expected a boolean.",
+        },
+      ]);
+    }
+  });
+
+  it("rejects unknown corpus-seed modes", () => {
+    expect(() =>
+      parseRecallEvalCaseRequest({
+        caseId: "case-corpus-seed-unknown-mode",
+        sandbox: {
+          corpusSeed: {
+            mode: "snapshot_link",
+            snapshotDbPath: "/tmp/snapshots/knowledge.db",
+          },
+        },
+        memoryPool: [],
+        recallRequest: {
+          text: "who is on call",
+        },
+      }),
+    ).toThrowError(RecallEvalRequestValidationError);
+
+    try {
+      parseRecallEvalCaseRequest({
+        caseId: "case-corpus-seed-unknown-mode",
+        sandbox: {
+          corpusSeed: {
+            mode: "snapshot_link",
+            snapshotDbPath: "/tmp/snapshots/knowledge.db",
+          },
+        },
+        memoryPool: [],
+        recallRequest: {
+          text: "who is on call",
+        },
+      });
+    } catch (error) {
+      expect(error).toBeInstanceOf(RecallEvalRequestValidationError);
+      expect((error as RecallEvalRequestValidationError).issues).toEqual([
+        {
+          path: "sandbox.corpusSeed.mode",
+          message: "Expected one of: fixture, snapshot_copy.",
+        },
+      ]);
+    }
+  });
+
+  it("rejects extra fields on a fixture corpus-seed block", () => {
+    expect(() =>
+      parseRecallEvalCaseRequest({
+        caseId: "case-corpus-seed-fixture-extra",
+        sandbox: {
+          corpusSeed: {
+            mode: "fixture",
+            snapshotDbPath: "/tmp/snapshots/knowledge.db",
+          },
+        },
+        memoryPool: [],
+        recallRequest: {
+          text: "who is on call",
+        },
+      }),
+    ).toThrowError(RecallEvalRequestValidationError);
+
+    try {
+      parseRecallEvalCaseRequest({
+        caseId: "case-corpus-seed-fixture-extra",
+        sandbox: {
+          corpusSeed: {
+            mode: "fixture",
+            snapshotDbPath: "/tmp/snapshots/knowledge.db",
+          },
+        },
+        memoryPool: [],
+        recallRequest: {
+          text: "who is on call",
+        },
+      });
+    } catch (error) {
+      expect(error).toBeInstanceOf(RecallEvalRequestValidationError);
+      expect((error as RecallEvalRequestValidationError).issues).toEqual([
+        {
+          path: "sandbox.corpusSeed.snapshotDbPath",
+          message: "Unexpected field.",
         },
       ]);
     }

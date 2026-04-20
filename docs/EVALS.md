@@ -298,7 +298,7 @@ Important request semantics:
 - `caseId` is required and echoed back whenever the boundary can safely do so
 - `description` is optional and informational only
 - `recallPath` is optional and defaults to `"core"`
-- `sandbox` is optional and controls where the isolated database lives and whether it is preserved
+- `sandbox` is optional and controls where the isolated database lives, whether it is preserved, and how the corpus is seeded through `sandbox.corpusSeed`
 - `memoryPool` is required but may be an empty array
 - the current HTTP boundary does not yet accept `procedurePool`, even though the app-layer eval contracts include procedure fixtures for direct-service tests
 - `recallRequest` is required
@@ -442,6 +442,7 @@ The HTTP boundary rejects unexpected fields for:
 
 - the top-level request object
 - `sandbox`
+- `sandbox.corpusSeed`
 - each fixture entry
 - `recallRequest`
 - `options`
@@ -494,12 +495,57 @@ Current sandbox behavior:
 - otherwise a temp directory is created under the OS temp directory with the prefix `agenr-recall-eval-`
 - the database path is always `<root>/knowledge.db`
 - any existing `knowledge.db`, `knowledge.db-wal`, and `knowledge.db-shm` files are removed before the database opens
+- when `sandbox.corpusSeed.mode` is `"snapshot_copy"`, the source snapshot DB is copied into `<root>/knowledge.db` before it is opened, which seeds the sandbox with a production-like corpus while leaving the source snapshot untouched
 
 Cleanup depends on the request:
 
 - if `preserve: true`, the sandbox stays on disk
 - if `preserve: false` and the root was supplied, cleanup deletes only the database files
 - if `preserve: false` and the root was generated, cleanup removes the whole temp directory
+
+#### Corpus seeding
+
+The optional `sandbox.corpusSeed` block selects how the sandbox is seeded before `memoryPool` and `procedurePool` overlays apply:
+
+```json
+{
+  "sandbox": {
+    "root": "/tmp/agenr-eval-case",
+    "preserve": false,
+    "corpusSeed": {
+      "mode": "snapshot_copy",
+      "snapshotDbPath": "/path/to/knowledge-snapshot.db",
+      "snapshotId": "2026-04-18-nightly",
+      "snapshotLabel": "nightly corpus snapshot",
+      "allowTelemetryWrites": false
+    }
+  }
+}
+```
+
+Rules:
+
+- if `corpusSeed` is omitted, the sandbox keeps the historical fixture-only behavior
+- `mode: "fixture"` is the explicit form of fixture-only seeding and behaves exactly like omitting the field
+- `mode: "snapshot_copy"` copies `snapshotDbPath` into the sandbox before opening it
+- `snapshotDbPath` must be a non-empty string and must resolve to an accessible file; the source DB is never opened, only copied
+- `snapshotDbPath` must not resolve to the same path as the sandbox database
+- `snapshotId` and `snapshotLabel` are optional provenance hints and are echoed in the response under `sandbox.snapshot`
+- `allowTelemetryWrites` defaults to `false`. When `false`, the recall seam wraps the recall ports so `recordRecallEvents` becomes a no-op and the copied snapshot stays read-only-like at the telemetry layer. When `true`, normal recall telemetry writes run against the copied snapshot (never against the source)
+- `memoryPool` and `procedurePool` overlays still run on top of the copied snapshot so harnesses can inject scenario-specific fixtures
+
+Safety rules:
+
+- the source snapshot file is never opened as a database
+- all writes, when they happen, hit the copied sandbox DB
+- snapshot copying is adapter-owned filesystem work driven from the app layer; `src/core/` still has zero filesystem dependencies
+
+Successful responses include snapshot metadata under `sandbox.snapshot` when the case used `snapshot_copy`:
+
+- `sandbox.snapshot.id` - optional echoed `snapshotId`
+- `sandbox.snapshot.label` - optional echoed `snapshotLabel`
+- `sandbox.snapshot.dbPathBasename` - base filename of the source snapshot (never a full path)
+- `sandbox.snapshot.allowedTelemetryWrites` - whether recall telemetry writes ran against the copied snapshot
 
 ### 4. Exact fixture provisioning
 

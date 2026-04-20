@@ -26,6 +26,46 @@ import type { ClaimTransitionExplanation, UnifiedRecallMode, UnifiedRecallRoutin
 export type RecallEvalPath = "core" | "unified";
 
 /**
+ * Fixture-only corpus seed. The isolated sandbox starts from an empty
+ * database and only the explicit `memoryPool` and `procedurePool`
+ * fixtures seed state. Preserves the historical recall eval behavior.
+ */
+export interface EvalCorpusSeedFixture {
+  /** Discriminator for the fixture-only seed mode. */
+  mode: "fixture";
+}
+
+/**
+ * Snapshot-backed corpus seed. The isolated sandbox is seeded by
+ * copying `snapshotDbPath` into the sandbox before opening it. Fixture
+ * overlays from `memoryPool` and `procedurePool` still apply on top of
+ * the copied snapshot. The source snapshot is never mutated.
+ */
+export interface EvalCorpusSeedSnapshotCopy {
+  /** Discriminator for the snapshot-copy seed mode. */
+  mode: "snapshot_copy";
+  /** Absolute or relative path to the source snapshot SQLite file to copy. */
+  snapshotDbPath: string;
+  /** Optional stable snapshot identifier for response metadata. */
+  snapshotId?: string;
+  /** Optional human-readable snapshot label for response metadata. */
+  snapshotLabel?: string;
+  /**
+   * Optional toggle that permits normal recall telemetry writes on the
+   * copied snapshot. Defaults to `false` so snapshot replays stay
+   * read-only-like at the telemetry layer. When `true`, the real
+   * `recordRecallEvents` port runs against the copied database.
+   */
+  allowTelemetryWrites?: boolean;
+}
+
+/**
+ * Discriminated union describing how an eval case should seed its
+ * isolated sandbox corpus before fixture overlays run.
+ */
+export type EvalCorpusSeed = EvalCorpusSeedFixture | EvalCorpusSeedSnapshotCopy;
+
+/**
  * Optional sandbox controls for a single recall eval case.
  */
 export interface RecallEvalSandboxRequest {
@@ -33,6 +73,27 @@ export interface RecallEvalSandboxRequest {
   root?: string;
   /** When true, keep the sandbox on disk after the case completes. */
   preserve?: boolean;
+  /**
+   * Optional corpus-seed control. When omitted, the sandbox keeps the
+   * historical fixture-only behavior. When supplied, selects between
+   * fixture and snapshot-copy seeding.
+   */
+  corpusSeed?: EvalCorpusSeed;
+}
+
+/**
+ * Snapshot provenance metadata attached to a recall eval response when
+ * the case ran against a copied corpus snapshot.
+ */
+export interface RecallEvalSnapshotMetadata {
+  /** Optional stable snapshot identifier echoed from the request. */
+  id?: string;
+  /** Optional human-readable snapshot label echoed from the request. */
+  label?: string;
+  /** Base filename of the source snapshot DB, never a full path. */
+  dbPathBasename: string;
+  /** Whether recall telemetry writes ran against the copied snapshot. */
+  allowedTelemetryWrites: boolean;
 }
 
 /**
@@ -619,6 +680,8 @@ export interface RecallEvalSandboxResult {
   dbPath?: string;
   /** Whether the sandbox was preserved for later inspection. */
   preserved: boolean;
+  /** Snapshot provenance metadata when the sandbox used snapshot-copy seeding. */
+  snapshot?: RecallEvalSnapshotMetadata;
 }
 
 /**

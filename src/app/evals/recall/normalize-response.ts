@@ -109,6 +109,7 @@ function buildSandboxResult(sandbox: RecallEvalSandboxContext): RecallEvalSandbo
     root: sandbox.root,
     dbPath: sandbox.dbPath,
     preserved: sandbox.preserved,
+    ...(sandbox.snapshot ? { snapshot: sandbox.snapshot } : {}),
   };
 }
 

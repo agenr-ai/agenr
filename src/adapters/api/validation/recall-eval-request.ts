@@ -1,3 +1,4 @@
+import type { EvalCorpusSeed } from "../../../app/evals/recall/contracts.js";
 import type {
   RecallEvalCaseOptions,
   RecallEvalCaseRequest,
@@ -14,12 +15,10 @@ import { ENTRY_TYPES } from "../../../core/types.js";
 import {
   extractParseableCaseId,
   mapFixtureEntryDto as mapSharedFixtureEntryDto,
-  mapSandboxRequestDto as mapSharedSandboxRequestDto,
   parseMemoryPool,
   parseObject,
   parseOptionalStringArray,
   parseOptionalThreshold,
-  parseSandbox,
   type InternalEvalFixtureEntryDto,
 } from "./internal-eval-shared.js";
 import {
@@ -34,6 +33,10 @@ import {
 } from "../../shared/validation.js";
 
 const ROOT_REQUEST_KEYS = new Set<string>(["caseId", "description", "recallPath", "sandbox", "memoryPool", "recallRequest", "unified", "options"]);
+const SANDBOX_REQUEST_KEYS = new Set<string>(["root", "preserve", "corpusSeed"]);
+const CORPUS_SEED_MODES = ["fixture", "snapshot_copy"] as const;
+const FIXTURE_CORPUS_SEED_KEYS = new Set<string>(["mode"]);
+const SNAPSHOT_COPY_CORPUS_SEED_KEYS = new Set<string>(["mode", "snapshotDbPath", "snapshotId", "snapshotLabel", "allowTelemetryWrites"]);
 const RECALL_REQUEST_KEYS = new Set<string>([
   "text",
   "limit",
@@ -78,6 +81,11 @@ const CLAIM_SLOT_POLICIES = ["exclusive", "multivalued"] as const;
 export type RecallEvalValidationIssue = ValidationIssue;
 
 /**
+ * Adapter-owned normalized corpus-seed DTO shared with the app layer.
+ */
+export type RecallEvalCorpusSeedDto = EvalCorpusSeed;
+
+/**
  * Adapter-owned normalized sandbox request DTO.
  */
 export interface RecallEvalSandboxRequestDto {
@@ -85,6 +93,8 @@ export interface RecallEvalSandboxRequestDto {
   root?: string;
   /** When true, preserves the sandbox on disk for inspection. */
   preserve?: boolean;
+  /** Optional corpus-seed control selecting fixture or snapshot-copy seeding. */
+  corpusSeed?: RecallEvalCorpusSeedDto;
 }
 
 /**
@@ -284,7 +294,7 @@ export function parseRecallEvalCaseRequest(input: unknown): RecallEvalCaseReques
   const parsedCaseId = parseRequiredTrimmedString(input.caseId, "caseId", issues);
   const description = parseOptionalTrimmedString(input.description, "description", issues);
   const recallPath = parseOptionalRecallPath(input.recallPath, "recallPath", issues);
-  const sandbox = parseSandbox(input.sandbox, issues);
+  const sandbox = parseRecallSandbox(input.sandbox, issues);
   const memoryPool = parseMemoryPool(input.memoryPool, issues);
   const recallRequest = parseRecallRequest(input.recallRequest, issues);
   const unified = parseUnifiedRequest(input.unified, issues);
@@ -819,13 +829,116 @@ function validatePathSpecificRequest(
 }
 
 /**
+ * Parses the recall-seam sandbox block, including the optional
+ * corpus-seed discriminated union that selects fixture or
+ * snapshot-copy corpus seeding for the isolated sandbox.
+ *
+ * @param value - Raw sandbox field.
+ * @param issues - Mutable validation issue collection.
+ * @returns Normalized sandbox DTO when valid.
+ */
+function parseRecallSandbox(value: unknown, issues: ValidationIssue[]): RecallEvalSandboxRequestDto | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const sandbox = parseObject(value, "sandbox", issues);
+  if (sandbox === undefined) {
+    return undefined;
+  }
+
+  pushUnexpectedFields(sandbox, SANDBOX_REQUEST_KEYS, "sandbox", issues);
+
+  return {
+    root: parseOptionalTrimmedString(sandbox.root, "sandbox.root", issues),
+    preserve: parseOptionalBoolean(sandbox.preserve, "sandbox.preserve", issues),
+    corpusSeed: parseCorpusSeed(sandbox.corpusSeed, issues),
+  };
+}
+
+/**
+ * Parses the optional `corpusSeed` discriminated union. The union
+ * mirrors the `EvalCorpusSeed` contract in
+ * `src/app/evals/recall/contracts.ts`, so snapshot-backed replays and
+ * fixture-only runs both validate through the same seam.
+ *
+ * @param value - Raw corpus-seed field.
+ * @param issues - Mutable validation issue collection.
+ * @returns Normalized corpus-seed DTO when valid.
+ */
+function parseCorpusSeed(value: unknown, issues: ValidationIssue[]): RecallEvalCorpusSeedDto | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const seed = parseObject(value, "sandbox.corpusSeed", issues);
+  if (seed === undefined) {
+    return undefined;
+  }
+
+  const mode = parseCorpusSeedMode(seed.mode, "sandbox.corpusSeed.mode", issues);
+  if (mode === undefined) {
+    return undefined;
+  }
+
+  if (mode === "fixture") {
+    pushUnexpectedFields(seed, FIXTURE_CORPUS_SEED_KEYS, "sandbox.corpusSeed", issues);
+    return { mode: "fixture" };
+  }
+
+  pushUnexpectedFields(seed, SNAPSHOT_COPY_CORPUS_SEED_KEYS, "sandbox.corpusSeed", issues);
+
+  const snapshotDbPath = parseRequiredTrimmedString(seed.snapshotDbPath, "sandbox.corpusSeed.snapshotDbPath", issues);
+  const snapshotId = parseOptionalTrimmedString(seed.snapshotId, "sandbox.corpusSeed.snapshotId", issues);
+  const snapshotLabel = parseOptionalTrimmedString(seed.snapshotLabel, "sandbox.corpusSeed.snapshotLabel", issues);
+  const allowTelemetryWrites = parseOptionalBoolean(seed.allowTelemetryWrites, "sandbox.corpusSeed.allowTelemetryWrites", issues);
+
+  if (snapshotDbPath === undefined) {
+    return undefined;
+  }
+
+  return {
+    mode: "snapshot_copy",
+    snapshotDbPath,
+    ...(snapshotId !== undefined ? { snapshotId } : {}),
+    ...(snapshotLabel !== undefined ? { snapshotLabel } : {}),
+    ...(allowTelemetryWrites !== undefined ? { allowTelemetryWrites } : {}),
+  };
+}
+
+/**
+ * Parses the corpus-seed discriminator string.
+ *
+ * @param value - Raw discriminator value.
+ * @param path - Stable validation path.
+ * @param issues - Mutable validation issue collection.
+ * @returns Valid discriminator when recognized.
+ */
+function parseCorpusSeedMode(value: unknown, path: string, issues: ValidationIssue[]): RecallEvalCorpusSeedDto["mode"] | undefined {
+  if (typeof value !== "string" || !CORPUS_SEED_MODES.includes(value as RecallEvalCorpusSeedDto["mode"])) {
+    pushIssue(issues, path, `Expected one of: ${CORPUS_SEED_MODES.join(", ")}.`);
+    return undefined;
+  }
+
+  return value as RecallEvalCorpusSeedDto["mode"];
+}
+
+/**
  * Maps an adapter sandbox DTO into the app-layer sandbox contract.
  *
  * @param dto - Adapter sandbox DTO.
  * @returns App sandbox request or `undefined`.
  */
 function mapSandboxRequestDto(dto: RecallEvalSandboxRequestDto | undefined): RecallEvalSandboxRequest | undefined {
-  return mapSharedSandboxRequestDto(dto) as RecallEvalSandboxRequest | undefined;
+  if (dto === undefined) {
+    return undefined;
+  }
+
+  return {
+    root: dto.root,
+    preserve: dto.preserve,
+    corpusSeed: dto.corpusSeed,
+  };
 }
 
 /**

@@ -1,5 +1,8 @@
 export { runRecallEvalCase, type RecallEvalCaseDependencies } from "./run-recall-eval-case.js";
 export type {
+  EvalCorpusSeed,
+  EvalCorpusSeedFixture,
+  EvalCorpusSeedSnapshotCopy,
   RecallEvalCandidateCounts,
   RecallEvalCaseDiagnostics,
   RecallEvalCaseError,
@@ -26,6 +29,7 @@ export type {
   RecallEvalResultEntry,
   RecallEvalSandboxRequest,
   RecallEvalSandboxResult,
+  RecallEvalSnapshotMetadata,
   RecallEvalUnifiedMemoryPolicyRequest,
   RecallEvalUnifiedMetadata,
   RecallEvalUnifiedRequest,
