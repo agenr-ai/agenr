@@ -1,71 +1,166 @@
 # Recall
 
-`agenr recall <query>` is a live CLI command backed by the hybrid recall pipeline.
+Recall in `agenr` is a hybrid retrieval and ranking system for three memory surfaces:
 
-It embeds the query when possible, retrieves candidates through vector search plus SQLite FTS, degrades to lexical-only entry recall when query embeddings or vector search fail at runtime, scores candidates in core, hydrates full entries, and records recall telemetry.
+- durable entries
+- episodes
+- procedures
 
-This document describes the code as it exists now, not just the intended flow.
+The system is exposed through multiple callers:
 
-The current codebase also layers a unified agent-facing recall surface plus two automatic OpenClaw prompt-time recall paths on top of the base entry pipeline documented here. The standalone CLI in `src/cli/commands/recall.ts` still exposes the entry-recall surface shown below, while `src/app/recall/unified.ts`, `src/app/procedures/recall/service.ts`, and the OpenClaw `agenr_recall` tool add procedural routing plus episodic recall. Separately, `src/adapters/openclaw/hooks/before-prompt-build.ts` now injects continuity context plus a bounded session-start durable-memory patch through `src/app/session-start/`, and can inject a bounded proactive turn-time patch through `src/app/before-turn/`, without calling the public recall tool directly.
+- `agenr recall <query>` for entry recall at the CLI
+- `runUnifiedRecall()` and the OpenClaw `agenr_recall` tool for routed entry, episode, and procedure recall
+- automatic OpenClaw prompt-time recall paths for session start and later user turns
+
+This document explains how recall works today: the retrieval channels, ranking equations, routing concepts, tuning knobs, and the boundaries between durable memory, episodic context, and procedures.
+
+## Design goals
+
+Recall optimizes for a few core properties:
+
+- hybrid retrieval, so strong lexical matches survive when embeddings are weak or unavailable
+- bounded ranking, so scoring stays explainable and tunable
+- clean separation of memory authorities, so durable facts, episodes, and procedures do not get blended into one undifferentiated result set
+- graceful degradation, so vector, embedding, or rerank failures fall back to simpler recall rather than failing the whole call
+- adapter isolation, so retrieval and persistence live in adapters while ranking and shaping stay in core
+
+## Recall surfaces
+
+### Entry recall
+
+Entry recall is the durable-memory path. It is the right surface for:
+
+- facts
+- decisions
+- preferences
+- standing thresholds
+- versions
+- claim-key-shaped current or prior state
+
+### Episode recall
+
+Episode recall is the narrative history path. It is the right surface for:
+
+- what happened in a time window
+- what the system was doing around a date
+- session-level historical context
+
+### Procedure recall
+
+Procedure recall is the procedural-memory path. It is the right surface for:
+
+- how-to questions
+- step-by-step workflows
+- canonical operating procedures
+
+### Automatic prompt-time recall
+
+OpenClaw also uses bounded automatic recall in two places:
+
+- session start, where continuity and durable memory are injected once per session
+- before-turn, where a narrow proactive recall pass can surface durable memory or a canonical procedure for a live user turn
+
+These paths reuse the same recall concepts, but they are not the same thing as calling the public recall tool directly.
 
 ## Code map
 
-- `src/cli/commands/recall.ts` - CLI option parsing, adapter wiring, and result formatting.
-- `src/app/recall/unified.ts` - mode routing, unified result shaping, and orchestration between entry, procedure, and episode recall.
-- `src/app/procedures/recall/service.ts` - dedicated procedure retrieval and canonical procedure selection.
-- `src/app/recall/types.ts` - agent-facing mode, routing, time-window, and split-result response types.
-- `src/core/recall/search.ts` - top-level recall pipeline orchestration.
-- `src/core/recall/scoring.ts` - vector, lexical, recency, importance, and final-score math.
-- `src/core/recall/fusion.ts` - pure reciprocal rank fusion helper used as the primary relevance signal across entry, episode, and procedure recall.
-- `src/core/recall/neighborhood.ts` - pure neighborhood-expansion request types, seeded-rerank helpers, and the domain lineage predicates used by entry, episode, and procedure recall.
-- `src/core/recall/mmr.ts` - pure maximal-marginal-relevance helper used to diversify the final shortlist across entry, episode, and procedure recall.
-- `src/core/recall/cross-encoder.ts` - pure cross-encoder rerank orchestration helper shared by entry, episode, and procedure recall.
-- `src/adapters/cross-encoder/openai-cross-encoder.ts` - OpenAI-backed `CrossEncoderPort` implementation using a boolean-classifier prompt plus `logit_bias` and `top_logprobs`.
-- `src/core/recall/lexical.ts` - tokenization, lexical search-plan generation, and lexical overlap scoring.
-- `src/core/recall/temporal.ts` - explicit and inferred date parsing for temporal recall.
-- `src/core/recall/trace.ts` - typed per-call execution summaries for observability and recall-eval instrumentation.
-- `src/core/recall/types.ts` - recall input, output, candidate, and filter types.
-- `src/core/episode/search.ts` - temporal, semantic, and hybrid episode retrieval modes.
-- `src/core/episode/scoring.ts` - interval overlap scoring and temporal tie-break math for episodes.
-- `src/core/episode/temporal-window.ts` - calendar-aware time-phrase parsing for episodic recall.
-- `src/core/episode/types.ts` - episode query/result and temporal window types.
-- `src/core/ports.ts` - `RecallPorts` plus episode database interfaces used by the pure core pipelines.
-- `src/adapters/db/recall-adapter.ts` - libSQL implementation of vector search, FTS search, bounded entry neighborhood expansion, hydration, and recall-event recording.
-- `src/adapters/db/episode-queries.ts` - SQL overlap lookup and episode vector search.
-- `src/adapters/db/queries.ts` - `recordRecallEvent()` write path that updates counters and inserts `recall_events` rows.
-- `src/adapters/openclaw/tools/recall.ts` - `agenr_recall` schema, unified recall execution, and structured tool result shaping.
-- `src/adapters/openclaw/tools/shared.ts` - human-readable unified recall formatter used by the OpenClaw tool.
-- `src/app/session-start/service.ts` - host-neutral session-start patch selection that merges always-on core memory with artifact-grounded durable recall.
-- `src/app/session-start/types.ts` and `src/app/session-start/ports.ts` - structured session-start patch contract and feature-scoped dependency types.
-- `src/app/before-turn/service.ts` - host-neutral before-turn patch selection that merges bounded durable recall with optional canonical procedure suggestion.
-- `src/app/before-turn/types.ts` and `src/app/before-turn/ports.ts` - structured before-turn patch contract and feature-scoped dependency types.
-- `src/adapters/openclaw/hooks/before-prompt-build.ts` - automatic session-start patch injection, proactive before-turn patch injection, continuity composition, and store-nudge gating.
-- `src/adapters/openclaw/format/recall-format.ts` - prompt formatter for the automatic session-start patch path.
-- `src/adapters/openclaw/format/before-turn-format.ts` - prompt formatter for the automatic before-turn patch path.
-- `tests/cli/commands/recall.test.ts`, `tests/core/recall/search.integration.test.ts`, and `tests/app/recall/unified.test.ts` - CLI surface, end-to-end pipeline, unified routing, historical-state behavior, tracing, telemetry, and concurrency coverage.
-- `tests/core/episode/temporal-window.test.ts` and `tests/adapters/openclaw/tools.test.ts` - parser coverage, tool schema, split-result formatting, and episode recall behavior.
+- `src/cli/commands/recall.ts` - CLI option parsing and entry recall formatting
+- `src/app/recall/unified.ts` - routed recall across entries, episodes, and procedures
+- `src/app/recall/types.ts` - unified recall request and response types
+- `src/app/procedures/recall/service.ts` - procedure retrieval and canonical selection
+- `src/app/session-start/service.ts` - session-start durable recall selection
+- `src/app/before-turn/service.ts` - proactive before-turn durable and procedure recall
+- `src/core/recall/search.ts` - entry recall pipeline orchestration
+- `src/core/recall/scoring.ts` - entry recall score math
+- `src/core/recall/fusion.ts` - reciprocal rank fusion
+- `src/core/recall/lexical.ts` - lexical tokenization and query planning
+- `src/core/recall/neighborhood.ts` - neighborhood expansion shapes and seeded rerank helpers
+- `src/core/recall/mmr.ts` - maximal marginal relevance diversification
+- `src/core/recall/cross-encoder.ts` - cross-encoder rerank orchestration
+- `src/core/recall/temporal.ts` - entry-side temporal parsing and `around` inference
+- `src/core/recall/trace.ts` - typed execution trace summaries
+- `src/core/recall/types.ts` - entry recall inputs, outputs, candidates, and filters
+- `src/core/episode/search.ts` - episode retrieval modes
+- `src/core/episode/scoring.ts` - temporal episode score math
+- `src/core/episode/temporal-window.ts` - episode time-window parsing
+- `src/core/episode/types.ts` - episode query and result types
+- `src/core/ports.ts` - recall and episode ports
+- `src/adapters/db/recall-adapter.ts` - libSQL entry retrieval, hydration, neighborhood expansion, and telemetry writes
+- `src/adapters/db/episode-queries.ts` - episode overlap lookup and vector search
+- `src/adapters/db/queries.ts` - recall event persistence
+- `src/adapters/cross-encoder/openai-cross-encoder.ts` - OpenAI-backed cross-encoder port
+- `src/adapters/openclaw/tools/recall.ts` - `agenr_recall` tool wiring
+- `src/adapters/openclaw/tools/shared.ts` - human-readable unified recall formatting
+- `src/adapters/openclaw/hooks/before-prompt-build.ts` - automatic session-start and before-turn recall injection
 
-## Important architectural nuance
+## Architecture split
 
-Recall is split cleanly between core and adapter concerns:
+Recall is intentionally split between core and adapters.
 
-- `src/core/recall/` owns query parsing, candidate merge, historical-state ranking, claim-key-aware result shaping, thresholding, token budgeting, tracing, and final ranking. It also owns neighborhood-expansion request shapes and the seeded-rerank helpers that run over ranked candidates.
-- `src/adapters/db/recall-adapter.ts` owns retrieval, SQL-pushable filters, bounded entry neighborhood expansion, full-entry hydration, and telemetry writes.
+Core owns:
 
-That split means the current recall implementation is already adapter-shaped:
+- query normalization
+- ranking
+- fusion
+- claim-key-aware shaping
+- thresholding
+- budgeting
+- routing
+- trace summaries
 
-- the CLI wires a libSQL adapter today
-- the core pipeline itself stays stateless
-- there is no direct `DatabasePort` dependency in `src/core/recall/search.ts`
+Adapters own:
 
-Four current-runtime details matter:
+- vector lookup
+- full-text lookup
+- SQL-pushable filters
+- entry hydration
+- episode overlap queries
+- recall telemetry writes
 
-- runtime query-embedding failures and vector-search failures degrade entry recall into an explicitly labeled lexical path instead of aborting the whole call
-- historical-state entry recall is still the same core pipeline, but it asks the adapter for a bounded sweep over supersession chains, claim-key siblings, and retired same-topic fallbacks through the optional `expandNeighborhood()` port
-- typed recall tracing is opt-in and no-op by default, so observability can be added without changing ranking behavior
-- recall telemetry is awaited as part of `recall()`, but the adapter serializes the writes internally and swallows telemetry failures
+That split keeps ranking logic pure and makes degraded-mode behavior explicit. Query embeddings or vector lookup can fail, and core can still continue with lexical recall when the caller allows degradation.
 
-## CLI surface
+## Unified recall model
+
+Unified recall sits above entry-only CLI recall and decides which memory surfaces to query.
+
+### Modes
+
+Unified recall accepts four modes:
+
+- `auto` - route heuristically
+- `entries` - durable entries only
+- `episodes` - episodes only
+- `procedures` - procedures only
+
+### Routing concepts
+
+The router looks for a few kinds of intent:
+
+- factual questions
+- entity-attribute questions
+- procedural questions
+- historical-state questions
+- temporal or narrative questions
+- mixed questions with both topic and time anchors
+
+Important concepts:
+
+- a topic anchor means the query is about a specific subject
+- a supported time expression means the query can be grounded to a resolved time window
+- historical-state intent means the user is asking about a prior version of something, not just the current fact
+
+Typical routing behavior:
+
+- factual questions usually query entries
+- procedural questions usually query procedures, and may also query entries or episodes when the query has topic or time anchors
+- narrative questions with a time window usually query episodes
+- historical-state questions often query both entries and episodes
+
+Unified recall returns separate sections rather than one mixed ranked list. Durable memory, episode context, and procedure candidates remain visibly distinct because they carry different authority.
+
+## CLI entry recall surface
+
+The standalone CLI currently exposes the entry-recall path:
 
 ```bash
 agenr recall <query> \
@@ -81,502 +176,178 @@ agenr recall <query> \
   [--verbose]
 ```
 
-- `--limit <n>` sets the max result count. Default: `10`.
-- `--threshold <n>` drops scored results below the inclusive `0-1` cutoff. Default: `0`.
-- `--budget <n>` applies an approximate token budget after scoring.
-- `--types <types>` filters by comma-separated entry types validated against the supported entry-type list.
-- `--tags <tags>` filters by comma-separated literal tag values.
-- `--since <date>` keeps only entries whose `created_at` is on or after the parsed date.
-- `--until <date>` keeps only entries whose `created_at` is on or before the parsed date.
-- `--around <date>` switches recency scoring to a gaussian date-proximity model centered on the parsed anchor.
-- `--around-radius <n>` sets the gaussian radius in days. Default: `14`.
-- `--verbose` prints per-result score breakdowns.
+Key CLI knobs:
 
-Unlike ingest, recall currently has no `--dry-run` flag.
+- `--limit` - maximum result count, default `10`
+- `--threshold` - inclusive score cutoff in `0-1`
+- `--budget` - approximate token budget applied after scoring
+- `--types` - entry-type filter
+- `--tags` - exact tag filter
+- `--since`, `--until` - hard date filters
+- `--around` - anchor date for recency scoring
+- `--around-radius` - Gaussian radius in days, default `14`
+- `--verbose` - include score breakdowns
 
-## Unified routing, procedures, and episodic recall
+## Entry recall pipeline
 
-This section covers the unified recall layer used by `runUnifiedRecall()` and the OpenClaw `agenr_recall` tool. It sits above the entry-only CLI flow documented later and decides whether to query semantic entries, procedural memory, episodic memory, or a supported combination.
+The durable entry pipeline is the core hybrid recall path.
 
-### Mode parameter
+### 1. Input normalization
 
-The unified layer accepts four modes:
+`recall()` normalizes the input before retrieval:
 
-- `auto` - default routing. The query text is classified and routed to entries, procedures, episodes, or a supported combination.
-- `entries` - force semantic entry recall only. This is the right mode for exact facts, decisions, thresholds, versions, and preferences.
-- `episodes` - force episodic recall only. With a resolved time window this becomes temporal episode search; without a time window it falls back to pure semantic episode search when embeddings are available.
-- `procedures` - force procedural recall only. This bypasses auto routing and runs the dedicated procedure retrieval service directly.
-
-`mode` is currently implemented in the unified app/tool layer, not in `src/cli/commands/recall.ts` yet.
-
-### Auto-routing rules
-
-`routeRecall()` uses a heuristic router across factual, entity-attribute, procedural, historical-state, temporal-narrative, and mixed signals.
-
-Current detection is deliberately heuristic, not LLM-based:
-
-- historical-state phrases are matched with conservative composite cues like `what was the previous`, `what was the earlier`, `what did we use before`, `what changed`, `changed from`, `before we switched`, and `before we migrated`
-- narrow entity-attribute phrases are matched with explicit shapes like `who is <entity>`, `where is <entity>`, `where does <entity> live`, and `what is <entity>'s <attribute>` for the small supported attribute set (`identity`, `location`, `email`, `phone`, `address`)
-- procedural phrases are matched with cues like `how do I`, `what steps`, `walk me through`, `step by step`, `checklist for`, `procedure for`, and `method for`
-- factual phrases are matched with regexes like `when did`, `when was`, `what decision`, `what preference`, `what's the default`, `which version`, and `what threshold`
-- narrative phrases are matched with regexes like `what happened`, `what were we doing`, `what was going on`, `summarize`, and `catch me up`
-- a **topic anchor** is detected when the query includes entry-only filters or wording like `about`, `regarding`, `with`, or `on <token>`
-- a **supported time expression** comes from `parseTemporalWindow()`
-
-That yields these concrete routing behaviors:
-
-- explicit `mode=procedures` -> `procedures`
-- procedural + no supported time window or topic anchor -> `procedures`
-- procedural + topic anchor -> `procedures` and `entries`
-- procedural + supported time window -> `procedures` and `episodes`
-- procedural + supported time window + topic anchor -> `procedures`, `episodes`, and `entries`
-- entity-attribute -> `entries`
-- historical-state + no supported time window -> `entries` and `episodes`
-- historical-state + procedural -> `procedures`, `entries`, and `episodes`
-- factual + no supported time window -> `entries`
-- factual + supported time window -> `entries` and `episodes`
-- narrative + supported time window + no topic anchor -> `episodes`
-- narrative + supported time window + topic anchor -> `episodes` and `entries`
-- supported time window + topic anchor, even without an obvious narrative phrase -> `episodes` and `entries`
-- supported time window without a clear narrative ask or topic anchor -> `entries`
-
-Historical-state intent beats plain factual detection. If the query also contains a real time expression, the detected intent remains `historical_state` rather than collapsing to `mixed`.
-
-Explicit overrides still win:
-
-- `mode=entries` always queries entries only
-- `mode=episodes` always queries episodes only
-- `mode=procedures` always queries procedures only
-
-For `entity_attribute`, the query still stays on `entries` under `mode=entries`, but the core entry pipeline applies a stricter precision-first evidence gate before admitting candidates.
-
-### Temporal window parser
-
-Episode recall does not reuse the older entry-recall `around` inference. It has a separate calendar-aware parser in `src/core/episode/temporal-window.ts` that returns:
-
-- the resolved `window`
-- concrete `bounds.start` / `bounds.end`
-- the runtime `timezone`
-- `resolvedFrom`, which preserves the matched phrase for output/debugging
-
-Supported phrases today include:
-
-- `today`
-- `yesterday`
-- `this week` / `last week`
-- `this month` / `last month`
-- `N days ago`, including small spelled-out forms like `two days ago`
-- `N weeks ago`, including small spelled-out forms like `two weeks ago`
-- `N months ago`, including small spelled-out forms like `two months ago`
-- `in March` (and the other month names)
-- `March 15th`, `March 15`, `on March 15`, and similar month-day forms
-- `last Friday` and the other weekdays
-- ISO dates like `2026-03-15`
-
-A few behavior details matter:
-
-- `today`, `this week`, and `this month` end at `now`, not the end of the full calendar period
-- `yesterday`, `last week`, `last month`, month names, month-day forms, weekdays, and ISO dates resolve to closed calendar intervals
-- `N days ago` resolves to that full prior local calendar day
-- `N weeks ago` and `N months ago` resolve to anchor windows with a fixed `±3` day radius around the anchor date
-- month-day queries resolve to the most recent matching calendar date, so `December 25` can land in the previous year
-- month-day parsing wins over weekday parsing when both appear in the same query
-
-### Episode recall pipeline
-
-Pure temporal episode recall does not depend on embeddings. The flow in `searchEpisodes()` is:
-
-1. parse the query into a `TemporalWindow`
-2. materialize concrete bounds with `resolveTemporalWindowBounds()`
-3. fetch overlap candidates through `listEpisodesByTimeWindow()`
-4. score each candidate in memory with `scoreEpisodeMatch()`
-5. sort with temporal-first ordering and return the top `limit`
-
-The SQL overlap filter in `listEpisodesByTimeWindow()` is inclusive:
-
-- `started_at <= query_end`
-- `COALESCE(ended_at, started_at) >= query_start`
-
-Only active episodes are considered (`retired = 0` and `superseded_by IS NULL`). Candidate lookup overfetches with `limit * 5`, bounded to `25-100`, before in-memory ranking.
-
-`scoreEpisodeMatch()` ranks by interval overlap, not by semantic similarity. Its final score is:
-
-```txt
-score = overlapQuality * 0.75 + midpointProximity * 0.20 + activity * 0.04 + recency * 0.01
-```
-
-Where:
-
-- `overlapQuality` is the primary signal: a harmonic-mean style blend of query coverage and episode precision
-- `midpointProximity` is the secondary temporal tiebreaker
-- `activity` lightly boosts more substantial sessions
-- `recency` is only a very small final tiebreaker
-
-Sort precedence for pure temporal recall is even stricter than the final score: overlap quality first, then midpoint proximity, then activity, then recency, then the stored final score.
-
-### Hybrid semantic episode search
-
-Episode search has three actual modes inside `src/core/episode/search.ts`:
-
-1. **Pure temporal** - resolved time window, no embedding. Uses SQL overlap candidates plus `scoreEpisodeMatch()`.
-2. **Pure semantic** - embedding, no time window. Uses `episodeVectorSearch()` and ranks by cosine similarity first.
-3. **Hybrid** - resolved time window plus embedding. Uses a hard temporal filter first (`listEpisodesByTimeWindow()`), then fuses a temporal rank list and a semantic rank list through the shared `rrfFuse()` helper. The fused RRF score drives ordering; temporal, activity, and recency stay as tie-break signals. Episodes without embeddings only appear in the temporal channel so they still rank below embedded matches.
-
-The important design point is that hybrid episode search is **not** a broad vector search with a soft time bias. It is:
-
-- hard temporal filter first
-- semantic rerank second
-
-That means mixed queries like “what happened on agenr 2026-03-29” cannot pull in semantically relevant sessions from the wrong time period.
-
-If the router wants semantic episode search but query embeddings are unavailable, unified recall adds a notice instead:
-
-- with a time window: `Semantic episode search unavailable - showing temporal results only.`
-- without a time window: `Semantic episode search unavailable - no semantic episode results could be returned.`
-
-### How results are returned
-
-Unified recall does **not** merge procedures, episodes, and entries into one ranked list. `UnifiedRecallResult` returns them separately:
-
-- `routing` - requested mode, detected intent, queried backends, and routing reason
-- optional `parsedTimeWindow` - the internal resolved temporal window object used by the app layer
-- optional `timeWindow` - resolved start/end/timezone/resolvedFrom metadata
-- optional `asOf` - explicit current-vs-prior reference point applied to entry recall
-- optional `procedure` - one canonical procedure answer when the dedicated procedure service found a stable leader
-- `procedureCandidates` - ranked procedure candidates preserved separately from entry and episode results
-- `procedureNotices` - degraded-mode or lexical-only notices from the dedicated procedure retrieval path
-- `episodes` - episode matches
-- `entries` - semantic entry matches
-- `claimTransitions` - compact read-side change summaries built from recalled claim families plus any nearby episode context
-- `notices` - fallback and scope notes
-- `count` - total across all returned sections
-
-The OpenClaw formatter preserves that separation in text output:
-
-- `Recall Route` first
-- then optional `Resolved Time Window`
-- then optional `As Of`
-- then `Procedure Matches` whenever procedures were queried or procedure data was returned
-- then claim-aware `Entry Matches` before `Episode Matches` when the detected intent is `historical_state`
-- then optional `Claim Transitions`
-- otherwise `Episode Matches` before `Entry Matches`
-- then optional `Notices`
-
-Entry matches now carry a lightweight claim-centric projection on top of the raw ranked rows:
-
-- rows are grouped into claim families when `claim_key` is present
-- each family carries a runtime slot policy of `exclusive` or `multivalued`
-- each row is labeled as `current`, `historical`, or `superseded`
-- trust surfaces include normalized claim lifecycle labels such as `trusted`, `tentative`, `unresolved`, `legacy`, and `no-key`
-- freshness and provenance cues come from `created_at`, `valid_from`, `valid_to`, supersession metadata, and stored claim-support metadata
-- explicit `asOf` resolution prefers `valid_from` / `valid_to`, then `claim_support_observed_at`, then `created_at`
-- a short `why_surfaced` explanation summarizes the score signals that pushed the row into the final answer
-
-This is why mixed recall responses show sessions and durable knowledge side by side without pretending they are the same kind of memory.
-
-One important caveat: `threshold`, `types`, and `tags` still apply to **entries only** in the current unified layer. When episodes are also queried, unified recall adds a notice saying so.
-
-Another caveat: semantic entry recall still depends on embeddings. In mixed or auto routing, unified recall can skip the entry side and return a notice when embeddings are unavailable. In explicit `mode=entries`, the same condition throws instead of degrading silently.
-
-## Automatic OpenClaw session-start recall
-
-The OpenClaw plugin has a second recall-related path that runs automatically on the first `before_prompt_build` call for a session. It is separate from `agenr_recall`.
-
-Current behavior in `handleAgenrBeforePromptBuild()` is:
-
-1. consume the session-start tracker so the recall injection runs only once per session
-2. resolve predecessor continuity and recent-session content through the OpenClaw continuity helpers
-3. kick off a background predecessor-episode write when a predecessor session exists
-4. call the app-layer `runSessionStart()` service with normalized predecessor artifacts and bounded policy hints
-5. let that service merge up to `4` always-on core entries with up to `3` artifact-grounded durable recall candidates, capped to `5` durable items after dedupe
-6. format the returned patch as visibly separate continuity and durable-memory prompt sections, with the durable-memory portion wrapped in an `agenr-memory-context` fence
-
-Important boundaries:
-
-- this path still depends on adapter-supplied predecessor artifacts rather than pretending Agenr can reconstruct continuity from DB state alone
-- any non-core durable memory on this path must be artifact-grounded, not a blind global session-start search
-- continuity summaries and recent-session snippets stay visibly separate from durable memory
-- fenced prompt-time durable memory is background context, not user text, and later sanitizers strip that fenced block before building future recall queries
-- duplicate session-start injections are blocked by in-memory tracker state
-- procedure suggestion is still out of scope for this v1 session-start slice
-- non-user follow-up turns may receive a separate store nudge, but that is not recall
-
-## Automatic OpenClaw before-turn recall
-
-The same `before_prompt_build` hook also has a second automatic path for later user-facing turns after session start.
-
-Current behavior in `handleAgenrBeforePromptBuild()` is:
-
-1. detect that the session-start tracker has already consumed the current session
-2. skip non-user triggers such as `heartbeat`, `cron`, and `memory`
-3. skip short/social turns and other low-signal turns before proactive recall runs
-4. derive a bounded query from the current prompt plus a compact recent-turn window from `event.messages`
-5. call the app-layer `runBeforeTurn()` service with that normalized turn input and bounded policy hints
-6. let that service run stricter-threshold durable entry recall plus optional dedicated procedure recall
-7. inject the result only when the service does not abstain, wrapping the injected recall block in an `agenr-memory-context` fence
-
-Important boundaries:
-
-- this path is a bounded proactive surfacing layer, not a replacement for the explicit `agenr_recall` tool
-- durable memory uses the same shared entry recall engine described in this document
-- proactive procedure suggestion reuses the dedicated procedure recall service and only surfaces a canonical leader
-- before-turn recall now requires stronger factual, procedural, or task signal before it runs at all
-- before-turn durable recall normally surfaces a single durable item and only expands when all surfaced items clear the recalibrated high-confidence score gate
-- the high-confidence gate also controls whether continuation-style turns like "what should we do next?" retry with a compact contextual anchor when the bare current-turn query surfaces a borderline leader
-- both behaviors share `DEFAULT_HIGH_CONFIDENCE_RECALL_THRESHOLD` in `src/app/before-turn/service.ts`; see the "Ranking policy tuning history" section below for the pre- and post-RRF values
-- before-turn prompt sections stay visibly separate from session-start continuity and durable-memory sections
-- when embeddings are unavailable, durable and procedure selection degrade to lexical-only ranking instead of failing the turn
-
-## Memory authority levels
-
-Adapters and prompts should teach the model that recall surfaces do not all carry the same authority.
-
-1. Durable entries are the canonical memory record. Use them for verified facts, standing decisions, preferences, lessons, and other durable knowledge. When live evidence contradicts an entry, update or retire it instead of quietly routing around it.
-2. Episode recall is narrative historical context. Use it for questions about what happened in a past session or time window, but confirm exact wording, timestamps, counts, and other precision-sensitive details when they matter.
-3. Session handoffs and continuity summaries are approximate restart context. They are useful for resuming open threads, but they can be incomplete, stale, or narrower than the full transcript history.
-4. Live verification always wins. If a file, tool call, database query, or host check can answer the question directly, that fresh evidence should override stored memory.
-
-Adapter guidance:
-
-- Keep durable entries, episodes, and handoffs visibly separated in prompt formatting and result rendering.
-- Do not blend narrative recall and durable facts into one undifferentiated block.
-- Encourage focused recall queries that match the memory tier you need instead of broad fishing expeditions.
-- Teach the model to verify precision-sensitive claims live when verification is cheap.
-
-### Examples
-
-Today, the implemented `mode` surface is the OpenClaw `agenr_recall` tool plus `runUnifiedRecall()`. The standalone CLI still does not accept `--mode`, so the live examples are:
-
-```txt
-agenr_recall({ query: "what happened yesterday", mode: "episodes" })
-agenr_recall({ query: "what happened on agenr 2026-03-29", mode: "auto", tags: ["agenr"] })
-agenr_recall({ query: "what was the previous deployment approach", mode: "auto" })
-agenr_recall({ query: "where does Jim Martin's dad live?", mode: "entries" })
-agenr_recall({ query: "what decision set the schema threshold", mode: "entries" })
-```
-
-Programmatic callers use the same routing layer through `runUnifiedRecall()`:
-
-```ts
-await runUnifiedRecall({ text: "what happened yesterday", mode: "episodes" }, deps);
-```
-
-## End-to-end flow
-
-### 1. Config and adapter setup
-
-The CLI does the following before running recall:
-
-- loads config via `readConfig()`
-- resolves the database path via `resolveDbPath()`
-- resolves the embedding API key and model
-- opens the database adapter
-- creates the recall adapter with the database plus embedding client
-
-Recall does not use the extraction model, dedup model, or any LLM adapter.
-
-## 2. Input normalization
-
-`recall()` immediately normalizes the raw input:
-
-- empty or whitespace-only query text returns `[]`
-- `limit` defaults to `10` and is normalized to a non-negative integer
+- empty or whitespace-only query returns no results
+- `limit` defaults to `10`
 - `threshold` is clamped into `0-1`
-- `budget` becomes `null` when omitted or non-finite
-- `sessionKey` is supported by the core API for telemetry attribution, but the CLI does not expose a flag for it
+- `budget` becomes `null` when omitted or invalid
+- `limit = 0` returns immediately
 
-If the effective limit is `0`, recall returns `[]` without embedding or retrieval.
+### 2. Hard filters and time parsing
 
-## 3. Temporal parsing and filter construction
+Entry recall has two different temporal concepts:
 
-Recall has two temporal concepts:
+- `since` and `until` are hard filters
+- `around` is a scoring bias
 
-- `since` / `until` are hard SQL filters
-- `around` is a scoring bias, not a filter
+Hard filters:
 
-### `since` and `until`
-
-`parseRelativeDate()` currently supports:
-
-- ISO-like date strings accepted by `new Date(...)`
-- relative day shorthand like `7d`
-
-It does not support `7w` or `3m` shorthand.
-
-If `since` or `until` cannot be parsed, the filter is silently ignored rather than treated as an error.
-
-### `around`
-
-If `--around` is set, recall parses that value first.
-
-If `--around` is omitted, recall tries to infer a temporal anchor from the query text itself. Current supported phrases include:
-
-- `yesterday`
-- `last week`
-- `last month`
-- `last year`
-- `this week`
-- `this month`
-- `<n> days ago`
-- `<n> weeks ago`
-- `<n> months ago`
-- `in january` through `in december`
-
-If inference would land in the future, the anchor is clamped back to "now".
-
-### SQL-pushable filters
-
-After date parsing, `buildEntryFilters()` composes the filter payload passed into both retrieval paths.
-
-Current filter semantics are:
-
-- `types` use an SQL `IN (...)` clause
-- `tags` use exact JSON-array membership checks
-- multiple tags are ANDed together, not ORed
+- `types` become SQL `IN (...)`
+- `tags` are exact JSON-array membership checks
+- multiple tags are ANDed together
 - `since` and `until` are inclusive comparisons on `created_at`
 
-Both retrieval paths also hard-filter for active entries only:
+Active entry filtering is always applied on the default path:
 
 - `retired = 0`
 - `superseded_by IS NULL`
 
-## 4. Query embedding
+### 3. Query embedding
 
-Core recall calls `ports.embed(text)` once for the query string.
+When embeddings are available, recall embeds the query once and uses that vector for semantic retrieval.
 
-In the current CLI path, that means:
+If embedding generation fails:
 
-- OpenAI embeddings
-- default model `text-embedding-3-small` unless config overrides it
-- one query embedding per recall invocation
+- entry recall can degrade to lexical-only mode
+- unified recall may emit notices instead of failing
+- explicit entry-only calls can still choose to fail rather than silently degrade, depending on the caller
 
-If the embedding provider returns an empty vector, vector search contributes no candidates.
+### 4. Candidate retrieval
 
-## 5. Candidate retrieval
+Entry recall runs vector and lexical retrieval in parallel.
 
-Recall runs vector and lexical retrieval in parallel.
-
-### Vector retrieval
+#### Vector retrieval
 
 The vector path:
 
 1. overfetches with `limit * 4`
-2. uses `vector_top_k('idx_entries_embedding', vector32(?), ?)`
-3. joins those row IDs back to `entries`
-4. applies active/type/tag/date filters in SQL
-5. recomputes cosine similarity in TypeScript from the stored embedding
-6. drops non-positive similarities
-7. sorts descending by similarity and slices back to the requested vector limit
+2. uses the vector index
+3. reapplies active and user filters
+4. recomputes cosine similarity in TypeScript
+5. drops non-positive similarities
+6. sorts by similarity
 
-Current behavior to know:
+#### Lexical retrieval
 
-- if `limit <= 0`, it returns `[]`
-- if the query embedding is empty, it returns `[]`
-- if vector serialization fails, it returns `[]`
-- if the libSQL vector query itself fails, the adapter throws `Vector search is unavailable: ...`
-
-The core recall pipeline now treats query-embedding failure and vector-query failure as degraded-mode signals:
-
-- embedding failure -> skip vector retrieval, keep lexical retrieval, label the call as lexical-only degraded mode
-- vector query failure -> keep lexical retrieval, preserve explicit degraded notices, and continue scoring any lexical candidates
-- CLI recall prints degraded notices
-- unified recall and the OpenClaw `agenr_recall` tool surface the same notices through their `notices` output
-
-### Lexical retrieval
-
-The FTS path:
+The lexical path:
 
 1. overfetches with `limit * 2`
-2. builds a lexical plan from the query text
-3. runs each tier in order until all tiers are attempted
-4. keeps only the first hit for each entry ID
-5. sorts by tier priority, then BM25 rank
-6. slices back to the requested lexical limit
+2. builds a lexical plan from the query
+3. runs lexical tiers in order
+4. keeps the first hit per entry ID
+5. sorts by tier priority and BM25
 
-Current tiers are:
+Current lexical tiers:
 
-- `exact` - quoted phrase search on the raw trimmed query
-- `all_tokens` - all normalized tokens must match
-- `any_tokens` - any normalized token may match
+- `exact`
+- `all_tokens`
+- `any_tokens`
 
 Tokenization is deliberately simple:
 
-- Unicode-aware lowercase normalization
-- regex: `[\p{L}\p{N}][\p{L}\p{N}._-]*`
-- minimum token length `2`
-- English stop words removed
-- reserved FTS operator words like `or`, `not`, and `near` removed from token tiers
+- lowercase Unicode-aware normalization
+- regex token extraction
+- stop-word removal
+- FTS operator-word removal from token tiers
 
-Important consequence: accented and other non-ASCII word tokens now participate in the all-token and any-token lexical tiers instead of degrading immediately to exact-phrase-only fallback.
+If tokenization yields no usable tokens, recall still attempts exact-phrase search.
 
-If the tokenized query is empty after stop-word removal, recall still runs the exact-phrase tier.
+### 5. Candidate merge
 
-FTS tier failures are swallowed per tier and the adapter continues to the next tier.
+Candidates are merged by entry ID.
 
-BM25 rank anchors the ordered lexical channel that feeds reciprocal rank fusion. The raw lexical overlap score is still kept on the result as evidence-only, but the lexical rank is what influences the fused relevance signal.
+Important properties:
 
-## 6. Candidate merge and scoring
+- an entry can arrive from vector, lexical, or both
+- duplicate IDs collapse into one candidate
+- vector similarity and lexical evidence are preserved separately
+- lexical overlap remains visible as evidence even though it is no longer the composite relevance signal
 
-After retrieval, recall merges vector and FTS candidates by entry ID.
+## Entry scoring model
 
-Merge behavior:
+Entry ranking is built from distinct signals.
 
-- an entry can arrive from either or both paths
-- vector similarity is preserved when available
-- duplicate IDs are collapsed before scoring
-
-Each merged candidate is then rescored in core using the live scoring model.
-
-### Lexical score
+### Lexical evidence score
 
 `computeLexicalScore()` combines:
 
-- token-overlap ratio against subject plus content
-- phrase-match bonus for matching 2+ token sequences, capped at `0.4`
+- token-overlap ratio over subject and content
+- phrase-match bonus for matching multi-token sequences, capped at `0.4`
 - exact subject-match bonus of `0.3`
 
-The raw lexical score is now evidence-only. It still appears in the score breakdown for trace visibility but no longer feeds the composite relevance signal directly.
+This lexical score is now evidence-only. It informs explanations and trace output, but it does not directly drive the composite relevance score.
 
-### Relevance score
+### Relevance via reciprocal rank fusion
 
-Relevance is now driven by **reciprocal rank fusion** (RRF) over per-channel ordered candidate id lists. `mergeCandidates()` emits one list per retrieval channel (vector and FTS today, plus the historical predecessor expansion when `rankingProfile: "historical_state"` is active), and `rrfFuse()` in `src/core/recall/fusion.ts` combines them with the Cormack et al. default rank constant `k = 60`:
+Composite relevance is driven by reciprocal rank fusion, or RRF.
 
-- each channel contributes `1 / (rankIndex + k)` to an id's raw score
-- the fused map is normalized by the theoretical maximum so an id that is top-ranked in every supplied channel maps to `1.0`
-- empty channels are ignored and do not count toward the normalizer
-- duplicate ids inside a single channel are compacted so they contribute exactly once
+`rrfFuse()` combines ordered candidate lists from the retrieval channels using:
 
-`scoreCandidate()` consumes that precomputed `relevance` value directly. The raw vector similarity and raw lexical overlap still show up in the score breakdown as evidence-only signals but are no longer blended into the composite.
+```txt
+raw_rrf(id) = sum(1 / (rankIndex + k))
+```
 
-RRF has three tuning knobs on `RecallExecutionOptions.rankingPolicy`:
+Where:
 
-- `rankingPolicy.rrf = "disabled"` is a hard kill switch. When set, recall falls back to single-channel vector ordering (with a lexical fallback when the vector channel is empty) so evals can isolate fusion effects without stripping channels from the pipeline. The fallback still records a trace branch with `applied: false` and `channelCount: 0 or 1`.
-- `rankingPolicy.rrfRankConstant` overrides the Cormack et al. constant. Larger values flatten the contribution of the top ranks across channels; smaller values sharpen them. The default is `60`. Setting this explicitly disables the phase-4 small-pool sharpening described next: the override then applies to every pool size.
-- `rankingPolicy.rrfSmallPoolRankConstant` overrides the rank constant used when the fused pool is at or below `SMALL_POOL_RRF_POOL_SIZE` (`4`). The default is `DEFAULT_RRF_SMALL_POOL_RANK_CONSTANT` (`8`), which widens the rank-1-vs-rank-2 gap on tiny shortlists so decisive vector leaders survive the composite blend. Setting this equal to `rrfRankConstant` disables the small-pool sharpening without touching larger-pool behavior. See the "RRF small-pool rank-constant sharpening" entry in "Ranking policy tuning history" below for the full precedence rules and the regression rows it targets.
+- each retrieval channel contributes one ordered list
+- `k` is the rank constant
+- duplicates within one channel count once
+- empty channels do not affect normalization
 
-Tracing gained a new `rrf` branch on `RecallExecutionTraceSummary` with `{ applied, channelCount, rankConstant, fusedCandidateCount, maxFusedScore }`. The branch is populated on every recall call so consumers can inspect channel counts even when fusion is disabled.
+The raw score is normalized so that a candidate ranked first in every active channel maps to `1.0`.
+
+This matters because entry recall can fuse:
+
+- vector ranking
+- lexical ranking
+- historical-neighborhood expansions when the historical-state profile is active
 
 ### Recency score
 
 Without an `around` anchor:
 
-- `core` expiry always scores `1`
+- `core` expiry scores `1`
 - `permanent` expiry uses a `365` day half-life
 - `temporary` expiry uses a `30` day half-life
 
 With an `around` anchor:
 
-- recency becomes gaussian proximity to that date
+- recency becomes Gaussian date proximity
 - default radius is `14` days
-- expiry tier no longer changes the recency formula for that query
+- expiry type no longer changes the formula
+
+Conceptually:
+
+```txt
+recency = gaussian(distance_from_anchor_days, radius_days)
+```
 
 ### Importance score
 
-Importance is normalized from the `1-10` domain into the `0.4-1.0` range.
+Importance maps the `1-10` domain into the `0.4-1.0` range.
 
-### Final score
+### Final entry score
 
-The final score is:
+The final entry score is:
 
 ```txt
 score = relevance * 0.5 + recency * 0.25 + importance * 0.25
@@ -584,404 +355,382 @@ score = relevance * 0.5 + recency * 0.25 + importance * 0.25
 
 All component scores and the final score are clamped into `0-1`.
 
-### MMR diversification
+### Threshold and raw-evidence gating
 
-A shared maximal-marginal-relevance stage sits between the claim-key shaping stage and the threshold filter on the entry recall pipeline, and between RRF fusion and the final `slice(limit)` on the episode and procedure pipelines. The helper lives in `src/core/recall/mmr.ts` and is a pure one-shot variant of the classic MMR ordering.
+Thresholding happens after retrieval and scoring, not before.
 
-Key design points:
+Important consequences:
 
-- MMR never rederives relevance from the query embedding. Each pipeline passes its already-shaped composite score as the MMR `relevance` signal, which preserves RRF fusion, historical lineage boosts, claim-key trust and redundancy penalties, and any seeded-rerank lift.
-- Candidates without embeddings are not run through the MMR similarity math. They are appended after the embedded candidates in their original relative order, so missing-embedding fallbacks degrade to pass-through rather than crashing.
-- When the query vector is empty or fewer than two candidates have usable embeddings, MMR is skipped and the input order is returned unchanged. The trace records this as `applied: false`.
-- When the candidate pool is at or below `DEFAULT_MMR_MIN_POOL_SIZE` (`4`), MMR is skipped even if every candidate has an embedding. On tiny shortlists the diversity penalty routinely promotes a semantically distant peer above the leader the prior stages already chose, so the phase-4 small-pool gate treats MMR as a no-op on pools that cannot add meaningful diversity without flipping the top-1. See the "MMR small-pool gate" entry in "Ranking policy tuning history" below.
-- Ties on the MMR score are broken in input order so the diversified list stays stable across runs.
+- retrieval overfetches first
+- low-scoring results are discarded only after the composite score exists
+- weak vector-only drift cannot be rescued by recency or importance alone
+- lexical support is sufficient raw evidence
+- vector-only candidates must clear a minimum raw similarity floor
 
-Tuning knobs live on `RecallExecutionOptions.rankingPolicy`:
+`entity_attribute` recall adds a stricter precision gate, because narrow attribute questions benefit from returning fewer results rather than adjacent semantic noise.
 
-- `rankingPolicy.mmrLambda` is the lambda balance between relevance (`lambda`) and diversity (`1 - lambda`). The default is `0.7`, which keeps relevance dominant but gives the diversity penalty enough room to demote near duplicates. Values are clamped into `[0, 1]`.
-- `rankingPolicy.mmrMinPoolSize` overrides the phase-4 small-pool gate. Defaults to `DEFAULT_MMR_MIN_POOL_SIZE` (`4`). Set to `0` to disable the gate so MMR runs on every non-empty shortlist (the pre-phase-4 behavior); values are floored to non-negative integers.
-- `rankingPolicy.mmr = "disabled"` is a hard kill switch for A/B evaluation. When set, MMR never runs for any surface regardless of intent.
+## Neighborhood expansion and lineage-aware rerank
 
-Per-surface behavior:
+Recall uses two related concepts to preserve coherence around claim families, supersession chains, and other local neighborhoods.
 
-- Entry recall runs MMR on every call unless the kill switch disables it.
-- Episode recall runs MMR inside hybrid mode only, and only when the routed intent is `factual` or `mixed`. Narrative, procedural, temporal, and historical-state intents keep the temporal-first ordering untouched. Pure-temporal and pure-semantic episode modes skip MMR entirely.
-- Procedure recall runs MMR after RRF and seeded rerank, regardless of intent, because revisions of the same `procedure_key` routinely share both recall text and embeddings.
+### Bounded neighborhood expansion
 
-Tracing gained a new `mmr` branch on `RecallExecutionTraceSummary` with `{ applied, lambda, droppedDuplicateCount, reorderedIds }`. `droppedDuplicateCount` counts candidates whose max pairwise similarity to another candidate is at or above `0.95` and whose MMR rank slid below their input rank. `reorderedIds` lists every candidate whose final position differs from the input order, empty when MMR was skipped.
+Neighborhood expansion is an adapter-scoped sweep over typed lineage families. Supported families are:
 
-### Cross-encoder rerank
+- `supersession_chain`
+- `claim_key_sibling`
+- `procedure_revision`
+- `session_family`
+- `topic_family`
 
-A shared cross-encoder rerank stage sits after MMR diversification and before the threshold filter on entry recall, and between RRF fusion and the final `slice(limit)` on episode and procedure recall. The orchestration helper lives in `src/core/recall/cross-encoder.ts` and is pure: it only needs a `CrossEncoderPort` from `src/core/ports.ts` plus the caller's shortlist. The OpenAI adapter lives in `src/adapters/cross-encoder/openai-cross-encoder.ts` and runs a boolean-classifier chat completion (`"Respond with 'True' if PASSAGE is relevant to QUERY and 'False' otherwise"`) using `logit_bias` and `top_logprobs` to extract a normalized relevance score per passage, modeled on graphiti's `openai_reranker_client.py`.
+The expansion request carries:
 
-Key design points:
+- requested families
+- a hard budget
+- whether retired rows are allowed
 
-- The rerank only touches the top-K shortlist. Candidates past the shortlist keep their input order and their prior composite score, so a slow or noisy reranker cannot drop a long tail of valid matches.
-- The cross-encoder score is blended with the prior composite through a linear alpha: `alpha * crossEncoderScore + (1 - alpha) * priorScore`. This keeps earlier shaping (RRF fusion, historical lineage boosts, claim-key trust and redundancy penalties, seeded rerank, MMR) participating in the final ordering.
-- The helper fails closed. Any thrown adapter error, malformed provider payload, empty shortlist, or empty query short-circuits into a pass-through and records a stable `degradedReason` on the trace branch (`not_configured`, `disabled`, `no_candidates`, or `provider_error`). A broken cross-encoder can never drop recall below its pre-rerank baseline.
-- The OpenAI adapter caps concurrency (default 4), retries retryable statuses (408, 409, 425, 429, 5xx) with exponential backoff, and fails closed on non-retryable errors so recall stays usable even when the reranker is flaky.
+### Seeded rerank
 
-Tuning knobs live on `RecallExecutionOptions.rankingPolicy`:
+`seededRerank()` uses the strongest current leaders as seeds and gives a small lift to candidates that share lineage with those leaders.
 
-- `rankingPolicy.crossEncoder = "disabled"` is a hard kill switch for A/B evaluation. When set, the rerank never runs even if a port is wired.
-- `rankingPolicy.crossEncoderTopK` overrides the top-K shortlist. Default is `10` for entries and episodes and `10` for procedures through the shared `DEFAULT_CROSS_ENCODER_TOP_K`.
-- `rankingPolicy.crossEncoderAlpha` overrides the blend weight. Default is `0.6` through the shared `DEFAULT_CROSS_ENCODER_ALPHA`. Values are clamped into `[0, 1]`.
+This is intentionally conservative:
 
-Per-surface behavior:
+- unrelated candidates do not get lifted
+- the rerank reinforces structure already present in the pool
+- it does not replace the underlying relevance model
 
-- Entry recall runs the rerank whenever `RecallPorts.crossEncoder` is wired and the policy leaves it enabled.
-- Episode recall runs the rerank inside hybrid mode only, mirroring the MMR placement. Unified recall plumbs `EpisodeCrossEncoderOptions` through based on the wired port.
-- Procedure recall runs the rerank after MMR on the full shortlist whenever unified recall wires `ProcedureCrossEncoderOptions`, since revisions of the same `procedure_key` often share embedding and lexical mass.
+## Historical-state entry recall
 
-Tracing gained a new `crossEncoder` branch on `RecallExecutionTraceSummary` with `{ applied, k, alpha, latencyMs, rescoredIds, degradedReason? }`. `rescoredIds` lists candidates whose composite score was reshaped by the rerank, empty when the stage was skipped.
+Historical-state recall is a ranking variant for questions such as:
 
-Model configuration uses the standard `ModelConfig` pattern through `config.crossEncoderModel` and resolves through `resolveModel(config, "cross_encoder")`. The adapter requires an OpenAI chat model with `logit_bias` and `top_logprobs` support. The stage default is `gpt-5.4-nano`, and the provider defaults to `"openai"` even when the global provider is `"openai-codex"`, since the adapter calls `https://api.openai.com/v1/chat/completions` directly. The API key is resolved through `resolveCrossEncoderApiKey(config)` which prefers `config.credentials.openaiApiKey` and falls back to `OPENAI_API_KEY`.
+- what was the previous approach
+- what changed
+- what did we use before
 
-### Neighborhood expansion and seeded rerank
+When `rankingProfile: "historical_state"` is active, entry recall changes behavior in a few ways:
 
-Entry, episode, and procedure recall now share a generalized post-retrieval stage inspired by a layered ranking pipeline. The helpers live in `src/core/recall/neighborhood.ts`.
+1. it expands into supersession chains, claim-key siblings, and retired topic-family candidates
+2. it flattens default recency to a neutral value when there is no explicit time anchor
+3. it applies lineage bonuses for plausible prior-state matches
+4. it applies claim-key trust and redundancy penalties to reduce current-state dominance
+5. it runs seeded rerank over the historical pool
 
-Two ideas matter:
+This profile exists because historical-state questions are not asking for the best current fact. They are asking for the right earlier fact.
 
-1. **Bounded neighborhood expansion** is a typed sweep over lineage families the adapter can cheaply reach from SQL. Each expansion call passes a `families` list, a hard `budget`, and an `includeRetired` gate. The supported families are:
-   - `supersession_chain` - direct `superseded_by` links in both directions
-   - `claim_key_sibling` - rows sharing the same claim-key slot
-   - `procedure_revision` - retired revisions of the same `procedure_key` (surfaced through the procedure recall path)
-   - `session_family` - episodes from the same `source + sourceId` (or transcript hash fallback)
-   - `topic_family` - retired-only fallback that reaches across strong shared subject prefixes for entries
-2. **Seeded rerank** (`seededRerank()`) sits on top of the ranked candidate list. It picks a tight top-N leader group through `selectStrongSeeds()`, then adds a small positive delta to any candidate that shares structural or topical lineage with at least one strong seed. The rerank never lifts a candidate that has no lineage relationship to any seed, so it cannot pull in unrelated material.
+### Historical-state shaping signals
 
-Default-profile entry recall still filters retired and superseded rows out of the candidate pool and does not call the expansion port. It does run `seededRerank()` over the fused candidates so supersession-chain followers, claim-key siblings, and strong subject-prefix peers of the top leaders get a small coherence boost when they are already in the ranked pool.
-
-The stage has one kill switch on `RecallExecutionOptions.rankingPolicy`:
-
-- `rankingPolicy.neighborhood = "disabled"` skips both the adapter-scoped `expandNeighborhood()` call and the seeded-rerank pass so evals can isolate fusion and MMR effects from lineage-aware rerank. The trace branch still reports structured facts but records `expansionRequested: false` and empty `strongSeedIds` / `rerankBoostedIds` lists.
-
-### Ranking policy (RRF, neighborhood, MMR, cross-encoder toggles)
-
-The full ranking policy lives on `RecallExecutionOptions.rankingPolicy`. Every stage has an independent `"enabled" | "disabled"` toggle so evals can A/B one stage at a time without restating the rest of the policy. Numeric tuning knobs stay optional alongside the toggles. The policy fields are:
-
-- `rrf` - reciprocal rank fusion toggle (default `"enabled"`)
-- `rrfRankConstant` - RRF rank constant override (default `60`). When this is set explicitly, the override applies to every pool size and disables the phase-4 small-pool sharpening described below.
-- `rrfSmallPoolRankConstant` - override for the RRF rank constant used when the fused pool is at or below `SMALL_POOL_RRF_POOL_SIZE` (`4`). Defaults to `DEFAULT_RRF_SMALL_POOL_RANK_CONSTANT` (`8`); setting this equal to `rrfRankConstant` disables the small-pool sharpening for those pools without touching larger-pool behavior.
-- `neighborhood` - neighborhood expansion plus seeded rerank toggle (default `"enabled"`)
-- `mmr` - MMR diversification toggle (default `"enabled"`)
-- `mmrLambda` - MMR relevance-diversity balance (default `0.7`, clamped into `[0, 1]`)
-- `mmrMinPoolSize` - minimum candidate-pool size for MMR to run (default `DEFAULT_MMR_MIN_POOL_SIZE = 4`; `0` disables the phase-4 gate)
-- `crossEncoder` - cross-encoder rerank toggle (default `"enabled"` when a port is wired)
-- `crossEncoderTopK` - shortlist size override (default `10`)
-- `crossEncoderAlpha` - cross-encoder blend weight (default `0.6`, clamped into `[0, 1]`)
-
-Unified recall forwards the same policy object into entry, episode, and procedure recall, and maps the cross-encoder and MMR fields into the per-surface option bundles `EpisodeCrossEncoderOptions`, `EpisodeMmrOptions`, `ProcedureCrossEncoderOptions`, and `ProcedureMmrOptions`. This keeps one policy as the single source of truth for every surface that the unified orchestrator touches.
-
-### Historical-state expansion and claim-key shaping
-
-Entry recall has one important ranking variant: `rankingProfile: "historical_state"`.
-
-Today that profile is set by unified recall when the router detects a prior-state question such as "what was the previous approach". The core pipeline then changes behavior in five ways:
-
-1. it calls the adapter's `expandNeighborhood()` port with `families: ["supersession_chain", "claim_key_sibling", "topic_family"]` and `includeRetired: true` so retired predecessors, claim-key siblings, and retired same-topic fallbacks merge into the candidate pool
-2. it flattens recency to a neutral `0.5` when there is no explicit `around` anchor
-3. it applies additive lineage bonuses for likely prior-state matches
-4. it applies light claim-key penalties to reduce redundant or low-trust current-state answers
-5. it then runs `seededRerank()` with the historical weight so siblings and predecessors of strong historical-state leaders get a small coherence bump
-
-`expandNeighborhood()` is adapter-scoped. The current libSQL adapter builds a single SQL union that prioritizes:
-
-- direct `superseded_by` links first
-- same `claim_key` lineage next, preferring trusted historical siblings
-- retired same-subject rows as a weaker topic-family fallback
-
-Historical bonuses are additive and clamp back into `0-1`. Each relation has a fixed floor that applies whenever the candidate is already outranking the active peer it is historically related to:
-
-- direct predecessor of an active candidate: floor `+0.08`
-- retired predecessor-like candidate: floor `+0.06`
-- older same-slot or same-topic prior state: floor `+0.08`
-
-When the active peer's composite dominates the predecessor's composite, the bonus is reshaped proportionally so the superseded entry edges the successor by `HISTORICAL_LINEAGE_GAP_MARGIN` (`0.02`). The result is capped at `HISTORICAL_LINEAGE_MAX_BONUS` (`0.45`) so claim-key shaping and MMR diversification still have room to operate after the boost lands. See the "Historical-state lineage bonus shaping" entry in "Ranking policy tuning history" below.
-
-Claim-key trust also changes how lineage is interpreted:
-
-- tentative same-slot lineage is suppressed when a trusted sibling for that slot exists
-- active tentative current-state siblings in a slot with a trusted peer receive a `0.08` penalty
-- extra trusted active siblings in the same slot receive a redundancy penalty of `0.05` per rank, capped at `0.15`
-
-These shaping signals are returned in the final score breakdown and are now surfaced in the CLI verbose view plus the OpenClaw claim-centric entry formatter:
+The score breakdown can include:
 
 - `historicalLineage`
 - `neighborhoodBoost`
 - `claimKeyTrustPenalty`
 - `claimKeyRedundancyPenalty`
 
-## 7. Thresholding, budgeting, and limit
+These signals are additive or subtractive shaping terms on top of the base composite.
 
-After scoring:
+## MMR diversification
 
-1. weak vector-only candidates without meaningful raw evidence are dropped
-2. results below `threshold` are dropped
-3. the optional token budget is applied greedily in score order
-4. the list is sliced to `limit`
+After fusion and lineage-aware shaping, recall can apply maximal marginal relevance, or MMR, to diversify the shortlist.
 
-### Threshold behavior
+MMR balances:
 
-Thresholding happens after scoring, not during retrieval.
+- relevance to the query
+- dissimilarity from already-selected candidates
 
-So vector and FTS still overfetch first, and only then does recall discard low-score candidates.
+Conceptually:
 
-Recall also applies a raw-evidence gate before the score threshold is considered final:
+```txt
+mmr(candidate) = lambda * relevance - (1 - lambda) * max_similarity_to_selected
+```
 
-- lexical support is always considered sufficient raw evidence
-- vector-only candidates must clear a minimum raw vector similarity floor
-- recency and importance cannot rescue weak vector-only drift into a returned result
+Design properties:
 
-`rankingProfile: "entity_attribute"` adds a narrower precision-first gate on top:
+- MMR uses the already-shaped composite relevance, not a fresh relevance model
+- candidates without embeddings pass through without similarity math
+- tiny pools can skip MMR entirely
+- ties are broken by original order
 
-- lexical overlap alone is not sufficient
-- candidates must show strong structured evidence for the extracted entity and attribute
-- when that evidence is weak, recall prefers returning fewer rows or none instead of padding the shortlist with adjacent identity/location noise
+MMR is most useful when the shortlist contains redundant near-duplicates. It is intentionally weaker on small pools where diversification can easily flip a correct top-1 into an odd but merely different result.
 
-### Budget behavior
+## Cross-encoder rerank
+
+Recall can optionally apply a cross-encoder rerank after MMR.
+
+The cross-encoder:
+
+- looks at the query and passage together
+- produces a normalized relevance score per candidate
+- only touches a top-K shortlist
+- blends with the prior composite score instead of replacing it
+
+Blend equation:
+
+```txt
+rescored = alpha * crossEncoderScore + (1 - alpha) * priorScore
+```
+
+Design properties:
+
+- failures are fail-closed, so a provider error becomes a pass-through
+- top-K keeps the stage bounded
+- the earlier ranking pipeline still matters because the rerank is a blend, not a reset
+
+## Budgeting and hydration
+
+After ranking:
+
+1. thresholding removes weak candidates
+2. an optional token budget is applied greedily in score order
+3. the ranked IDs are hydrated into full entries
+4. the final list is sliced to `limit`
 
 The budget estimator is intentionally simple:
 
 ```txt
-(entry.subject.length + entry.content.length) / 4
+approx_tokens = (subject.length + content.length) / 4
 ```
 
-Budgeting has one important safeguard:
+The first threshold-qualified result is always kept even if it alone exceeds the budget.
 
-- the first threshold-qualified result is always kept, even if it alone exceeds the budget
+## Episode recall
 
-After that, lower-ranked results are skipped whenever adding them would exceed the remaining budget.
+Episode recall has three internal modes:
 
-## 8. Hydration and final output
+1. pure temporal
+2. pure semantic
+3. hybrid temporal plus semantic
 
-The scoring pass only uses the minimal candidate shape.
+## Episode temporal windows
 
-Before returning, recall calls `hydrateEntries()` for the ranked IDs and rebuilds the final result list in ranked order.
+Episode recall uses a dedicated calendar-aware parser. It produces:
 
-Current hydration behavior:
+- the resolved window
+- concrete `start` and `end` bounds
+- the runtime timezone
+- `resolvedFrom`, the phrase that produced the window
 
-- hydration re-reads the ranked IDs without filtering out inactive historical rows
-- missing hydrated rows are silently dropped
-- final ordering follows the ranked candidate list, not SQL return order
+Supported concepts include:
 
-Each returned result contains:
+- `today`
+- `yesterday`
+- `this week`, `last week`
+- `this month`, `last month`
+- `N days ago`
+- `N weeks ago`
+- `N months ago`
+- month names such as `in March`
+- month-day phrases such as `March 15`
+- weekday phrases such as `last Friday`
+- ISO dates
 
-- the full `Entry`
-- the final `score`
-- the score breakdown object
+Important behaviors:
 
-The current `scores` payload includes:
+- `today`, `this week`, and `this month` end at `now`
+- closed historical periods resolve to full calendar intervals
+- `N weeks ago` and `N months ago` resolve to anchor windows with a small radius
+- month-day queries resolve to the most recent matching date
 
-- `relevance` - the fused RRF score used as the composite relevance signal
-- `rrf` - alias of `relevance` that makes the RRF origin explicit in traces
-- `vector` - evidence-only raw vector similarity
-- `lexical` - evidence-only raw lexical overlap
-- `recency`
-- `importance`
-- `historicalLineage`
-- `neighborhoodBoost` - additive delta applied by the seeded rerank stage when the row shares lineage with a strong seed
-- `claimKeyTrustPenalty`
-- `claimKeyRedundancyPenalty`
+## Episode retrieval modes
 
-## 9. CLI formatting
+### Pure temporal
 
-The CLI prints each result as a multi-line block:
+Pure temporal episode recall:
 
-- `[<score>] <subject>`
-- truncated content preview
-- `type`, `importance`, `expiry`, created date, memory-state label, and claim-status label
-- claim family and freshness summary
-- optional provenance summary when the row has supersession or claim-support metadata
-- one `why=...` line that summarizes why the row surfaced
+1. resolves a time window
+2. fetches overlapping episodes through SQL
+3. scores them in memory
+4. sorts primarily by temporal fit
 
-In verbose mode it also prints:
+The overlap filter is inclusive:
 
-- `vector`
-- `lexical`
-- `recency`
-- `importance`
-- `relevance`
-- `historicalLineage`
-- `neighborhoodBoost`
-- `claimKeyTrustPenalty`
-- `claimKeyRedundancyPenalty`
+```txt
+started_at <= query_end
+COALESCE(ended_at, started_at) >= query_start
+```
 
-Current formatting details:
+### Pure semantic
 
-- score is shown with two decimals
-- content is truncated to `120` chars normally or `200` in verbose mode
-- created dates are displayed as `YYYY-MM-DD`
-- tags, source-file metadata, and recall counters are not shown
+Pure semantic episode recall:
 
-## 10. Recall tracing
+- requires embeddings
+- uses episode vector search
+- ranks by semantic similarity
 
-`recall()` now supports an optional typed trace sink through `RecallExecutionOptions.trace`.
+### Hybrid episode recall
 
-Important properties of the tracing path:
+Hybrid episode recall is not a broad vector search with a soft time bias.
 
-- tracing is observational only and defaults to `createNoopRecallTraceSink()`
-- the trace summary is emitted exactly once per recall call
-- tracing works for successful calls, no-result calls, and thrown errors
-- integration tests explicitly assert that enabling tracing does not change result ordering or scores
+It is:
 
-The emitted `RecallExecutionTraceSummary` currently contains:
+1. hard temporal filtering first
+2. semantic reranking inside the filtered set
+3. RRF fusion between temporal and semantic rank lists
 
-- `filtering` - active `types`, `tags`, `since`, `until`, and optional `around`
-- `ranking` - normalized `limit`, `threshold`, `budget`, and optional stable `noResultReason`
-- `candidateCounts` - merged, threshold-qualified, budget-accepted, final-ranked, and returned counts
-- `claimKey` - historical boosts, tentative-lineage suppression, trust penalties, and redundancy penalties
-- `rrf` - whether reciprocal rank fusion actually ran, the active channel count, the effective rank constant, the number of fused candidates, and the maximum normalized fused score
-- `neighborhood` - whether neighborhood expansion ran, the families requested, the expanded candidate count, the strong seed count, and the ids that received a seeded-rerank boost
-- `mmr` - whether MMR ran, the effective lambda, the dropped-near-duplicate count, and the ids whose position changed relative to the input order
-- `crossEncoder` - whether the cross-encoder rerank ran, the shortlist size `k`, the effective alpha, the rerank latency in milliseconds, the ids whose score was reshaped, and any stable `degradedReason` when the stage was skipped or failed closed
-- `degraded` - whether recall fell back away from the normal vector-backed path, the stable causes, whether the run was lexical-only, and the user-facing notices
-- `timings` - merge, score, threshold, budget, and result-shaping timings
+This preserves the date boundary. A semantically good episode from the wrong time window should not outrank a weaker but temporally correct episode.
 
-Stable no-result reasons today are:
+## Episode scoring
 
-- `empty_query`
-- `limit_zero`
-- `no_candidates`
-- `below_threshold`
-- `hydrate_missing`
-- `degraded_no_candidates`
-- `degraded_below_threshold`
+Pure temporal episode ranking uses:
 
-This tracing surface is what the internal recall-eval seam and future observability hooks should consume. It is separate from user-facing recall telemetry.
+```txt
+score = overlapQuality * 0.75 + midpointProximity * 0.20 + activity * 0.04 + recency * 0.01
+```
 
-## 11. Recall telemetry
+Where:
 
-If recall returns at least one result, it records telemetry for those entry IDs.
+- `overlapQuality` measures how well the episode interval matches the query interval
+- `midpointProximity` rewards closeness to the center of the window
+- `activity` lightly rewards more substantial sessions
+- `recency` is only a final tiebreak signal
 
-Current telemetry behavior:
+In hybrid mode, the fused RRF score becomes the main relevance signal, with temporal and activity signals acting as secondary ordering information.
 
-1. update each entry's `recall_count`
-2. update each entry's `last_recalled_at`
-3. insert one row into `recall_events`
+## Procedure recall
 
-Each event stores:
+Procedure recall is a dedicated path rather than a thin alias for entry recall.
 
-- a generated event ID
-- `entry_id`
-- the raw query text
-- optional `session_key`
-- `recalled_at`
+Key ideas:
 
-Two reliability details matter:
+- procedure questions want canonical operational guidance
+- revisions of the same procedure are often close in lexical and semantic space
+- the procedure surface therefore benefits from lineage-aware handling, MMR, and optional cross-encoder rerank just like other recall surfaces
 
-- `recall()` awaits `recordRecallEvents()` before returning
-- the adapter serializes writes behind a `pendingWrites` promise chain so concurrent recalls do not all write at once
+Unified recall returns:
 
-Telemetry failures do not fail recall:
+- one canonical procedure answer when the service finds a stable leader
+- ranked procedure candidates separately from entries and episodes
+- procedure notices when the path had to degrade
 
-- per-entry write errors are swallowed inside the adapter
-- the core recall function also wraps the telemetry call in `.catch(() => undefined)`
+## Automatic OpenClaw recall
 
-So the user still gets results even when telemetry writes fail.
+OpenClaw uses two bounded automatic recall paths.
 
-## Ranking policy tuning history
+### Session-start recall
 
-This section records before/after values for ranking-policy defaults that have been intentionally tuned after the graphiti-recall-borrows work landed. Every change cites the regression it targets so future tuning passes start from a documented state.
+Session-start recall:
 
-### `DEFAULT_HIGH_CONFIDENCE_RECALL_THRESHOLD` (before-turn)
+- runs once per session
+- merges continuity context with durable memory
+- keeps continuity and durable memory visibly separate
+- caps the durable-memory patch to a small bounded set
+- prefers artifact-grounded durable memory for non-core context
 
-- File: `src/app/before-turn/service.ts`
-- Gates: `shouldRetryWeakPrimaryWithContext()` contextual-fallback retry, and the `selectDurablePatchItems()` expansion past the one-item cap.
-- Before: `0.85` (tuned for the pre-RRF continuous relevance blend).
-- Intermediate: `0.92` (initial phase-2 recalibration for the RRF-driven composite score distribution; insufficient for single-entry pools).
-- After: `0.97` (phase-2 follow-up, tuned to keep single-candidate pools on the contextual-fallback side of the gate).
-- Reason: reciprocal rank fusion in `src/core/recall/fusion.ts` normalizes rank-based contributions so a top-1 candidate in a single channel already lands at `1.0` after normalization, and a single-candidate pool lands at exactly `1.0`. With `score = 0.5 * relevance + 0.25 * recency + 0.25 * importance`, moderately important and reasonably recent single-channel leaders already composed above the old `0.85` gate, which suppressed the contextual-fallback retry on continuation-style turns like "what should we do next?" and over-expanded the durable patch past the normal one-item cap. The first phase-2 recalibration to `0.92` handled most single-channel leader cases, but the single-entry pools seeded by rows 22 and 23 of the phase-0 attribution sweep still composed to `~0.933` and stayed above `0.92`. The `0.97` gate keeps the high-confidence behavior gated on candidates that behave like top-1 in both retrieval channels with near-maximum recency and importance, and lets the single-candidate continuation-style cases escalate to the contextual fallback they were designed for. The precision floor for the new gate is the importance-10 very-recent permanent entry (composite `~0.999`), which still clears `0.97`.
-- Regressions targeted: the `contextual-follow-up.fallback.inject` cases in both `before-turn-section-4-ablations` and `before-turn-section-5-ablations` (rows 22 and 23 in the phase-0 attribution sweep at run `2026-04-19T23-07-52-044Z`) as tracked in `docs/internal/recall/regression-attribution.md`.
-- Phase: phase 2 (initial `0.92` recalibration) plus phase-2 follow-up (`0.97` single-pool guard) of the recall-regression-resolution plan.
-- Regression tests: `tests/app/before-turn/service.test.ts` pins the recalibrated default on all three sides of the gate:
-  - "retries with contextual fallback when the primary score clears the old 0.85 gate but not the recalibrated default" - moderate single-leader case (~0.890) stays below both `0.92` and `0.97`.
-  - "retries with contextual fallback when a single-entry pool inflates the primary score past 0.92 but not 0.97" - single-entry pool case (~0.933, rows 22/23) clears `0.92` but must stay below `0.97`.
-  - "keeps the current-turn-only variant when the primary score clears the recalibrated default" - precision floor (~0.999) clears `0.97`.
-- Not changed in the same pass: `DEFAULT_RECALL_THRESHOLD = 0.6` and `DEFAULT_PROCEDURE_THRESHOLD = 0.72`. Neither was implicated in the threshold-induced regressions, and moving them without attribution evidence would risk widening or narrowing the before-turn surface in ways the regression table does not authorize.
+### Before-turn recall
 
-### Historical-state lineage bonus shaping
+Before-turn recall:
 
-- File: `src/core/recall/search.ts` (`applyHistoricalLineageBoosts`, `resolveHistoricalLineageBonus`, `shapeHistoricalLineageBonus`).
-- Gates: the additive score delta applied on the `rankingProfile: "historical_state"` branch of entry recall. The bonus is layered on top of the base composite score alongside claim-key shaping and seeded rerank, and it feeds MMR diversification as the shaped relevance signal.
-- Before: fixed additive deltas (`+0.08` for direct predecessor, `+0.06` for retired predecessor-like peer, `+0.08` for older same-slot or same-topic peer). A constant delta could not flip a predecessor whose RRF-compressed relevance lagged the current-state peer's relevance by more than the delta itself.
-- After: a proportional bonus computed from the score gap to the best-scoring active peer with a qualifying historical relation. The bonus is `max(fixedFloor, gap + HISTORICAL_LINEAGE_GAP_MARGIN)`, capped at `HISTORICAL_LINEAGE_MAX_BONUS`. `HISTORICAL_LINEAGE_GAP_MARGIN = 0.02` is the minimum margin by which the superseded predecessor must edge the active successor; `HISTORICAL_LINEAGE_MAX_BONUS = 0.45` is the hard cap that keeps the bonus from dominating the entire score surface.
-- Reason: `rrfFuse()` normalizes rank-based contributions so a single-channel current-state leader routinely lands at a relevance of `1.0` while its superseded predecessor lands near `0.33-0.5`. With `score = 0.5 * relevance + 0.25 * recency + 0.25 * importance` the composite gap between the two peers is often `0.03-0.06`, which the old fixed `+0.08` delta could usually close but which the combined claim-key shaping plus MMR stage sometimes re-opened. The proportional bonus makes the flip decision a function of the observed gap rather than a static constant, so the predecessor wins whenever the `historical_state` profile is active regardless of how compressed the RRF distribution is. The floor preserves the previously validated delta when the predecessor already outranks the successor. The cap prevents a pathological active peer (extreme importance, pinned recency, single-channel dominance) from pushing the bonus close to `1.0` and hiding claim-key redundancy or trust suppression.
-- Regressions targeted: rows 8, 9, and 21 of the phase-0 attribution sweep (`threshold_induced` historical-state / `.previous-state` / `.what-changed` cases). The `2026-04-20T17-59-45-467Z` sweep re-run confirms all three flip to `pass` at baseline. Rows 11, 14, 18, and 20 also benefit at the RRF layer, moving from `mmr_induced` to `combined` because `rrf=disabled` now rescues them as well; their remaining baseline failure is an MMR-reordering shape that phase 4 owns.
-- Phase: phase 3 of the recall-regression-resolution plan.
-- Regression tests: `tests/core/recall/search.test.ts` pins the new shape at three points:
-  - "flips the superseded trusted predecessor above an RRF-dominant successor in historical_state" - constructs the rows 8/9/21 shape where the current-state peer has higher RRF relevance, and asserts `historicalLineage > 0.08` plus a final-score margin of at least `HISTORICAL_LINEAGE_GAP_MARGIN` over the successor.
-  - "keeps the current entry first under the default profile even when the pool has a direct predecessor" - pins the non-leak guard so the proportional bonus cannot lift a predecessor on default-profile queries.
-  - Existing `historical_state` fixtures in the same file continue to assert the previously validated fixed-delta floors (`+0.08` direct predecessor, `+0.06` retired predecessor-like, `+0.08` older state).
-- Not changed in the same pass: `DEFAULT_SEEDED_RERANK_WEIGHT = 0.03` in `src/core/recall/neighborhood.ts`. The plan's phase-3 option 1 (raise the seeded-rerank weight for `historical_state`) was rejected because raising it globally would leak into the default profile, and per-profile seeded-rerank weights would need a second magic constant; the proportional lineage bonus keeps all shaping inside the historical-state branch.
+- runs only on later user-facing turns
+- skips low-signal or non-user triggers
+- derives a bounded query from the current prompt plus recent turns
+- can surface one or a few high-confidence durable items
+- can also surface a canonical procedure suggestion
 
-### MMR small-pool gate
+This path is intentionally stricter than the explicit recall tool. It is meant to assist live prompting, not dump broad memory into the prompt by default.
 
-- File: `src/core/recall/mmr.ts` (`DEFAULT_MMR_MIN_POOL_SIZE`, the `minPoolSize` branch of `maximalMarginalRelevance`), with plumbing through `src/core/recall/search.ts`, `src/core/recall/trace.ts`, `src/core/episode/search.ts`, `src/app/procedures/recall/service.ts`, `src/app/recall/unified.ts`, and `src/adapters/api/validation/recall-eval-request.ts`.
-- Gates: the maximal-marginal-relevance diversification stage used by entry, episode, and procedure recall. When the candidate pool is at or below the gate, MMR returns the input order untouched and records `applied: false`.
-- Before: MMR ran on every shortlist with at least two embedded candidates. On small pools (2-4 candidates) the diversity penalty routinely promoted a semantically distant peer above the top-1 that RRF fusion, historical-lineage shaping, claim-key trust, and seeded rerank had already chosen.
-- After: `DEFAULT_MMR_MIN_POOL_SIZE = 4`. MMR runs only when the candidate pool has strictly more than four candidates. Callers can override via `rankingPolicy.mmrMinPoolSize` (and per-surface `MmrOptions.minPoolSize`); `0` restores the pre-phase-4 behavior so every non-empty pool still runs through MMR.
-- Reason: diversification adds value when the shortlist contains redundant semantic neighbors. On pools of three or four, MMR's diversity penalty has nothing useful to diversify against, and its top-level effect is to re-promote whichever candidate happens to have the lowest pairwise similarity to the current leader. That reordering routinely flips the intended top-1 on initial-corpus, historical-state, and memory-freshness shapes where prior stages had already converged on the correct leader.
-- Regressions targeted: the `mmr_induced` and `combined` rows of the phase-0 attribution sweep - rows 7, 12, 16, and 19 (`mmr_induced`) plus rows 2-6, 10, 11, 14, 17, 18, and 20 (`combined`) against the `2026-04-20T17-59-45-467Z` sweep. The follow-up sweep at `2026-04-20T18-36-19-918Z` flips all of them to `already_passing` at baseline.
-- Phase: phase 4 of the recall-regression-resolution plan.
-- Regression tests:
-  - `tests/core/recall/mmr.test.ts` adds four targeted cases covering the default gate (skip on two-candidate pools), the `pool > gate` path, the explicit `minPoolSize: 0` override, and the negative-override fallback to the default.
-  - `tests/core/recall/search.test.ts` adds "keeps the ranked leader intact on a three-candidate pool with a semantically distant but embeddings-diverse peer (phase-4 MMR regression)" which mirrors the `mmr_induced` row 7 shape end-to-end.
-  - Existing algorithm-level MMR tests pass `minPoolSize: 0` to disable the gate on their synthetic small pools, since those tests exercise MMR internals rather than the gate policy.
+## Notices, degradation, and fallbacks
 
-### RRF small-pool rank-constant sharpening
+Recall surfaces explicit notices when parts of the pipeline degrade.
 
-- File: `src/core/recall/fusion.ts` (`DEFAULT_RRF_SMALL_POOL_RANK_CONSTANT`, `SMALL_POOL_RRF_POOL_SIZE`), `src/core/recall/search.ts` (`resolveRrfRankConstant` with a `fusedPoolSize` argument), and `src/core/recall/trace.ts` (`RecallRankingPolicy.rrfSmallPoolRankConstant`). The HTTP validator in `src/adapters/api/validation/recall-eval-request.ts` accepts the new field.
-- Gates: the rank constant `k` used by `rrfFuse()` when the union of ranked IDs across channels is at or below `SMALL_POOL_RRF_POOL_SIZE` (`4`). Larger pools keep the canonical Cormack et al. `k = 60`.
-- Before: RRF always used `k = 60`. At that constant the normalized gap between rank-1 and rank-2 in a two-item pool is under two percent, which let small-magnitude recency and importance differences flip an otherwise-clear vector leader. Rows 1 and 15 of the phase-0 attribution sweep classified as `rrf_induced` for exactly that reason (confirmed by `rrf=disabled` rescuing them while keeping every other stage in place).
-- After: `DEFAULT_RRF_SMALL_POOL_RANK_CONSTANT = 8` when the fused pool is at or below `SMALL_POOL_RRF_POOL_SIZE`. At `k = 8` the rank-1-vs-rank-2 gap widens to roughly eleven percent, which is enough to keep a clear vector leader on top after scoring and claim-key shaping without otherwise changing RRF's contract on mature shortlists. Callers can override via `rankingPolicy.rrfSmallPoolRankConstant`; setting it equal to `DEFAULT_RRF_RANK_CONSTANT` (`60`) disables the sharpening for small pools without touching larger-pool behavior.
-- Precedence rules for the two RRF knobs:
-  - An explicit `rrfSmallPoolRankConstant` always wins on small pools when present.
-  - An explicit `rrfRankConstant` (without an explicit `rrfSmallPoolRankConstant`) is treated as a deliberate caller choice for every pool size, preserving the pre-phase-4 single-knob semantics. Callers who want both the sharpening and a non-default large-pool constant should set both fields.
-  - When neither is set, small pools use `8` and larger pools use `60`.
-- Reason: on two- or three-candidate shortlists, the paper's `k = 60` compresses rank differences into noise relative to the `recency` and `importance` contributions to the final composite score (`0.5 * relevance + 0.25 * recency + 0.25 * importance`). Sharpening `k` only on narrow pools keeps the paper's flattening contract on normal-sized shortlists while restoring decisive top-1 separation on the small-pool shapes the initial-corpus and memory-freshness manifests exercise.
-- Regressions targeted: the `rrf_induced` rows 1 and 15 of the phase-0 attribution sweep, plus the `combined` rows that benefit from sharper relevance separation as a precondition for the MMR small-pool gate. The follow-up sweep at `2026-04-20T18-36-19-918Z` confirms every one of these flips to `pass` at baseline.
-- Phase: phase 4 of the recall-regression-resolution plan.
-- Regression tests:
-  - `tests/core/recall/search.test.ts` adds "sharpens the RRF rank constant on small fused pools by default", "honors rrfSmallPoolRankConstant override on small pools", and "keeps k=60 on small pools when the caller sets rrfRankConstant without a small-pool override" to pin the three precedence rules.
-  - `tests/core/recall/search.test.ts` adds "keeps the vector-preferred top-1 on a small pool where a recency-favored peer used to flip it (phase-4 RRF regression)" which mirrors the `rrf_induced` row 1 shape end-to-end.
-  - `tests/core/recall/search.test.ts` updates the "down-ranks redundant active trusted siblings from the same current slot" case to opt out of the small-pool sharpening via `rankingPolicy.rrfSmallPoolRankConstant = 60`, because the claim-key redundancy penalty was calibrated against the pre-phase-4 `k = 60` rank compression on three-candidate pools.
+Common degraded cases:
 
-### Deviation from the phase-4 plan RRF hypothesis
+- query embedding unavailable
+- vector search unavailable
+- semantic episode search unavailable
+- lexical-only procedure selection
 
-The plan's phase-4 section proposed either the MMR gate or per-channel weights on `rrfFuse` (exposed as `rankingPolicy.rrfVectorWeight`) as the RRF-side fix. The attribution sweep evidence points at rank compression rather than channel imbalance: the `rrf_induced` rows (1 and 15) flip to `pass` under `rrf=disabled` even though every channel weight would have been `1.0` in the legacy fallback. A smaller rank constant on small pools restores the rank-1-vs-rank-2 separation that recency and importance were overwhelming. `rankingPolicy.rrfSmallPoolRankConstant` therefore lands in place of `rrfVectorWeight`; the per-channel-weight option is left as a future lever if a later sweep identifies cases where channels actually need rebalancing rather than sharpening.
+The core design principle is graceful fallback:
 
-### Phase 5 end-to-end validation
+- lexical recall should still work when vector recall does not
+- temporal episode recall should still work when semantic episode search does not
+- a broken rerank stage should never produce worse-than-baseline failure semantics
 
-- Phase: phase 5 (validation and documentation) of the recall-regression-resolution plan.
-- Aggregate verdict: the full recall plus before-turn eval suite covered by the plan's exit criteria ran `80/85` passing against local `master` with every phase-2 through phase-4 tuning landed (run timestamp `2026-04-20T19:00:20Z` through `2026-04-20T19:01:42Z` under `/Users/jmartin/Code/agenr-evals/artifacts/runs/`). This matches the stated pre-phase baseline of `80/85`, so the plan's "Combined total >= 80/85" gate is satisfied.
-- Section breakdown:
-  - `agenr-recall-http`: 4/4
-  - `agenr-recall-http-initial-corpus`: 16/18 (2 pre-existing validator rejections on `type: "event"`; see "Surviving failures after phase 5" below).
-  - `agenr-recall-http-claim-centric-section-1`: 4/4
-  - `agenr-recall-http-degraded-section-1`: 5/5
-  - `agenr-recall-http-memory-freshness-section-1`: 9/10 (row 13 residual).
-  - `agenr-recall-http-memory-freshness-section-1-lineage-ranking`: 7/8 (same case repeated in the stricter lineage manifest).
-  - `agenr-recall-http-temporal-slot-policy-section-1`: 4/4
-  - `before-turn-section-1-core`: 8/8 (precision floor intact).
-  - `before-turn-section-2-live-replay`: 11/12 (pre-existing `kevin-family.inject` abstain).
-  - `before-turn-section-2-live-replay-diagnostics`: 1/1
-  - `before-turn-section-3-directness`: 4/4 (precision floor intact).
-  - `before-turn-section-4-contextual-follow-up`: 2/2 (rows 22 and 23 stay passing under the phase-2 follow-up gate).
-  - `before-turn-section-5-ablations`: 5/5 (row 23 mirror stays passing).
+## Trace and telemetry
 
-### Surviving failures after phase 5
+Recall has two different observability layers.
 
-Three distinct failure shapes survive this plan and are called out here so the next tuning pass starts from documented state:
+### Trace summaries
 
-1. `agenr.recall.memory-freshness.section1.recent-obsolete-plan-loses.current` (row 13 in the phase-0 attribution sweep, repeated in the lineage-ranking manifest). Classification: `threshold_induced`. None of the four kill-switch variants (`rrf=disabled`, `neighborhood=disabled`, `mmr=disabled`, `crossEncoder=disabled`) flip it to pass. The fixture expects `freshness-fix` (a `milestone` at 15:00 UTC) to rank above `recency-plan` (a `decision` at 09:00 UTC) on the query "what ranking behavior are we using now for freshness handling", but the seeded pool has no claim-key overlap and no `supersedes` relation, so every stage of the pipeline treats the two entries as independent current-state peers. `recency-plan` wins the RRF composite because its content literally reuses the query tokens ("switch recall ranking to pure recency while debugging freshness problems"), yielding higher lexical overlap and higher vector similarity; the ~6h recency advantage of `freshness-fix` is below the resolution of the importance/recency blend. Under the legacy continuous relevance scoring this case passed because the non-RRF relevance blend compressed the rank gap enough for the tiny recency advantage to matter; RRF widens the rank-1-vs-rank-2 gap by design, which is the architectural win that phases 3 and 4 explicitly build on. The accepted tradeoff is that content-only supersession ("the earlier recency-only plan was dropped" is phrased inside the `freshness-fix` content) is not something the current pipeline infers without a structural signal; the fixture would need either a `supersedes`/`supersededBy` relation or a claim-key overlap to flip through the historical-lineage path, and no ranking-policy tuning can produce the expected order without changing the architectural win. Future work that wants to flip this row should (a) extend the fixture with a structural supersession signal, (b) introduce a content-driven soft-supersession detector as a new recall stage, or (c) deliberately rebias the importance/recency contribution above the RRF contribution for small same-family pools. None of those is in scope for the regression-resolution plan.
-2. `agenr.recall.corpus.filters.public-repo-launch-around-date` and `agenr.recall.corpus.edge.event-filter-no-result` in `agenr-recall-http-initial-corpus`. These are pre-existing validator rejections of `type: "event"` entries; they were excluded from the plan's scope in its "What We Know" section.
-3. `before-turn.replay.entity.kevin-family.inject` in `before-turn-section-2-live-replay`. This abstain is pre-existing (confirmed against run `2026-04-18T17-30-12-545Z`) and the manifest is explicitly described by `agenr-evals` as an investigative replay slice that "may stay red while core ranking/query issues are being worked."
+Typed trace summaries capture execution facts such as:
 
-Later phases of this plan do not exist. Any follow-up tuning should open a new plan that cites these surviving failure shapes before changing a default.
+- filters
+- ranking settings
+- candidate counts
+- claim-key shaping
+- RRF details
+- neighborhood expansion details
+- MMR details
+- cross-encoder details
+- degraded-mode notices
+- timings
 
-## Config relevant to recall
+Tracing is observational only. It should not change ranking behavior.
+
+### Recall telemetry
+
+Recall telemetry records that results were surfaced.
+
+For recalled entries, telemetry updates:
+
+- `recall_count`
+- `last_recalled_at`
+- `recall_events`
+
+Telemetry failures are swallowed so the user still receives results.
+
+## Tuning knobs
+
+Recall exposes several practical tuning knobs across the CLI, unified recall, and ranking policy.
+
+### Query-surface knobs
+
+- `limit` - maximum number of returned results
+- `threshold` - inclusive `0-1` score cutoff
+- `budget` - approximate token budget applied after scoring
+- `types` - entry-type filter
+- `tags` - exact tag filter
+- `since`, `until` - hard date filters
+- `around` - date anchor for recency scoring
+- `aroundRadiusDays` - Gaussian radius for `around`
+
+### Unified routing knobs
+
+- `mode` - `auto`, `entries`, `episodes`, or `procedures`
+- explicit time-window phrases - push routing toward episodes
+- topic anchors - can pull mixed questions toward entries plus episodes or procedures
+
+### Ranking-policy knobs
+
+- `rrf` - enable or disable reciprocal rank fusion
+- `rrfRankConstant` - main RRF rank constant, default `60`
+- `rrfSmallPoolRankConstant` - sharper RRF constant for small pools, default `8` when the fused pool is at or below `4` candidates
+- `neighborhood` - enable or disable expansion plus seeded rerank
+- `mmr` - enable or disable diversification
+- `mmrLambda` - relevance versus diversity balance, default `0.7`
+- `mmrMinPoolSize` - minimum pool size before MMR runs, default `4`
+- `crossEncoder` - enable or disable cross-encoder rerank
+- `crossEncoderTopK` - shortlist size for the reranker, default `10`
+- `crossEncoderAlpha` - blend weight for reranked scores, default `0.6`
+
+### Surface-specific defaults that matter
+
+- entry recall default `limit` is `10`
+- entry `around` default radius is `14` days
+- recency half-life is `365` days for `permanent` and `30` days for `temporary`
+- entry final score weights are `0.5 relevance`, `0.25 recency`, `0.25 importance`
+- episode temporal score weights are `0.75 overlapQuality`, `0.20 midpointProximity`, `0.04 activity`, `0.01 recency`
+
+## Memory authority model
+
+Not all recalled material should be treated the same way.
+
+1. Durable entries are the canonical memory record for facts, decisions, preferences, and claim-key-managed state.
+2. Episodes are narrative history. They are good for context, but they are weaker than durable entries for precision-sensitive facts.
+3. Procedures are canonical guidance for how to perform a task.
+4. Live verification still wins over any stored memory when direct evidence is cheap to obtain.
+
+This is why the system keeps these surfaces separated in both internal types and user-facing formatting.
+
+## Recall-relevant configuration
 
 A minimal recall-relevant config looks like this:
 
@@ -999,12 +748,11 @@ A minimal recall-relevant config looks like this:
 }
 ```
 
-Notes:
+Important config notes:
 
 - embeddings use `credentials.openaiApiKey`, then `OPENAI_API_KEY`
-- if extraction uses Anthropic auth or OpenAI subscription auth, embeddings still require an OpenAI API key
-- `embeddingModel` falls back to `text-embedding-3-small`
-- `crossEncoderModel` is optional and follows the same `ModelConfig` shape as other per-stage overrides; it defaults to `{ provider: "openai", model: "gpt-5.4-nano" }` through `resolveModel(config, "cross_encoder")` and falls back to the OpenAI API key in `credentials.openaiApiKey` or `OPENAI_API_KEY`
+- embeddings default to `text-embedding-3-small`
+- the cross-encoder model is optional
 - `AGENR_DB_PATH` overrides `dbPath`
 - `AGENR_CONFIG_PATH` overrides the config file location
 
@@ -1013,17 +761,16 @@ Notes:
 - `src/cli/commands/recall.ts`
 - `src/app/recall/unified.ts`
 - `src/app/recall/types.ts`
+- `src/app/procedures/recall/service.ts`
 - `src/app/session-start/service.ts`
-- `src/app/session-start/types.ts`
 - `src/app/before-turn/service.ts`
-- `src/app/before-turn/types.ts`
 - `src/core/recall/search.ts`
 - `src/core/recall/scoring.ts`
+- `src/core/recall/fusion.ts`
 - `src/core/recall/lexical.ts`
 - `src/core/recall/neighborhood.ts`
 - `src/core/recall/mmr.ts`
 - `src/core/recall/cross-encoder.ts`
-- `src/adapters/cross-encoder/openai-cross-encoder.ts`
 - `src/core/recall/temporal.ts`
 - `src/core/recall/trace.ts`
 - `src/core/recall/types.ts`
@@ -1035,12 +782,7 @@ Notes:
 - `src/adapters/db/recall-adapter.ts`
 - `src/adapters/db/episode-queries.ts`
 - `src/adapters/db/queries.ts`
+- `src/adapters/cross-encoder/openai-cross-encoder.ts`
 - `src/adapters/openclaw/tools/recall.ts`
 - `src/adapters/openclaw/tools/shared.ts`
 - `src/adapters/openclaw/hooks/before-prompt-build.ts`
-- `src/adapters/openclaw/format/recall-format.ts`
-- `tests/cli/commands/recall.test.ts`
-- `tests/core/recall/search.integration.test.ts`
-- `tests/app/recall/unified.test.ts`
-- `tests/core/episode/temporal-window.test.ts`
-- `tests/adapters/openclaw/tools.test.ts`
