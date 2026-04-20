@@ -188,6 +188,137 @@ describe("parseBeforeTurnEvalCaseRequest", () => {
     }
   });
 
+  it("accepts an explicit fixture corpus-seed block on the sandbox", () => {
+    const result = parseBeforeTurnEvalCaseRequest({
+      caseId: "case-before-turn-fixture-seed",
+      sandbox: {
+        corpusSeed: { mode: "fixture" },
+      },
+      memoryPool: [],
+      beforeTurnInput: {
+        currentTurnText: "who is Duke?",
+      },
+    });
+
+    expect(result.sandbox).toEqual({
+      root: undefined,
+      preserve: undefined,
+      corpusSeed: { mode: "fixture" },
+    });
+    expect(mapBeforeTurnEvalCaseRequestDto(result).sandbox?.corpusSeed).toEqual({
+      mode: "fixture",
+    });
+  });
+
+  it("accepts a snapshot_copy corpus-seed block with full provenance hints", () => {
+    const result = parseBeforeTurnEvalCaseRequest({
+      caseId: "case-before-turn-snapshot-seed",
+      sandbox: {
+        root: "/tmp/evals/before-turn-snapshot",
+        preserve: false,
+        corpusSeed: {
+          mode: "snapshot_copy",
+          snapshotDbPath: "  /tmp/snapshots/knowledge-2026-04-18.db  ",
+          snapshotId: "  nightly-2026-04-18  ",
+          snapshotLabel: "  nightly corpus snapshot  ",
+          allowTelemetryWrites: true,
+        },
+      },
+      memoryPool: [],
+      beforeTurnInput: {
+        currentTurnText: "who is on call?",
+      },
+    });
+
+    expect(result.sandbox).toEqual({
+      root: "/tmp/evals/before-turn-snapshot",
+      preserve: false,
+      corpusSeed: {
+        mode: "snapshot_copy",
+        snapshotDbPath: "/tmp/snapshots/knowledge-2026-04-18.db",
+        snapshotId: "nightly-2026-04-18",
+        snapshotLabel: "nightly corpus snapshot",
+        allowTelemetryWrites: true,
+      },
+    });
+    expect(mapBeforeTurnEvalCaseRequestDto(result).sandbox?.corpusSeed).toEqual({
+      mode: "snapshot_copy",
+      snapshotDbPath: "/tmp/snapshots/knowledge-2026-04-18.db",
+      snapshotId: "nightly-2026-04-18",
+      snapshotLabel: "nightly corpus snapshot",
+      allowTelemetryWrites: true,
+    });
+  });
+
+  it("rejects malformed corpus-seed blocks with stable paths", () => {
+    try {
+      parseBeforeTurnEvalCaseRequest({
+        caseId: "case-before-turn-corpus-seed-invalid",
+        sandbox: {
+          corpusSeed: {
+            mode: "snapshot_copy",
+            snapshotDbPath: "   ",
+            snapshotId: 42,
+            allowTelemetryWrites: "yes",
+            extraField: true,
+          },
+        },
+        memoryPool: [],
+        beforeTurnInput: {
+          currentTurnText: "who is on call?",
+        },
+      });
+      expect.unreachable("Expected validation failure.");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BeforeTurnEvalRequestValidationError);
+      expect((error as BeforeTurnEvalRequestValidationError).issues).toEqual([
+        {
+          path: "sandbox.corpusSeed.extraField",
+          message: "Unexpected field.",
+        },
+        {
+          path: "sandbox.corpusSeed.snapshotDbPath",
+          message: "Expected a non-empty string.",
+        },
+        {
+          path: "sandbox.corpusSeed.snapshotId",
+          message: "Expected a string.",
+        },
+        {
+          path: "sandbox.corpusSeed.allowTelemetryWrites",
+          message: "Expected a boolean.",
+        },
+      ]);
+    }
+  });
+
+  it("rejects unknown corpus-seed modes", () => {
+    try {
+      parseBeforeTurnEvalCaseRequest({
+        caseId: "case-before-turn-corpus-seed-mode",
+        sandbox: {
+          corpusSeed: {
+            mode: "snapshot_link",
+            snapshotDbPath: "/tmp/snapshots/knowledge.db",
+          },
+        },
+        memoryPool: [],
+        beforeTurnInput: {
+          currentTurnText: "who is on call?",
+        },
+      });
+      expect.unreachable("Expected validation failure.");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BeforeTurnEvalRequestValidationError);
+      expect((error as BeforeTurnEvalRequestValidationError).issues).toEqual([
+        {
+          path: "sandbox.corpusSeed.mode",
+          message: "Expected one of: fixture, snapshot_copy.",
+        },
+      ]);
+    }
+  });
+
   it("rejects malformed procedure fixtures", () => {
     try {
       parseBeforeTurnEvalCaseRequest({

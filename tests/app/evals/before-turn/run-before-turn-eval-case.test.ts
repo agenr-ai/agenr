@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -393,6 +393,143 @@ describe("runBeforeTurnEvalCase", () => {
     expect(response.diagnostics?.durableRecallTrace?.crossEncoder?.degradedReason).toBe("not_configured");
   });
 
+  it("seeds durable memory from a copied snapshot and surfaces snapshot metadata", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const sourceRoot = await createTempDirectory("agenr-before-turn-snapshot-source-");
+    const snapshotDbPath = path.join(sourceRoot, "knowledge.db");
+    await seedSnapshotEntry(snapshotDbPath, {
+      id: "snapshot-duke",
+      type: "fact",
+      subject: "duke identity",
+      content: "Duke is Jim's dog.",
+      importance: 6,
+      expiry: "permanent",
+      tags: ["dogs", "identity"],
+      quality_score: 0.5,
+      recall_count: 0,
+      retired: false,
+      created_at: "2026-04-18T00:00:00.000Z",
+      updated_at: "2026-04-18T00:00:00.000Z",
+    });
+    const sourceBytesBefore = await readFile(snapshotDbPath);
+
+    const sandboxRoot = await createTempDirectory("agenr-before-turn-snapshot-sandbox-");
+
+    const response = await runBeforeTurnEvalCase({
+      caseId: "before-turn-snapshot-seed",
+      sandbox: {
+        root: sandboxRoot,
+        preserve: true,
+        corpusSeed: {
+          mode: "snapshot_copy",
+          snapshotDbPath,
+          snapshotId: "nightly-2026-04-18",
+          snapshotLabel: "nightly corpus snapshot",
+        },
+      },
+      memoryPool: [],
+      beforeTurnInput: {
+        currentTurnText: "who is Duke?",
+        policy: {
+          recallThreshold: 0,
+          enableProcedureSuggestion: false,
+        },
+      },
+      options: {
+        includeDiagnostics: true,
+      },
+    });
+
+    expect(response.status).toBe("ok");
+    expect(response.output?.selectedEntryIds).toEqual(["snapshot-duke"]);
+    expect(response.sandbox).toMatchObject({
+      root: sandboxRoot,
+      preserved: true,
+      snapshot: {
+        id: "nightly-2026-04-18",
+        label: "nightly corpus snapshot",
+        dbPathBasename: "knowledge.db",
+        allowedTelemetryWrites: false,
+      },
+    });
+
+    const sourceBytesAfter = await readFile(snapshotDbPath);
+    expect(sourceBytesAfter.equals(sourceBytesBefore)).toBe(true);
+  });
+
+  it("applies fixture overlays on top of a copied snapshot and keeps telemetry writes off by default", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const sourceRoot = await createTempDirectory("agenr-before-turn-overlay-source-");
+    const snapshotDbPath = path.join(sourceRoot, "knowledge.db");
+    await seedSnapshotEntry(snapshotDbPath, {
+      id: "snapshot-duke",
+      type: "fact",
+      subject: "duke identity",
+      content: "Duke is Jim's dog in the snapshot.",
+      importance: 6,
+      expiry: "permanent",
+      tags: ["dogs", "identity"],
+      quality_score: 0.5,
+      recall_count: 0,
+      retired: false,
+      created_at: "2026-04-18T00:00:00.000Z",
+      updated_at: "2026-04-18T00:00:00.000Z",
+    });
+    const sourceBytesBefore = await readFile(snapshotDbPath);
+
+    const sandboxRoot = await createTempDirectory("agenr-before-turn-overlay-sandbox-");
+
+    const response = await runBeforeTurnEvalCase({
+      caseId: "before-turn-snapshot-overlay",
+      sandbox: {
+        root: sandboxRoot,
+        preserve: true,
+        corpusSeed: {
+          mode: "snapshot_copy",
+          snapshotDbPath,
+        },
+      },
+      memoryPool: [
+        {
+          id: "overlay-pager",
+          type: "fact",
+          subject: "overlay pager policy",
+          content: "Taylor is on call in the overlay fixtures.",
+          tags: ["ops"],
+        },
+      ],
+      beforeTurnInput: {
+        currentTurnText: "who is on call in the overlay fixtures?",
+        policy: {
+          recallThreshold: 0,
+          enableProcedureSuggestion: false,
+        },
+      },
+    });
+
+    expect(response.status).toBe("ok");
+    expect(response.output?.selectedEntryIds).toEqual(["overlay-pager"]);
+
+    const overlaySandboxDb = await createDatabase(path.join(sandboxRoot, "knowledge.db"));
+    try {
+      const overlayEntry = await overlaySandboxDb.getEntry("overlay-pager");
+      expect(overlayEntry?.content).toBe("Taylor is on call in the overlay fixtures.");
+
+      const snapshotEntry = await overlaySandboxDb.getEntry("snapshot-duke");
+      expect(snapshotEntry?.content).toBe("Duke is Jim's dog in the snapshot.");
+      expect(snapshotEntry?.recall_count).toBe(0);
+    } finally {
+      await overlaySandboxDb.close();
+    }
+
+    const sourceBytesAfter = await readFile(snapshotDbPath);
+    expect(sourceBytesAfter.equals(sourceBytesBefore)).toBe(true);
+  });
+
   it("keeps isolated eval state from leaking live database entries into results", async () => {
     const tempRoot = await createTempDirectory("agenr-before-turn-live-");
     const liveDbPath = path.join(tempRoot, "live.sqlite");
@@ -453,6 +590,21 @@ async function seedLiveEntry(dbPath: string, entry: Parameters<Awaited<ReturnTyp
   const database = await createDatabase(dbPath);
   try {
     await database.insertEntry(entry, hashToVector(`${entry.subject} ${entry.content}`, 1024), entry.id);
+  } finally {
+    await database.close();
+  }
+}
+
+/**
+ * Seeds one entry into a standalone snapshot database and collapses the
+ * WAL so the main database file captures every seeded row before the
+ * sandbox copyFile step runs.
+ */
+async function seedSnapshotEntry(dbPath: string, entry: Parameters<Awaited<ReturnType<typeof createDatabase>>["insertEntry"]>[0]): Promise<void> {
+  const database = await createDatabase(dbPath);
+  try {
+    await database.insertEntry(entry, hashToVector(`${entry.subject} ${entry.content}`, 1024), entry.id);
+    await database.execute("PRAGMA wal_checkpoint(TRUNCATE)");
   } finally {
     await database.close();
   }

@@ -6,6 +6,7 @@ import { attachCrossEncoderPort } from "../recall/attach-cross-encoder.js";
 import { provisionRecallEvalFixtures } from "../recall/provision-fixtures.js";
 import { provisionRecallEvalProcedureFixtures } from "../recall/provision-procedure-fixtures.js";
 import { setupRecallEvalSandbox } from "../recall/sandbox.js";
+import { applyTelemetryWriteGate } from "../recall/telemetry-write-gate.js";
 import type { BeforeTurnEvalCaseRequest, BeforeTurnEvalCaseResponse, BeforeTurnEvalCaseTimings } from "./contracts.js";
 import { buildBeforeTurnEvalErrorResponse, buildBeforeTurnEvalSuccessResponse, maybeRenderBeforeTurnPatch } from "./normalize-response.js";
 
@@ -152,7 +153,7 @@ export async function runBeforeTurnEvalCase(
       const sandboxRecallPorts = sandbox.createRecallPorts(
         embeddingSupport.port ?? createUnavailableEmbeddingPort(embeddingSupport.error ?? "Embeddings are unavailable."),
       );
-      const recallPorts = attachCrossEncoderPort(sandboxRecallPorts, dependencies.crossEncoder);
+      const recallPorts = applyTelemetryWriteGate(attachCrossEncoderPort(sandboxRecallPorts, dependencies.crossEncoder), sandbox);
       const patch = await runBeforeTurn(request.beforeTurnInput, {
         recall: recallPorts,
         procedures: sandbox.procedureDatabase,

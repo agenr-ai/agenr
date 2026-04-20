@@ -76,6 +76,7 @@ function buildSandboxResult(sandbox: RecallEvalSandboxContext): BeforeTurnEvalCa
     root: sandbox.root,
     dbPath: sandbox.dbPath,
     preserved: sandbox.preserved,
+    ...(sandbox.snapshot ? { snapshot: sandbox.snapshot } : {}),
   };
 }
 

@@ -12,6 +12,7 @@ import type { RecallEvalSandboxContext } from "./ports.js";
 import { provisionRecallEvalFixtures } from "./provision-fixtures.js";
 import { provisionRecallEvalProcedureFixtures } from "./provision-procedure-fixtures.js";
 import { setupRecallEvalSandbox } from "./sandbox.js";
+import { applyTelemetryWriteGate } from "./telemetry-write-gate.js";
 
 /**
  * Optional runtime dependencies injected by the HTTP adapter.
@@ -253,50 +254,6 @@ function createUnavailableEmbeddingPort(message: string): EmbeddingPort {
   return {
     async embed(): Promise<number[][]> {
       throw new Error(message);
-    },
-  };
-}
-
-/**
- * Wraps the recall ports with a telemetry-write gate so snapshot-copy
- * replays stay read-only-like at the telemetry layer unless the caller
- * explicitly opted in via `allowTelemetryWrites`. Fixture-only sandboxes
- * keep the historical behavior of letting normal telemetry run against
- * the isolated database.
- */
-function applyTelemetryWriteGate(ports: RecallPorts, sandbox: RecallEvalSandboxContext): RecallPorts {
-  const snapshot = sandbox.snapshot;
-  if (snapshot === undefined || snapshot.allowedTelemetryWrites) {
-    return ports;
-  }
-
-  return {
-    async embed(text: string): Promise<number[]> {
-      return ports.embed(text);
-    },
-    async vectorSearch(params) {
-      return ports.vectorSearch(params);
-    },
-    async ftsSearch(params) {
-      return ports.ftsSearch(params);
-    },
-    ...(ports.expandNeighborhood
-      ? {
-          async expandNeighborhood(request) {
-            return ports.expandNeighborhood!(request);
-          },
-        }
-      : {}),
-    ...(ports.crossEncoder
-      ? {
-          crossEncoder: ports.crossEncoder,
-        }
-      : {}),
-    async hydrateEntries(ids: string[]) {
-      return ports.hydrateEntries(ids);
-    },
-    async recordRecallEvents(): Promise<void> {
-      return undefined;
     },
   };
 }

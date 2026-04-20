@@ -13,7 +13,10 @@ import {
   pushUnexpectedFields,
 } from "../../shared/validation.js";
 
-const SANDBOX_REQUEST_KEYS = new Set<string>(["root", "preserve"]);
+const SANDBOX_REQUEST_KEYS = new Set<string>(["root", "preserve", "corpusSeed"]);
+const CORPUS_SEED_MODES = ["fixture", "snapshot_copy"] as const;
+const FIXTURE_CORPUS_SEED_KEYS = new Set<string>(["mode"]);
+const SNAPSHOT_COPY_CORPUS_SEED_KEYS = new Set<string>(["mode", "snapshotDbPath", "snapshotId", "snapshotLabel", "allowTelemetryWrites"]);
 const FIXTURE_ENTRY_KEYS = new Set<string>([
   "id",
   "type",
@@ -64,6 +67,35 @@ const FIXTURE_PROCEDURE_KEYS = new Set<string>([
 ]);
 
 /**
+ * Adapter-owned normalized fixture-only corpus-seed DTO shared across eval seams.
+ */
+export interface InternalEvalCorpusSeedFixtureDto {
+  /** Discriminator for fixture-only corpus seeding. */
+  mode: "fixture";
+}
+
+/**
+ * Adapter-owned normalized snapshot-copy corpus-seed DTO shared across eval seams.
+ */
+export interface InternalEvalCorpusSeedSnapshotCopyDto {
+  /** Discriminator for snapshot-copy corpus seeding. */
+  mode: "snapshot_copy";
+  /** Absolute or relative path to the source snapshot SQLite file. */
+  snapshotDbPath: string;
+  /** Optional stable snapshot identifier for response metadata. */
+  snapshotId?: string;
+  /** Optional human-readable snapshot label for response metadata. */
+  snapshotLabel?: string;
+  /** Optional toggle that permits normal recall telemetry writes on the copied snapshot. */
+  allowTelemetryWrites?: boolean;
+}
+
+/**
+ * Adapter-owned normalized corpus-seed discriminated union shared across eval seams.
+ */
+export type InternalEvalCorpusSeedDto = InternalEvalCorpusSeedFixtureDto | InternalEvalCorpusSeedSnapshotCopyDto;
+
+/**
  * Adapter-owned normalized sandbox request DTO shared across internal eval seams.
  */
 export interface InternalEvalSandboxRequestDto {
@@ -71,6 +103,13 @@ export interface InternalEvalSandboxRequestDto {
   root?: string;
   /** When true, preserves the sandbox on disk for inspection. */
   preserve?: boolean;
+  /**
+   * Optional corpus-seed control. When omitted, the sandbox keeps the
+   * historical fixture-only behavior. When supplied, selects between
+   * fixture and snapshot-copy seeding using the same contract across
+   * every eval seam.
+   */
+  corpusSeed?: InternalEvalCorpusSeedDto;
 }
 
 /**
@@ -227,7 +266,69 @@ export function parseSandbox(value: unknown, issues: ValidationIssue[]): Interna
   return {
     root: parseOptionalTrimmedString(sandbox.root, "sandbox.root", issues),
     preserve: parseOptionalBoolean(sandbox.preserve, "sandbox.preserve", issues),
+    corpusSeed: parseCorpusSeed(sandbox.corpusSeed, issues),
   };
+}
+
+/**
+ * Parses the optional `corpusSeed` discriminated union shared across eval seams.
+ *
+ * Mirrors the app-layer `EvalCorpusSeed` contract so snapshot-backed
+ * replays and fixture-only runs validate through the same seam for
+ * every eval request boundary.
+ *
+ * @param value - Raw corpus-seed field.
+ * @param issues - Mutable validation issue collection.
+ * @returns Normalized corpus-seed DTO when valid.
+ */
+export function parseCorpusSeed(value: unknown, issues: ValidationIssue[]): InternalEvalCorpusSeedDto | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const seed = parseObject(value, "sandbox.corpusSeed", issues);
+  if (seed === undefined) {
+    return undefined;
+  }
+
+  const mode = parseCorpusSeedMode(seed.mode, "sandbox.corpusSeed.mode", issues);
+  if (mode === undefined) {
+    return undefined;
+  }
+
+  if (mode === "fixture") {
+    pushUnexpectedFields(seed, FIXTURE_CORPUS_SEED_KEYS, "sandbox.corpusSeed", issues);
+    return { mode: "fixture" };
+  }
+
+  pushUnexpectedFields(seed, SNAPSHOT_COPY_CORPUS_SEED_KEYS, "sandbox.corpusSeed", issues);
+
+  const snapshotDbPath = parseRequiredTrimmedString(seed.snapshotDbPath, "sandbox.corpusSeed.snapshotDbPath", issues);
+  const snapshotId = parseOptionalTrimmedString(seed.snapshotId, "sandbox.corpusSeed.snapshotId", issues);
+  const snapshotLabel = parseOptionalTrimmedString(seed.snapshotLabel, "sandbox.corpusSeed.snapshotLabel", issues);
+  const allowTelemetryWrites = parseOptionalBoolean(seed.allowTelemetryWrites, "sandbox.corpusSeed.allowTelemetryWrites", issues);
+
+  if (snapshotDbPath === undefined) {
+    return undefined;
+  }
+
+  return {
+    mode: "snapshot_copy",
+    snapshotDbPath,
+    ...(snapshotId !== undefined ? { snapshotId } : {}),
+    ...(snapshotLabel !== undefined ? { snapshotLabel } : {}),
+    ...(allowTelemetryWrites !== undefined ? { allowTelemetryWrites } : {}),
+  };
+}
+
+/** Parses the corpus-seed discriminator string. */
+function parseCorpusSeedMode(value: unknown, path: string, issues: ValidationIssue[]): InternalEvalCorpusSeedDto["mode"] | undefined {
+  if (typeof value !== "string" || !CORPUS_SEED_MODES.includes(value as InternalEvalCorpusSeedDto["mode"])) {
+    pushIssue(issues, path, `Expected one of: ${CORPUS_SEED_MODES.join(", ")}.`);
+    return undefined;
+  }
+
+  return value as InternalEvalCorpusSeedDto["mode"];
 }
 
 /**
@@ -286,6 +387,7 @@ export function mapSandboxRequestDto(dto: InternalEvalSandboxRequestDto | undefi
   return {
     root: dto.root,
     preserve: dto.preserve,
+    corpusSeed: dto.corpusSeed,
   };
 }
 

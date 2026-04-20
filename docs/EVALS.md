@@ -198,7 +198,7 @@ Top-level request semantics:
 
 - `caseId` is required and echoed back whenever the boundary can safely do so
 - `description` is optional and informational only
-- `sandbox` is optional and controls where the isolated database lives and whether it is preserved
+- `sandbox` is optional and controls where the isolated database lives, whether it is preserved, and how the corpus is seeded through `sandbox.corpusSeed`
 - `memoryPool` is required but may be an empty array
 - `procedurePool` is optional and seeds isolated procedure fixtures for procedure-aware cases
 - `beforeTurnInput.currentTurnText` is required
@@ -243,6 +243,39 @@ When diagnostics are included, the seam mirrors the real `runBeforeTurn()` diagn
 - `diagnostics.notices` - degraded-mode and expansion notices preserved from the live selector
 
 These diagnostics let `agenr-evals` compare current-only, contextual-required, contextual-fallback, rerank-only, and combined selector behavior without reading raw candidate dumps.
+
+### Before-turn snapshot replay
+
+The before-turn seam reuses the same `sandbox` contract as the recall seam, including the optional `sandbox.corpusSeed` block described under [Corpus seeding](#corpus-seeding). Harnesses can therefore replay a before-turn case against a copied production-like snapshot with the exact same shape as a recall case:
+
+```json
+{
+  "sandbox": {
+    "preserve": false,
+    "corpusSeed": {
+      "mode": "snapshot_copy",
+      "snapshotDbPath": "/path/to/knowledge-snapshot.db",
+      "snapshotId": "2026-04-18-nightly",
+      "snapshotLabel": "nightly corpus snapshot",
+      "allowTelemetryWrites": false
+    }
+  }
+}
+```
+
+Before-turn-specific behavior on top of the shared contract:
+
+- `memoryPool` and `procedurePool` overlays still apply on top of the copied snapshot, so scenario-specific fixtures behave the same in fixture and snapshot replay modes
+- when `allowTelemetryWrites` is `false` (the default), the durable-recall stage of `runBeforeTurn()` runs through a telemetry-gated port so `recordRecallEvents` becomes a no-op and the copied snapshot stays read-only-like at the telemetry layer
+- when `allowTelemetryWrites` is `true`, normal recall telemetry writes run against the copied sandbox database (never the source)
+- the source snapshot file is never opened as a database; it is only copied into the sandbox
+
+Successful responses include snapshot metadata under `sandbox.snapshot` when the case used `snapshot_copy`, mirroring the recall seam:
+
+- `sandbox.snapshot.id`
+- `sandbox.snapshot.label`
+- `sandbox.snapshot.dbPathBasename`
+- `sandbox.snapshot.allowedTelemetryWrites`
 
 ## Recall Request Contract
 
