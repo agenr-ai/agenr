@@ -2,9 +2,9 @@ import type { RecallPorts } from "../ports.js";
 import { resolveClaimSlotPolicy } from "../claim-slot-policy.js";
 
 import { applyCrossEncoderRerank, DEFAULT_CROSS_ENCODER_ALPHA, DEFAULT_CROSS_ENCODER_TOP_K } from "./cross-encoder.js";
-import { DEFAULT_RRF_RANK_CONSTANT, rrfFuse } from "./fusion.js";
+import { DEFAULT_RRF_RANK_CONSTANT, DEFAULT_RRF_SMALL_POOL_RANK_CONSTANT, SMALL_POOL_RRF_POOL_SIZE, rrfFuse } from "./fusion.js";
 import { computeLexicalScore, tokenize } from "./lexical.js";
-import { DEFAULT_MMR_LAMBDA, maximalMarginalRelevance } from "./mmr.js";
+import { DEFAULT_MMR_LAMBDA, DEFAULT_MMR_MIN_POOL_SIZE, maximalMarginalRelevance } from "./mmr.js";
 import {
   DEFAULT_NEIGHBORHOOD_BUDGET,
   DEFAULT_SEEDED_RERANK_WEIGHT,
@@ -502,8 +502,6 @@ function resolveEntryRelevance(params: {
   trace: RecallRrfTrace;
 }): Map<string, number> {
   const { vectorRanks, ftsRanks, expansionRanks, policy, trace } = params;
-  const rankConstant = resolveRrfRankConstant(policy);
-  trace.rankConstant = rankConstant;
 
   if (policy?.rrf === "disabled") {
     // Single-channel fallback: assign a shrinking relevance in vector-rank
@@ -518,6 +516,7 @@ function resolveEntryRelevance(params: {
     });
     trace.applied = false;
     trace.channelCount = fallbackChannel.length > 0 ? 1 : 0;
+    trace.rankConstant = resolveRrfRankConstant(policy, fallback.size);
     trace.fusedCandidateCount = fallback.size;
     trace.maxFusedScore = fallback.size > 0 ? Math.max(...fallback.values()) : 0;
     return fallback;
@@ -525,6 +524,19 @@ function resolveEntryRelevance(params: {
 
   const channels: readonly string[][] = [Array.from(vectorRanks), Array.from(ftsRanks), Array.from(expansionRanks)];
   const activeChannels = channels.filter((channel) => channel.length > 0);
+  // Count unique fused IDs across channels so the small-pool rank-constant
+  // override only applies when the fused shortlist is genuinely narrow.
+  // Running RRF twice would be wasteful, so we collect IDs here and pass
+  // the chosen rank constant into `rrfFuse` below.
+  const uniqueFusedIds = new Set<string>();
+  for (const channel of channels) {
+    for (const id of channel) {
+      uniqueFusedIds.add(id);
+    }
+  }
+  const rankConstant = resolveRrfRankConstant(policy, uniqueFusedIds.size);
+  trace.rankConstant = rankConstant;
+
   const fused = rrfFuse(channels, rankConstant);
 
   trace.applied = fused.size > 0;
@@ -538,16 +550,48 @@ function resolveEntryRelevance(params: {
 /**
  * Resolve the effective RRF rank constant from caller-supplied policy.
  *
+ * When the fused pool is narrow (at or below `SMALL_POOL_RRF_POOL_SIZE`),
+ * prefer the small-pool override (`rrfSmallPoolRankConstant`, default
+ * `DEFAULT_RRF_SMALL_POOL_RANK_CONSTANT`) which sharpens rank-1 vs.
+ * rank-2 differentiation enough to keep recency and importance
+ * differences from flipping a clear vector leader. Larger pools fall
+ * back to the canonical Cormack et al. `k = 60` unless the caller
+ * explicitly overrides via `rrfRankConstant`.
+ *
+ * Non-finite or non-positive overrides are ignored in favor of the
+ * documented defaults.
+ *
  * @param policy - Optional ranking policy overrides.
+ * @param fusedPoolSize - Size of the fused candidate pool, used to pick
+ *   between the small-pool and general-pool rank constants.
  * @returns Positive finite rank constant.
  */
-function resolveRrfRankConstant(policy: RecallRankingPolicy | undefined): number {
-  const raw = policy?.rrfRankConstant;
-  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
-    return DEFAULT_RRF_RANK_CONSTANT;
+function resolveRrfRankConstant(policy: RecallRankingPolicy | undefined, fusedPoolSize: number): number {
+  const rawGeneral = policy?.rrfRankConstant;
+  const hasExplicitGeneral = typeof rawGeneral === "number" && Number.isFinite(rawGeneral) && rawGeneral > 0;
+  const generalConstant = hasExplicitGeneral ? rawGeneral : DEFAULT_RRF_RANK_CONSTANT;
+
+  const isSmallPool = Number.isFinite(fusedPoolSize) && fusedPoolSize > 0 && fusedPoolSize <= SMALL_POOL_RRF_POOL_SIZE;
+  if (!isSmallPool) {
+    return generalConstant;
   }
 
-  return raw;
+  const rawSmall = policy?.rrfSmallPoolRankConstant;
+  if (typeof rawSmall === "number" && Number.isFinite(rawSmall) && rawSmall > 0) {
+    return rawSmall;
+  }
+
+  // When a caller explicitly overrides the general rank constant but
+  // leaves the small-pool override unset, treat the general override as
+  // the caller's deliberate choice for every pool size; this preserves
+  // the prior semantic of `rrfRankConstant` as a single knob. Callers
+  // who want phase-4 sharpening either leave `rrfRankConstant` at its
+  // default or set `rrfSmallPoolRankConstant` explicitly.
+  if (hasExplicitGeneral) {
+    return generalConstant;
+  }
+
+  return DEFAULT_RRF_SMALL_POOL_RANK_CONSTANT;
 }
 
 /**
@@ -1083,6 +1127,7 @@ function applyMmrDiversification(
       ...(candidate.entry.embedding ? { embedding: candidate.entry.embedding } : {}),
     })),
     lambda: resolveMmrLambda(policy),
+    minPoolSize: resolveMmrMinPoolSize(policy),
   });
 
   trace.applied = reorder.applied;
@@ -1206,6 +1251,25 @@ function resolveMmrLambda(policy: RecallRankingPolicy | undefined): number {
   }
 
   return Math.max(0, Math.min(1, rawLambda));
+}
+
+/**
+ * Resolve the effective MMR minimum-pool-size gate from caller-supplied
+ * policy. Non-finite or negative overrides fall back to the core
+ * `DEFAULT_MMR_MIN_POOL_SIZE` so a misconfigured eval cannot
+ * accidentally widen the gate; a `0` override is honored so evals can
+ * disable the gate entirely.
+ *
+ * @param policy - Optional ranking policy overrides.
+ * @returns Effective non-negative integer gate size.
+ */
+function resolveMmrMinPoolSize(policy: RecallRankingPolicy | undefined): number {
+  const raw = policy?.mmrMinPoolSize;
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) {
+    return DEFAULT_MMR_MIN_POOL_SIZE;
+  }
+
+  return Math.floor(raw);
 }
 
 /**

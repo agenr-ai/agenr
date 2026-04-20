@@ -591,6 +591,15 @@ describe("recall raw evidence gating", () => {
         limit: 5,
       },
       fixture.ports,
+      {
+        // Opt this three-candidate pool out of the phase-4 small-pool
+        // RRF sharpening so the fixed trusted-sibling redundancy penalty
+        // still dominates the rank-1 vs. rank-2 relevance gap. Sharpened
+        // relevance scores on pools this narrow would widen the gap past
+        // the phase-3 calibrated penalty magnitude, flipping the order
+        // this test is specifically designed to verify.
+        rankingPolicy: { rrfSmallPoolRankConstant: 60 },
+      },
     );
 
     expect(results.map((result) => result.entry.id)).toEqual(["vite-primary", "release-rollout", "vite-shadow"]);
@@ -978,6 +987,11 @@ describe("recall raw evidence gating", () => {
         },
         rankingPolicy: {
           mmrLambda: 0.1,
+          // The three-candidate synthetic pool falls under the phase-4
+          // small-pool gate, so the test disables it to exercise MMR
+          // itself; dedicated gate coverage lives in its own `it` block
+          // below.
+          mmrMinPoolSize: 0,
         },
       },
     );
@@ -1285,6 +1299,232 @@ describe("recall raw evidence gating", () => {
 
     expect(rankedIds).toEqual([["a", "b"]]);
     expect(traceSummaries[0]?.crossEncoder.k).toBe(2);
+  });
+
+  it("sharpens the RRF rank constant on small fused pools by default", async () => {
+    const traceSummaries: RecallExecutionTraceSummary[] = [];
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "alpha",
+          subject: "alpha note",
+          content: "Alpha content.",
+          embedding: createCosineEmbedding(0.9),
+        }),
+        buildEntry({
+          id: "beta",
+          subject: "beta note",
+          content: "Beta content.",
+          embedding: createCosineEmbedding(0.6),
+        }),
+      ],
+      vectorCandidates: [
+        { id: "alpha", vectorSim: 0.9 },
+        { id: "beta", vectorSim: 0.6 },
+      ],
+    });
+
+    await recall(
+      {
+        text: "alpha beta",
+        limit: 5,
+      },
+      fixture.ports,
+      {
+        trace: {
+          reportSummary(summary): void {
+            traceSummaries.push(summary);
+          },
+        },
+      },
+    );
+
+    expect(traceSummaries).toHaveLength(1);
+    // With the phase-4 small-pool sharpening in place, the trace reports
+    // the small-pool constant (8 by default) instead of the paper's k=60
+    // when the fused pool is narrow enough to compress rank differences.
+    expect(traceSummaries[0]?.rrf.rankConstant).toBeLessThan(60);
+    expect(traceSummaries[0]?.rrf.rankConstant).toBeGreaterThan(0);
+  });
+
+  it("honors rrfSmallPoolRankConstant override on small pools", async () => {
+    const traceSummaries: RecallExecutionTraceSummary[] = [];
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "alpha",
+          subject: "alpha note",
+          content: "Alpha content.",
+          embedding: createCosineEmbedding(0.9),
+        }),
+        buildEntry({
+          id: "beta",
+          subject: "beta note",
+          content: "Beta content.",
+          embedding: createCosineEmbedding(0.6),
+        }),
+      ],
+      vectorCandidates: [
+        { id: "alpha", vectorSim: 0.9 },
+        { id: "beta", vectorSim: 0.6 },
+      ],
+    });
+
+    await recall(
+      {
+        text: "alpha beta",
+        limit: 5,
+      },
+      fixture.ports,
+      {
+        trace: {
+          reportSummary(summary): void {
+            traceSummaries.push(summary);
+          },
+        },
+        rankingPolicy: {
+          rrfSmallPoolRankConstant: 12,
+        },
+      },
+    );
+
+    expect(traceSummaries[0]?.rrf.rankConstant).toBe(12);
+  });
+
+  it("keeps k=60 on small pools when the caller sets rrfRankConstant without a small-pool override", async () => {
+    const traceSummaries: RecallExecutionTraceSummary[] = [];
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "alpha",
+          subject: "alpha note",
+          content: "Alpha content.",
+          embedding: createCosineEmbedding(0.9),
+        }),
+      ],
+      vectorCandidates: [{ id: "alpha", vectorSim: 0.9 }],
+    });
+
+    await recall(
+      {
+        text: "alpha",
+        limit: 5,
+      },
+      fixture.ports,
+      {
+        trace: {
+          reportSummary(summary): void {
+            traceSummaries.push(summary);
+          },
+        },
+        rankingPolicy: {
+          rrfRankConstant: 45,
+        },
+      },
+    );
+
+    expect(traceSummaries[0]?.rrf.rankConstant).toBe(45);
+  });
+
+  it("keeps the vector-preferred top-1 on a small pool where a recency-favored peer used to flip it (phase-4 RRF regression)", async () => {
+    // Regression mirror of row 1 in
+    // docs/internal/recall/regression-attribution.md: a small two-candidate
+    // pool where the pre-phase-4 k=60 rank compression allowed a more
+    // recent but semantically weaker neighbor to beat the vector-preferred
+    // leader. Sharpening the RRF rank constant on small pools keeps the
+    // leader on top.
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "leader",
+          subject: "deployment owner",
+          content: "Taylor owns the deployment handoff.",
+          embedding: createCosineEmbedding(0.95),
+          created_at: "2026-02-15T00:00:00.000Z",
+        }),
+        buildEntry({
+          id: "recent-neighbor",
+          subject: "deployment note",
+          content: "Jamie sent a short note about deployment logistics.",
+          embedding: createCosineEmbedding(0.75),
+          created_at: "2026-03-25T12:00:00.000Z",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "leader", vectorSim: 0.95 },
+        { id: "recent-neighbor", vectorSim: 0.75 },
+      ],
+    });
+
+    const results = await recall(
+      {
+        text: "who owns the deployment handoff",
+        limit: 5,
+      },
+      fixture.ports,
+    );
+
+    expect(results[0]?.entry.id).toBe("leader");
+  });
+
+  it("keeps the ranked leader intact on a three-candidate pool with a semantically distant but embeddings-diverse peer (phase-4 MMR regression)", async () => {
+    // Regression mirror of the `mmr_induced` rows (e.g., row 7) in
+    // docs/internal/recall/regression-attribution.md: MMR's diversity
+    // penalty used to promote an orthogonal but topically unrelated
+    // neighbor above the intended top-1 when the shortlist was tiny.
+    // The phase-4 small-pool gate skips MMR on pools of this size.
+    const traceSummaries: RecallExecutionTraceSummary[] = [];
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "leader",
+          subject: "pager policy",
+          content: "Jordan is on call this week.",
+          embedding: createCosineEmbedding(0.95),
+        }),
+        buildEntry({
+          id: "near-neighbor",
+          subject: "pager policy note",
+          content: "Jordan holds the pager through Friday.",
+          embedding: createCosineEmbedding(0.9),
+        }),
+        buildEntry({
+          id: "diverse-distractor",
+          subject: "office snacks",
+          content: "The office is out of almonds.",
+          embedding: [0, 1, 0],
+        }),
+      ],
+      vectorCandidates: [
+        { id: "leader", vectorSim: 0.95 },
+        { id: "near-neighbor", vectorSim: 0.9 },
+        { id: "diverse-distractor", vectorSim: 0.2 },
+      ],
+    });
+
+    const results = await recall(
+      {
+        text: "who is on call",
+        limit: 5,
+      },
+      fixture.ports,
+      {
+        trace: {
+          reportSummary(summary): void {
+            traceSummaries.push(summary);
+          },
+        },
+        rankingPolicy: {
+          // Keep MMR enabled with a diversity-leaning lambda to prove the
+          // phase-4 gate prevents the diversity penalty from flipping the
+          // leader; the assertion flips if the gate is removed.
+          mmrLambda: 0.1,
+        },
+      },
+    );
+
+    expect(results[0]?.entry.id).toBe("leader");
+    expect(traceSummaries[0]?.mmr.applied).toBe(false);
   });
 
   it("falls back to support observation time before created-at for explicit as-of ranking", async () => {

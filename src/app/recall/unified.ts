@@ -441,6 +441,7 @@ function resolveEpisodeMmrOptions(
   return {
     enabled: true,
     ...(typeof rankingPolicy?.mmrLambda === "number" ? { lambda: rankingPolicy.mmrLambda } : {}),
+    ...(typeof rankingPolicy?.mmrMinPoolSize === "number" ? { minPoolSize: rankingPolicy.mmrMinPoolSize } : {}),
   };
 }
 
@@ -462,6 +463,7 @@ function resolveProcedureMmrOptions(rankingPolicy: RecallRankingPolicy | undefin
   return {
     enabled: true,
     ...(typeof rankingPolicy?.mmrLambda === "number" ? { lambda: rankingPolicy.mmrLambda } : {}),
+    ...(typeof rankingPolicy?.mmrMinPoolSize === "number" ? { minPoolSize: rankingPolicy.mmrMinPoolSize } : {}),
   };
 }
 

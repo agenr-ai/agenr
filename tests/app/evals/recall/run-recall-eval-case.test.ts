@@ -1082,6 +1082,11 @@ describe("runRecallEvalCase", () => {
       recallRequest: {
         text: "handoff checklist",
         limit: 3,
+        rankingPolicy: {
+          // Disable the phase-4 small-pool gate so this three-entry
+          // synthetic fixture still exercises MMR end-to-end.
+          mmrMinPoolSize: 0,
+        },
       },
       options: {
         includeDiagnostics: true,

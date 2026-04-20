@@ -293,6 +293,7 @@ function applyProcedureMmrDiversification(
       ...(candidate.procedure.embedding ? { embedding: candidate.procedure.embedding } : {}),
     })),
     lambda: resolveProcedureMmrLambda(options.lambda),
+    ...(typeof options.minPoolSize === "number" ? { minPoolSize: options.minPoolSize } : {}),
   });
   if (!reorder.applied) {
     return candidates;

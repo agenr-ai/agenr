@@ -25,6 +25,24 @@ import { cosineSimilarity } from "./scoring.js";
 export const DEFAULT_MMR_LAMBDA = 0.7;
 
 /**
+ * Minimum candidate-pool size for MMR diversification to run. When the
+ * input pool has at most this many candidates, MMR returns the input
+ * order untouched and records `applied: false`.
+ *
+ * Diversification adds value when the shortlist contains redundant
+ * semantic neighbors; on very small pools its diversity penalty routinely
+ * promotes a semantically distant peer above a leader that the prior
+ * ranking stages (RRF fusion, historical-lineage shaping, claim-key
+ * trust, seeded rerank) already placed first. Gating below this size is
+ * the phase-4 fix for the `mmr_induced` and `combined` regression rows
+ * captured in `docs/internal/recall/regression-attribution.md`.
+ *
+ * Callers can override via `MmrOptions.minPoolSize` or through the
+ * `rankingPolicy.mmrMinPoolSize` policy field; `0` disables the gate.
+ */
+export const DEFAULT_MMR_MIN_POOL_SIZE = 4;
+
+/**
  * Threshold above which two candidate embeddings are treated as near
  * duplicates for trace accounting. Only influences the
  * `droppedDuplicateCount` counter; it does not affect the MMR ordering.
@@ -87,6 +105,13 @@ export interface MmrOptions {
   lambda?: number;
   /** Optional final result limit applied after MMR ordering. */
   limit?: number;
+  /**
+   * Optional minimum pool size required for MMR to run. Defaults to
+   * `DEFAULT_MMR_MIN_POOL_SIZE`. When `candidates.length` is at or below
+   * this size, MMR returns `applied: false` with the input order
+   * preserved. Set to `0` to disable the gate entirely.
+   */
+  minPoolSize?: number;
 }
 
 /**
@@ -105,11 +130,19 @@ export function maximalMarginalRelevance(options: MmrOptions): MmrReorderResult 
   const lambda = clampUnit(sanitizeNumber(options.lambda, DEFAULT_MMR_LAMBDA));
   const inputIds = options.candidates.map((candidate) => candidate.id);
   const limit = resolveLimit(options.limit, inputIds.length);
+  const minPoolSize = resolveMinPoolSize(options.minPoolSize);
 
   const embeddedCandidates = options.candidates.filter((candidate) => hasUsableEmbedding(candidate.embedding));
   const unembeddedIds = options.candidates.filter((candidate) => !hasUsableEmbedding(candidate.embedding)).map((candidate) => candidate.id);
 
-  const canApplyMmr = options.queryVector.length > 0 && embeddedCandidates.length >= 2;
+  // Gate MMR on small pools. Diversification adds value when the
+  // shortlist contains redundant semantic neighbors; on tiny pools the
+  // diversity penalty can out-rank a leader that the prior ranking
+  // stages already placed first, which the phase-4 attribution sweep
+  // identified as the dominant cause of top-1 regressions.
+  const poolBelowGate = minPoolSize > 0 && options.candidates.length <= minPoolSize;
+
+  const canApplyMmr = !poolBelowGate && options.queryVector.length > 0 && embeddedCandidates.length >= 2;
   if (!canApplyMmr) {
     return {
       applied: false,
@@ -282,6 +315,28 @@ function clampUnit(value: number): number {
   }
 
   return value >= 1 ? 1 : value;
+}
+
+/**
+ * Resolve the effective minimum-pool-size gate.
+ *
+ * Negative or non-finite overrides fall back to the documented default
+ * so a misconfigured harness cannot accidentally widen the gate. A `0`
+ * override is honored so evals can disable the gate entirely.
+ *
+ * @param value - Optional override from `MmrOptions.minPoolSize`.
+ * @returns Effective non-negative integer gate size.
+ */
+function resolveMinPoolSize(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_MMR_MIN_POOL_SIZE;
+  }
+
+  if (value < 0) {
+    return DEFAULT_MMR_MIN_POOL_SIZE;
+  }
+
+  return Math.floor(value);
 }
 
 /**

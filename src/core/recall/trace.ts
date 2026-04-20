@@ -265,6 +265,16 @@ export interface RecallRankingPolicy {
    */
   rrfRankConstant?: number;
   /**
+   * Optional override for the small-pool RRF rank constant `k` that is
+   * used when the fused candidate pool is at or below
+   * `SMALL_POOL_RRF_POOL_SIZE`. Defaults to
+   * `DEFAULT_RRF_SMALL_POOL_RANK_CONSTANT` (`8`), which sharpens the
+   * rank-1 versus rank-2 gap enough to keep small-magnitude recency and
+   * importance differences from flipping a clear vector leader. Set to
+   * the same value as `rrfRankConstant` to disable the sharpening.
+   */
+  rrfSmallPoolRankConstant?: number;
+  /**
    * Whether to apply the neighborhood expansion plus seeded rerank
    * stage. Defaults to `"enabled"`. When set to `"disabled"`, the
    * pipeline skips both the adapter-scoped `expandNeighborhood()` call
@@ -279,6 +289,13 @@ export interface RecallRankingPolicy {
   mmr?: "enabled" | "disabled";
   /** Effective MMR lambda in the inclusive 0-1 range. */
   mmrLambda?: number;
+  /**
+   * Minimum candidate-pool size required for MMR to run. Defaults to
+   * the core `DEFAULT_MMR_MIN_POOL_SIZE`. Set to `0` to disable the
+   * small-pool gate entirely so MMR runs on every non-empty shortlist
+   * (the pre-phase-4 behavior).
+   */
+  mmrMinPoolSize?: number;
   /**
    * Whether to apply the cross-encoder rerank stage when a
    * `CrossEncoderPort` is wired. Defaults to `"enabled"`; evals can pass

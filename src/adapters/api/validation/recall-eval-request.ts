@@ -52,9 +52,11 @@ const RECALL_REQUEST_KEYS = new Set<string>([
 const RANKING_POLICY_KEYS = new Set<string>([
   "rrf",
   "rrfRankConstant",
+  "rrfSmallPoolRankConstant",
   "neighborhood",
   "mmr",
   "mmrLambda",
+  "mmrMinPoolSize",
   "crossEncoder",
   "crossEncoderTopK",
   "crossEncoderAlpha",
@@ -403,6 +405,11 @@ function parseOptionalRankingPolicy(value: unknown, path: string, issues: Recall
     parsed.rrfRankConstant = rrfRankConstant;
   }
 
+  const rrfSmallPoolRankConstant = parseOptionalIntegerInRange(policy.rrfSmallPoolRankConstant, `${path}.rrfSmallPoolRankConstant`, issues, { min: 1 });
+  if (rrfSmallPoolRankConstant !== undefined) {
+    parsed.rrfSmallPoolRankConstant = rrfSmallPoolRankConstant;
+  }
+
   const neighborhood = parseOptionalStageToggle(policy.neighborhood, `${path}.neighborhood`, issues);
   if (neighborhood !== undefined) {
     parsed.neighborhood = neighborhood;
@@ -416,6 +423,13 @@ function parseOptionalRankingPolicy(value: unknown, path: string, issues: Recall
   const mmrLambda = parseOptionalUnitInterval(policy.mmrLambda, `${path}.mmrLambda`, issues);
   if (mmrLambda !== undefined) {
     parsed.mmrLambda = mmrLambda;
+  }
+
+  const mmrMinPoolSize = parseOptionalIntegerInRange(policy.mmrMinPoolSize, `${path}.mmrMinPoolSize`, issues, {
+    min: 0,
+  });
+  if (mmrMinPoolSize !== undefined) {
+    parsed.mmrMinPoolSize = mmrMinPoolSize;
   }
 
   const crossEncoder = parseOptionalStageToggle(policy.crossEncoder, `${path}.crossEncoder`, issues);

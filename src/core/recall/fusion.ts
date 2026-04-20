@@ -16,6 +16,31 @@
 export const DEFAULT_RRF_RANK_CONSTANT = 60;
 
 /**
+ * Small-pool override for the RRF rank constant. When the fused candidate
+ * pool is below `SMALL_POOL_RRF_POOL_SIZE`, the rank-based fusion math
+ * compresses the gap between rank-1 and rank-2 to under two percent at
+ * `k = 60`, which allows small-magnitude recency and importance
+ * differences to flip an otherwise-clear vector leader. The small-pool
+ * default `k = 8` sharpens the rank gap to roughly eleven percent at
+ * two candidates, matching the empirical distribution that flips rows
+ * 1 and 15 of the phase-0 attribution sweep back to the expected
+ * vector leader.
+ *
+ * Callers can override via `rankingPolicy.rrfSmallPoolRankConstant`;
+ * setting the value to `DEFAULT_RRF_RANK_CONSTANT` effectively disables
+ * the small-pool sharpening.
+ */
+export const DEFAULT_RRF_SMALL_POOL_RANK_CONSTANT = 8;
+
+/**
+ * Upper bound of the fused-pool size that qualifies for the small-pool
+ * rank-constant override. Pools larger than this value always use the
+ * standard `k = 60` so the paper's flattening contract is preserved on
+ * mature shortlists.
+ */
+export const SMALL_POOL_RRF_POOL_SIZE = 4;
+
+/**
  * One input channel of ranked identifiers.
  *
  * Each channel should be an ordered list from most-relevant to least-relevant,

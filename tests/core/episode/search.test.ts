@@ -173,7 +173,10 @@ describe("searchEpisodes", () => {
           source: "inferred",
         },
         embedding: [1, 0],
-        mmr: { enabled: true, lambda: 0.2 },
+        // Disable the phase-4 small-pool gate so this three-episode
+        // synthetic fixture still exercises MMR; gate coverage lives in
+        // the shared MMR unit tests.
+        mmr: { enabled: true, lambda: 0.2, minPoolSize: 0 },
       },
       database,
       new Date("2026-03-30T00:00:00.000Z"),

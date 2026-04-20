@@ -173,6 +173,7 @@ function applyEpisodeMmrDiversification(results: EpisodeResult[], queryEmbedding
       ...(result.episode.embedding ? { embedding: result.episode.embedding } : {}),
     })),
     lambda: resolveEpisodeMmrLambda(options.lambda),
+    ...(typeof options.minPoolSize === "number" ? { minPoolSize: options.minPoolSize } : {}),
   });
   if (!reorder.applied) {
     return results;

@@ -169,7 +169,9 @@ describe("runProcedureRecall", () => {
       {
         text: "how should I publish agenr",
         limit: 3,
-        mmr: { enabled: true, lambda: 0.1 },
+        // Disable the phase-4 small-pool gate so this three-procedure
+        // synthetic fixture still exercises MMR directly.
+        mmr: { enabled: true, lambda: 0.1, minPoolSize: 0 },
       },
       {
         db,

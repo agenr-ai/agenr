@@ -543,10 +543,11 @@ Relevance is now driven by **reciprocal rank fusion** (RRF) over per-channel ord
 
 `scoreCandidate()` consumes that precomputed `relevance` value directly. The raw vector similarity and raw lexical overlap still show up in the score breakdown as evidence-only signals but are no longer blended into the composite.
 
-RRF has two tuning knobs on `RecallExecutionOptions.rankingPolicy`:
+RRF has three tuning knobs on `RecallExecutionOptions.rankingPolicy`:
 
 - `rankingPolicy.rrf = "disabled"` is a hard kill switch. When set, recall falls back to single-channel vector ordering (with a lexical fallback when the vector channel is empty) so evals can isolate fusion effects without stripping channels from the pipeline. The fallback still records a trace branch with `applied: false` and `channelCount: 0 or 1`.
-- `rankingPolicy.rrfRankConstant` overrides the Cormack et al. constant. Larger values flatten the contribution of the top ranks across channels; smaller values sharpen them. The default is `60`.
+- `rankingPolicy.rrfRankConstant` overrides the Cormack et al. constant. Larger values flatten the contribution of the top ranks across channels; smaller values sharpen them. The default is `60`. Setting this explicitly disables the phase-4 small-pool sharpening described next: the override then applies to every pool size.
+- `rankingPolicy.rrfSmallPoolRankConstant` overrides the rank constant used when the fused pool is at or below `SMALL_POOL_RRF_POOL_SIZE` (`4`). The default is `DEFAULT_RRF_SMALL_POOL_RANK_CONSTANT` (`8`), which widens the rank-1-vs-rank-2 gap on tiny shortlists so decisive vector leaders survive the composite blend. Setting this equal to `rrfRankConstant` disables the small-pool sharpening without touching larger-pool behavior. See the "RRF small-pool rank-constant sharpening" entry in "Ranking policy tuning history" below for the full precedence rules and the regression rows it targets.
 
 Tracing gained a new `rrf` branch on `RecallExecutionTraceSummary` with `{ applied, channelCount, rankConstant, fusedCandidateCount, maxFusedScore }`. The branch is populated on every recall call so consumers can inspect channel counts even when fusion is disabled.
 
@@ -587,11 +588,13 @@ Key design points:
 - MMR never rederives relevance from the query embedding. Each pipeline passes its already-shaped composite score as the MMR `relevance` signal, which preserves RRF fusion, historical lineage boosts, claim-key trust and redundancy penalties, and any seeded-rerank lift.
 - Candidates without embeddings are not run through the MMR similarity math. They are appended after the embedded candidates in their original relative order, so missing-embedding fallbacks degrade to pass-through rather than crashing.
 - When the query vector is empty or fewer than two candidates have usable embeddings, MMR is skipped and the input order is returned unchanged. The trace records this as `applied: false`.
+- When the candidate pool is at or below `DEFAULT_MMR_MIN_POOL_SIZE` (`4`), MMR is skipped even if every candidate has an embedding. On tiny shortlists the diversity penalty routinely promotes a semantically distant peer above the leader the prior stages already chose, so the phase-4 small-pool gate treats MMR as a no-op on pools that cannot add meaningful diversity without flipping the top-1. See the "MMR small-pool gate" entry in "Ranking policy tuning history" below.
 - Ties on the MMR score are broken in input order so the diversified list stays stable across runs.
 
 Tuning knobs live on `RecallExecutionOptions.rankingPolicy`:
 
 - `rankingPolicy.mmrLambda` is the lambda balance between relevance (`lambda`) and diversity (`1 - lambda`). The default is `0.7`, which keeps relevance dominant but gives the diversity penalty enough room to demote near duplicates. Values are clamped into `[0, 1]`.
+- `rankingPolicy.mmrMinPoolSize` overrides the phase-4 small-pool gate. Defaults to `DEFAULT_MMR_MIN_POOL_SIZE` (`4`). Set to `0` to disable the gate so MMR runs on every non-empty shortlist (the pre-phase-4 behavior); values are floored to non-negative integers.
 - `rankingPolicy.mmr = "disabled"` is a hard kill switch for A/B evaluation. When set, MMR never runs for any surface regardless of intent.
 
 Per-surface behavior:
@@ -654,10 +657,12 @@ The stage has one kill switch on `RecallExecutionOptions.rankingPolicy`:
 The full ranking policy lives on `RecallExecutionOptions.rankingPolicy`. Every stage has an independent `"enabled" | "disabled"` toggle so evals can A/B one stage at a time without restating the rest of the policy. Numeric tuning knobs stay optional alongside the toggles. The policy fields are:
 
 - `rrf` - reciprocal rank fusion toggle (default `"enabled"`)
-- `rrfRankConstant` - RRF rank constant override (default `60`)
+- `rrfRankConstant` - RRF rank constant override (default `60`). When this is set explicitly, the override applies to every pool size and disables the phase-4 small-pool sharpening described below.
+- `rrfSmallPoolRankConstant` - override for the RRF rank constant used when the fused pool is at or below `SMALL_POOL_RRF_POOL_SIZE` (`4`). Defaults to `DEFAULT_RRF_SMALL_POOL_RANK_CONSTANT` (`8`); setting this equal to `rrfRankConstant` disables the small-pool sharpening for those pools without touching larger-pool behavior.
 - `neighborhood` - neighborhood expansion plus seeded rerank toggle (default `"enabled"`)
 - `mmr` - MMR diversification toggle (default `"enabled"`)
 - `mmrLambda` - MMR relevance-diversity balance (default `0.7`, clamped into `[0, 1]`)
+- `mmrMinPoolSize` - minimum candidate-pool size for MMR to run (default `DEFAULT_MMR_MIN_POOL_SIZE = 4`; `0` disables the phase-4 gate)
 - `crossEncoder` - cross-encoder rerank toggle (default `"enabled"` when a port is wired)
 - `crossEncoderTopK` - shortlist size override (default `10`)
 - `crossEncoderAlpha` - cross-encoder blend weight (default `0.6`, clamped into `[0, 1]`)
@@ -899,6 +904,42 @@ This section records before/after values for ranking-policy defaults that have b
   - "keeps the current entry first under the default profile even when the pool has a direct predecessor" - pins the non-leak guard so the proportional bonus cannot lift a predecessor on default-profile queries.
   - Existing `historical_state` fixtures in the same file continue to assert the previously validated fixed-delta floors (`+0.08` direct predecessor, `+0.06` retired predecessor-like, `+0.08` older state).
 - Not changed in the same pass: `DEFAULT_SEEDED_RERANK_WEIGHT = 0.03` in `src/core/recall/neighborhood.ts`. The plan's phase-3 option 1 (raise the seeded-rerank weight for `historical_state`) was rejected because raising it globally would leak into the default profile, and per-profile seeded-rerank weights would need a second magic constant; the proportional lineage bonus keeps all shaping inside the historical-state branch.
+
+### MMR small-pool gate
+
+- File: `src/core/recall/mmr.ts` (`DEFAULT_MMR_MIN_POOL_SIZE`, the `minPoolSize` branch of `maximalMarginalRelevance`), with plumbing through `src/core/recall/search.ts`, `src/core/recall/trace.ts`, `src/core/episode/search.ts`, `src/app/procedures/recall/service.ts`, `src/app/recall/unified.ts`, and `src/adapters/api/validation/recall-eval-request.ts`.
+- Gates: the maximal-marginal-relevance diversification stage used by entry, episode, and procedure recall. When the candidate pool is at or below the gate, MMR returns the input order untouched and records `applied: false`.
+- Before: MMR ran on every shortlist with at least two embedded candidates. On small pools (2-4 candidates) the diversity penalty routinely promoted a semantically distant peer above the top-1 that RRF fusion, historical-lineage shaping, claim-key trust, and seeded rerank had already chosen.
+- After: `DEFAULT_MMR_MIN_POOL_SIZE = 4`. MMR runs only when the candidate pool has strictly more than four candidates. Callers can override via `rankingPolicy.mmrMinPoolSize` (and per-surface `MmrOptions.minPoolSize`); `0` restores the pre-phase-4 behavior so every non-empty pool still runs through MMR.
+- Reason: diversification adds value when the shortlist contains redundant semantic neighbors. On pools of three or four, MMR's diversity penalty has nothing useful to diversify against, and its top-level effect is to re-promote whichever candidate happens to have the lowest pairwise similarity to the current leader. That reordering routinely flips the intended top-1 on initial-corpus, historical-state, and memory-freshness shapes where prior stages had already converged on the correct leader.
+- Regressions targeted: the `mmr_induced` and `combined` rows of the phase-0 attribution sweep - rows 7, 12, 16, and 19 (`mmr_induced`) plus rows 2-6, 10, 11, 14, 17, 18, and 20 (`combined`) against the `2026-04-20T17-59-45-467Z` sweep. The follow-up sweep at `2026-04-20T18-36-19-918Z` flips all of them to `already_passing` at baseline.
+- Phase: phase 4 of the recall-regression-resolution plan.
+- Regression tests:
+  - `tests/core/recall/mmr.test.ts` adds four targeted cases covering the default gate (skip on two-candidate pools), the `pool > gate` path, the explicit `minPoolSize: 0` override, and the negative-override fallback to the default.
+  - `tests/core/recall/search.test.ts` adds "keeps the ranked leader intact on a three-candidate pool with a semantically distant but embeddings-diverse peer (phase-4 MMR regression)" which mirrors the `mmr_induced` row 7 shape end-to-end.
+  - Existing algorithm-level MMR tests pass `minPoolSize: 0` to disable the gate on their synthetic small pools, since those tests exercise MMR internals rather than the gate policy.
+
+### RRF small-pool rank-constant sharpening
+
+- File: `src/core/recall/fusion.ts` (`DEFAULT_RRF_SMALL_POOL_RANK_CONSTANT`, `SMALL_POOL_RRF_POOL_SIZE`), `src/core/recall/search.ts` (`resolveRrfRankConstant` with a `fusedPoolSize` argument), and `src/core/recall/trace.ts` (`RecallRankingPolicy.rrfSmallPoolRankConstant`). The HTTP validator in `src/adapters/api/validation/recall-eval-request.ts` accepts the new field.
+- Gates: the rank constant `k` used by `rrfFuse()` when the union of ranked IDs across channels is at or below `SMALL_POOL_RRF_POOL_SIZE` (`4`). Larger pools keep the canonical Cormack et al. `k = 60`.
+- Before: RRF always used `k = 60`. At that constant the normalized gap between rank-1 and rank-2 in a two-item pool is under two percent, which let small-magnitude recency and importance differences flip an otherwise-clear vector leader. Rows 1 and 15 of the phase-0 attribution sweep classified as `rrf_induced` for exactly that reason (confirmed by `rrf=disabled` rescuing them while keeping every other stage in place).
+- After: `DEFAULT_RRF_SMALL_POOL_RANK_CONSTANT = 8` when the fused pool is at or below `SMALL_POOL_RRF_POOL_SIZE`. At `k = 8` the rank-1-vs-rank-2 gap widens to roughly eleven percent, which is enough to keep a clear vector leader on top after scoring and claim-key shaping without otherwise changing RRF's contract on mature shortlists. Callers can override via `rankingPolicy.rrfSmallPoolRankConstant`; setting it equal to `DEFAULT_RRF_RANK_CONSTANT` (`60`) disables the sharpening for small pools without touching larger-pool behavior.
+- Precedence rules for the two RRF knobs:
+  - An explicit `rrfSmallPoolRankConstant` always wins on small pools when present.
+  - An explicit `rrfRankConstant` (without an explicit `rrfSmallPoolRankConstant`) is treated as a deliberate caller choice for every pool size, preserving the pre-phase-4 single-knob semantics. Callers who want both the sharpening and a non-default large-pool constant should set both fields.
+  - When neither is set, small pools use `8` and larger pools use `60`.
+- Reason: on two- or three-candidate shortlists, the paper's `k = 60` compresses rank differences into noise relative to the `recency` and `importance` contributions to the final composite score (`0.5 * relevance + 0.25 * recency + 0.25 * importance`). Sharpening `k` only on narrow pools keeps the paper's flattening contract on normal-sized shortlists while restoring decisive top-1 separation on the small-pool shapes the initial-corpus and memory-freshness manifests exercise.
+- Regressions targeted: the `rrf_induced` rows 1 and 15 of the phase-0 attribution sweep, plus the `combined` rows that benefit from sharper relevance separation as a precondition for the MMR small-pool gate. The follow-up sweep at `2026-04-20T18-36-19-918Z` confirms every one of these flips to `pass` at baseline.
+- Phase: phase 4 of the recall-regression-resolution plan.
+- Regression tests:
+  - `tests/core/recall/search.test.ts` adds "sharpens the RRF rank constant on small fused pools by default", "honors rrfSmallPoolRankConstant override on small pools", and "keeps k=60 on small pools when the caller sets rrfRankConstant without a small-pool override" to pin the three precedence rules.
+  - `tests/core/recall/search.test.ts` adds "keeps the vector-preferred top-1 on a small pool where a recency-favored peer used to flip it (phase-4 RRF regression)" which mirrors the `rrf_induced` row 1 shape end-to-end.
+  - `tests/core/recall/search.test.ts` updates the "down-ranks redundant active trusted siblings from the same current slot" case to opt out of the small-pool sharpening via `rankingPolicy.rrfSmallPoolRankConstant = 60`, because the claim-key redundancy penalty was calibrated against the pre-phase-4 `k = 60` rank compression on three-candidate pools.
+
+### Deviation from the phase-4 plan RRF hypothesis
+
+The plan's phase-4 section proposed either the MMR gate or per-channel weights on `rrfFuse` (exposed as `rankingPolicy.rrfVectorWeight`) as the RRF-side fix. The attribution sweep evidence points at rank compression rather than channel imbalance: the `rrf_induced` rows (1 and 15) flip to `pass` under `rrf=disabled` even though every channel weight would have been `1.0` in the legacy fallback. A smaller rank constant on small pools restores the rank-1-vs-rank-2 separation that recency and importance were overwhelming. `rankingPolicy.rrfSmallPoolRankConstant` therefore lands in place of `rrfVectorWeight`; the per-channel-weight option is left as a future lever if a later sweep identifies cases where channels actually need rebalancing rather than sharpening.
 
 Later phases of the same plan will extend this section as they land. Each entry should cite the regression rows it targets before changing a default.
 

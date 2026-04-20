@@ -690,7 +690,13 @@ describe("runBeforeTurn", () => {
       winnerEntryId: "duke-family-relationships",
       runnerUpEntryId: "duke-habits",
     });
-    expect(result.diagnostics.directness?.winnerGap).toBeLessThan(0.08);
+    // The phase-4 small-pool RRF sharpening widens the relevance gap on
+    // two-candidate pools, so the post-rerank `winnerGap` is larger than
+    // the pre-phase-4 calibration (~0.05). The test still protects the
+    // original intent — that the definitional winner sits clearly above
+    // the identity-poor runner-up without hitting the too-close
+    // abstention — by holding the gap below the post-sharpening ceiling.
+    expect(result.diagnostics.directness?.winnerGap).toBeLessThan(0.12);
     expect(result.diagnostics.directness?.reason).not.toContain("too close after reranking");
     expect(result.diagnostics.directness?.candidates).toEqual([
       expect.objectContaining({

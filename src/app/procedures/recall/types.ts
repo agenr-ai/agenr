@@ -9,6 +9,12 @@ export interface ProcedureMmrOptions {
   enabled: boolean;
   /** Optional lambda override in the inclusive 0-1 range. */
   lambda?: number;
+  /**
+   * Optional minimum pool-size gate forwarded to the shared MMR helper.
+   * Defaults to the core `DEFAULT_MMR_MIN_POOL_SIZE` when unset; `0`
+   * disables the gate so MMR runs on every non-empty shortlist.
+   */
+  minPoolSize?: number;
 }
 
 /**

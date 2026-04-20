@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_MMR_LAMBDA, maximalMarginalRelevance, NEAR_DUPLICATE_SIMILARITY } from "../../../src/core/recall/mmr.js";
+import { DEFAULT_MMR_LAMBDA, DEFAULT_MMR_MIN_POOL_SIZE, maximalMarginalRelevance, NEAR_DUPLICATE_SIMILARITY } from "../../../src/core/recall/mmr.js";
 
 const QUERY = unitVector([1, 0, 0]);
+
+// Every algorithm-level MMR test below uses small synthetic pools. The
+// phase-4 small-pool gate would otherwise short-circuit them, so we
+// disable the gate globally here and exercise it in its own `describe`
+// block below.
+const NO_POOL_GATE = 0;
 
 describe("maximalMarginalRelevance", () => {
   it("returns input order untouched when no candidates have embeddings", () => {
@@ -45,6 +51,7 @@ describe("maximalMarginalRelevance", () => {
     const result = maximalMarginalRelevance({
       queryVector: QUERY,
       lambda: 0.1,
+      minPoolSize: NO_POOL_GATE,
       candidates: [
         { id: "primary", embedding: unitVector([1, 0, 0]) },
         { id: "duplicate", embedding: unitVector([1, 0, 0]) },
@@ -68,6 +75,7 @@ describe("maximalMarginalRelevance", () => {
     const result = maximalMarginalRelevance({
       queryVector: QUERY,
       lambda: 1,
+      minPoolSize: NO_POOL_GATE,
       candidates: [
         { id: "high", embedding: unitVector([1, 0, 0]) },
         { id: "medium", embedding: unitVector([0.9, 0.436, 0]) },
@@ -87,6 +95,7 @@ describe("maximalMarginalRelevance", () => {
     const result = maximalMarginalRelevance({
       queryVector: QUERY,
       lambda: 1,
+      minPoolSize: NO_POOL_GATE,
       candidates: [
         { id: "raw-leader", embedding: unitVector([1, 0, 0]), relevance: 0.4 },
         { id: "boosted", embedding: unitVector([0.5, 0.866, 0]), relevance: 0.9 },
@@ -101,6 +110,7 @@ describe("maximalMarginalRelevance", () => {
   it("appends candidates without embeddings after the embedded candidates", () => {
     const result = maximalMarginalRelevance({
       queryVector: QUERY,
+      minPoolSize: NO_POOL_GATE,
       candidates: [
         { id: "no-embed-1" },
         { id: "embedded-1", embedding: unitVector([1, 0, 0]) },
@@ -119,6 +129,7 @@ describe("maximalMarginalRelevance", () => {
     const result = maximalMarginalRelevance({
       queryVector: QUERY,
       limit: 2,
+      minPoolSize: NO_POOL_GATE,
       candidates: [
         { id: "alpha", embedding: unitVector([1, 0, 0]) },
         { id: "beta", embedding: unitVector([0, 1, 0]) },
@@ -167,6 +178,72 @@ describe("maximalMarginalRelevance", () => {
   it("keeps the near-duplicate similarity threshold importable for trace tests", () => {
     expect(NEAR_DUPLICATE_SIMILARITY).toBeGreaterThan(0.9);
     expect(NEAR_DUPLICATE_SIMILARITY).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("maximalMarginalRelevance small-pool gate", () => {
+  it("skips MMR when the candidate pool is at or below the default gate", () => {
+    const candidates = [
+      { id: "leader", embedding: unitVector([1, 0, 0]) },
+      { id: "peer", embedding: unitVector([0, 1, 0]) },
+    ];
+
+    const result = maximalMarginalRelevance({
+      queryVector: QUERY,
+      lambda: 0.1,
+      candidates,
+    });
+
+    expect(result.applied).toBe(false);
+    expect(result.orderedIds).toEqual(["leader", "peer"]);
+    expect(result.reorderedIds).toEqual([]);
+    expect(DEFAULT_MMR_MIN_POOL_SIZE).toBeGreaterThanOrEqual(candidates.length);
+  });
+
+  it("runs MMR once the pool is strictly larger than the default gate", () => {
+    const candidates = [
+      { id: "leader", embedding: unitVector([1, 0, 0]) },
+      { id: "near", embedding: unitVector([1, 0, 0]) },
+      { id: "mid", embedding: unitVector([0.9, 0.436, 0]) },
+      { id: "edge", embedding: unitVector([0.5, 0.866, 0]) },
+      { id: "orth", embedding: unitVector([0, 1, 0]) },
+    ];
+
+    const result = maximalMarginalRelevance({
+      queryVector: QUERY,
+      lambda: 0.1,
+      candidates,
+    });
+
+    expect(result.applied).toBe(true);
+  });
+
+  it("honors an explicit minPoolSize override that re-enables MMR on tiny pools", () => {
+    const result = maximalMarginalRelevance({
+      queryVector: QUERY,
+      lambda: 0.1,
+      minPoolSize: 0,
+      candidates: [
+        { id: "leader", embedding: unitVector([1, 0, 0]) },
+        { id: "peer", embedding: unitVector([0, 1, 0]) },
+      ],
+    });
+
+    expect(result.applied).toBe(true);
+  });
+
+  it("treats a negative minPoolSize override as a request for the default gate", () => {
+    const result = maximalMarginalRelevance({
+      queryVector: QUERY,
+      lambda: 0.1,
+      minPoolSize: -5,
+      candidates: [
+        { id: "leader", embedding: unitVector([1, 0, 0]) },
+        { id: "peer", embedding: unitVector([0, 1, 0]) },
+      ],
+    });
+
+    expect(result.applied).toBe(false);
   });
 });
 
