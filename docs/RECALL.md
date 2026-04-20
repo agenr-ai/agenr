@@ -952,7 +952,34 @@ This section records before/after values for ranking-policy defaults that have b
 
 The plan's phase-4 section proposed either the MMR gate or per-channel weights on `rrfFuse` (exposed as `rankingPolicy.rrfVectorWeight`) as the RRF-side fix. The attribution sweep evidence points at rank compression rather than channel imbalance: the `rrf_induced` rows (1 and 15) flip to `pass` under `rrf=disabled` even though every channel weight would have been `1.0` in the legacy fallback. A smaller rank constant on small pools restores the rank-1-vs-rank-2 separation that recency and importance were overwhelming. `rankingPolicy.rrfSmallPoolRankConstant` therefore lands in place of `rrfVectorWeight`; the per-channel-weight option is left as a future lever if a later sweep identifies cases where channels actually need rebalancing rather than sharpening.
 
-Later phases of the same plan will extend this section as they land. Each entry should cite the regression rows it targets before changing a default.
+### Phase 5 end-to-end validation
+
+- Phase: phase 5 (validation and documentation) of the recall-regression-resolution plan.
+- Aggregate verdict: the full recall plus before-turn eval suite covered by the plan's exit criteria ran `80/85` passing against local `master` with every phase-2 through phase-4 tuning landed (run timestamp `2026-04-20T19:00:20Z` through `2026-04-20T19:01:42Z` under `/Users/jmartin/Code/agenr-evals/artifacts/runs/`). This matches the stated pre-phase baseline of `80/85`, so the plan's "Combined total >= 80/85" gate is satisfied.
+- Section breakdown:
+  - `agenr-recall-http`: 4/4
+  - `agenr-recall-http-initial-corpus`: 16/18 (2 pre-existing validator rejections on `type: "event"`; see "Surviving failures after phase 5" below).
+  - `agenr-recall-http-claim-centric-section-1`: 4/4
+  - `agenr-recall-http-degraded-section-1`: 5/5
+  - `agenr-recall-http-memory-freshness-section-1`: 9/10 (row 13 residual).
+  - `agenr-recall-http-memory-freshness-section-1-lineage-ranking`: 7/8 (same case repeated in the stricter lineage manifest).
+  - `agenr-recall-http-temporal-slot-policy-section-1`: 4/4
+  - `before-turn-section-1-core`: 8/8 (precision floor intact).
+  - `before-turn-section-2-live-replay`: 11/12 (pre-existing `kevin-family.inject` abstain).
+  - `before-turn-section-2-live-replay-diagnostics`: 1/1
+  - `before-turn-section-3-directness`: 4/4 (precision floor intact).
+  - `before-turn-section-4-contextual-follow-up`: 2/2 (rows 22 and 23 stay passing under the phase-2 follow-up gate).
+  - `before-turn-section-5-ablations`: 5/5 (row 23 mirror stays passing).
+
+### Surviving failures after phase 5
+
+Three distinct failure shapes survive this plan and are called out here so the next tuning pass starts from documented state:
+
+1. `agenr.recall.memory-freshness.section1.recent-obsolete-plan-loses.current` (row 13 in the phase-0 attribution sweep, repeated in the lineage-ranking manifest). Classification: `threshold_induced`. None of the four kill-switch variants (`rrf=disabled`, `neighborhood=disabled`, `mmr=disabled`, `crossEncoder=disabled`) flip it to pass. The fixture expects `freshness-fix` (a `milestone` at 15:00 UTC) to rank above `recency-plan` (a `decision` at 09:00 UTC) on the query "what ranking behavior are we using now for freshness handling", but the seeded pool has no claim-key overlap and no `supersedes` relation, so every stage of the pipeline treats the two entries as independent current-state peers. `recency-plan` wins the RRF composite because its content literally reuses the query tokens ("switch recall ranking to pure recency while debugging freshness problems"), yielding higher lexical overlap and higher vector similarity; the ~6h recency advantage of `freshness-fix` is below the resolution of the importance/recency blend. Under the legacy continuous relevance scoring this case passed because the non-RRF relevance blend compressed the rank gap enough for the tiny recency advantage to matter; RRF widens the rank-1-vs-rank-2 gap by design, which is the architectural win that phases 3 and 4 explicitly build on. The accepted tradeoff is that content-only supersession ("the earlier recency-only plan was dropped" is phrased inside the `freshness-fix` content) is not something the current pipeline infers without a structural signal; the fixture would need either a `supersedes`/`supersededBy` relation or a claim-key overlap to flip through the historical-lineage path, and no ranking-policy tuning can produce the expected order without changing the architectural win. Future work that wants to flip this row should (a) extend the fixture with a structural supersession signal, (b) introduce a content-driven soft-supersession detector as a new recall stage, or (c) deliberately rebias the importance/recency contribution above the RRF contribution for small same-family pools. None of those is in scope for the regression-resolution plan.
+2. `agenr.recall.corpus.filters.public-repo-launch-around-date` and `agenr.recall.corpus.edge.event-filter-no-result` in `agenr-recall-http-initial-corpus`. These are pre-existing validator rejections of `type: "event"` entries; they were excluded from the plan's scope in its "What We Know" section.
+3. `before-turn.replay.entity.kevin-family.inject` in `before-turn-section-2-live-replay`. This abstain is pre-existing (confirmed against run `2026-04-18T17-30-12-545Z`) and the manifest is explicitly described by `agenr-evals` as an investigative replay slice that "may stay red while core ranking/query issues are being worked."
+
+Later phases of this plan do not exist. Any follow-up tuning should open a new plan that cites these surviving failure shapes before changing a default.
 
 ## Config relevant to recall
 
