@@ -1,11 +1,12 @@
 import type { EpisodeDatabasePort, ProcedureDatabasePort, RecallPorts } from "../../core/ports.js";
 import type { ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
+import { tokenize } from "../../core/recall/lexical.js";
 import { recall } from "../../core/recall/search.js";
 import { parseTemporalWindow } from "../../core/episode/temporal-window.js";
 import { searchEpisodes } from "../../core/episode/search.js";
 import type { EpisodeCrossEncoderOptions, EpisodeMmrOptions } from "../../core/episode/types.js";
 import type { RecallExecutionOptions, RecallExecutionTraceSummary, RecallRankingPolicy, RecallTraceSink } from "../../core/recall/trace.js";
-import type { RecallInput } from "../../core/recall/types.js";
+import type { EntityAttributeKind, EntityAttributeQueryShape, RecallInput } from "../../core/recall/types.js";
 import type { ProcedureCrossEncoderOptions, ProcedureMmrOptions } from "../procedures/recall/types.js";
 import { runProcedureRecall } from "../procedures/recall/service.js";
 
@@ -66,6 +67,19 @@ const PROCEDURAL_REGEX_PATTERNS = [
   /\b(?:checklist|playbook|runbook|procedure|process|instructions?|workflow|method)\b.*\b(?:for|to)\b/u,
   /\bwhat(?:'s| is) the (?:best|recommended|right) way to\b/u,
 ] as const;
+const ENTITY_ATTRIBUTE_MAX_WORDS = 5;
+const ENTITY_ATTRIBUTE_CONTEXTUAL_PREFIX_RE = /^(?:on|in|at|for|about|during|after|before)\b/u;
+const ENTITY_ATTRIBUTE_CONTEXTUAL_TIME_RE =
+  /\b(?:today|tomorrow|yesterday|tonight|currently|right now|this week|next week|last week|this month|next month|last month|this year|next year|last year)\b/u;
+const ENTITY_ATTRIBUTE_CONTEXTUAL_ACTIVITY_RE = /\b(?:on call|available|working|assigned|scheduled|responsible)\b/u;
+const ENTITY_ATTRIBUTE_GENERIC_ENTITY_RE = /^(?:it|this|that|these|those|they|them|he|she|someone|anyone|anything|everything)\b/u;
+const ENTITY_ATTRIBUTE_KIND_TOKENS: Readonly<Record<EntityAttributeKind, readonly string[]>> = {
+  identity: ["identity", "profile", "bio", "biography", "summary"],
+  location: ["location", "live", "lives", "reside", "resides", "located", "home", "city"],
+  email: ["email", "e-mail", "mail"],
+  phone: ["phone", "number", "mobile", "cell", "telephone"],
+  address: ["address", "street", "mailing"],
+};
 
 /**
  * Dependencies needed by the unified recall orchestration layer.
@@ -96,8 +110,14 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
   const parsedTimeWindow = parseTemporalWindow(input.text, now);
   const hasEntryFilters = hasEntryScopedFilters(input);
   const topicAnchor = hasTopicAnchor(input.text, hasEntryFilters);
+  const entityAttributeQuery = detectEntityAttributeQuery(input.text);
   const historicalStatePattern = detectHistoricalStatePattern(input.text);
   const proceduralPattern = detectProceduralPattern(input.text);
+  if (entityAttributeQuery) {
+    deps.debugLog?.(
+      `[agenr] unified recall matched entity-attribute kind=${JSON.stringify(entityAttributeQuery.attributeKind)} entity=${JSON.stringify(entityAttributeQuery.entityText)} query=${JSON.stringify(input.text)}`,
+    );
+  }
   if (historicalStatePattern) {
     deps.debugLog?.(`[agenr] unified recall matched historical-state pattern=${JSON.stringify(historicalStatePattern)} query=${JSON.stringify(input.text)}`);
   }
@@ -219,6 +239,7 @@ export function routeRecall(params: { requested: UnifiedRecallMode; text: string
   const lower = params.text.trim().toLowerCase();
   const factual = /^(when did|when was|what decision|what preference|what(?:'s| is) the default|which version|what threshold)\b/.test(lower);
   const narrative = /\b(what happened|what were we doing|what was going on|summarize|catch me up)\b/.test(lower);
+  const entityAttributeQuery = detectEntityAttributeQuery(params.text);
   const historicalState = detectHistoricalStatePattern(params.text) !== undefined;
   const procedural = detectProceduralPattern(params.text) !== undefined;
   const topicAnchor = hasTopicAnchor(params.text, params.hasEntryFilters);
@@ -226,7 +247,15 @@ export function routeRecall(params: { requested: UnifiedRecallMode; text: string
   if (params.requested === "entries") {
     return {
       requested: params.requested,
-      detectedIntent: historicalState ? "historical_state" : factual ? "factual" : params.parsedTimeWindow ? "mixed" : "factual",
+      detectedIntent: entityAttributeQuery
+        ? "entity_attribute"
+        : historicalState
+          ? "historical_state"
+          : factual
+            ? "factual"
+            : params.parsedTimeWindow
+              ? "mixed"
+              : "factual",
       queried: ["entries"],
       reason: "Explicit mode=entries override.",
     };
@@ -249,6 +278,15 @@ export function routeRecall(params: { requested: UnifiedRecallMode; text: string
       detectedIntent: "procedural",
       queried: ["procedures"],
       reason: "Explicit mode=procedures override.",
+    };
+  }
+
+  if (entityAttributeQuery) {
+    return {
+      requested: params.requested,
+      detectedIntent: "entity_attribute",
+      queried: ["entries"],
+      reason: "The query asks for a specific entity attribute, so precision-first entry recall was used.",
     };
   }
 
@@ -602,6 +640,7 @@ function buildEntryRecallInput(
   parsedTimeWindow: ReturnType<typeof parseTemporalWindow>,
   routing: UnifiedRecallRouting,
 ): RecallInput {
+  const entityAttributeQuery = routing.detectedIntent === "entity_attribute" ? detectEntityAttributeQuery(input.text) : undefined;
   const request: RecallInput = {
     text: input.text,
     ...(input.limit !== undefined ? { limit: input.limit } : {}),
@@ -611,6 +650,8 @@ function buildEntryRecallInput(
     ...(input.sessionKey ? { sessionKey: input.sessionKey } : {}),
     ...(input.asOf ? { asOf: input.asOf } : {}),
     ...(routing.detectedIntent === "historical_state" ? { rankingProfile: "historical_state" } : {}),
+    ...(routing.detectedIntent === "entity_attribute" ? { rankingProfile: "entity_attribute" as const } : {}),
+    ...(entityAttributeQuery ? { queryShape: entityAttributeQuery } : {}),
   };
 
   if (!parsedTimeWindow || input.asOf) {
@@ -663,6 +704,172 @@ function detectProceduralPattern(text: string): string | undefined {
 
   const regexPattern = PROCEDURAL_REGEX_PATTERNS.find((pattern) => pattern.test(lower));
   return regexPattern?.source;
+}
+
+/**
+ * Detects whether a query asks for one supported entity attribute.
+ *
+ * @param text - Raw recall query.
+ * @returns Structured entity-attribute query shape, or `undefined` when absent.
+ */
+function detectEntityAttributeQuery(text: string): EntityAttributeQueryShape | undefined {
+  const normalizedText = normalizeEntityAttributeWhitespace(text);
+
+  const whereDoesLive = /^where\s+does\s+(.+?)\s+live[?!.,]*$/iu.exec(normalizedText);
+  if (whereDoesLive) {
+    return buildEntityAttributeQueryShape(whereDoesLive[1], "location");
+  }
+
+  const whereIs = /^where\s+is\s+(.+?)[?!.,]*$/iu.exec(normalizedText);
+  if (whereIs) {
+    return buildEntityAttributeQueryShape(whereIs[1], "location");
+  }
+
+  const possessiveAttribute = /^(?:what\s+is|what's)\s+(.+?)'s\s+(.+?)[?!.,]*$/iu.exec(normalizedText);
+  if (possessiveAttribute) {
+    const attributeKind = resolveEntityAttributeKind(possessiveAttribute[2]);
+    if (attributeKind) {
+      return buildEntityAttributeQueryShape(possessiveAttribute[1], attributeKind);
+    }
+  }
+
+  const whoIs = /^(?:who\s+is|who's)\s+(.+?)(?:\s+again)?[?!.,]*$/iu.exec(normalizedText);
+  if (whoIs) {
+    return buildEntityAttributeQueryShape(whoIs[1], "identity");
+  }
+
+  const whatIs = /^what\s+is\s+(.+?)(?:\s+again)?[?!.,]*$/iu.exec(normalizedText);
+  if (whatIs) {
+    return buildEntityAttributeQueryShape(whatIs[1], "identity");
+  }
+
+  return undefined;
+}
+
+/**
+ * Builds one structured entity-attribute query shape after validation.
+ *
+ * @param rawEntityText - Raw captured entity text from the query pattern.
+ * @param attributeKind - Supported attribute bucket resolved from the query.
+ * @returns Structured shape, or `undefined` when the capture is too broad.
+ */
+function buildEntityAttributeQueryShape(rawEntityText: string | undefined, attributeKind: EntityAttributeKind): EntityAttributeQueryShape | undefined {
+  const entityText = normalizeEntityAttributeEntity(rawEntityText);
+  if (!entityText) {
+    return undefined;
+  }
+
+  const entityTokens = tokenize(entityText);
+  if (entityTokens.length === 0) {
+    return undefined;
+  }
+
+  return {
+    kind: "entity_attribute",
+    entityText,
+    normalizedEntity: normalizeEntityAttributeText(entityText),
+    entityTokens,
+    attributeKind,
+    attributeTokens: [...ENTITY_ATTRIBUTE_KIND_TOKENS[attributeKind]],
+  };
+}
+
+/**
+ * Resolves a supported attribute bucket from raw attribute text.
+ *
+ * @param rawAttributeText - Raw captured attribute segment.
+ * @returns Supported attribute kind, or `undefined` when unsupported.
+ */
+function resolveEntityAttributeKind(rawAttributeText: string | undefined): EntityAttributeKind | undefined {
+  const tokens = tokenize(rawAttributeText ?? "");
+
+  if (tokens.some((token) => token === "email" || token === "e-mail" || token === "mail")) {
+    return "email";
+  }
+
+  if (tokens.some((token) => token === "phone" || token === "number" || token === "mobile" || token === "cell" || token === "telephone")) {
+    return "phone";
+  }
+
+  if (tokens.some((token) => token === "address" || token === "street" || token === "mailing")) {
+    return "address";
+  }
+
+  if (
+    tokens.some(
+      (token) =>
+        token === "location" ||
+        token === "live" ||
+        token === "lives" ||
+        token === "reside" ||
+        token === "resides" ||
+        token === "located" ||
+        token === "home" ||
+        token === "city",
+    )
+  ) {
+    return "location";
+  }
+
+  if (tokens.some((token) => ENTITY_ATTRIBUTE_KIND_TOKENS.identity.includes(token))) {
+    return "identity";
+  }
+
+  return undefined;
+}
+
+/**
+ * Normalizes a raw entity capture and rejects broad contextual lookalikes.
+ *
+ * @param rawEntityText - Raw captured entity string from the query pattern.
+ * @returns Narrow entity text, or `undefined` when too broad.
+ */
+function normalizeEntityAttributeEntity(rawEntityText: string | undefined): string | undefined {
+  const cleaned = rawEntityText
+    ? normalizeEntityAttributeWhitespace(rawEntityText)
+        .replace(/^[("'`]+/u, "")
+        .replace(/[)"'`?!.,]+$/u, "")
+        .replace(/^(?:the|a|an)\s+/iu, "")
+        .trim()
+    : "";
+  if (cleaned.length === 0) {
+    return undefined;
+  }
+
+  const normalized = normalizeEntityAttributeText(cleaned);
+  const wordCount = cleaned.split(/\s+/u).filter((token) => token.length > 0).length;
+  if (
+    wordCount === 0 ||
+    wordCount > ENTITY_ATTRIBUTE_MAX_WORDS ||
+    ENTITY_ATTRIBUTE_GENERIC_ENTITY_RE.test(normalized) ||
+    ENTITY_ATTRIBUTE_CONTEXTUAL_PREFIX_RE.test(normalized) ||
+    ENTITY_ATTRIBUTE_CONTEXTUAL_TIME_RE.test(normalized) ||
+    ENTITY_ATTRIBUTE_CONTEXTUAL_ACTIVITY_RE.test(normalized)
+  ) {
+    return undefined;
+  }
+
+  return cleaned;
+}
+
+/**
+ * Collapses repeated whitespace while preserving other query text.
+ *
+ * @param text - Raw text value.
+ * @returns Whitespace-normalized text.
+ */
+function normalizeEntityAttributeWhitespace(text: string): string {
+  return text.replace(/\s+/gu, " ").trim();
+}
+
+/**
+ * Normalizes one entity/attribute string for case-insensitive comparisons.
+ *
+ * @param text - Raw text value.
+ * @returns Lowercased normalized comparison string.
+ */
+function normalizeEntityAttributeText(text: string): string {
+  return normalizeEntityAttributeWhitespace(text).normalize("NFKC").toLocaleLowerCase();
 }
 
 /**

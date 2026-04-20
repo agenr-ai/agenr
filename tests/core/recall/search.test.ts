@@ -4,7 +4,7 @@ import type { CrossEncoderPort, RecallPorts } from "../../../src/core/ports.js";
 import type { Entry } from "../../../src/core/types.js";
 import { recall } from "../../../src/core/recall/search.js";
 import type { RecallExecutionTraceSummary } from "../../../src/core/recall/trace.js";
-import type { FtsCandidate, RecallCandidateEntry, VectorCandidate } from "../../../src/core/recall/types.js";
+import type { EntityAttributeKind, FtsCandidate, RecallCandidateEntry, VectorCandidate } from "../../../src/core/recall/types.js";
 
 const NOW = new Date("2026-03-26T12:00:00.000Z");
 
@@ -270,6 +270,120 @@ describe("recall raw evidence gating", () => {
       query: "who is on call this week",
       sessionKey: undefined,
     });
+  });
+
+  it("rejects weak entity-attribute distractors that only match identity or the base entity name", async () => {
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "git-identity",
+          subject: "agenr git identity",
+          content: "Use the repo git identity for signed commits.",
+        }),
+        buildEntry({
+          id: "jim-email",
+          subject: "jim martin work email",
+          content: "Jim Martin uses jim@example.com for work mail.",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "git-identity", vectorSim: 0.79 },
+        { id: "jim-email", vectorSim: 0.77 },
+      ],
+      ftsCandidates: [
+        { id: "git-identity", rank: 1, tier: "any_tokens" },
+        { id: "jim-email", rank: 2, tier: "any_tokens" },
+      ],
+    });
+
+    const results = await recall(
+      {
+        text: "Where does Jim Martin's dad live? identity and location",
+        limit: 6,
+        threshold: 0.2,
+        rankingProfile: "entity_attribute",
+        queryShape: buildEntityAttributeQueryShape("Jim Martin's dad", "location"),
+      },
+      fixture.ports,
+    );
+
+    expect(results).toEqual([]);
+  });
+
+  it("keeps the location-bearing family entry for a narrow entity-attribute query", async () => {
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "jim-dad-location",
+          subject: "Jim Martin dad location",
+          content: "Jim Martin's dad lives in Austin, Texas.",
+        }),
+        buildEntry({
+          id: "jim-identity",
+          subject: "Jim Martin skunk identity",
+          content: "Jim Martin's skunk is named Pepper.",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "jim-dad-location", vectorSim: 0.83 },
+        { id: "jim-identity", vectorSim: 0.81 },
+      ],
+      ftsCandidates: [
+        { id: "jim-identity", rank: 1, tier: "any_tokens" },
+        { id: "jim-dad-location", rank: 2, tier: "all_tokens" },
+      ],
+    });
+
+    const results = await recall(
+      {
+        text: "Where does Jim Martin's dad live?",
+        limit: 6,
+        threshold: 0.2,
+        rankingProfile: "entity_attribute",
+        queryShape: buildEntityAttributeQueryShape("Jim Martin's dad", "location"),
+      },
+      fixture.ports,
+    );
+
+    expect(results.map((result) => result.entry.id)).toEqual(["jim-dad-location"]);
+  });
+
+  it("keeps identity wrapper subjects working for entity-definition queries", async () => {
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "duke-identity",
+          subject: "Duke identity",
+          content: "Duke is Jim Martin's dog.",
+        }),
+        buildEntry({
+          id: "duke-family",
+          subject: "Duke family notes",
+          content: "Duke likes visiting Jim Martin's parents.",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "duke-family", vectorSim: 0.76 },
+        { id: "duke-identity", vectorSim: 0.72 },
+      ],
+      ftsCandidates: [
+        { id: "duke-family", rank: 1, tier: "any_tokens" },
+        { id: "duke-identity", rank: 2, tier: "all_tokens" },
+      ],
+    });
+
+    const results = await recall(
+      {
+        text: "who is Duke?",
+        limit: 3,
+        threshold: 0.2,
+        rankingProfile: "entity_attribute",
+        queryShape: buildEntityAttributeQueryShape("Duke", "identity"),
+      },
+      fixture.ports,
+    );
+
+    expect(results.map((result) => result.entry.id)).toEqual(["duke-identity"]);
   });
 
   it("neutralizes default age bias for historical-state ranking", async () => {
@@ -1706,6 +1820,37 @@ function buildEntry(overrides: Partial<Entry> & Pick<Entry, "id" | "subject" | "
     retired_reason: overrides.retired_reason,
     created_at: createdAt,
     updated_at: updatedAt,
+  };
+}
+
+/**
+ * Builds a stable entity-attribute query shape for recall tests.
+ *
+ * @param entityText - Extracted entity text.
+ * @param attributeKind - Supported attribute bucket.
+ * @returns Structured query-shape fixture.
+ */
+function buildEntityAttributeQueryShape(entityText: string, attributeKind: EntityAttributeKind) {
+  const attributeTokensByKind: Record<EntityAttributeKind, string[]> = {
+    identity: ["identity", "profile", "bio", "biography", "summary"],
+    location: ["location", "live", "lives", "reside", "resides", "located", "home", "city"],
+    email: ["email", "e-mail", "mail"],
+    phone: ["phone", "number", "mobile", "cell", "telephone"],
+    address: ["address", "street", "mailing"],
+  };
+
+  return {
+    kind: "entity_attribute" as const,
+    entityText,
+    normalizedEntity: entityText.normalize("NFKC").toLocaleLowerCase(),
+    entityTokens:
+      entityText
+        .normalize("NFKC")
+        .toLocaleLowerCase()
+        .match(/[\p{L}\p{N}][\p{L}\p{N}._-]*/gu)
+        ?.filter((token) => token.length >= 2 && !["is", "who", "where", "the", "a", "an", "does"].includes(token)) ?? [],
+    attributeKind,
+    attributeTokens: attributeTokensByKind[attributeKind],
   };
 }
 

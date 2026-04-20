@@ -91,6 +91,41 @@ describe("runUnifiedRecall", () => {
     ).toBe("factual");
   });
 
+  it("routes narrow entity-attribute questions to precision-first entry recall", () => {
+    expect(
+      routeRecall({
+        requested: "auto",
+        text: "Where does Jim Martin's dad live?",
+        parsedTimeWindow: false,
+        hasEntryFilters: false,
+      }),
+    ).toEqual({
+      requested: "auto",
+      detectedIntent: "entity_attribute",
+      queried: ["entries"],
+      reason: "The query asks for a specific entity attribute, so precision-first entry recall was used.",
+    });
+    expect(
+      routeRecall({
+        requested: "auto",
+        text: "who is Duke?",
+        parsedTimeWindow: false,
+        hasEntryFilters: false,
+      }).detectedIntent,
+    ).toBe("entity_attribute");
+  });
+
+  it("keeps contextual role questions out of entity-attribute routing", () => {
+    expect(
+      routeRecall({
+        requested: "auto",
+        text: "who is on call this week",
+        parsedTimeWindow: false,
+        hasEntryFilters: false,
+      }).detectedIntent,
+    ).toBe("factual");
+  });
+
   it("routes generic how-to queries to procedures without repo-specific workflow keywords", () => {
     expect(
       routeRecall({
@@ -298,6 +333,45 @@ describe("runUnifiedRecall", () => {
 
     expect(result.entries.map((item) => item.entry.id)).toEqual(["policy-new"]);
     expect(result.notices).toContain("Embeddings failed during recall, so Agenr fell back to lexical-only entry ranking.");
+  });
+
+  it("logs entity-attribute detection and keeps the query on entry recall only", async () => {
+    const entry = createEntry({
+      id: "jim-dad-location",
+      subject: "Jim Martin dad location",
+      content: "Jim Martin's dad lives in Austin, Texas.",
+    });
+    const debugLog = vi.fn();
+
+    const result = await runUnifiedRecall(
+      {
+        text: "Where does Jim Martin's dad live?",
+        limit: 3,
+      },
+      {
+        database: createEpisodeDatabase(),
+        procedures: createProcedureDatabase(),
+        recall: createRecallPorts({
+          ftsSearch: async () => [
+            {
+              entry: toRecallCandidateEntry(entry),
+              rank: 1,
+              tier: "all_tokens",
+            },
+          ],
+          hydrateEntries: async () => [entry],
+        }),
+        embeddingAvailable: true,
+        debugLog,
+      },
+    );
+
+    expect(result.routing).toMatchObject({
+      detectedIntent: "entity_attribute",
+      queried: ["entries"],
+    });
+    expect(result.entries.map((item) => item.entry.id)).toEqual(["jim-dad-location"]);
+    expect(debugLog).toHaveBeenCalledWith(expect.stringContaining('unified recall matched entity-attribute kind="location" entity="Jim Martin\'s dad"'));
   });
 
   it("surfaces explicit as-of resolution and claim-transition context for historical-state queries", async () => {

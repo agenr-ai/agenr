@@ -111,11 +111,12 @@ The unified layer accepts four modes:
 
 ### Auto-routing rules
 
-`routeRecall()` uses a heuristic router across factual, procedural, historical-state, temporal-narrative, and mixed signals.
+`routeRecall()` uses a heuristic router across factual, entity-attribute, procedural, historical-state, temporal-narrative, and mixed signals.
 
 Current detection is deliberately heuristic, not LLM-based:
 
 - historical-state phrases are matched with conservative composite cues like `what was the previous`, `what was the earlier`, `what did we use before`, `what changed`, `changed from`, `before we switched`, and `before we migrated`
+- narrow entity-attribute phrases are matched with explicit shapes like `who is <entity>`, `where is <entity>`, `where does <entity> live`, and `what is <entity>'s <attribute>` for the small supported attribute set (`identity`, `location`, `email`, `phone`, `address`)
 - procedural phrases are matched with cues like `how do I`, `what steps`, `walk me through`, `step by step`, `checklist for`, `procedure for`, and `method for`
 - factual phrases are matched with regexes like `when did`, `when was`, `what decision`, `what preference`, `what's the default`, `which version`, and `what threshold`
 - narrative phrases are matched with regexes like `what happened`, `what were we doing`, `what was going on`, `summarize`, and `catch me up`
@@ -129,6 +130,7 @@ That yields these concrete routing behaviors:
 - procedural + topic anchor -> `procedures` and `entries`
 - procedural + supported time window -> `procedures` and `episodes`
 - procedural + supported time window + topic anchor -> `procedures`, `episodes`, and `entries`
+- entity-attribute -> `entries`
 - historical-state + no supported time window -> `entries` and `episodes`
 - historical-state + procedural -> `procedures`, `entries`, and `episodes`
 - factual + no supported time window -> `entries`
@@ -145,6 +147,8 @@ Explicit overrides still win:
 - `mode=entries` always queries entries only
 - `mode=episodes` always queries episodes only
 - `mode=procedures` always queries procedures only
+
+For `entity_attribute`, the query still stays on `entries` under `mode=entries`, but the core entry pipeline applies a stricter precision-first evidence gate before admitting candidates.
 
 ### Temporal window parser
 
@@ -347,6 +351,7 @@ Today, the implemented `mode` surface is the OpenClaw `agenr_recall` tool plus `
 agenr_recall({ query: "what happened yesterday", mode: "episodes" })
 agenr_recall({ query: "what happened on agenr 2026-03-29", mode: "auto", tags: ["agenr"] })
 agenr_recall({ query: "what was the previous deployment approach", mode: "auto" })
+agenr_recall({ query: "where does Jim Martin's dad live?", mode: "entries" })
 agenr_recall({ query: "what decision set the schema threshold", mode: "entries" })
 ```
 
@@ -728,6 +733,12 @@ Recall also applies a raw-evidence gate before the score threshold is considered
 - lexical support is always considered sufficient raw evidence
 - vector-only candidates must clear a minimum raw vector similarity floor
 - recency and importance cannot rescue weak vector-only drift into a returned result
+
+`rankingProfile: "entity_attribute"` adds a narrower precision-first gate on top:
+
+- lexical overlap alone is not sufficient
+- candidates must show strong structured evidence for the extracted entity and attribute
+- when that evidence is weak, recall prefers returning fewer rows or none instead of padding the shortlist with adjacent identity/location noise
 
 ### Budget behavior
 

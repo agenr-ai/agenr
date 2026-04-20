@@ -60,6 +60,7 @@ const CLAIM_KEY_REDUNDANT_TRUSTED_SLOT_PENALTY = 0.05;
 const CLAIM_KEY_REDUNDANT_TRUSTED_SLOT_MAX_PENALTY = 0.15;
 const QUERY_EMBEDDING_FAILURE_NOTICE = "Embeddings failed during recall, so Agenr fell back to lexical-only entry ranking.";
 const VECTOR_SEARCH_FAILURE_NOTICE = "Vector search failed during recall, so Agenr continued with lexical entry candidates only.";
+const ENTITY_ATTRIBUTE_IDENTITY_WRAPPERS = new Set(["identity", "profile", "bio", "biography", "summary"]);
 
 /**
  * Execute the v1 recall pipeline against the provided adapter ports.
@@ -207,7 +208,7 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
     summary.timings.scoreCandidatesMs = elapsedMs(scoreStartedAt);
 
     const thresholdStartedAt = Date.now();
-    const thresholded = scored.filter((result) => hasSufficientReturnEvidence(result) && result.score >= threshold);
+    const thresholded = scored.filter((result) => hasSufficientReturnEvidence(result, query) && result.score >= threshold);
     summary.candidateCounts.thresholdQualified = thresholded.length;
     summary.timings.thresholdMs = elapsedMs(thresholdStartedAt);
     if (thresholded.length === 0) {
@@ -1428,12 +1429,101 @@ function clampRecallScore(value: number): number {
  * @param candidate - Ranked candidate with raw score breakdowns.
  * @returns True when the candidate is return-worthy.
  */
-function hasSufficientReturnEvidence(candidate: RankedCandidate): boolean {
+function hasSufficientReturnEvidence(candidate: RankedCandidate, query: RecallInput): boolean {
+  if (query.rankingProfile === "entity_attribute") {
+    return hasEntityAttributeEvidence(candidate.entry, query.queryShape);
+  }
+
   if (candidate.scores.lexical > 0) {
     return true;
   }
 
   return candidate.scores.vector >= MIN_VECTOR_ONLY_EVIDENCE;
+}
+
+/**
+ * Applies precision-first structured evidence checks for entity-attribute recall.
+ *
+ * @param entry - Ranking-time entry candidate.
+ * @param queryShape - Structured entity-attribute query metadata.
+ * @returns True when the candidate provides strong enough structured evidence.
+ */
+function hasEntityAttributeEvidence(entry: RecallCandidateEntry, queryShape: RecallInput["queryShape"]): boolean {
+  if (queryShape?.kind !== "entity_attribute") {
+    return false;
+  }
+
+  const normalizedSubject = normalizeEntityAttributeText(entry.subject);
+  const normalizedContent = normalizeEntityAttributeText(entry.content);
+  const combinedTokens = new Set(tokenize(`${entry.subject} ${entry.content}`));
+  const entityTokenMatches = countTokenMatches(queryShape.entityTokens, combinedTokens);
+  const attributeTokenMatches = countTokenMatches(queryShape.attributeTokens, combinedTokens);
+
+  if (queryShape.attributeKind === "identity") {
+    if (normalizedSubject === queryShape.normalizedEntity || isIdentityWrapperSubject(normalizedSubject, queryShape.normalizedEntity)) {
+      return true;
+    }
+  }
+
+  if (
+    (containsNormalizedPhrase(normalizedSubject, queryShape.normalizedEntity) || containsNormalizedPhrase(normalizedContent, queryShape.normalizedEntity)) &&
+    (queryShape.entityTokens.length >= 2 || attributeTokenMatches >= 1)
+  ) {
+    return true;
+  }
+
+  return entityTokenMatches >= 2 && attributeTokenMatches >= 1;
+}
+
+/**
+ * Counts how many expected tokens appear in a candidate token set.
+ *
+ * @param expectedTokens - Query-derived tokens that should appear.
+ * @param availableTokens - Candidate token set built from subject and content.
+ * @returns Number of matching tokens.
+ */
+function countTokenMatches(expectedTokens: readonly string[], availableTokens: ReadonlySet<string>): number {
+  let matches = 0;
+
+  for (const token of expectedTokens) {
+    if (availableTokens.has(token)) {
+      matches += 1;
+    }
+  }
+
+  return matches;
+}
+
+/**
+ * Detects the `<entity> identity/profile/...` subject wrapper shape.
+ *
+ * @param normalizedSubject - Candidate subject normalized for comparison.
+ * @param normalizedEntity - Normalized query entity text.
+ * @returns True when the subject is a supported identity wrapper.
+ */
+function isIdentityWrapperSubject(normalizedSubject: string, normalizedEntity: string): boolean {
+  return Array.from(ENTITY_ATTRIBUTE_IDENTITY_WRAPPERS).some((wrapper) => normalizedSubject === `${normalizedEntity} ${wrapper}`);
+}
+
+/**
+ * Tests whether a normalized phrase appears in normalized candidate text.
+ *
+ * @param normalizedText - Candidate text normalized for comparison.
+ * @param normalizedPhrase - Query phrase normalized for comparison.
+ * @returns True when the phrase appears contiguously in the text.
+ */
+function containsNormalizedPhrase(normalizedText: string, normalizedPhrase: string): boolean {
+  return normalizedPhrase.length > 0 && normalizedText.includes(normalizedPhrase);
+}
+
+/**
+ * Normalizes candidate text for entity-attribute phrase comparisons.
+ *
+ * @param text - Raw candidate subject or content text.
+ * @returns Lowercased whitespace-normalized text.
+ */
+function normalizeEntityAttributeText(text: string): string {
+  return text.replace(/\s+/gu, " ").trim().normalize("NFKC").toLocaleLowerCase();
 }
 
 /**

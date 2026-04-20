@@ -281,6 +281,129 @@ describe("agenr OpenClaw tools", () => {
     expect(logger.debug).not.toHaveBeenCalled();
   });
 
+  it("keeps narrow entity-attribute recall precise and logs the detected shape at debug level", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const locationEntry = createEntry({
+      subject: "Jim Martin dad location",
+      content: "Jim Martin's dad lives in Austin, Texas.",
+      type: "fact",
+      importance: 8,
+      expiry: "permanent",
+    });
+    const distractorEntry = createEntry({
+      subject: "Jim Martin work email",
+      content: "Jim Martin uses jim@example.com for work.",
+      type: "fact",
+      importance: 8,
+      expiry: "permanent",
+    });
+    const services = createServices(database, {
+      available: true,
+      recall: {
+        async embed() {
+          return createEmbedding(0, 1);
+        },
+        async vectorSearch() {
+          return [
+            {
+              entry: {
+                id: distractorEntry.id,
+                subject: distractorEntry.subject,
+                content: distractorEntry.content,
+                importance: distractorEntry.importance,
+                expiry: distractorEntry.expiry,
+                created_at: distractorEntry.created_at,
+                embedding: createEmbedding(0, 1),
+                superseded_by: distractorEntry.superseded_by,
+                retired: distractorEntry.retired,
+              },
+              vectorSim: 0.87,
+            },
+            {
+              entry: {
+                id: locationEntry.id,
+                subject: locationEntry.subject,
+                content: locationEntry.content,
+                importance: locationEntry.importance,
+                expiry: locationEntry.expiry,
+                created_at: locationEntry.created_at,
+                embedding: createEmbedding(1, 1),
+                superseded_by: locationEntry.superseded_by,
+                retired: locationEntry.retired,
+              },
+              vectorSim: 0.81,
+            },
+          ];
+        },
+        async ftsSearch() {
+          return [
+            {
+              entry: {
+                id: distractorEntry.id,
+                subject: distractorEntry.subject,
+                content: distractorEntry.content,
+                importance: distractorEntry.importance,
+                expiry: distractorEntry.expiry,
+                created_at: distractorEntry.created_at,
+                embedding: createEmbedding(0, 1),
+                superseded_by: distractorEntry.superseded_by,
+                retired: distractorEntry.retired,
+              },
+              rank: 0,
+              tier: "any_tokens",
+            },
+            {
+              entry: {
+                id: locationEntry.id,
+                subject: locationEntry.subject,
+                content: locationEntry.content,
+                importance: locationEntry.importance,
+                expiry: locationEntry.expiry,
+                created_at: locationEntry.created_at,
+                embedding: createEmbedding(1, 1),
+                superseded_by: locationEntry.superseded_by,
+                retired: locationEntry.retired,
+              },
+              rank: 1,
+              tier: "all_tokens",
+            },
+          ];
+        },
+        async hydrateEntries(ids) {
+          return [locationEntry, distractorEntry].filter((entry) => ids.includes(entry.id));
+        },
+        async recordRecallEvents() {
+          return;
+        },
+      },
+    });
+    const recallTool = createAgenrRecallTool(createToolContext(), Promise.resolve(services), logger);
+
+    const result = await recallTool.execute("tool-entity-attribute", {
+      query: "Where does Jim Martin's dad live?",
+      mode: "entries",
+      limit: 6,
+      threshold: 0.2,
+    });
+
+    expect(result.details).toMatchObject({
+      status: "ok",
+      count: 1,
+      routing: {
+        requested: "entries",
+        detectedIntent: "entity_attribute",
+        queried: ["entries"],
+      },
+      entries: [expect.objectContaining({ subject: "Jim Martin dad location" })],
+    });
+    expect(result.content[0]?.text).toContain("Jim Martin dad location");
+    expect(result.content[0]?.text).not.toContain("Jim Martin work email");
+    expect(getMessages(logger.debug)).toEqual(
+      expect.arrayContaining([expect.stringContaining('unified recall matched entity-attribute kind="location" entity="Jim Martin\'s dad"')]),
+    );
+  });
+
   it("allows mode=episodes when embeddings are unavailable", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();

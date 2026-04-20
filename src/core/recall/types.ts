@@ -3,7 +3,24 @@ import type { Entry, EntryType } from "../types.js";
 /**
  * Internal ranking profiles that adjust recall scoring for specific query intents.
  */
-export type RecallRankingProfile = "historical_state";
+export type RecallRankingProfile = "historical_state" | "entity_attribute";
+
+/**
+ * Supported attribute buckets for precision-first entity recall.
+ */
+export type EntityAttributeKind = "identity" | "location" | "email" | "phone" | "address";
+
+/**
+ * Narrow structured query shape for precision-first entity-attribute recall.
+ */
+export interface EntityAttributeQueryShape {
+  kind: "entity_attribute";
+  entityText: string;
+  normalizedEntity: string;
+  entityTokens: string[];
+  attributeKind: EntityAttributeKind;
+  attributeTokens: string[];
+}
 
 /**
  * Input to the v1 recall pipeline.
@@ -22,6 +39,7 @@ export interface RecallInput {
   asOf?: string;
   sessionKey?: string;
   rankingProfile?: RecallRankingProfile;
+  queryShape?: EntityAttributeQueryShape;
 }
 
 /**
