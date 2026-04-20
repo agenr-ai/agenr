@@ -6,6 +6,7 @@ import { createDatabase } from "../../adapters/db/client.js";
 import { createRecallAdapter } from "../../adapters/db/recall-adapter.js";
 import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
 import { resolveModel } from "../../adapters/llm.js";
+import { attachCrossEncoderPort } from "../../app/evals/recall/attach-cross-encoder.js";
 import { projectClaimCentricRecallEntry } from "../../app/recall/index.js";
 import { normalizeOptionalString, normalizeStringList, parseCsvList, parsePositiveInteger, parsePositiveNumber, parseUnitInterval } from "../shared/parse.js";
 import { readConfig } from "../../config.js";
@@ -76,7 +77,7 @@ export function registerRecallCommand(program: Command): void {
         db = await createDatabase(dbPath);
         const recallPorts = createRecallAdapter(db, embeddingClient);
         const crossEncoder = commandInput.rankingPolicy?.crossEncoder === "disabled" ? undefined : tryCreateCrossEncoder(config);
-        const adapter = crossEncoder ? { ...recallPorts, crossEncoder } : recallPorts;
+        const adapter = attachCrossEncoderPort(recallPorts, crossEncoder);
         let lastTraceSummary: RecallExecutionTraceSummary | undefined;
 
         const spinner = clack.spinner();

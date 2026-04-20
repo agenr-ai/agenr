@@ -157,6 +157,28 @@ describe("createAgenrOpenClawServices", () => {
     await services.close();
   });
 
+  it("preserves recall port methods when cross-encoder wiring is enabled", async () => {
+    const root = await createTempRoot();
+    const dbPath = path.join(root, "knowledge.db");
+    await writeJson(path.join(root, "config.json"), {
+      credentials: {
+        openaiApiKey: "config-key",
+      },
+    });
+
+    const services = await createAgenrOpenClawServices(
+      { dbPath },
+      {
+        openClaw: createOpenClawHost(),
+      },
+    );
+
+    expect(services.recall.crossEncoder).toBeDefined();
+    await expect(services.recall.ftsSearch({ text: "remember this", limit: 3 })).resolves.toEqual([]);
+
+    await services.close();
+  });
+
   it("uses configPath when the config file is not adjacent to dbPath", async () => {
     const root = await createTempRoot();
     const dbPath = path.join(root, "data", "knowledge.db");

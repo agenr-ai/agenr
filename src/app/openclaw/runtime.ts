@@ -18,6 +18,7 @@ import type {
 } from "../../adapters/openclaw/types.js";
 import type { OpenClawRepository } from "./ports.js";
 import type { BeforeTurnDeps } from "../before-turn/index.js";
+import { attachCrossEncoderPort } from "../evals/recall/attach-cross-encoder.js";
 import type { SessionStartDeps } from "../session-start/index.js";
 
 /**
@@ -142,7 +143,7 @@ async function createRuntimeServices(
     : createUnavailableEmbeddingPort(embeddingStatus.error ?? "Embeddings are unavailable.");
   const baseRecall = createRecallAdapter(database, embedding);
   const crossEncoder = resolveCrossEncoder(config);
-  const recall: RecallPorts = crossEncoder ? { ...baseRecall, crossEncoder } : baseRecall;
+  const recall: RecallPorts = attachCrossEncoderPort(baseRecall, crossEncoder);
   const claimExtraction = await createClaimExtractionRuntime(config, openClawContext.openClaw, openClawContext.pluginConfig);
   let closed = false;
 

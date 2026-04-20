@@ -148,6 +148,92 @@ describe("registerRecallCommand", () => {
     );
   });
 
+  it("preserves class-backed recall port methods when the cross-encoder is wired", async () => {
+    const recallMock = vi.fn(async () => []);
+
+    class RecallAdapterStub {
+      public async embed(): Promise<number[]> {
+        return [];
+      }
+
+      public async vectorSearch(): Promise<[]> {
+        return [];
+      }
+
+      public async ftsSearch(): Promise<[]> {
+        return [];
+      }
+
+      public async hydrateEntries(): Promise<[]> {
+        return [];
+      }
+
+      public async recordRecallEvents(): Promise<void> {
+        return;
+      }
+    }
+
+    vi.resetModules();
+    vi.doMock("@clack/prompts", () => createClackMock());
+    vi.doMock("../../../src/adapters/db/client.js", () => ({
+      createDatabase: vi.fn(async () => ({
+        close: vi.fn(async () => undefined),
+      })),
+    }));
+    vi.doMock("../../../src/adapters/db/recall-adapter.js", () => ({
+      createRecallAdapter: vi.fn(() => new RecallAdapterStub()),
+    }));
+    vi.doMock("../../../src/adapters/embeddings.js", () => ({
+      createEmbeddingClient: vi.fn(() => ({ embed: vi.fn() })),
+      resolveEmbeddingApiKey: vi.fn(() => "sk-test"),
+      resolveEmbeddingModel: vi.fn(() => "text-embedding-3-small"),
+    }));
+    vi.doMock("../../../src/adapters/llm.js", () => ({
+      resolveModel: vi.fn(() => ({
+        modelId: "gpt-5.4-nano",
+      })),
+    }));
+    vi.doMock("../../../src/config.js", () => ({
+      readConfig: vi.fn(() => ({
+        dbPath: "/tmp/knowledge.db",
+        credentials: {
+          openaiApiKey: "sk-cross-encoder",
+        },
+      })),
+    }));
+    vi.doMock("../../../src/core/recall/index.js", () => ({
+      recall: recallMock,
+    }));
+    vi.doMock("../../../src/ui.js", () => ({
+      banner: vi.fn(() => "agenr"),
+      ui: {
+        error: (text: string) => text,
+      },
+    }));
+
+    const { registerRecallCommand: registerMockedRecallCommand } = await import("../../../src/cli/commands/recall.js");
+    const program = new Command();
+    registerMockedRecallCommand(program);
+
+    await program.parseAsync(["recall", "hybrid retrieval"], { from: "user" });
+
+    expect(recallMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "hybrid retrieval",
+      }),
+      expect.objectContaining({
+        crossEncoder: expect.any(Object),
+        ftsSearch: expect.any(Function),
+        vectorSearch: expect.any(Function),
+        hydrateEntries: expect.any(Function),
+        recordRecallEvents: expect.any(Function),
+      }),
+      expect.objectContaining({
+        trace: expect.any(Object),
+      }),
+    );
+  });
+
   it("renders claim-centric trust annotations in verbose recall output", async () => {
     const stepMock = vi.fn();
     vi.resetModules();
