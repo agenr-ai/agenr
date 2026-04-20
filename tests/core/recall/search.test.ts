@@ -720,6 +720,93 @@ describe("recall raw evidence gating", () => {
     expect(results[0]?.scores.recency).toBeGreaterThan(results[1]?.scores.recency ?? 0);
   });
 
+  it("flips the superseded trusted predecessor above an RRF-dominant successor in historical_state", async () => {
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "approach-old",
+          type: "decision",
+          subject: "deployment approach",
+          content: "Webpack was the previous deployment approach before the migration.",
+          claim_key: "deployment/approach",
+          claim_key_status: "trusted",
+          created_at: "2026-02-01T00:00:00.000Z",
+          superseded_by: "approach-new",
+        }),
+        buildEntry({
+          id: "approach-new",
+          type: "decision",
+          subject: "deployment approach",
+          content: "The current deployment approach uses vite after the migration.",
+          claim_key: "deployment/approach",
+          claim_key_status: "trusted",
+          created_at: "2026-03-20T00:00:00.000Z",
+        }),
+      ],
+      vectorCandidates: [{ id: "approach-new", vectorSim: 0.69 }],
+      ftsCandidates: [{ id: "approach-new", rank: 1, tier: "all_tokens" }],
+      predecessorCandidateIds: ["approach-old"],
+    });
+
+    const historicalResults = await recall(
+      {
+        text: "what was the previous deployment approach",
+        limit: 2,
+        rankingProfile: "historical_state",
+      },
+      fixture.ports,
+    );
+
+    expect(historicalResults.map((result) => result.entry.id)).toEqual(["approach-old", "approach-new"]);
+    const predecessor = historicalResults[0];
+    const successor = historicalResults[1];
+    expect(predecessor?.scores.rrf).toBeLessThan(successor?.scores.rrf ?? Infinity);
+    expect(predecessor?.scores.historicalLineage).toBeGreaterThan(0.08);
+    expect((predecessor?.score ?? 0) - (successor?.score ?? 0)).toBeGreaterThanOrEqual(0.02);
+  });
+
+  it("keeps the current entry first under the default profile even when the pool has a direct predecessor", async () => {
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "approach-old",
+          type: "decision",
+          subject: "deployment approach",
+          content: "Webpack was the previous deployment approach before the migration.",
+          claim_key: "deployment/approach",
+          claim_key_status: "trusted",
+          created_at: "2026-02-01T00:00:00.000Z",
+          superseded_by: "approach-new",
+        }),
+        buildEntry({
+          id: "approach-new",
+          type: "decision",
+          subject: "deployment approach",
+          content: "The current deployment approach uses vite after the migration.",
+          claim_key: "deployment/approach",
+          claim_key_status: "trusted",
+          created_at: "2026-03-20T00:00:00.000Z",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "approach-new", vectorSim: 0.7 },
+        { id: "approach-old", vectorSim: 0.66 },
+      ],
+      ftsCandidates: [{ id: "approach-new", rank: 1, tier: "all_tokens" }],
+    });
+
+    const defaultResults = await recall(
+      {
+        text: "what is the deployment approach",
+        limit: 2,
+      },
+      fixture.ports,
+    );
+
+    expect(defaultResults.map((result) => result.entry.id)).toEqual(["approach-new", "approach-old"]);
+    expect(defaultResults.map((result) => result.scores.historicalLineage)).toEqual([0, 0]);
+  });
+
   it("does not apply same-slot redundancy shaping to multivalued claim families", async () => {
     const fixture = createRecallPortsFixture({
       entries: [

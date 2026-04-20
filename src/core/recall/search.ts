@@ -38,6 +38,21 @@ const HISTORICAL_STATE_FLAT_RECENCY = 0.5;
 const HISTORICAL_PREDECESSOR_BOOST = 0.08;
 const HISTORICAL_RETIRED_PREDECESSOR_BOOST = 0.06;
 const HISTORICAL_OLDER_STATE_BOOST = 0.08;
+/**
+ * Extra score margin the historical-state lineage bonus must clear over the
+ * highest-scoring active peer. Kept small so the proportional boost only
+ * narrowly beats the successor rather than dominating the entire score
+ * surface, which preserves claim-key shaping and downstream MMR diagnostics.
+ */
+const HISTORICAL_LINEAGE_GAP_MARGIN = 0.02;
+/**
+ * Hard upper bound on the historical-state lineage bonus. Without a cap an
+ * RRF-dominant successor with a near-1.0 composite could otherwise push the
+ * predecessor bonus close to 1.0 and hide claim-key redundancy penalties or
+ * trust suppression. 0.45 is comfortably above any pool-derived gap observed
+ * in the phase-0 attribution sweep.
+ */
+const HISTORICAL_LINEAGE_MAX_BONUS = 0.45;
 const HISTORICAL_TOPIC_SHARED_PREFIX_MIN = 2;
 const HISTORICAL_TOPIC_PREFIX_OF_CANDIDATE_MIN = 0.6;
 const CLAIM_KEY_TENTATIVE_CURRENT_PENALTY = 0.08;
@@ -752,6 +767,19 @@ function resolveAsOfScore(entry: RecallCandidateEntry, asOfDate: Date): number {
  * absent, older claim-key siblings and same-topic peers can still get a
  * smaller boost against an active successor candidate.
  *
+ * The historical_state profile was the primary regression surface in the
+ * phase-0 attribution sweep: RRF places any active current-state peer well
+ * above its superseded predecessor, and a fixed additive boost of 0.08 is
+ * too small to flip the final composite when RRF assigns the successor a
+ * much higher relevance. The bonus here is therefore shaped by the score
+ * gap to the highest-scoring active peer with a qualifying historical
+ * relation, so the predecessor always edges the successor by
+ * `HISTORICAL_LINEAGE_GAP_MARGIN`. The floor (`HISTORICAL_PREDECESSOR_BOOST`
+ * for direct supersession, `HISTORICAL_OLDER_STATE_BOOST` /
+ * `HISTORICAL_RETIRED_PREDECESSOR_BOOST` otherwise) still applies when the
+ * pool's RRF layout already puts the predecessor close enough that the
+ * fixed delta was sufficient.
+ *
  * @param candidates - Base-scored candidates before final ranking.
  * @param params - Historical ranking profile and optional around-date anchor.
  * @returns Candidate list with historical boosts applied when relevant.
@@ -770,8 +798,9 @@ function applyHistoricalLineageBoosts(
   }
 
   const entries = candidates.map((candidate) => candidate.entry);
+  const scoresById = new Map(candidates.map((candidate) => [candidate.entry.id, candidate.score]));
   return candidates.map((candidate) => {
-    const decision = resolveHistoricalLineageBonus(candidate.entry, entries, params.aroundDate, slotPolicyConfig);
+    const decision = resolveHistoricalLineageBonus(candidate.entry, entries, scoresById, candidate.score, params.aroundDate, slotPolicyConfig);
     if (decision.tentativeLineageSuppressed) {
       claimKeyTrace.tentativeLineageSuppressed += 1;
     }
@@ -798,21 +827,27 @@ function applyHistoricalLineageBoosts(
  *
  * @param entry - Candidate being evaluated.
  * @param entries - All candidate entries currently in the result set.
+ * @param scoresById - Base score lookup used to shape the proportional bonus.
+ * @param candidateScore - Candidate's pre-boost composite score.
  * @param aroundDate - Optional explicit around-date anchor.
  * @returns Additive historical bonus and any trust-aware suppression facts.
  */
 function resolveHistoricalLineageBonus(
   entry: RecallCandidateEntry,
   entries: RecallCandidateEntry[],
+  scoresById: ReadonlyMap<string, number>,
+  candidateScore: number,
   aroundDate: Date | null,
   slotPolicyConfig?: RecallExecutionOptions["slotPolicyConfig"],
 ): {
   bonus: number;
   tentativeLineageSuppressed: boolean;
 } {
-  if (entries.some((peer) => peer.id !== entry.id && entry.superseded_by === peer.id)) {
+  const directSuccessor = entries.find((peer) => peer.id !== entry.id && entry.superseded_by === peer.id);
+  if (directSuccessor) {
+    const successorScore = scoresById.get(directSuccessor.id) ?? 0;
     return {
-      bonus: HISTORICAL_PREDECESSOR_BOOST,
+      bonus: shapeHistoricalLineageBonus(HISTORICAL_PREDECESSOR_BOOST, candidateScore, successorScore),
       tentativeLineageSuppressed: false,
     };
   }
@@ -825,6 +860,8 @@ function resolveHistoricalLineageBonus(
   }
 
   let tentativeLineageSuppressed = false;
+  let bestPeerScore = 0;
+  let peerMatched = false;
   for (const peer of entries) {
     if (peer.id === entry.id || !isPotentialCurrentPeer(peer) || createdAtMs(entry.created_at) >= createdAtMs(peer.created_at)) {
       continue;
@@ -840,16 +877,48 @@ function resolveHistoricalLineageBonus(
       continue;
     }
 
+    peerMatched = true;
+    const peerScore = scoresById.get(peer.id) ?? 0;
+    if (peerScore > bestPeerScore) {
+      bestPeerScore = peerScore;
+    }
+  }
+
+  if (!peerMatched) {
     return {
-      bonus: entry.retired ? HISTORICAL_RETIRED_PREDECESSOR_BOOST : HISTORICAL_OLDER_STATE_BOOST,
+      bonus: 0,
       tentativeLineageSuppressed,
     };
   }
 
+  const base = entry.retired ? HISTORICAL_RETIRED_PREDECESSOR_BOOST : HISTORICAL_OLDER_STATE_BOOST;
   return {
-    bonus: 0,
+    bonus: shapeHistoricalLineageBonus(base, candidateScore, bestPeerScore),
     tentativeLineageSuppressed,
   };
+}
+
+/**
+ * Shape the additive historical-state lineage bonus.
+ *
+ * Starts from a fixed floor (direct predecessor, retired predecessor, or
+ * older-state) so candidates that already outrank their successor keep the
+ * previously validated delta. When the successor's composite dominates the
+ * predecessor's composite, the bonus expands to close that gap plus
+ * `HISTORICAL_LINEAGE_GAP_MARGIN`, so the superseded entry narrowly edges
+ * the current-state peer without drowning the rest of the shortlist. The
+ * result is capped at `HISTORICAL_LINEAGE_MAX_BONUS` so MMR diversification
+ * and claim-key shaping still have room to operate after the boost lands.
+ *
+ * @param base - Fixed floor for the specific historical relation.
+ * @param candidateScore - Candidate's pre-boost composite score.
+ * @param successorScore - Best-scoring active peer with a qualifying historical relation.
+ * @returns Bounded additive bonus for the candidate.
+ */
+function shapeHistoricalLineageBonus(base: number, candidateScore: number, successorScore: number): number {
+  const gap = successorScore - candidateScore;
+  const needed = gap > 0 ? gap + HISTORICAL_LINEAGE_GAP_MARGIN : 0;
+  return Math.min(HISTORICAL_LINEAGE_MAX_BONUS, Math.max(base, needed));
 }
 
 /**

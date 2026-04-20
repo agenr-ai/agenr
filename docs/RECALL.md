@@ -682,11 +682,13 @@ Today that profile is set by unified recall when the router detects a prior-stat
 - same `claim_key` lineage next, preferring trusted historical siblings
 - retired same-subject rows as a weaker topic-family fallback
 
-Historical bonuses are additive and clamp back into `0-1`:
+Historical bonuses are additive and clamp back into `0-1`. Each relation has a fixed floor that applies whenever the candidate is already outranking the active peer it is historically related to:
 
-- direct predecessor of an active candidate: `+0.08`
-- retired predecessor-like candidate: `+0.06`
-- older same-slot or same-topic prior state: `+0.08`
+- direct predecessor of an active candidate: floor `+0.08`
+- retired predecessor-like candidate: floor `+0.06`
+- older same-slot or same-topic prior state: floor `+0.08`
+
+When the active peer's composite dominates the predecessor's composite, the bonus is reshaped proportionally so the superseded entry edges the successor by `HISTORICAL_LINEAGE_GAP_MARGIN` (`0.02`). The result is capped at `HISTORICAL_LINEAGE_MAX_BONUS` (`0.45`) so claim-key shaping and MMR diversification still have room to operate after the boost lands. See the "Historical-state lineage bonus shaping" entry in "Ranking policy tuning history" below.
 
 Claim-key trust also changes how lineage is interpreted:
 
@@ -882,6 +884,21 @@ This section records before/after values for ranking-policy defaults that have b
   - "retries with contextual fallback when a single-entry pool inflates the primary score past 0.92 but not 0.97" - single-entry pool case (~0.933, rows 22/23) clears `0.92` but must stay below `0.97`.
   - "keeps the current-turn-only variant when the primary score clears the recalibrated default" - precision floor (~0.999) clears `0.97`.
 - Not changed in the same pass: `DEFAULT_RECALL_THRESHOLD = 0.6` and `DEFAULT_PROCEDURE_THRESHOLD = 0.72`. Neither was implicated in the threshold-induced regressions, and moving them without attribution evidence would risk widening or narrowing the before-turn surface in ways the regression table does not authorize.
+
+### Historical-state lineage bonus shaping
+
+- File: `src/core/recall/search.ts` (`applyHistoricalLineageBoosts`, `resolveHistoricalLineageBonus`, `shapeHistoricalLineageBonus`).
+- Gates: the additive score delta applied on the `rankingProfile: "historical_state"` branch of entry recall. The bonus is layered on top of the base composite score alongside claim-key shaping and seeded rerank, and it feeds MMR diversification as the shaped relevance signal.
+- Before: fixed additive deltas (`+0.08` for direct predecessor, `+0.06` for retired predecessor-like peer, `+0.08` for older same-slot or same-topic peer). A constant delta could not flip a predecessor whose RRF-compressed relevance lagged the current-state peer's relevance by more than the delta itself.
+- After: a proportional bonus computed from the score gap to the best-scoring active peer with a qualifying historical relation. The bonus is `max(fixedFloor, gap + HISTORICAL_LINEAGE_GAP_MARGIN)`, capped at `HISTORICAL_LINEAGE_MAX_BONUS`. `HISTORICAL_LINEAGE_GAP_MARGIN = 0.02` is the minimum margin by which the superseded predecessor must edge the active successor; `HISTORICAL_LINEAGE_MAX_BONUS = 0.45` is the hard cap that keeps the bonus from dominating the entire score surface.
+- Reason: `rrfFuse()` normalizes rank-based contributions so a single-channel current-state leader routinely lands at a relevance of `1.0` while its superseded predecessor lands near `0.33-0.5`. With `score = 0.5 * relevance + 0.25 * recency + 0.25 * importance` the composite gap between the two peers is often `0.03-0.06`, which the old fixed `+0.08` delta could usually close but which the combined claim-key shaping plus MMR stage sometimes re-opened. The proportional bonus makes the flip decision a function of the observed gap rather than a static constant, so the predecessor wins whenever the `historical_state` profile is active regardless of how compressed the RRF distribution is. The floor preserves the previously validated delta when the predecessor already outranks the successor. The cap prevents a pathological active peer (extreme importance, pinned recency, single-channel dominance) from pushing the bonus close to `1.0` and hiding claim-key redundancy or trust suppression.
+- Regressions targeted: rows 8, 9, and 21 of the phase-0 attribution sweep (`threshold_induced` historical-state / `.previous-state` / `.what-changed` cases). The `2026-04-20T17-59-45-467Z` sweep re-run confirms all three flip to `pass` at baseline. Rows 11, 14, 18, and 20 also benefit at the RRF layer, moving from `mmr_induced` to `combined` because `rrf=disabled` now rescues them as well; their remaining baseline failure is an MMR-reordering shape that phase 4 owns.
+- Phase: phase 3 of the recall-regression-resolution plan.
+- Regression tests: `tests/core/recall/search.test.ts` pins the new shape at three points:
+  - "flips the superseded trusted predecessor above an RRF-dominant successor in historical_state" - constructs the rows 8/9/21 shape where the current-state peer has higher RRF relevance, and asserts `historicalLineage > 0.08` plus a final-score margin of at least `HISTORICAL_LINEAGE_GAP_MARGIN` over the successor.
+  - "keeps the current entry first under the default profile even when the pool has a direct predecessor" - pins the non-leak guard so the proportional bonus cannot lift a predecessor on default-profile queries.
+  - Existing `historical_state` fixtures in the same file continue to assert the previously validated fixed-delta floors (`+0.08` direct predecessor, `+0.06` retired predecessor-like, `+0.08` older state).
+- Not changed in the same pass: `DEFAULT_SEEDED_RERANK_WEIGHT = 0.03` in `src/core/recall/neighborhood.ts`. The plan's phase-3 option 1 (raise the seeded-rerank weight for `historical_state`) was rejected because raising it globally would leak into the default profile, and per-profile seeded-rerank weights would need a second magic constant; the proportional lineage bonus keeps all shaping inside the historical-state branch.
 
 Later phases of the same plan will extend this section as they land. Each entry should cite the regression rows it targets before changing a default.
 
