@@ -243,6 +243,20 @@ export interface RecallEvalFaultInjectionRequest {
 }
 
 /**
+ * Default top-K candidate cap applied when a recall eval case requests
+ * a bounded debug artifact without supplying an explicit override.
+ */
+export const RECALL_DEBUG_ARTIFACT_DEFAULT_TOP_K = 10;
+
+/**
+ * Hard upper bound for the debug-artifact top-K candidate list. The
+ * boundary rejects values above this cap and the artifact builder
+ * clamps any larger in-process request defensively so artifacts stay
+ * bounded and predictable for agent-driven consumers.
+ */
+export const RECALL_DEBUG_ARTIFACT_MAX_TOP_K = 25;
+
+/**
  * Optional output controls for the recall eval execution seam.
  */
 export interface RecallEvalCaseOptions {
@@ -252,6 +266,21 @@ export interface RecallEvalCaseOptions {
   includeCandidates?: boolean;
   /** Include timing metadata in the response. */
   includeTimings?: boolean;
+  /**
+   * Include a bounded, versioned debug artifact in the response. The
+   * artifact is opt-in and disabled by default. When true the response
+   * includes `debugArtifact` with stable routing, candidate-count,
+   * ranking, degraded, and top-K candidate facts sufficient to diagnose
+   * a failing replay case without re-running it.
+   */
+  includeDebugArtifact?: boolean;
+  /**
+   * Optional top-K override for the debug-artifact candidate breakdown.
+   * Clamped into the inclusive range `[1, RECALL_DEBUG_ARTIFACT_MAX_TOP_K]`.
+   * Defaults to `RECALL_DEBUG_ARTIFACT_DEFAULT_TOP_K` so payloads stay
+   * predictable across cases.
+   */
+  topKCandidates?: number;
   /** Internal deterministic degradation controls used by eval corpora and tests. */
   faultInjection?: RecallEvalFaultInjectionRequest;
 }
@@ -697,6 +726,90 @@ export interface RecallEvalCaseError {
 }
 
 /**
+ * Stable schema version tag for the recall replay debug artifact.
+ */
+export type RecallDebugArtifactSchemaVersion = "recall-debug-artifact.v1";
+
+/**
+ * Snapshot provenance block included in a recall debug artifact when
+ * the sandbox was seeded from a copied corpus snapshot. The full
+ * snapshot filesystem path is intentionally excluded so artifacts stay
+ * portable and safe to publish in replay reports.
+ */
+export interface RecallDebugArtifactSnapshot {
+  /** Optional stable snapshot identifier echoed from the request. */
+  id?: string;
+  /** Optional human-readable snapshot label echoed from the request. */
+  label?: string;
+  /** Base filename of the source snapshot DB, never a full path. */
+  dbPathBasename: string;
+}
+
+/**
+ * Compact request summary preserved inside the recall debug artifact.
+ * Only fields that are useful for post-hoc diagnosis are included; the
+ * full request is intentionally not echoed so the artifact stays
+ * bounded and stable across unrelated request-shape changes.
+ */
+export interface RecallDebugArtifactRequestSummary {
+  /** Effective recall execution path the case ran against. */
+  recallPath: RecallEvalPath;
+  /** Query text that was issued to the recall pipeline. */
+  query: string;
+}
+
+/**
+ * Compact top-K candidate breakdown carried inside the recall debug
+ * artifact. Every field beyond `id` and `score` is optional so the
+ * shape stays stable across core and unified paths.
+ */
+export interface RecallDebugArtifactTopCandidate {
+  /** Stable entry identifier surfaced by recall. */
+  id: string;
+  /** Final composite recall score for this candidate. */
+  score: number;
+  /** Evidence-only raw lexical overlap score when available. */
+  lexicalScore?: number;
+  /** Evidence-only raw vector similarity score when available. */
+  vectorScore?: number;
+  /** Scoring component for the recency signal when available. */
+  recencyScore?: number;
+  /** Scoring component for the importance signal when available. */
+  importanceScore?: number;
+  /** Concise reason fragments explaining why the candidate surfaced. */
+  reasons?: string[];
+}
+
+/**
+ * Bounded, versioned debug artifact surfaced by the recall eval seam
+ * when `options.includeDebugArtifact` is `true`. The artifact is
+ * designed so a failing replay case can be diagnosed from the artifact
+ * alone without re-running the case interactively.
+ */
+export interface RecallDebugArtifactV1 {
+  /** Stable schema version for this artifact payload. */
+  schemaVersion: RecallDebugArtifactSchemaVersion;
+  /** Stable case identifier echoed from the request for correlation. */
+  caseId: string;
+  /** Optional snapshot provenance when the sandbox was snapshot-seeded. */
+  snapshot?: RecallDebugArtifactSnapshot;
+  /** Compact request summary preserved for offline diagnosis. */
+  request: RecallDebugArtifactRequestSummary;
+  /** Unified routing metadata when the case ran through unified recall. */
+  routing?: UnifiedRecallRouting;
+  /** Stage-by-stage candidate counts mirrored from diagnostics. */
+  candidateCounts?: RecallEvalCandidateCounts;
+  /** Ranking facts mirrored from diagnostics. */
+  ranking?: RecallEvalRankingDiagnostics;
+  /** Degraded-mode facts mirrored from diagnostics. */
+  degraded?: RecallEvalDegradedDiagnostics;
+  /** Ranked entry IDs returned by recall, in output order. */
+  selectedEntryIds: string[];
+  /** Optional bounded top-K candidate breakdown for post-hoc review. */
+  topCandidates?: RecallDebugArtifactTopCandidate[];
+}
+
+/**
  * Application-layer response contract for a single recall eval case.
  */
 export interface RecallEvalCaseResponse {
@@ -714,6 +827,11 @@ export interface RecallEvalCaseResponse {
   timings?: RecallEvalCaseTimings;
   /** Optional sandbox references for later inspection. */
   sandbox?: RecallEvalSandboxResult;
+  /**
+   * Optional bounded, versioned debug artifact. Present only when
+   * `options.includeDebugArtifact` is `true` on the request.
+   */
+  debugArtifact?: RecallDebugArtifactV1;
   /** Structured error payload when execution fails. */
   error?: RecallEvalCaseError;
 }

@@ -1,13 +1,14 @@
 import type { EvalCorpusSeed } from "../../../app/evals/recall/contracts.js";
-import type {
-  RecallEvalCaseOptions,
-  RecallEvalCaseRequest,
-  RecallEvalFaultInjectionRequest,
-  RecallEvalFixtureEntry,
-  RecallEvalPath,
-  RecallEvalQueryRequest,
-  RecallEvalSandboxRequest,
-  RecallEvalUnifiedRequest,
+import {
+  RECALL_DEBUG_ARTIFACT_MAX_TOP_K,
+  type RecallEvalCaseOptions,
+  type RecallEvalCaseRequest,
+  type RecallEvalFaultInjectionRequest,
+  type RecallEvalFixtureEntry,
+  type RecallEvalPath,
+  type RecallEvalQueryRequest,
+  type RecallEvalSandboxRequest,
+  type RecallEvalUnifiedRequest,
 } from "../../../app/evals/recall/index.js";
 import type { ClaimSlotPolicyConfig, ClaimSlotPolicy } from "../../../core/claim-slot-policy.js";
 import type { RecallRankingPolicy } from "../../../core/recall/trace.js";
@@ -64,7 +65,7 @@ const RANKING_POLICY_KEYS = new Set<string>([
 const UNIFIED_REQUEST_KEYS = new Set<string>(["mode", "sessionKey", "memoryPolicy"]);
 const UNIFIED_MEMORY_POLICY_KEYS = new Set<string>(["slotPolicies"]);
 const SLOT_POLICY_KEYS = new Set<string>(["attributeHeads"]);
-const OPTIONS_KEYS = new Set<string>(["includeDiagnostics", "includeCandidates", "includeTimings", "faultInjection"]);
+const OPTIONS_KEYS = new Set<string>(["includeDiagnostics", "includeCandidates", "includeTimings", "includeDebugArtifact", "topKCandidates", "faultInjection"]);
 const FAULT_INJECTION_KEYS = new Set<string>(["queryEmbeddingFailure", "vectorSearchFailure"]);
 const RECALL_PATHS = ["core", "unified"] as const;
 const RECALL_RANKING_PROFILES = ["historical_state"] as const;
@@ -194,6 +195,10 @@ export interface RecallEvalCaseOptionsDto {
   includeCandidates?: boolean;
   /** Include timing metadata in the response. */
   includeTimings?: boolean;
+  /** Include the bounded, versioned recall replay debug artifact in the response. */
+  includeDebugArtifact?: boolean;
+  /** Optional top-K override for the debug-artifact candidate breakdown. */
+  topKCandidates?: number;
   /** Internal deterministic degradation controls for recall eval cases. */
   faultInjection?: RecallEvalFaultInjectionRequest;
 }
@@ -550,6 +555,11 @@ function parseOptions(value: unknown, issues: RecallEvalValidationIssue[]): Reca
     includeDiagnostics: parseOptionalBoolean(options.includeDiagnostics, "options.includeDiagnostics", issues),
     includeCandidates: parseOptionalBoolean(options.includeCandidates, "options.includeCandidates", issues),
     includeTimings: parseOptionalBoolean(options.includeTimings, "options.includeTimings", issues),
+    includeDebugArtifact: parseOptionalBoolean(options.includeDebugArtifact, "options.includeDebugArtifact", issues),
+    topKCandidates: parseOptionalIntegerInRange(options.topKCandidates, "options.topKCandidates", issues, {
+      min: 1,
+      max: RECALL_DEBUG_ARTIFACT_MAX_TOP_K,
+    }),
     faultInjection: parseFaultInjection(options.faultInjection, issues),
   };
 }
@@ -915,6 +925,8 @@ function mapCaseOptionsDto(dto: RecallEvalCaseOptionsDto | undefined): RecallEva
     includeDiagnostics: dto.includeDiagnostics,
     includeCandidates: dto.includeCandidates,
     includeTimings: dto.includeTimings,
+    includeDebugArtifact: dto.includeDebugArtifact,
+    topKCandidates: dto.topKCandidates,
     faultInjection: dto.faultInjection,
   };
 }

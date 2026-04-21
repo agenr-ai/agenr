@@ -208,6 +208,7 @@ export async function runRecallEvalCase(request: RecallEvalCaseRequest, dependen
         diagnostics: diagnostics.buildDiagnostics(),
         timings: diagnostics.buildTimings(elapsedMs(startedAt)),
         sandbox,
+        observedArtifactFacts: request.options?.includeDebugArtifact === true ? diagnostics.buildObservedArtifactFacts() : undefined,
       });
     } catch (error) {
       diagnostics.recordRecall(elapsedMs(recallStartedAt));

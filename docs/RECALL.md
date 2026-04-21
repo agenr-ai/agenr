@@ -677,6 +677,18 @@ For recalled entries, telemetry updates:
 
 Telemetry failures are swallowed so the user still receives results.
 
+### Replay debug artifacts
+
+The internal eval seams described in [docs/EVALS.md](./EVALS.md) can emit a bounded, versioned `debugArtifact` on successful responses when the caller sets `options.includeDebugArtifact` to `true`. Artifacts mirror the stable fields reported in the typed trace summary (candidate counts, ranking, degraded, routing) and add a small top-K candidate breakdown sourced from the claim-centric projection.
+
+Key properties carried into the artifact:
+
+- artifacts never run inside `src/core/`; they are assembled in the app layer from the same diagnostics the eval seams already surface
+- artifacts are opt-in, omitted by default, and bounded by `options.topKCandidates` (seam-enforced maximum)
+- artifact payloads are versioned through `schemaVersion` so `agenr-evals` can assert shape stability and require explicit bumps for any future change
+
+See [docs/EVALS.md](./EVALS.md#replay-debug-artifacts) for the full artifact contract for both the recall and before-turn seams.
+
 ## Tuning knobs
 
 Recall exposes several practical tuning knobs across the CLI, unified recall, and ranking policy.

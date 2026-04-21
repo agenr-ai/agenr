@@ -1,7 +1,10 @@
 import { projectClaimCentricRecallEntry } from "../../recall/claim-centric.js";
 import type { RecallOutput } from "../../../core/recall/types.js";
 import type { UnifiedRecallResult } from "../../recall/types.js";
+import { buildRecallDebugArtifact } from "./build-debug-artifact.js";
+import type { RecallEvalObservedArtifactFacts } from "./collect-diagnostics.js";
 import type {
+  RecallDebugArtifactV1,
   RecallEvalCaseDiagnostics,
   RecallEvalCaseMetadata,
   RecallEvalCaseRequest,
@@ -25,12 +28,23 @@ export function buildRecallEvalSuccessResponse(params: {
   diagnostics?: RecallEvalCaseDiagnostics;
   timings?: RecallEvalCaseTimings;
   sandbox: RecallEvalSandboxContext;
+  observedArtifactFacts?: RecallEvalObservedArtifactFacts;
 }): RecallEvalCaseResponse {
   const entryResults = Array.isArray(params.results) ? params.results : params.results.entries;
   const projectedEntries = Array.isArray(params.results)
     ? entryResults.map((result) => projectClaimCentricRecallEntry(result, { asOf: params.request.recallRequest.asOf }))
     : params.results.projectedEntries;
   const metadata = buildMetadata(params.request, params.results, projectedEntries);
+  const debugArtifact: RecallDebugArtifactV1 | undefined =
+    params.request.options?.includeDebugArtifact === true && params.observedArtifactFacts
+      ? buildRecallDebugArtifact({
+          request: params.request,
+          results: params.results,
+          projectedEntries,
+          sandbox: params.sandbox,
+          observed: params.observedArtifactFacts,
+        })
+      : undefined;
 
   return {
     status: "ok",
@@ -71,6 +85,7 @@ export function buildRecallEvalSuccessResponse(params: {
     diagnostics: params.diagnostics,
     timings: params.timings,
     sandbox: buildSandboxResult(params.sandbox),
+    ...(debugArtifact ? { debugArtifact } : {}),
   };
 }
 

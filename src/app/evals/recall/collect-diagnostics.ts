@@ -11,17 +11,44 @@ import type {
 import type { RecallEvalProvisioningResult } from "./provision-fixtures.js";
 
 /**
+ * Compact subset of observed facts surfaced to the debug-artifact
+ * builder. Only fields that survive as stable artifact content are
+ * exposed; raw stage timings and internal only fields remain private
+ * to the collector.
+ */
+export interface RecallEvalObservedArtifactFacts {
+  /** Stage-by-stage candidate counts, mirrored from the internal collector state. */
+  candidateCounts: RecallEvalCaseDiagnostics["candidateCounts"];
+  /** Ranking facts emitted by the core recall path when the trace was observed. */
+  ranking?: RecallEvalRankingDiagnostics;
+  /** Degraded-mode facts emitted by the core recall path when the trace was observed. */
+  degraded?: RecallEvalCaseDiagnostics["degraded"];
+  /** Whether a recall trace summary was observed for this case. */
+  traceObserved: boolean;
+}
+
+/**
  * App-level collector that assembles stable recall eval diagnostics and timings.
  */
 export interface RecallEvalDiagnosticsCollector {
   /** Typed core trace sink used to collect algorithm-only recall facts. */
   readonly traceSink: RecallTraceSink;
   /**
-   * Returns true when diagnostics or timings require port and core observation.
+   * Returns true when diagnostics, timings, or the replay debug artifact
+   * require port and core observation.
    *
    * @returns Whether the Phase 3 observation layer should be enabled.
    */
   isObservationEnabled(): boolean;
+  /**
+   * Builds the artifact-facing observed facts regardless of whether the
+   * caller requested diagnostics. Used by the debug-artifact builder so
+   * artifacts carry the stable top-level trace fields independently of
+   * `includeDiagnostics`.
+   *
+   * @returns Observed facts suitable for the stable debug artifact.
+   */
+  buildObservedArtifactFacts(): RecallEvalObservedArtifactFacts;
   /**
    * Records sandbox setup timing for the current case.
    *
@@ -101,7 +128,8 @@ export interface RecallEvalDiagnosticsCollector {
 export function createRecallEvalDiagnosticsCollector(request: RecallEvalCaseRequest): RecallEvalDiagnosticsCollector {
   const diagnosticsRequested = wantsRecallEvalDiagnostics(request);
   const timingsRequested = request.options?.includeTimings === true;
-  const observationEnabled = diagnosticsRequested || timingsRequested;
+  const debugArtifactRequested = request.options?.includeDebugArtifact === true;
+  const observationEnabled = diagnosticsRequested || timingsRequested || debugArtifactRequested;
 
   const execution: RecallEvalCaseDiagnostics["execution"] = {
     mode: "isolated-case",
@@ -238,6 +266,22 @@ export function createRecallEvalDiagnosticsCollector(request: RecallEvalCaseRequ
     traceSink,
     isObservationEnabled(): boolean {
       return observationEnabled;
+    },
+    buildObservedArtifactFacts(): RecallEvalObservedArtifactFacts {
+      return {
+        candidateCounts: { ...candidateCounts },
+        ranking: traceObserved && ranking ? { ...ranking } : undefined,
+        degraded:
+          traceObserved && degraded
+            ? {
+                active: degraded.active,
+                reasons: [...degraded.reasons],
+                lexicalOnly: degraded.lexicalOnly,
+                notices: [...degraded.notices],
+              }
+            : undefined,
+        traceObserved,
+      };
     },
     recordSandboxSetup(durationMs: number): void {
       stageTimings.sandboxSetupMs = durationMs;

@@ -1,4 +1,4 @@
-import type { BeforeTurnEvalCaseOptions, BeforeTurnEvalCaseRequest } from "../../../app/evals/before-turn/index.js";
+import { BEFORE_TURN_DEBUG_ARTIFACT_MAX_TOP_K, type BeforeTurnEvalCaseOptions, type BeforeTurnEvalCaseRequest } from "../../../app/evals/before-turn/index.js";
 import type { BeforeTurnInput, BeforeTurnPolicy, BeforeTurnRecentTurn } from "../../../app/before-turn/index.js";
 import type { RecallEvalFixtureEntry, RecallEvalFixtureProcedure, RecallEvalSandboxRequest } from "../../../app/evals/recall/index.js";
 import {
@@ -44,7 +44,7 @@ const BEFORE_TURN_POLICY_KEYS = new Set<string>([
   "skipTrivialTurns",
   "requireTurnSignal",
 ]);
-const OPTIONS_KEYS = new Set<string>(["includeDiagnostics", "includeRenderedPatch", "includeTimings"]);
+const OPTIONS_KEYS = new Set<string>(["includeDiagnostics", "includeRenderedPatch", "includeTimings", "includeDebugArtifact", "topKCandidates"]);
 
 /**
  * Structured request validation issue emitted at the HTTP boundary.
@@ -117,6 +117,10 @@ export interface BeforeTurnEvalCaseOptionsDto {
   includeRenderedPatch?: boolean;
   /** Include timing metadata in the response. */
   includeTimings?: boolean;
+  /** Include the bounded, versioned before-turn replay debug artifact in the response. */
+  includeDebugArtifact?: boolean;
+  /** Optional top-K override for the debug-artifact candidate breakdown. */
+  topKCandidates?: number;
 }
 
 /**
@@ -368,6 +372,11 @@ function parseOptions(value: unknown, issues: BeforeTurnEvalValidationIssue[]): 
     includeDiagnostics: parseOptionalBoolean(options.includeDiagnostics, "options.includeDiagnostics", issues),
     includeRenderedPatch: parseOptionalBoolean(options.includeRenderedPatch, "options.includeRenderedPatch", issues),
     includeTimings: parseOptionalBoolean(options.includeTimings, "options.includeTimings", issues),
+    includeDebugArtifact: parseOptionalBoolean(options.includeDebugArtifact, "options.includeDebugArtifact", issues),
+    topKCandidates: parseOptionalIntegerInRange(options.topKCandidates, "options.topKCandidates", issues, {
+      min: 1,
+      max: BEFORE_TURN_DEBUG_ARTIFACT_MAX_TOP_K,
+    }),
   };
 }
 
@@ -432,5 +441,7 @@ function mapCaseOptionsDto(dto: BeforeTurnEvalCaseOptionsDto | undefined): Befor
     includeDiagnostics: dto.includeDiagnostics,
     includeRenderedPatch: dto.includeRenderedPatch,
     includeTimings: dto.includeTimings,
+    includeDebugArtifact: dto.includeDebugArtifact,
+    topKCandidates: dto.topKCandidates,
   };
 }

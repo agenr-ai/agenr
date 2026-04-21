@@ -1,7 +1,14 @@
 import { formatAgenrBeforeTurnRecall } from "../../../adapters/openclaw/format/before-turn-format.js";
 import type { BeforeTurnPatch } from "../../before-turn/index.js";
 import type { RecallEvalSandboxContext } from "../recall/ports.js";
-import type { BeforeTurnEvalCaseOutput, BeforeTurnEvalCaseRequest, BeforeTurnEvalCaseResponse, BeforeTurnEvalCaseTimings } from "./contracts.js";
+import { buildBeforeTurnDebugArtifact } from "./build-debug-artifact.js";
+import type {
+  BeforeTurnDebugArtifactV1,
+  BeforeTurnEvalCaseOutput,
+  BeforeTurnEvalCaseRequest,
+  BeforeTurnEvalCaseResponse,
+  BeforeTurnEvalCaseTimings,
+} from "./contracts.js";
 
 /**
  * Builds the stable success response envelope for a completed before-turn eval case.
@@ -17,6 +24,10 @@ export function buildBeforeTurnEvalSuccessResponse(params: {
   renderedPatchText?: string;
 }): BeforeTurnEvalCaseResponse {
   const output = buildOutput(params.patch, params.renderedPatchText);
+  const debugArtifact: BeforeTurnDebugArtifactV1 | undefined =
+    params.request.options?.includeDebugArtifact === true
+      ? buildBeforeTurnDebugArtifact({ request: params.request, patch: params.patch, sandbox: params.sandbox })
+      : undefined;
 
   return {
     status: "ok",
@@ -25,6 +36,7 @@ export function buildBeforeTurnEvalSuccessResponse(params: {
     diagnostics: params.request.options?.includeDiagnostics === true ? params.patch.diagnostics : undefined,
     timings: params.timings,
     sandbox: buildSandboxResult(params.sandbox),
+    ...(debugArtifact ? { debugArtifact } : {}),
   };
 }
 

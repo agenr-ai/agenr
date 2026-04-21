@@ -1,8 +1,14 @@
 export { runRecallEvalCase, type RecallEvalCaseDependencies } from "./run-recall-eval-case.js";
+export { RECALL_DEBUG_ARTIFACT_DEFAULT_TOP_K, RECALL_DEBUG_ARTIFACT_MAX_TOP_K } from "./contracts.js";
 export type {
   EvalCorpusSeed,
   EvalCorpusSeedFixture,
   EvalCorpusSeedSnapshotCopy,
+  RecallDebugArtifactRequestSummary,
+  RecallDebugArtifactSchemaVersion,
+  RecallDebugArtifactSnapshot,
+  RecallDebugArtifactTopCandidate,
+  RecallDebugArtifactV1,
   RecallEvalCandidateCounts,
   RecallEvalCaseDiagnostics,
   RecallEvalCaseError,

@@ -319,6 +319,74 @@ describe("parseBeforeTurnEvalCaseRequest", () => {
     }
   });
 
+  it("accepts the debug-artifact options with a bounded top-K override", () => {
+    const result = parseBeforeTurnEvalCaseRequest({
+      caseId: "case-before-turn-debug-artifact",
+      memoryPool: [],
+      beforeTurnInput: {
+        currentTurnText: "who is Duke?",
+      },
+      options: {
+        includeDebugArtifact: true,
+        topKCandidates: 3,
+      },
+    });
+
+    expect(result.options).toMatchObject({
+      includeDebugArtifact: true,
+      topKCandidates: 3,
+    });
+  });
+
+  it("rejects debug-artifact top-K values above the maximum", () => {
+    try {
+      parseBeforeTurnEvalCaseRequest({
+        caseId: "case-before-turn-debug-too-large",
+        memoryPool: [],
+        beforeTurnInput: {
+          currentTurnText: "who is Duke?",
+        },
+        options: {
+          includeDebugArtifact: true,
+          topKCandidates: 500,
+        },
+      });
+      expect.unreachable("Expected validation failure.");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BeforeTurnEvalRequestValidationError);
+      expect((error as BeforeTurnEvalRequestValidationError).issues).toEqual([
+        {
+          path: "options.topKCandidates",
+          message: "Expected an integer from 1 to 25.",
+        },
+      ]);
+    }
+  });
+
+  it("rejects debug-artifact top-K values below the minimum", () => {
+    try {
+      parseBeforeTurnEvalCaseRequest({
+        caseId: "case-before-turn-debug-zero",
+        memoryPool: [],
+        beforeTurnInput: {
+          currentTurnText: "who is Duke?",
+        },
+        options: {
+          topKCandidates: 0,
+        },
+      });
+      expect.unreachable("Expected validation failure.");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BeforeTurnEvalRequestValidationError);
+      expect((error as BeforeTurnEvalRequestValidationError).issues).toEqual([
+        {
+          path: "options.topKCandidates",
+          message: "Expected an integer from 1 to 25.",
+        },
+      ]);
+    }
+  });
+
   it("rejects malformed procedure fixtures", () => {
     try {
       parseBeforeTurnEvalCaseRequest({

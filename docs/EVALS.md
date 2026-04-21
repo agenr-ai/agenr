@@ -183,6 +183,7 @@ Successful responses include:
 - `diagnostics.abstentionReasons`
 - optional `timings`
 - `sandbox`
+- optional `debugArtifact` (see [Replay debug artifacts](#replay-debug-artifacts))
 
 Current explicit non-goals for this seam:
 
@@ -206,6 +207,8 @@ Top-level request semantics:
 - `options.includeDiagnostics` enables the top-level mirrored diagnostics payload
 - `options.includeRenderedPatch` enables adapter-format prompt rendering
 - `options.includeTimings` enables timing metadata
+- `options.includeDebugArtifact` enables the bounded before-turn replay debug artifact on the response (see [Replay debug artifacts](#replay-debug-artifacts))
+- `options.topKCandidates` overrides the artifact top-K candidate cap; omitted values fall back to the default cap and out-of-range values are rejected at the HTTP boundary
 
 Supported `beforeTurnInput.policy` fields at the HTTP boundary:
 
@@ -339,6 +342,8 @@ Important request semantics:
 - `options.includeDiagnostics` enables structured diagnostics
 - `options.includeCandidates` does not return raw candidates - it only enables the same aggregate diagnostics used by the harness
 - `options.includeTimings` enables timing metadata
+- `options.includeDebugArtifact` enables the bounded recall replay debug artifact on the response (see [Replay debug artifacts](#replay-debug-artifacts))
+- `options.topKCandidates` overrides the artifact top-K candidate cap; omitted values fall back to the default cap and out-of-range values are rejected at the HTTP boundary
 - `options.faultInjection` is an internal-only deterministic degradation hook for eval corpora and tests; it is not part of any public product surface
 
 ### Supported `recallPath` values
@@ -729,6 +734,58 @@ When timings are included, the response can contain:
 - `shapeResultsMs`
 - `recordRecallEventsMs`
 
+## Replay debug artifacts
+
+Both seams can emit a bounded, versioned replay debug artifact on successful responses when the caller opts in explicitly. The artifact is designed so a failing corpus-backed replay case can be diagnosed from the artifact alone without re-running the case interactively.
+
+Design guarantees:
+
+- artifacts are opt-in and omitted by default
+- artifacts are bounded - the top-K candidate breakdown is capped at a small, stable maximum so payloads stay predictable across cases
+- artifacts are versioned through `schemaVersion`; any shape change requires an explicit version bump
+- artifacts map existing diagnostics into stable, documented fields rather than dumping raw internal structures
+- no artifact code runs inside `src/core/`; generation lives in `src/app/evals/recall/build-debug-artifact.ts` and `src/app/evals/before-turn/build-debug-artifact.ts`
+
+Shared request options:
+
+- `options.includeDebugArtifact` - enables the `debugArtifact` field on the successful response envelope
+- `options.topKCandidates` - optional top-K override for the candidate breakdown. Must be an integer from `1` to the seam-specific maximum; invalid values are rejected at the HTTP boundary and missing values fall back to the seam default
+
+### Recall replay debug artifact
+
+When `options.includeDebugArtifact` is `true`, successful recall responses include `debugArtifact` with the following fields:
+
+- `schemaVersion` - stable tag `"recall-debug-artifact.v1"`
+- `caseId` - echoed from the request
+- `snapshot` - present only when the sandbox used `corpusSeed.mode: "snapshot_copy"`; includes `id`, `label`, and `dbPathBasename`
+- `request.recallPath` - `"core"` or `"unified"`
+- `request.query` - the query text that was issued
+- `routing` - unified routing metadata when the case ran through unified recall
+- `candidateCounts` - stage-by-stage counts mirrored from diagnostics (merged, threshold-qualified, budget-accepted, final-ranked, returned)
+- `ranking` - effective `limit`, `threshold`, `budget`, and optional `noResultReason`
+- `degraded` - degraded-mode facts, including `active`, `reasons`, `lexicalOnly`, and product-facing `notices`
+- `selectedEntryIds` - ranked entry IDs returned by recall
+- `topCandidates` - bounded top-K candidate breakdown containing `id`, `score`, `lexicalScore`, `vectorScore`, `recencyScore`, `importanceScore`, and optional concise `reasons` sourced from the claim-centric projection
+
+### Before-turn replay debug artifact
+
+When `options.includeDebugArtifact` is `true`, successful before-turn responses include `debugArtifact` with the following fields:
+
+- `schemaVersion` - stable tag `"before-turn-debug-artifact.v1"`
+- `caseId` - echoed from the request
+- `snapshot` - present only when the sandbox used `corpusSeed.mode: "snapshot_copy"`; includes `id`, `label`, and `dbPathBasename`
+- `input.trigger` - host trigger hint, or `"unspecified"` when omitted
+- `input.currentTurnText` - current user-turn text preserved for offline replay analysis
+- `queryPolicy` - stable durable-query policy decision (`current_only`, `contextual_fallback`, or `contextual_required`)
+- `queryVariants` - actual attempted durable-query variants with `kind`, `query`, `candidateCount`, and `selected`
+- `abstentionReasons` - typed abstention reasons when the selector abstained
+- `selectedEntryIds` - ranked durable entry IDs returned by the selector
+- `selectedProcedureKey` - selected canonical procedure key, or `null`
+- `durableRecallTopCandidates` - bounded top-K durable candidate breakdown with `id`, `score`, and optional concise `reasons`
+- `procedureTopCandidates` - bounded procedure candidate breakdown with `procedureKey`, `score`, and optional concise `reasons`
+
+Both artifacts omit any block whose source data was not observed on the executed path, so degraded or abstained cases still produce a well-formed artifact.
+
 ## Response contract
 
 The app-layer response type is `RecallEvalCaseResponse`.
@@ -756,6 +813,7 @@ Successful responses include:
 - `sandbox`
 - optional `diagnostics`
 - optional `timings`
+- optional `debugArtifact` (see [Replay debug artifacts](#replay-debug-artifacts))
 
 Each result entry includes:
 

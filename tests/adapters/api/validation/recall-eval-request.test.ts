@@ -96,6 +96,9 @@ describe("parseRecallEvalCaseRequest", () => {
         includeDiagnostics: true,
         includeCandidates: undefined,
         includeTimings: true,
+        includeDebugArtifact: undefined,
+        topKCandidates: undefined,
+        faultInjection: undefined,
       },
     });
   });
@@ -298,6 +301,8 @@ describe("parseRecallEvalCaseRequest", () => {
       includeDiagnostics: true,
       includeCandidates: undefined,
       includeTimings: undefined,
+      includeDebugArtifact: undefined,
+      topKCandidates: undefined,
       faultInjection: {
         queryEmbeddingFailure: true,
         vectorSearchFailure: false,
@@ -924,6 +929,126 @@ describe("parseRecallEvalCaseRequest", () => {
         },
       ]);
     }
+  });
+
+  it("accepts the debug-artifact options with a bounded top-K override", () => {
+    const result = parseRecallEvalCaseRequest({
+      caseId: "case-debug-artifact",
+      memoryPool: [],
+      recallRequest: {
+        text: "who is on call",
+      },
+      options: {
+        includeDebugArtifact: true,
+        topKCandidates: 5,
+      },
+    });
+
+    expect(result.options).toMatchObject({
+      includeDebugArtifact: true,
+      topKCandidates: 5,
+    });
+  });
+
+  it("omits debug-artifact fields when the caller does not request them", () => {
+    const result = parseRecallEvalCaseRequest({
+      caseId: "case-debug-artifact-omitted",
+      memoryPool: [],
+      recallRequest: {
+        text: "who is on call",
+      },
+    });
+
+    expect(result.options).toBeUndefined();
+  });
+
+  it("rejects debug-artifact options that exceed the top-K maximum", () => {
+    expect(() =>
+      parseRecallEvalCaseRequest({
+        caseId: "case-debug-artifact-too-large",
+        memoryPool: [],
+        recallRequest: {
+          text: "who is on call",
+        },
+        options: {
+          includeDebugArtifact: true,
+          topKCandidates: 999,
+        },
+      }),
+    ).toThrowError(RecallEvalRequestValidationError);
+
+    try {
+      parseRecallEvalCaseRequest({
+        caseId: "case-debug-artifact-too-large",
+        memoryPool: [],
+        recallRequest: {
+          text: "who is on call",
+        },
+        options: {
+          includeDebugArtifact: true,
+          topKCandidates: 999,
+        },
+      });
+    } catch (error) {
+      expect(error).toBeInstanceOf(RecallEvalRequestValidationError);
+      expect((error as RecallEvalRequestValidationError).issues).toEqual([
+        {
+          path: "options.topKCandidates",
+          message: "Expected an integer from 1 to 25.",
+        },
+      ]);
+    }
+  });
+
+  it("rejects debug-artifact options below the top-K minimum", () => {
+    expect(() =>
+      parseRecallEvalCaseRequest({
+        caseId: "case-debug-artifact-zero",
+        memoryPool: [],
+        recallRequest: {
+          text: "who is on call",
+        },
+        options: {
+          topKCandidates: 0,
+        },
+      }),
+    ).toThrowError(RecallEvalRequestValidationError);
+
+    try {
+      parseRecallEvalCaseRequest({
+        caseId: "case-debug-artifact-zero",
+        memoryPool: [],
+        recallRequest: {
+          text: "who is on call",
+        },
+        options: {
+          topKCandidates: 0,
+        },
+      });
+    } catch (error) {
+      expect(error).toBeInstanceOf(RecallEvalRequestValidationError);
+      expect((error as RecallEvalRequestValidationError).issues).toEqual([
+        {
+          path: "options.topKCandidates",
+          message: "Expected an integer from 1 to 25.",
+        },
+      ]);
+    }
+  });
+
+  it("rejects non-integer debug-artifact top-K values", () => {
+    expect(() =>
+      parseRecallEvalCaseRequest({
+        caseId: "case-debug-artifact-fractional",
+        memoryPool: [],
+        recallRequest: {
+          text: "who is on call",
+        },
+        options: {
+          topKCandidates: 2.5,
+        },
+      }),
+    ).toThrowError(RecallEvalRequestValidationError);
   });
 
   it("rejects malformed fault-injection options", () => {

@@ -530,6 +530,71 @@ describe("runBeforeTurnEvalCase", () => {
     expect(sourceBytesAfter.equals(sourceBytesBefore)).toBe(true);
   });
 
+  it("omits the before-turn debug artifact by default and includes a bounded artifact when requested", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const memoryPool = [
+      {
+        id: "duke-debug",
+        type: "fact" as const,
+        subject: "duke identity",
+        content: "Duke is Jim's dog.",
+        tags: ["dogs", "identity"],
+      },
+    ];
+
+    const baselineResponse = await runBeforeTurnEvalCase({
+      caseId: "before-turn-debug-artifact-baseline",
+      memoryPool,
+      beforeTurnInput: {
+        currentTurnText: "who is Duke?",
+        policy: {
+          recallThreshold: 0,
+          enableProcedureSuggestion: false,
+        },
+      },
+    });
+
+    expect(baselineResponse.status).toBe("ok");
+    expect(baselineResponse.debugArtifact).toBeUndefined();
+
+    const artifactResponse = await runBeforeTurnEvalCase({
+      caseId: "before-turn-debug-artifact-included",
+      memoryPool,
+      beforeTurnInput: {
+        currentTurnText: "who is Duke?",
+        policy: {
+          recallThreshold: 0,
+          enableProcedureSuggestion: false,
+        },
+      },
+      options: {
+        includeDebugArtifact: true,
+        topKCandidates: 2,
+      },
+    });
+
+    expect(artifactResponse.status).toBe("ok");
+    expect(artifactResponse.debugArtifact).toBeDefined();
+    const artifact = artifactResponse.debugArtifact!;
+    expect(artifact.schemaVersion).toBe("before-turn-debug-artifact.v1");
+    expect(artifact.caseId).toBe("before-turn-debug-artifact-included");
+    expect(artifact.input).toEqual({
+      trigger: "unspecified",
+      currentTurnText: "who is Duke?",
+    });
+    expect(artifact.selectedEntryIds).toEqual(["duke-debug"]);
+    expect(artifact.selectedProcedureKey).toBeNull();
+    expect(artifact.durableRecallTopCandidates).toBeDefined();
+    expect(artifact.durableRecallTopCandidates!.length).toBeLessThanOrEqual(2);
+    expect(artifact.durableRecallTopCandidates![0]).toMatchObject({
+      id: "duke-debug",
+      score: expect.any(Number),
+    });
+    expect(artifact.procedureTopCandidates).toBeUndefined();
+  });
+
   it("keeps isolated eval state from leaking live database entries into results", async () => {
     const tempRoot = await createTempDirectory("agenr-before-turn-live-");
     const liveDbPath = path.join(tempRoot, "live.sqlite");

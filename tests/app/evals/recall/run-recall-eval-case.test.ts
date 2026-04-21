@@ -1350,6 +1350,80 @@ describe("runRecallEvalCase", () => {
     expect(response.diagnostics?.crossEncoder?.degradedReason).toBe("not_configured");
   });
 
+  it("omits the debug artifact by default and includes a bounded artifact when requested", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const basePool = [
+      {
+        id: "entry-debug-a",
+        type: "decision" as const,
+        subject: "pager policy",
+        content: "Taylor is on call this week.",
+        importance: 7,
+        created_at: "2026-03-11T00:00:00.000Z",
+      },
+      {
+        id: "entry-debug-b",
+        type: "fact" as const,
+        subject: "pager policy",
+        content: "Pager rotation is weekly.",
+        importance: 5,
+        created_at: "2026-03-10T00:00:00.000Z",
+      },
+      {
+        id: "entry-debug-c",
+        type: "fact" as const,
+        subject: "pager policy",
+        content: "Pager escalations go through Jim first.",
+        importance: 4,
+        created_at: "2026-03-09T00:00:00.000Z",
+      },
+    ];
+
+    const baselineResponse = await runRecallEvalCase({
+      caseId: "case-debug-artifact-baseline",
+      memoryPool: basePool,
+      recallRequest: {
+        text: "who is on call",
+        limit: 3,
+      },
+    });
+
+    expect(baselineResponse.status).toBe("ok");
+    expect(baselineResponse.debugArtifact).toBeUndefined();
+
+    const artifactResponse = await runRecallEvalCase({
+      caseId: "case-debug-artifact-included",
+      memoryPool: basePool,
+      recallRequest: {
+        text: "who is on call",
+        limit: 3,
+      },
+      options: {
+        includeDebugArtifact: true,
+        topKCandidates: 2,
+      },
+    });
+
+    expect(artifactResponse.status).toBe("ok");
+    expect(artifactResponse.debugArtifact).toBeDefined();
+    const artifact = artifactResponse.debugArtifact!;
+    expect(artifact.schemaVersion).toBe("recall-debug-artifact.v1");
+    expect(artifact.caseId).toBe("case-debug-artifact-included");
+    expect(artifact.request).toEqual({ recallPath: "core", query: "who is on call" });
+    expect(Array.isArray(artifact.selectedEntryIds)).toBe(true);
+    expect(artifact.selectedEntryIds.length).toBeGreaterThan(0);
+    expect(artifact.topCandidates).toBeDefined();
+    expect(artifact.topCandidates!.length).toBeLessThanOrEqual(2);
+    for (const candidate of artifact.topCandidates ?? []) {
+      expect(typeof candidate.id).toBe("string");
+      expect(typeof candidate.score).toBe("number");
+      expect(typeof candidate.lexicalScore).toBe("number");
+      expect(typeof candidate.vectorScore).toBe("number");
+    }
+  });
+
   it("preserves explicit as-of resolution metadata in claim-centric eval responses", async () => {
     process.env.OPENAI_API_KEY = "test-key";
     vi.stubGlobal("fetch", createEmbeddingFetchStub());
