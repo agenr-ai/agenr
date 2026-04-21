@@ -61,6 +61,27 @@ const CLAIM_KEY_REDUNDANT_TRUSTED_SLOT_MAX_PENALTY = 0.15;
 const QUERY_EMBEDDING_FAILURE_NOTICE = "Embeddings failed during recall, so Agenr fell back to lexical-only entry ranking.";
 const VECTOR_SEARCH_FAILURE_NOTICE = "Vector search failed during recall, so Agenr continued with lexical entry candidates only.";
 const ENTITY_ATTRIBUTE_IDENTITY_WRAPPERS = new Set(["identity", "profile", "bio", "biography", "summary"]);
+const WEAK_QUERY_GROUNDING_TOKENS = new Set([
+  "earlier",
+  "last",
+  "mention",
+  "mentioned",
+  "number",
+  "order",
+  "remember",
+  "remind",
+  "reminder",
+  "run",
+  "runs",
+  "thing",
+  "time",
+  "use",
+  "uses",
+  "using",
+]);
+const WEAKLY_GROUNDED_REMINDER_PATTERN = /\b(earlier|last time|mention(?:ed)?|remember|remind(?:er)?)\b/iu;
+const MIN_VECTOR_WITHOUT_GROUNDED_LEXICAL_SUPPORT = 0.45;
+const GROUNDING_SORT_MAX_SCORE_GAP = 0.03;
 
 /**
  * Execute the v1 recall pipeline against the provided adapter ports.
@@ -220,7 +241,7 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
     const budgeted = budget === null ? thresholded : applyBudget(thresholded, budget);
     summary.candidateCounts.budgetAccepted = budgeted.length;
     summary.timings.budgetMs = budget === null ? 0 : elapsedMs(budgetStartedAt);
-    const ranked = budgeted.slice(0, limit);
+    const ranked = sortAcceptedCandidates(budgeted.slice(0, limit), text, query.rankingProfile);
     summary.candidateCounts.finalRanked = ranked.length;
     if (ranked.length === 0) {
       reportTrace("limit_zero");
@@ -1434,11 +1455,59 @@ function hasSufficientReturnEvidence(candidate: RankedCandidate, query: RecallIn
     return hasEntityAttributeEvidence(candidate.entry, query.queryShape);
   }
 
+  const groundedLexicalSupport = hasGroundedLexicalSupport(candidate.entry, query.text);
   if (candidate.scores.lexical > 0) {
-    return true;
+    if (groundedLexicalSupport) {
+      return true;
+    }
+
+    return candidate.scores.vector >= MIN_VECTOR_WITHOUT_GROUNDED_LEXICAL_SUPPORT;
+  }
+
+  if (isWeaklyGroundedReminderQuery(query.text) && !groundedLexicalSupport) {
+    return false;
   }
 
   return candidate.scores.vector >= MIN_VECTOR_ONLY_EVIDENCE;
+}
+
+/**
+ * Require at least one non-generic query token to overlap before lexical
+ * evidence alone can justify a returned answer.
+ *
+ * Queries such as "what coffee order should I remember" or "the thing from
+ * earlier" often overlap only on conversational filler like `remember`,
+ * `order`, or `earlier`. Those tokens are useful for retrieval recall, but
+ * they are not strong enough by themselves to ground a durable-memory answer.
+ *
+ * @param entry - Candidate entry under consideration.
+ * @param queryText - Raw recall query text.
+ * @returns True when the candidate matches at least one grounded query token.
+ */
+function hasGroundedLexicalSupport(entry: RecallCandidateEntry, queryText: string): boolean {
+  const groundingTokens = getGroundingTokens(queryText);
+  if (groundingTokens.length === 0) {
+    return false;
+  }
+
+  const candidateTokens = new Set(tokenize(`${entry.subject} ${entry.content}`).map(canonicalizeRecallToken));
+  return groundingTokens.some((token) => candidateTokens.has(token));
+}
+
+/**
+ * Detect reminder-style queries that lack enough grounding to trust a
+ * vector-only durable-memory answer.
+ *
+ * These turns often ask about "the thing from earlier" or what was
+ * "mentioned last time". Without any lexical grounding, a medium-strength
+ * embedding neighbor is usually a false positive rather than a recoverable
+ * durable fact.
+ *
+ * @param queryText - Raw recall query text.
+ * @returns True when the query reads like a weakly grounded reminder request.
+ */
+function isWeaklyGroundedReminderQuery(queryText: string): boolean {
+  return WEAKLY_GROUNDED_REMINDER_PATTERN.test(queryText);
 }
 
 /**
@@ -1638,6 +1707,242 @@ function applyBudget(results: RankedCandidate[], budget: number): RankedCandidat
   }
 
   return accepted;
+}
+
+/**
+ * Sort the final accepted shortlist by descending score while preserving
+ * existing order for exact score ties.
+ *
+ * MMR intentionally changes which candidates survive into the bounded
+ * shortlist, but the user-facing output should still present that accepted
+ * set in descending score order so printed scores and rank order agree.
+ *
+ * @param candidates - Accepted shortlist after threshold and budget shaping.
+ * @returns Stable score-descending candidate order.
+ */
+function sortAcceptedCandidates(candidates: RankedCandidate[], queryText: string, rankingProfile?: RecallRankingProfile): RankedCandidate[] {
+  if (rankingProfile === "historical_state" || rankingProfile === "entity_attribute") {
+    return candidates
+      .map((candidate, index) => ({ candidate, index }))
+      .sort((left, right) => right.candidate.score - left.candidate.score || left.index - right.index)
+      .map(({ candidate }) => candidate);
+  }
+
+  const groundingTokens = getGroundingTokens(queryText);
+  return candidates
+    .map((candidate, index) => ({
+      candidate,
+      index,
+      grounding: computeGroundingSupport(candidate.entry, groundingTokens),
+    }))
+    .sort((left, right) => {
+      const scoreGap = Math.abs(left.candidate.score - right.candidate.score);
+      if (scoreGap > GROUNDING_SORT_MAX_SCORE_GAP || hasStructuralScoreShaping(left.candidate) || hasStructuralScoreShaping(right.candidate)) {
+        if (left.candidate.score !== right.candidate.score) {
+          return right.candidate.score - left.candidate.score;
+        }
+
+        return left.index - right.index;
+      }
+
+      if (left.grounding.phraseMatches !== right.grounding.phraseMatches) {
+        return right.grounding.phraseMatches - left.grounding.phraseMatches;
+      }
+
+      if (left.grounding.coverage !== right.grounding.coverage) {
+        return right.grounding.coverage - left.grounding.coverage;
+      }
+
+      if (left.candidate.score !== right.candidate.score) {
+        return right.candidate.score - left.candidate.score;
+      }
+
+      if (left.candidate.scores.vector !== right.candidate.scores.vector) {
+        return right.candidate.scores.vector - left.candidate.scores.vector;
+      }
+
+      return left.index - right.index;
+    })
+    .map(({ candidate }) => candidate);
+}
+
+/**
+ * Detect whether a candidate already carries a structural rank adjustment that
+ * should outrank final query-grounding tie-breaks.
+ *
+ * Claim-key penalties and historical-lineage boosts are deliberate shaping
+ * decisions. The accepted-shortlist grounding sort should not silently undo
+ * them just because the query text happens to overlap more strongly.
+ *
+ * @param candidate - Ranked candidate in the accepted shortlist.
+ * @returns True when the score already includes structural shaping.
+ */
+function hasStructuralScoreShaping(candidate: RankedCandidate): boolean {
+  return (
+    candidate.scores.historicalLineage > 0 ||
+    candidate.scores.neighborhoodBoost > 0 ||
+    candidate.scores.claimKeyTrustPenalty > 0 ||
+    candidate.scores.claimKeyRedundancyPenalty > 0 ||
+    typeof candidate.scores.crossEncoder === "number"
+  );
+}
+
+/**
+ * Build canonical non-generic grounding tokens for one recall query.
+ *
+ * @param queryText - Raw recall query text.
+ * @returns Unique canonical grounding tokens in query order.
+ */
+function getGroundingTokens(queryText: string): string[] {
+  const seen = new Set<string>();
+  const groundingTokens: string[] = [];
+
+  for (const token of tokenize(queryText)) {
+    if (WEAK_QUERY_GROUNDING_TOKENS.has(token)) {
+      continue;
+    }
+
+    const canonical = canonicalizeRecallToken(token);
+    if (seen.has(canonical)) {
+      continue;
+    }
+
+    seen.add(canonical);
+    groundingTokens.push(canonical);
+  }
+
+  return groundingTokens;
+}
+
+/**
+ * Canonicalize a recall token so light inflection and repo-local shorthand do
+ * not hide the same concept from grounding checks.
+ *
+ * @param token - Raw lexical token.
+ * @returns Canonical token used for grounding comparisons.
+ */
+function canonicalizeRecallToken(token: string): string {
+  const normalized = token.normalize("NFKC").toLocaleLowerCase();
+  if (normalized === "db" || normalized === "database" || normalized === "databases") {
+    return "db";
+  }
+
+  if (normalized === "resolve" || normalized === "resolves" || normalized === "resolved" || normalized === "resolving" || normalized === "resolution") {
+    return "resolve";
+  }
+
+  if (normalized === "branches") {
+    return "branch";
+  }
+
+  if (normalized === "prefix" || normalized === "prefixes") {
+    return "prefix";
+  }
+
+  if (normalized.endsWith("ies") && normalized.length > 4) {
+    return `${normalized.slice(0, -3)}y`;
+  }
+
+  if (normalized.endsWith("es") && normalized.length > 4) {
+    return normalized.slice(0, -2);
+  }
+
+  if (normalized.endsWith("s") && normalized.length > 3) {
+    return normalized.slice(0, -1);
+  }
+
+  return normalized;
+}
+
+/**
+ * Compute lightweight grounding support facts for final shortlist ordering.
+ *
+ * Phrase matches and coverage are used only as a tie-break inside the bounded
+ * accepted shortlist so the returned order prefers the candidate that most
+ * directly answers the query without perturbing the underlying score surface.
+ *
+ * @param entry - Candidate entry in the accepted shortlist.
+ * @param groundingTokens - Canonical grounding tokens extracted from the query.
+ * @returns Grounding phrase and coverage facts for shortlist sorting.
+ */
+function computeGroundingSupport(
+  entry: RecallCandidateEntry,
+  groundingTokens: readonly string[],
+): {
+  phraseMatches: number;
+  coverage: number;
+} {
+  if (groundingTokens.length === 0) {
+    return {
+      phraseMatches: 0,
+      coverage: 0,
+    };
+  }
+
+  const subjectTokens = tokenize(entry.subject).map(canonicalizeRecallToken);
+  const contentTokens = tokenize(entry.content).map(canonicalizeRecallToken);
+  const candidateTokens = new Set([...subjectTokens, ...contentTokens]);
+  const matchedTokens = groundingTokens.filter((token) => candidateTokens.has(token));
+
+  return {
+    phraseMatches: countCanonicalPhraseMatches(groundingTokens, subjectTokens, contentTokens),
+    coverage: matchedTokens.length / groundingTokens.length,
+  };
+}
+
+/**
+ * Count canonical 2+-token grounding phrases found in candidate token order.
+ *
+ * @param queryTokens - Canonical grounding tokens from the query.
+ * @param subjectTokens - Canonicalized subject tokens.
+ * @param contentTokens - Canonicalized content tokens.
+ * @returns Number of matching canonical grounding phrases.
+ */
+function countCanonicalPhraseMatches(queryTokens: readonly string[], subjectTokens: readonly string[], contentTokens: readonly string[]): number {
+  if (queryTokens.length < 2) {
+    return 0;
+  }
+
+  const matchedPhrases = new Set<string>();
+  for (let size = 2; size <= queryTokens.length; size += 1) {
+    for (let index = 0; index + size <= queryTokens.length; index += 1) {
+      const phraseTokens = queryTokens.slice(index, index + size);
+      if (hasCanonicalConsecutivePhrase(subjectTokens, phraseTokens) || hasCanonicalConsecutivePhrase(contentTokens, phraseTokens)) {
+        matchedPhrases.add(phraseTokens.join(" "));
+      }
+    }
+  }
+
+  return matchedPhrases.size;
+}
+
+/**
+ * Check whether one canonical token phrase appears consecutively in a target.
+ *
+ * @param haystack - Candidate canonical tokens.
+ * @param needle - Canonical phrase tokens to locate.
+ * @returns True when the phrase appears consecutively.
+ */
+function hasCanonicalConsecutivePhrase(haystack: readonly string[], needle: readonly string[]): boolean {
+  if (needle.length === 0 || haystack.length < needle.length) {
+    return false;
+  }
+
+  for (let index = 0; index + needle.length <= haystack.length; index += 1) {
+    let matches = true;
+    for (let offset = 0; offset < needle.length; offset += 1) {
+      if (haystack[index + offset] !== needle[offset]) {
+        matches = false;
+        break;
+      }
+    }
+
+    if (matches) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**

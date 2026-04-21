@@ -201,7 +201,7 @@ describe("recall raw evidence gating", () => {
     expect(fixture.recordRecallEvents).not.toHaveBeenCalled();
   });
 
-  it("keeps a strong vector-only match when the raw similarity is meaningful", async () => {
+  it("keeps a strong vector-only match for a non-reminder query when the raw similarity is meaningful", async () => {
     const fixture = createRecallPortsFixture({
       entries: [
         buildEntry({
@@ -215,7 +215,7 @@ describe("recall raw evidence gating", () => {
 
     const results = await recall(
       {
-        text: "can you remind me about the earlier note",
+        text: "artifact preservation",
         limit: 5,
       },
       fixture.ports,
@@ -227,9 +227,120 @@ describe("recall raw evidence gating", () => {
     expect(results[0]?.scores.vector).toBeCloseTo(0.34, 6);
     expect(fixture.recordRecallEvents).toHaveBeenCalledWith({
       entryIds: ["sandbox-bootstrap"],
-      query: "can you remind me about the earlier note",
+      query: "artifact preservation",
       sessionKey: undefined,
     });
+  });
+
+  it("rejects lexical overlap that comes only from weak conversational grounding tokens", async () => {
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "memory-trigger",
+          subject: "memory trigger phrase",
+          content: "Saying remember this saves the current context.",
+          embedding: createCosineEmbedding(0.36),
+        }),
+        buildEntry({
+          id: "workflow-order",
+          subject: "workflow cleanup order",
+          content: "Cleanup order matters when shared handles stay open.",
+          embedding: createCosineEmbedding(0.34),
+        }),
+      ],
+      vectorCandidates: [
+        { id: "memory-trigger", vectorSim: 0.36 },
+        { id: "workflow-order", vectorSim: 0.34 },
+      ],
+      ftsCandidates: [
+        { id: "memory-trigger", rank: 1, tier: "any_tokens" },
+        { id: "workflow-order", rank: 2, tier: "any_tokens" },
+      ],
+    });
+
+    const results = await recall(
+      {
+        text: "what coffee order should I remember",
+        limit: 5,
+      },
+      fixture.ports,
+    );
+
+    expect(results).toEqual([]);
+  });
+
+  it("abstains on reminder-style queries that have no grounded lexical anchor", async () => {
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "path-precedence",
+          subject: "global binary path precedence",
+          content: "The earlier CLI on PATH wins.",
+          embedding: createCosineEmbedding(0.22),
+        }),
+        buildEntry({
+          id: "branch-testing",
+          subject: "guard branch testing",
+          content: "Earlier guards can mask later test branches.",
+          embedding: createCosineEmbedding(0.25),
+        }),
+      ],
+      vectorCandidates: [
+        { id: "branch-testing", vectorSim: 0.25 },
+        { id: "path-precedence", vectorSim: 0.22 },
+      ],
+      ftsCandidates: [
+        { id: "path-precedence", rank: 1, tier: "any_tokens" },
+        { id: "branch-testing", rank: 2, tier: "any_tokens" },
+      ],
+    });
+
+    const results = await recall(
+      {
+        text: "can you remind me about the thing from earlier",
+        limit: 5,
+      },
+      fixture.ports,
+    );
+
+    expect(results).toEqual([]);
+  });
+
+  it("does not treat generic numbering terms as grounding for reminder-style no-result queries", async () => {
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "prompt-style",
+          subject: "codex prompt style",
+          content: "Number the prompts and point them back to the plan doc.",
+          embedding: createCosineEmbedding(0.22),
+        }),
+        buildEntry({
+          id: "numbered-lists",
+          subject: "numbered list usage",
+          content: "Use numbered lists when the user needs to refer back by number.",
+          embedding: createCosineEmbedding(0.25),
+        }),
+      ],
+      vectorCandidates: [
+        { id: "numbered-lists", vectorSim: 0.25 },
+        { id: "prompt-style", vectorSim: 0.22 },
+      ],
+      ftsCandidates: [
+        { id: "prompt-style", rank: 1, tier: "any_tokens" },
+        { id: "numbered-lists", rank: 2, tier: "any_tokens" },
+      ],
+    });
+
+    const results = await recall(
+      {
+        text: "what hotel room number did I mention last time",
+        limit: 5,
+      },
+      fixture.ports,
+    );
+
+    expect(results).toEqual([]);
   });
 
   it("filters weak vector-only distractors while keeping a lexical match", async () => {
@@ -1639,6 +1750,76 @@ describe("recall raw evidence gating", () => {
 
     expect(results[0]?.entry.id).toBe("leader");
     expect(traceSummaries[0]?.mmr.applied).toBe(false);
+  });
+
+  it("sorts the accepted MMR shortlist back into descending score order", async () => {
+    const traceSummaries: RecallExecutionTraceSummary[] = [];
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "leader",
+          subject: "branch naming convention",
+          content: "Use feat/, fix/, chore/, and hotfix/ branch prefixes.",
+          embedding: createCosineEmbedding(0.95),
+        }),
+        buildEntry({
+          id: "near-1",
+          subject: "branch workflow note",
+          content: "Branch workflow note for nearby Git tasks.",
+          embedding: createCosineEmbedding(0.94),
+        }),
+        buildEntry({
+          id: "near-2",
+          subject: "branch cleanup workflow",
+          content: "Delete merged branches after review.",
+          embedding: createCosineEmbedding(0.93),
+        }),
+        buildEntry({
+          id: "diverse-mid",
+          subject: "branch strategy discussion",
+          content: "Branch strategy remains reviewable with standard prefixes.",
+          embedding: [0, 1, 0],
+        }),
+        buildEntry({
+          id: "tail",
+          subject: "branch history note",
+          content: "Historical note about earlier branch names.",
+          embedding: [0, 0, 1],
+        }),
+      ],
+      vectorCandidates: [
+        { id: "leader", vectorSim: 0.95 },
+        { id: "near-1", vectorSim: 0.94 },
+        { id: "near-2", vectorSim: 0.93 },
+        { id: "diverse-mid", vectorSim: 0.6 },
+        { id: "tail", vectorSim: 0.2 },
+      ],
+      ftsCandidates: [
+        { id: "leader", rank: 1, tier: "all_tokens" },
+        { id: "near-1", rank: 2, tier: "all_tokens" },
+        { id: "near-2", rank: 3, tier: "all_tokens" },
+      ],
+    });
+
+    const results = await recall(
+      {
+        text: "what branch prefixes should I use",
+        limit: 3,
+      },
+      fixture.ports,
+      {
+        trace: {
+          reportSummary(summary): void {
+            traceSummaries.push(summary);
+          },
+        },
+      },
+    );
+
+    expect(traceSummaries[0]?.mmr.applied).toBe(true);
+    expect(traceSummaries[0]?.mmr.reorderedIds.length ?? 0).toBeGreaterThan(0);
+    expect(results.map((result) => result.score)).toEqual([...results.map((result) => result.score)].sort((left, right) => right - left));
+    expect(results[0]?.entry.id).toBe("leader");
   });
 
   it("falls back to support observation time before created-at for explicit as-of ranking", async () => {
