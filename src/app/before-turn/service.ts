@@ -958,7 +958,15 @@ function hasDefinitionalContent(content: string, entity: string): boolean {
  */
 function hasEmbeddedDefinitionalContent(content: string, escapedEntity: string): boolean {
   const embeddedLead = `(?:^|[.!?;:]\\s+)${escapedEntity}\\s+(?:is|was)\\s+`;
-  const patterns = [new RegExp(`${embeddedLead}(?:a|an|the)\\b`, "u"), new RegExp(`${embeddedLead}[\\p{L}\\p{N}]+(?:['’]s)\\b`, "u")];
+  const fullNameLead = `(?:^|[.!?;:]\\s+)${escapedEntity}(?:\\s+[\\p{L}\\p{N}]+){1,2}\\s+(?:is|was)\\s+`;
+  const patterns = [
+    new RegExp(`${embeddedLead}(?:a|an|the)\\b`, "u"),
+    new RegExp(`${embeddedLead}[\\p{L}\\p{N}]+(?:['’]s)\\b`, "u"),
+    // Allow short-name queries like "who is Kevin?" to match a leading
+    // full-name clause such as "Kevin Martin is married to Kate".
+    new RegExp(`${fullNameLead}(?:a|an|the)\\b`, "u"),
+    new RegExp(`${fullNameLead}[\\p{L}\\p{N}]+\\b`, "u"),
+  ];
   return patterns.some((pattern) => pattern.test(content));
 }
 

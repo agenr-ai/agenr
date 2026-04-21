@@ -653,6 +653,44 @@ describe("runBeforeTurn", () => {
     ]);
   });
 
+  it("accepts a full-name family summary for a short-name identity question", async () => {
+    const familySummary = createEntry({
+      id: "kevin-martin-family",
+      subject: "kevin martin family",
+      content: "Kevin Martin is married to Kate, and they have three children: Luke, Caroline, and Maddie.",
+      importance: 10,
+    });
+    const deps = createDeps({
+      ftsCandidates: [toRecallCandidateEntry(familySummary)],
+      hydratedEntries: [familySummary],
+    });
+
+    const result = await runBeforeTurn(
+      {
+        currentTurnText: "Who is Kevin?",
+        policy: {
+          enableProcedureSuggestion: false,
+          recallThreshold: 0,
+        },
+      },
+      deps,
+    );
+
+    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["kevin-martin-family"]);
+    expect(result.diagnostics.directness).toMatchObject({
+      queryKind: "entity_definition",
+      entity: "Kevin",
+      decision: "kept",
+      winnerEntryId: "kevin-martin-family",
+    });
+    expect(result.diagnostics.directness?.candidates).toEqual([
+      expect.objectContaining({
+        entryId: "kevin-martin-family",
+        signals: expect.arrayContaining(["definitional_content", "adjacent_relationship"]),
+      }),
+    ]);
+  });
+
   it("keeps a definitional winner when only the runner-up lacks identity signals", async () => {
     const relationshipDefinition = createEntry({
       id: "duke-family-relationships",
