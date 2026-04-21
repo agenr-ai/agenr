@@ -35,7 +35,13 @@ export type BeforeTurnDirectnessDecision = "kept" | "reranked" | "abstained";
 /**
  * Stable directness signal attached to one candidate during rerank.
  */
-export type BeforeTurnDirectnessSignal = "subject_entity_match" | "subject_identity_wrapper" | "definitional_content" | "adjacent_relationship" | "list_lore";
+export type BeforeTurnDirectnessSignal =
+  | "subject_entity_match"
+  | "subject_identity_wrapper"
+  | "definitional_content"
+  | "claim_key_entity_match"
+  | "adjacent_relationship"
+  | "list_lore";
 
 /**
  * Inspectable directness features for one top candidate.

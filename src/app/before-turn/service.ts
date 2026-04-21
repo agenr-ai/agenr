@@ -96,9 +96,11 @@ const DIRECTNESS_STABLE_GAP = 0.08;
 const DIRECTNESS_SUBJECT_ENTITY_MATCH_BONUS = 0.16;
 const DIRECTNESS_SUBJECT_IDENTITY_WRAPPER_BONUS = 0.12;
 const DIRECTNESS_DEFINITIONAL_CONTENT_BONUS = 0.22;
+const DIRECTNESS_CLAIM_KEY_ENTITY_MATCH_BONUS = 0.18;
 const DIRECTNESS_ADJACENT_RELATIONSHIP_PENALTY = 0.18;
 const DIRECTNESS_LIST_LORE_PENALTY = 0.08;
 const ENTITY_DIRECTNESS_MAX_WORDS = 5;
+const ENTITY_DIRECTNESS_RECALL_CANDIDATE_LIMIT = 5;
 const DIRECTNESS_IDENTITY_WRAPPERS = new Set(["identity", "profile", "bio", "biography", "definition", "overview", "summary"]);
 const DIRECTNESS_RELATIONSHIP_KEYWORDS = new Set([
   "cousin",
@@ -330,7 +332,10 @@ async function runDurableRecallAttempt(
   deps: BeforeTurnDeps,
   diagnostics: BeforeTurnPatchDiagnostics,
 ): Promise<DurableRecallAttemptResult> {
-  const durableRecallLimit = Math.max(policy.maxDurableEntries, policy.maxHighConfidenceDurableEntries);
+  const directnessQuery = detectEntityDefinitionTurn(currentTurnText);
+  const durableRecallLimit = directnessQuery
+    ? Math.max(policy.maxDurableEntries, policy.maxHighConfidenceDurableEntries, ENTITY_DIRECTNESS_RECALL_CANDIDATE_LIMIT)
+    : Math.max(policy.maxDurableEntries, policy.maxHighConfidenceDurableEntries);
 
   let durableRecallTrace: RecallExecutionTraceSummary | undefined;
   try {
@@ -840,6 +845,11 @@ function scoreDirectnessCandidate(queryMatch: DirectnessQueryMatch, item: Before
     directnessDelta += DIRECTNESS_DEFINITIONAL_CONTENT_BONUS;
   }
 
+  if (hasEntityClaimKey(item.entry.claim_key, queryMatch.normalizedEntity)) {
+    signals.push("claim_key_entity_match");
+    directnessDelta += DIRECTNESS_CLAIM_KEY_ENTITY_MATCH_BONUS;
+  }
+
   if (looksLikeAdjacentRelationship(subject, content, queryMatch.normalizedEntity)) {
     signals.push("adjacent_relationship");
     directnessDelta -= DIRECTNESS_ADJACENT_RELATIONSHIP_PENALTY;
@@ -939,6 +949,10 @@ function isIdentityWrapperSubject(subject: string, entity: string): boolean {
  */
 function hasDefinitionalContent(content: string, entity: string): boolean {
   const escapedEntity = escapeRegExp(entity);
+  if (startsWithBareRelationshipPredicate(content, escapedEntity)) {
+    return false;
+  }
+
   const anchoredPatterns = [new RegExp(`^${escapedEntity}\\s+(?:is|was|means)\\b`, "u"), new RegExp(`^${escapedEntity}\\s+refers\\s+to\\b`, "u")];
   if (anchoredPatterns.some((pattern) => pattern.test(content))) {
     return true;
@@ -959,6 +973,10 @@ function hasDefinitionalContent(content: string, entity: string): boolean {
 function hasEmbeddedDefinitionalContent(content: string, escapedEntity: string): boolean {
   const embeddedLead = `(?:^|[.!?;:]\\s+)${escapedEntity}\\s+(?:is|was)\\s+`;
   const fullNameLead = `(?:^|[.!?;:]\\s+)${escapedEntity}(?:\\s+[\\p{L}\\p{N}]+){1,2}\\s+(?:is|was)\\s+`;
+  if (startsWithBareRelationshipPredicate(content, escapedEntity)) {
+    return false;
+  }
+
   const patterns = [
     new RegExp(`${embeddedLead}(?:a|an|the)\\b`, "u"),
     new RegExp(`${embeddedLead}[\\p{L}\\p{N}]+(?:['’]s)\\b`, "u"),
@@ -968,6 +986,21 @@ function hasEmbeddedDefinitionalContent(content: string, escapedEntity: string):
     new RegExp(`${fullNameLead}[\\p{L}\\p{N}]+\\b`, "u"),
   ];
   return patterns.some((pattern) => pattern.test(content));
+}
+
+/**
+ * Returns whether the content starts with a bare relationship predicate such
+ * as "Duke is cousins with ..." that should not count as a direct identity
+ * definition for before-turn reranking.
+ *
+ * @param content - Normalized candidate content.
+ * @param escapedEntity - Regex-safe entity extracted from the turn.
+ * @returns `true` when the leading predicate is just a relationship term.
+ */
+function startsWithBareRelationshipPredicate(content: string, escapedEntity: string): boolean {
+  const relationshipAlternation = Array.from(DIRECTNESS_RELATIONSHIP_KEYWORDS).join("|");
+  const embeddedLead = `(?:^|[.!?;:]\\s+)${escapedEntity}\\s+(?:is|was)\\s+`;
+  return new RegExp(`${embeddedLead}(?:${relationshipAlternation})\\b`, "u").test(content);
 }
 
 /**
@@ -1024,6 +1057,18 @@ function compareDirectnessCandidates(left: DirectnessCandidateScore, right: Dire
  */
 function normalizeDirectnessText(value: string): string {
   return normalizeWhitespace(value).toLocaleLowerCase();
+}
+
+/**
+ * Returns whether the candidate claim key is anchored on the queried entity.
+ *
+ * @param claimKey - Optional durable claim key carried by the candidate entry.
+ * @param entity - Normalized entity extracted from the current turn.
+ * @returns `true` when the claim key head matches the entity.
+ */
+function hasEntityClaimKey(claimKey: string | undefined, entity: string): boolean {
+  const head = claimKey?.split("/", 1)[0]?.replace(/[-_]+/g, " ");
+  return normalizeDirectnessText(head ?? "") === entity;
 }
 
 /**

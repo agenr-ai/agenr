@@ -1753,6 +1753,10 @@ function sortAcceptedCandidates(candidates: RankedCandidate[], queryText: string
         return right.grounding.coverage - left.grounding.coverage;
       }
 
+      if (left.candidate.scores.lexical !== right.candidate.scores.lexical) {
+        return right.candidate.scores.lexical - left.candidate.scores.lexical;
+      }
+
       if (left.candidate.score !== right.candidate.score) {
         return right.candidate.score - left.candidate.score;
       }
@@ -1774,6 +1778,11 @@ function sortAcceptedCandidates(candidates: RankedCandidate[], queryText: string
  * decisions. The accepted-shortlist grounding sort should not silently undo
  * them just because the query text happens to overlap more strongly.
  *
+ * Cross-encoder scores are intentionally excluded here. They participate in
+ * the composite score surface, but when two post-rerank candidates remain
+ * nearly tied, the final grounding sort may still prefer the more directly
+ * phrased answer.
+ *
  * @param candidate - Ranked candidate in the accepted shortlist.
  * @returns True when the score already includes structural shaping.
  */
@@ -1782,8 +1791,7 @@ function hasStructuralScoreShaping(candidate: RankedCandidate): boolean {
     candidate.scores.historicalLineage > 0 ||
     candidate.scores.neighborhoodBoost > 0 ||
     candidate.scores.claimKeyTrustPenalty > 0 ||
-    candidate.scores.claimKeyRedundancyPenalty > 0 ||
-    typeof candidate.scores.crossEncoder === "number"
+    candidate.scores.claimKeyRedundancyPenalty > 0
   );
 }
 

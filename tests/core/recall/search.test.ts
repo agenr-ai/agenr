@@ -1341,6 +1341,101 @@ describe("recall raw evidence gating", () => {
     expect(traceSummaries[0]?.crossEncoder.degradedReason).toBeUndefined();
   });
 
+  it("lets grounding break near-ties after cross-encoder reranking", async () => {
+    const rank = vi.fn<CrossEncoderPort["rank"]>(async (_query, passages) =>
+      passages.map((passage) => ({
+        id: passage.id,
+        score: passage.id === "codex-prefix" ? 0.90001 : 0.9,
+      })),
+    );
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "codex-prefix",
+          subject: "codex branch naming",
+          content: "Use the `codex/` prefix for Codex iteration branches in this repo.",
+        }),
+        buildEntry({
+          id: "standard-prefixes",
+          subject: "branch prefixes guide",
+          content: "The branch prefixes to use are `feat/`, `fix/`, `chore/`, and `hotfix/`.",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "codex-prefix", vectorSim: 0.7 },
+        { id: "standard-prefixes", vectorSim: 0.69 },
+      ],
+      ftsCandidates: [
+        { id: "standard-prefixes", rank: 1, tier: "all_tokens" },
+        { id: "codex-prefix", rank: 2, tier: "all_tokens" },
+      ],
+      crossEncoder: { rank },
+    });
+
+    const results = await recall(
+      {
+        text: "what branch prefixes should I use",
+        limit: 5,
+      },
+      fixture.ports,
+      {
+        rankingPolicy: { crossEncoderAlpha: 1 },
+      },
+    );
+
+    expect(rank).toHaveBeenCalledTimes(1);
+    expect(results.map((result) => result.entry.id)).toEqual(["standard-prefixes", "codex-prefix"]);
+    expect(results[0]?.scores.crossEncoder).toBeCloseTo(0.9, 6);
+    expect(results[1]?.scores.crossEncoder).toBeCloseTo(0.90001, 6);
+  });
+
+  it("uses lexical support to break canonicalized prefix near-ties after cross-encoder reranking", async () => {
+    const rank = vi.fn<CrossEncoderPort["rank"]>(async (_query, passages) =>
+      passages.map((passage) => ({
+        id: passage.id,
+        score: passage.id === "singular-prefix" ? 0.90001 : 0.9,
+      })),
+    );
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "singular-prefix",
+          subject: "codex branch naming",
+          content: "Use the `codex/` branch prefix for Codex iteration work.",
+        }),
+        buildEntry({
+          id: "plural-prefixes",
+          subject: "branch naming convention",
+          content: "Use `feat/`, `fix/`, `chore/`, and `hotfix/` as the standard branch prefixes going forward.",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "singular-prefix", vectorSim: 0.7 },
+        { id: "plural-prefixes", vectorSim: 0.69 },
+      ],
+      ftsCandidates: [
+        { id: "plural-prefixes", rank: 1, tier: "all_tokens" },
+        { id: "singular-prefix", rank: 2, tier: "all_tokens" },
+      ],
+      crossEncoder: { rank },
+    });
+
+    const results = await recall(
+      {
+        text: "what branch prefixes should I use",
+        limit: 5,
+      },
+      fixture.ports,
+      {
+        rankingPolicy: { crossEncoderAlpha: 1 },
+      },
+    );
+
+    expect(rank).toHaveBeenCalledTimes(1);
+    expect(results.map((result) => result.entry.id)).toEqual(["plural-prefixes", "singular-prefix"]);
+    expect(results[0]?.scores.lexical).toBeGreaterThan(results[1]?.scores.lexical ?? 0);
+  });
+
   it("records `not_configured` in the cross-encoder trace when no port is wired", async () => {
     const traceSummaries: RecallExecutionTraceSummary[] = [];
     const fixture = createRecallPortsFixture({

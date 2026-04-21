@@ -133,7 +133,7 @@ describe("createOpenAICrossEncoder", () => {
     expect(scores[0]?.score).toBeCloseTo(1 - 0.8, 6);
   });
 
-  it("sends `logit_bias`, `logprobs`, and `top_logprobs` with the configured model", async () => {
+  it("sends `max_completion_tokens`, `logprobs`, and `top_logprobs` with the configured model", async () => {
     const bodies: unknown[] = [];
     const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       bodies.push(JSON.parse(String(init?.body)));
@@ -151,18 +151,17 @@ describe("createOpenAICrossEncoder", () => {
     const request = bodies[0] as {
       model: string;
       temperature: number;
-      max_tokens: number;
-      logit_bias: Record<string, number>;
+      max_completion_tokens: number;
       logprobs: boolean;
       top_logprobs: number;
       messages: Array<{ role: string; content: string }>;
     };
     expect(request.model).toBe("gpt-5.4-nano");
     expect(request.temperature).toBe(0);
-    expect(request.max_tokens).toBe(1);
+    expect(request.max_completion_tokens).toBe(4);
     expect(request.logprobs).toBe(true);
     expect(request.top_logprobs).toBe(2);
-    expect(request.logit_bias).toMatchObject({ "6432": 1, "7983": 1 });
+    expect(request).not.toHaveProperty("logit_bias");
     expect(request.messages[0]?.role).toBe("system");
     expect(request.messages[1]?.content).toContain("<PASSAGE>");
     expect(request.messages[1]?.content).toContain("<QUERY>");

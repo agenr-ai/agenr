@@ -98,7 +98,27 @@ function buildOutput(patch: BeforeTurnPatch, renderedPatchText: string | undefin
     abstained: patch.diagnostics.abstained,
     selectedEntryIds: patch.durableMemory.map((item) => item.entry.id),
     selectedProcedureKey: patch.procedure?.procedure.procedure_key ?? null,
-    patch,
+    patch: normalizePatchForEvalOutput(patch),
     ...(renderedPatchText !== undefined ? { renderedPatchText } : {}),
   };
+}
+
+/**
+ * Adds eval-friendly camelCase aliases to the serialized before-turn patch
+ * without mutating the app-layer patch returned by the real selector.
+ *
+ * @param patch - Structured before-turn patch returned by the app layer.
+ * @returns Clone of the patch with stable camelCase aliases for replay tools.
+ */
+function normalizePatchForEvalOutput(patch: BeforeTurnPatch): BeforeTurnPatch {
+  return {
+    ...patch,
+    durableMemory: patch.durableMemory.map((item) => ({
+      ...item,
+      entry: {
+        ...item.entry,
+        ...(typeof item.entry.claim_key === "string" ? { claimKey: item.entry.claim_key } : {}),
+      },
+    })),
+  } as BeforeTurnPatch;
 }

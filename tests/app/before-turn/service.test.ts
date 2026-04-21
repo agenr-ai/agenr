@@ -691,6 +691,62 @@ describe("runBeforeTurn", () => {
     ]);
   });
 
+  it("widens the durable recall window for entity-definition turns before directness rerank", async () => {
+    const cousins = createEntry({
+      id: "duke-cousins",
+      subject: "duke cousins",
+      content: "Duke is cousins with Lady, Oliver, and Tucker.",
+      importance: 6,
+      created_at: "2026-04-05T05:20:47.357Z",
+    });
+    const bedNote = createEntry({
+      id: "jim-and-duke",
+      subject: "jim martin and duke",
+      content: "Jim's dog Duke sleeps in Jim's bed at night, not just on the couch.",
+      importance: 6,
+      created_at: "2026-03-01T08:47:34.958Z",
+    });
+    const owner = createEntry({
+      id: "jim-family-dogs",
+      subject: "jim family dogs",
+      content: "Duke is Jim's dog; Tucker and Oliver are his mom's golden doodles, and Lady is his dad's German Shepherd.",
+      importance: 4,
+      created_at: "2026-02-23T01:13:28.045Z",
+      claim_key: "duke/owner",
+    });
+    const deps = createDeps({
+      ftsCandidates: [toRecallCandidateEntry(cousins), toRecallCandidateEntry(bedNote), toRecallCandidateEntry(owner)],
+      hydratedEntries: [cousins, bedNote, owner],
+    });
+
+    const result = await runBeforeTurn(
+      {
+        currentTurnText: "Who is Duke?",
+        policy: {
+          enableProcedureSuggestion: false,
+          recallThreshold: 0,
+        },
+      },
+      deps,
+    );
+
+    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["jim-family-dogs"]);
+    expect(result.diagnostics.durableRecallCandidateCount).toBe(3);
+    expect(result.diagnostics.directness).toMatchObject({
+      queryKind: "entity_definition",
+      entity: "Duke",
+      winnerEntryId: "jim-family-dogs",
+    });
+    expect(result.diagnostics.directness?.candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entryId: "jim-family-dogs",
+          signals: expect.arrayContaining(["definitional_content", "claim_key_entity_match"]),
+        }),
+      ]),
+    );
+  });
+
   it("keeps a definitional winner when only the runner-up lacks identity signals", async () => {
     const relationshipDefinition = createEntry({
       id: "duke-family-relationships",

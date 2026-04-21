@@ -38,6 +38,7 @@ describe("runBeforeTurnEvalCase", () => {
           type: "fact",
           subject: "duke identity",
           content: "Duke is Jim's dog.",
+          claim_key: "duke/owner",
           tags: ["dogs", "identity"],
         },
       ],
@@ -91,6 +92,10 @@ describe("runBeforeTurnEvalCase", () => {
         dbPath: expect.any(String),
         preserved: false,
       },
+    });
+    expect(response.output?.patch.durableMemory[0]?.entry).toMatchObject({
+      claim_key: "duke/owner",
+      claimKey: "duke/owner",
     });
     expect(response.output?.renderedPatchText).toContain("Duke is Jim's dog.");
   });

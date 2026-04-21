@@ -14,17 +14,6 @@ const DEFAULT_MAX_CONCURRENCY = 4;
 const DEFAULT_MAX_RETRIES = 2;
 const REQUEST_TIMEOUT_MS = 20_000;
 
-/**
- * Logit-bias hint for the `True` and `False` tokens. These IDs match the
- * OpenAI cl100k-style tokenizer shared by the gpt-4.1 and gpt-5.x families
- * `openai_reranker_client.py`. Holding them in a named constant keeps
- * the rest of the adapter declarative.
- */
-const LOGIT_BIAS: Record<string, number> = {
-  "6432": 1, // "True"
-  "7983": 1, // "False"
-};
-
 const SYSTEM_PROMPT = "You are an expert tasked with determining whether the passage is relevant to the query";
 
 /**
@@ -35,7 +24,7 @@ export interface OpenAICrossEncoderOptions {
   apiKey: string;
   /**
    * Chat-completions model used for the boolean classifier prompt.
-   * Must be an OpenAI model that supports `logit_bias` and
+   * Must be an OpenAI model that supports `logprobs` and
    * `top_logprobs`. Defaults to the cross-encoder stage model resolved by
    * `resolveModel(config, "cross_encoder")` at the factory sites.
    */
@@ -206,8 +195,9 @@ async function rankSinglePassage(params: {
   const body = JSON.stringify({
     model: params.model,
     temperature: 0,
-    max_tokens: 1,
-    logit_bias: LOGIT_BIAS,
+    // gpt-5.4 chat completions reject `max_tokens=1` and may return an
+    // empty completion when constrained below 4 completion tokens.
+    max_completion_tokens: 4,
     logprobs: true,
     top_logprobs: 2,
     messages: [
