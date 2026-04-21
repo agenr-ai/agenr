@@ -18,6 +18,7 @@ vi.mock("../../../src/adapters/openclaw/llm/openclaw-llm-client.js", () => ({
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
 import { createOpenClawRepository } from "../../../src/adapters/db/openclaw-repository.js";
 import { createSessionStartRepository } from "../../../src/adapters/db/session-start-repository.js";
+import { createNoopAgenrDebugSink } from "../../../src/adapters/openclaw/debug/index.js";
 import { handleAgenrAfterToolCall } from "../../../src/adapters/openclaw/hooks/after-tool-call.js";
 import { handleAgenrBeforePromptBuild } from "../../../src/adapters/openclaw/hooks/before-prompt-build.js";
 import { createMidSessionTracker, createSessionStartTracker } from "../../../src/adapters/openclaw/session/state.js";
@@ -2451,6 +2452,7 @@ function createServices(
     pluginConfig?: AgenrOpenClawServices["pluginConfig"];
     continuitySummaryRunImplementation?: LlmPort["complete"];
     episodeSummaryRunImplementation?: LlmPort["complete"];
+    debugSink?: AgenrOpenClawServices["debugSink"];
   } = {},
 ): AgenrOpenClawServices {
   const available = options.available ?? false;
@@ -2547,6 +2549,7 @@ function createServices(
       model: "text-embedding-3-small",
       ...(available ? {} : { error: "Embedding API key is required." }),
     },
+    debugSink: options.debugSink ?? createNoopAgenrDebugSink(),
     async close() {
       await database.close();
     },

@@ -6,6 +6,7 @@ import type {
   MemorySearchResult as OpenClawMemorySearchResult,
 } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 
+import type { AgenrDebugSink } from "./debug/sink.js";
 import type { OpenClawRepository } from "../../app/openclaw/ports.js";
 import type { BeforeTurnDeps } from "../../app/before-turn/index.js";
 import type { SessionStartDeps } from "../../app/session-start/index.js";
@@ -32,6 +33,32 @@ export interface StoreNudgeConfig {
 export interface AgenrOpenClawClaimSlotPolicyConfig extends ClaimSlotPolicyConfig {
   /** Optional attribute-head policy overrides keyed by canonical attribute head. */
   attributeHeads?: Readonly<Record<string, ClaimSlotPolicy>>;
+}
+
+/**
+ * Stable event detail levels accepted by the agenr debug sink.
+ *
+ * `basic` limits payloads to routing, selection, and summary facts.
+ * `detailed` admits bounded top-K candidate breakdowns into recall and
+ * before-turn events.
+ */
+export type AgenrOpenClawDebugEventLevel = "basic" | "detailed";
+
+/**
+ * Narrow adapter-facing debug config after normalization. Shared across
+ * the plugin config and the sink lifecycle owner.
+ */
+export interface AgenrOpenClawDebugConfig {
+  /** Enables or disables the agenr JSONL debug sink. */
+  enabled?: boolean;
+  /** Optional explicit log-file path. Resolved relative to the host when unset. */
+  logPath?: string;
+  /** Event-detail level, gating bounded top-K candidate payloads. */
+  eventLevel?: AgenrOpenClawDebugEventLevel;
+  /** Whether to split one log file per OpenClaw session. */
+  perSessionFiles?: boolean;
+  /** Maximum top-K candidates retained in detailed recall and before-turn events. */
+  maxTopCandidates?: number;
 }
 
 /**
@@ -108,6 +135,8 @@ export interface AgenrOpenClawPluginConfig {
   storeNudge?: Partial<StoreNudgeConfig>;
   /** Narrow runtime memory-policy overrides for claim-aware read surfaces. */
   memoryPolicy?: AgenrOpenClawMemoryPolicyConfig;
+  /** Opt-in JSONL debug sink config for live OpenClaw runs. */
+  debug?: AgenrOpenClawDebugConfig;
 }
 
 /**
@@ -180,6 +209,8 @@ export interface AgenrOpenClawServices {
     config: ClaimExtractionConfig;
   };
   embeddingStatus: AgenrOpenClawEmbeddingStatus;
+  /** Opt-in JSONL debug sink shared by adapter paths that emit structured events. */
+  debugSink: AgenrDebugSink;
   close(): Promise<void>;
 }
 

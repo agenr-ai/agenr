@@ -1,7 +1,13 @@
+import { randomUUID } from "node:crypto";
+
 import { runBeforeTurn } from "../../../app/before-turn/index.js";
 import { runSessionStart } from "../../../app/session-start/index.js";
 import type { BeforeTurnPatch, BeforeTurnRecentTurn } from "../../../app/before-turn/index.js";
+import path from "node:path";
 import { resolveStoreNudgeConfig } from "../config.js";
+import { buildLiveBeforeTurnDebugArtifact } from "../debug/index.js";
+import type { AgenrDebugSink } from "../debug/index.js";
+import type { PredecessorContinuityResult } from "../session/continuity/index.js";
 import { writeOpenClawPredecessorEpisode } from "../episode/episode-writer.js";
 import { formatAgenrBeforeTurnRecall } from "../format/before-turn-format.js";
 import { containsAgenrMemoryContext, stripAgenrMemoryContext } from "../format/memory-context.js";
@@ -78,6 +84,7 @@ export async function handleAgenrBeforePromptBuild(
   try {
     const services = await params.servicesPromise;
     const continuity = await resolveContinuity(ctx, params.tracker, services, params.logger);
+    emitContinuityEvent(services.debugSink, ctx, continuity);
     void writeOpenClawPredecessorEpisode({
       ctx,
       predecessor: continuity.predecessor,
@@ -94,6 +101,21 @@ export async function handleAgenrBeforePromptBuild(
       services.sessionStart,
     );
     const prependContext = formatAgenrSessionStartRecall(sessionStartPatch);
+    if (services.debugSink.enabled) {
+      void services.debugSink.emit({
+        type: "session_start_recall",
+        ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
+        ...(ctx.sessionKey ? { sessionKey: ctx.sessionKey } : {}),
+        debug: {
+          durableMemoryCount: sessionStartPatch.durableMemory.length,
+          selectedEntryIds: sessionStartPatch.durableMemory.map((item) => item.entry.id),
+          coreCandidateCount: sessionStartPatch.diagnostics.coreCandidateCount,
+          artifactRecallCandidateCount: sessionStartPatch.diagnostics.artifactRecallCandidateCount,
+          artifactRecallUsed: sessionStartPatch.diagnostics.artifactRecallUsed,
+          notices: [...sessionStartPatch.diagnostics.notices],
+        },
+      });
+    }
 
     params.logger.info(
       `[agenr] session-start recall: ${sessionStartPatch.durableMemory.length} durable entries for ${sessionContext} ` +
@@ -121,8 +143,49 @@ export async function handleAgenrBeforePromptBuild(
     return { prependContext };
   } catch (error) {
     params.logger.warn(`[agenr] session-start recall failed for ${sessionContext}: ${formatErrorMessage(error)}`);
+    try {
+      const services = await params.servicesPromise;
+      if (services.debugSink.enabled) {
+        void services.debugSink.emit({
+          type: "error",
+          ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
+          ...(ctx.sessionKey ? { sessionKey: ctx.sessionKey } : {}),
+          scope: "session_start_recall",
+          error: { message: error instanceof Error ? error.message : String(error) },
+        });
+      }
+    } catch {
+      // Ignore debug-sink emission failures to keep the runtime path resilient.
+    }
     return undefined;
   }
+}
+
+/**
+ * Emits one continuity-resolution summary event through the debug sink.
+ *
+ * @param sink - Adapter-owned debug sink.
+ * @param ctx - Active OpenClaw hook context.
+ * @param continuity - Resolved predecessor continuity payload.
+ */
+function emitContinuityEvent(sink: AgenrDebugSink, ctx: AgenrOpenClawHookContext, continuity: PredecessorContinuityResult): void {
+  if (!sink.enabled) {
+    return;
+  }
+
+  void sink.emit({
+    type: "continuity_resolution",
+    ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
+    ...(ctx.sessionKey ? { sessionKey: ctx.sessionKey } : {}),
+    summary: {
+      predecessorFound: Boolean(continuity.predecessor),
+      ...(continuity.predecessor ? { predecessorFileBasename: path.basename(continuity.predecessor.sessionFile) } : {}),
+      hasContinuitySummary: continuity.continuitySummaryContent.length > 0,
+      hasRecentSession: continuity.recentSessionContent.length > 0,
+      continuitySummaryChars: continuity.continuitySummaryContent.length,
+      recentSessionChars: continuity.recentSessionContent.length,
+    },
+  });
 }
 
 /**
@@ -197,6 +260,21 @@ async function resolveBeforeTurnResult(
       services.beforeTurn,
     );
     const prependContext = formatAgenrBeforeTurnRecall(beforeTurnPatch);
+    if (services.debugSink.enabled) {
+      void services.debugSink.emit({
+        type: "before_turn_decision",
+        ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
+        ...(ctx.sessionKey ? { sessionKey: ctx.sessionKey } : {}),
+        debug: buildLiveBeforeTurnDebugArtifact({
+          caseId: `live-${randomUUID()}`,
+          patch: beforeTurnPatch,
+          currentTurnText,
+          trigger: ctx.trigger,
+          eventLevel: services.debugSink.eventLevel,
+          maxTopCandidates: services.debugSink.maxTopCandidates,
+        }),
+      });
+    }
 
     params.logger.info(
       `[agenr] before-turn recall: ${beforeTurnPatch.durableMemory.length} durable entries for ${sessionContext} ` +
@@ -233,6 +311,19 @@ async function resolveBeforeTurnResult(
     return { prependContext };
   } catch (error) {
     params.logger.warn(`[agenr] before-turn recall failed for ${sessionContext}: ${formatErrorMessage(error)}`);
+    try {
+      if (services.debugSink.enabled) {
+        void services.debugSink.emit({
+          type: "error",
+          ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
+          ...(ctx.sessionKey ? { sessionKey: ctx.sessionKey } : {}),
+          scope: "before_turn_decision",
+          error: { message: error instanceof Error ? error.message : String(error) },
+        });
+      }
+    } catch {
+      // Ignore debug-sink emission failures to keep the runtime path resilient.
+    }
     return undefined;
   }
 }

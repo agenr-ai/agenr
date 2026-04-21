@@ -1,9 +1,12 @@
+import { randomUUID } from "node:crypto";
+
 import type { AnyAgentTool } from "openclaw/plugin-sdk/agent-runtime";
 import { readNumberParam, readStringArrayParam, readStringParam, textResult } from "openclaw/plugin-sdk/agent-runtime";
 import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sdk/core";
 
 import { runUnifiedRecall } from "../../../app/recall/index.js";
 import { ENTRY_TYPES } from "../../../core/types.js";
+import { buildLiveRecallDebugArtifact } from "../debug/index.js";
 import type { AgenrOpenClawServices } from "../types.js";
 import {
   RECALL_MODES,
@@ -106,6 +109,15 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
           sessionKey: ctx.sessionKey,
         };
 
+        const sanitizedParams = sanitizeRecallToolParams({
+          query,
+          mode,
+          limit,
+          threshold,
+          types,
+          tags,
+          ...(asOf ? { asOf } : {}),
+        });
         logToolCall(
           logger,
           "agenr_recall",
@@ -118,16 +130,15 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
             tags,
             ...(asOf ? { asOf } : {}),
           }),
-          sanitizeRecallToolParams({
-            query,
-            mode,
-            limit,
-            threshold,
-            types,
-            tags,
-            ...(asOf ? { asOf } : {}),
-          }),
+          sanitizedParams,
         );
+        void services.debugSink.emit({
+          type: "tool_call",
+          tool: "agenr_recall",
+          ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
+          ...(ctx.sessionKey ? { sessionKey: ctx.sessionKey } : {}),
+          params: sanitizedParams,
+        });
         const result = await runUnifiedRecall(request, {
           database: services.episodes,
           procedures: services.procedures,
@@ -151,6 +162,42 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
         logger.info(
           `[agenr] tool=agenr_recall session=${ctx.sessionId ?? "unknown"} key=${ctx.sessionKey ?? "unknown"} result: ${formatUnifiedRecallLogSummary(result)}`,
         );
+        if (services.debugSink.enabled) {
+          const sessionIdPayload = ctx.sessionId ? { sessionId: ctx.sessionId } : {};
+          const sessionKeyPayload = ctx.sessionKey ? { sessionKey: ctx.sessionKey } : {};
+          void services.debugSink.emit({
+            type: "tool_result",
+            tool: "agenr_recall",
+            ...sessionIdPayload,
+            ...sessionKeyPayload,
+            summary: {
+              count: result.count,
+              routing: {
+                requested: result.routing.requested,
+                detectedIntent: result.routing.detectedIntent,
+                queried: [...result.routing.queried],
+                reason: result.routing.reason,
+              },
+              selectedEntryIds: result.entries.map((entry) => entry.entry.id),
+              episodeIds: result.episodes.map((episode) => episode.episode.id),
+              selectedProcedureKey: result.procedure?.procedure_key ?? null,
+              notices: [...result.notices],
+              procedureNotices: [...result.procedureNotices],
+            },
+          });
+          void services.debugSink.emit({
+            type: "unified_recall",
+            ...sessionIdPayload,
+            ...sessionKeyPayload,
+            debug: buildLiveRecallDebugArtifact({
+              caseId: `live-${randomUUID()}`,
+              query,
+              result,
+              eventLevel: services.debugSink.eventLevel,
+              maxTopCandidates: services.debugSink.maxTopCandidates,
+            }),
+          });
+        }
 
         return textResult(formatUnifiedRecallResults(result), {
           status: "ok",
@@ -240,6 +287,20 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
         });
       } catch (error) {
         logToolFailure(logger, "agenr_recall", ctx, error);
+        try {
+          const services = await servicesPromise;
+          if (services.debugSink.enabled) {
+            void services.debugSink.emit({
+              type: "error",
+              ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
+              ...(ctx.sessionKey ? { sessionKey: ctx.sessionKey } : {}),
+              scope: "agenr_recall",
+              error: { message: error instanceof Error ? error.message : String(error) },
+            });
+          }
+        } catch {
+          // Swallow debug-sink emission failures to avoid masking the original error.
+        }
         return toolFailureResult(error);
       }
     },

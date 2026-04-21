@@ -31,6 +31,7 @@ import {
   createAgenrTraceTool,
   createAgenrUpdateTool,
 } from "../../../src/adapters/openclaw/tools.js";
+import { createNoopAgenrDebugSink } from "../../../src/adapters/openclaw/debug/index.js";
 import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../src/adapters/openclaw/types.js";
 import type { EmbeddingPort, RecallPorts } from "../../../src/core/ports.js";
 import type { Entry, Procedure } from "../../../src/core/types.js";
@@ -985,6 +986,7 @@ function createServices(
     recall: RecallPorts;
     openClaw?: AgenrOpenClawHost;
     claimExtraction?: AgenrOpenClawServices["claimExtraction"];
+    debugSink?: AgenrOpenClawServices["debugSink"];
   },
 ): AgenrOpenClawServices {
   const embedding: EmbeddingPort = {
@@ -1033,6 +1035,7 @@ function createServices(
       model: "text-embedding-3-small",
       ...(options.available ? {} : { error: "Embedding API key is required." }),
     },
+    debugSink: options.debugSink ?? createNoopAgenrDebugSink(),
     async close() {
       await database.close();
     },

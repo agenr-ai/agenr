@@ -4,6 +4,7 @@ import {
   coerceAgenrOpenClawPluginConfig,
   createAgenrOpenClawPluginConfigSchema,
   normalizeAgenrOpenClawPluginConfig,
+  resolveDebugConfig,
   resolveStoreNudgeConfig,
 } from "../../../src/adapters/openclaw/config.js";
 
@@ -201,6 +202,83 @@ describe("agenr OpenClaw plugin config", () => {
     expect(schema.validate({})).toEqual({
       ok: true,
       value: {},
+    });
+  });
+
+  it("accepts a fully specified debug block", () => {
+    const parsed = normalizeAgenrOpenClawPluginConfig({
+      debug: {
+        enabled: true,
+        logPath: "/tmp/agenr-debug.jsonl",
+        eventLevel: "detailed",
+        perSessionFiles: true,
+        maxTopCandidates: 15,
+      },
+    });
+
+    expect(parsed).toEqual({
+      ok: true,
+      value: {
+        debug: {
+          enabled: true,
+          logPath: "/tmp/agenr-debug.jsonl",
+          eventLevel: "detailed",
+          perSessionFiles: true,
+          maxTopCandidates: 15,
+        },
+      },
+    });
+  });
+
+  it("rejects invalid debug config fields", () => {
+    const parsed = normalizeAgenrOpenClawPluginConfig({
+      debug: {
+        enabled: "yes",
+        logPath: "   ",
+        eventLevel: "verbose",
+        perSessionFiles: 1,
+        maxTopCandidates: 0,
+        extra: true,
+      },
+    });
+
+    expect(parsed.ok).toBe(false);
+    expect(parsed.ok ? [] : parsed.errors).toEqual(
+      expect.arrayContaining([
+        "debug.enabled must be a boolean when provided",
+        "debug.logPath must be a non-empty string when provided",
+        'debug.eventLevel must be "basic" or "detailed" when provided',
+        "debug.perSessionFiles must be a boolean when provided",
+        "debug.maxTopCandidates must be an integer between 1 and 25 when provided",
+        "unknown config field: debug.extra",
+      ]),
+    );
+  });
+
+  it("resolves default debug-sink settings with safe fall-backs", () => {
+    expect(resolveDebugConfig(undefined)).toEqual({
+      enabled: false,
+      eventLevel: "basic",
+      perSessionFiles: false,
+      maxTopCandidates: 10,
+    });
+  });
+
+  it("applies explicit debug-sink settings when provided", () => {
+    expect(
+      resolveDebugConfig({
+        enabled: true,
+        logPath: "  /tmp/agenr.jsonl  ",
+        eventLevel: "detailed",
+        perSessionFiles: true,
+        maxTopCandidates: 7,
+      }),
+    ).toEqual({
+      enabled: true,
+      logPath: "/tmp/agenr.jsonl",
+      eventLevel: "detailed",
+      perSessionFiles: true,
+      maxTopCandidates: 7,
     });
   });
 });

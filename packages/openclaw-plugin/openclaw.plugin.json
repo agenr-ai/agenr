@@ -35,6 +35,10 @@
     "memoryPolicy": {
       "label": "Memory policy",
       "help": "Optional runtime overrides for claim-aware read behavior, session-start memory injection, and proactive before-turn surfacing."
+    },
+    "debug": {
+      "label": "Debug log",
+      "help": "Optional opt-in JSONL debug sink that records recall, session-start, and before-turn decisions into a dedicated agenr log file separate from OpenClaw host logs."
     }
   },
   "configSchema": {
@@ -82,6 +86,37 @@
             "type": "integer",
             "minimum": 1,
             "description": "Maximum nudges injected during one session lifetime. Defaults to 5."
+          }
+        }
+      },
+      "debug": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Optional opt-in JSONL debug sink for live OpenClaw runs. Writes agenr-only events to a dedicated log file rather than the shared host log.",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable or disable the agenr JSONL debug sink. Defaults to false."
+          },
+          "logPath": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Optional explicit log-file path. Defaults to agenr-debug.jsonl inside the OpenClaw state directory."
+          },
+          "eventLevel": {
+            "type": "string",
+            "enum": ["basic", "detailed"],
+            "description": "Event detail level. Detailed enables bounded top-K candidate breakdowns for recall and before-turn events. Defaults to basic."
+          },
+          "perSessionFiles": {
+            "type": "boolean",
+            "description": "Split one JSONL file per OpenClaw session id. Defaults to false."
+          },
+          "maxTopCandidates": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 25,
+            "description": "Cap for top-K candidate breakdowns included in detailed events. Defaults to 10."
           }
         }
       },

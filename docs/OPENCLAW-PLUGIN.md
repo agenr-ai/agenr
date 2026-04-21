@@ -37,6 +37,7 @@ The adapter is intentionally not a second memory brain. Durable memory, recall r
 - `src/adapters/openclaw/format/recall-format.ts` - session-start recall rendering.
 - `src/adapters/openclaw/format/before-turn-format.ts` - before-turn recall rendering.
 - `src/adapters/openclaw/format/nudge-format.ts` - mid-session `[MEMORY CHECK]` prompt generation.
+- `src/adapters/openclaw/debug/` - adapter-owned JSONL debug sink (opt-in), event types, and live artifact builders shared with the eval seams.
 - `src/adapters/openclaw/hooks/before-prompt-build.ts` - session-start recall, before-turn recall, predecessor continuity injection, background predecessor episode write, and mid-session store nudge logic.
 - `src/adapters/openclaw/hooks/after-tool-call.ts` - mid-session tracker updates after `agenr_store`, `agenr_update`, and `agenr_retire`.
 - `src/adapters/openclaw/session/state.ts` - in-process session-start dedup plus per-session mid-session state.
@@ -96,8 +97,17 @@ The runtime config is currently:
 - `memoryPolicy.beforeTurn.highConfidenceRecallThreshold` - optional score floor required before before-turn recall can expand beyond the normal durable-item cap
 - `memoryPolicy.beforeTurn.procedureThreshold` - optional score floor for proactive procedure suggestion
 - `memoryPolicy.slotPolicies.attributeHeads` - optional attribute-head overrides for read-time claim-slot policy classes
+- `debug` - optional opt-in JSONL debug sink for `agenr`-only live events
 
 Unknown keys are rejected.
+
+Current `debug` defaults when unset:
+
+- `enabled = false`
+- `logPath = <openclaw-state-dir>/agenr/logs/debug.jsonl` when enabled and no explicit path is supplied
+- `eventLevel = "basic"`
+- `perSessionFiles = false`
+- `maxTopCandidates = 10` (bounded to 25)
 
 Current `storeNudge` defaults:
 
@@ -569,3 +579,27 @@ The current adapter tests cover:
 - no-op flush-plan behavior
 
 See `tests/adapters/openclaw/` for the current set of targeted plugin tests.
+
+## Agenr debug sink
+
+The OpenClaw plugin includes an opt-in JSONL debug sink dedicated to `agenr`-only events. It lives in `src/adapters/openclaw/debug/` and exists so detailed recall and before-turn decisions can be inspected without the noise of OpenClaw host debug logs.
+
+Current behavior:
+
+- the sink is always present in the shared services bundle, but returns a no-op when `debug.enabled` is false
+- events are written to `debug.logPath` when set, or to `<openclaw-state-dir>/agenr/logs/debug.jsonl` otherwise
+- writes are serialized per-process, fire-and-forget from call sites, and failures never propagate back into host paths
+- `debug.perSessionFiles = true` appends a sanitized session id or session key to the log basename (for example `debug.alpha.jsonl`)
+- `debug.eventLevel = "detailed"` admits bounded top-K candidate breakdowns into `unified_recall` and `before_turn_decision` events; `basic` omits them
+- `debug.maxTopCandidates` caps the bounded breakdowns
+
+Event families emitted today:
+
+- `tool_call` and `tool_result` for `agenr_recall`
+- `unified_recall` carrying the reusable `recall-debug-artifact.v1` live artifact
+- `session_start_recall` with a compact session-start selection summary
+- `before_turn_decision` carrying the reusable `before-turn-debug-artifact.v1` live artifact
+- `continuity_resolution` summarizing predecessor continuity decisions
+- `error` for scoped failures in recall, session-start, and before-turn paths
+
+The sink is deliberately adapter-owned and bounded: `src/core/` never performs filesystem work, normal host logs remain concise, and detailed payloads stay bounded to the configured top-K caps.

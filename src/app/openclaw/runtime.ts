@@ -9,6 +9,8 @@ import { createRecallAdapter } from "../../adapters/db/recall-adapter.js";
 import { createEmbeddingClient, EMBEDDING_MODEL, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
 import { resolveModel } from "../../adapters/llm.js";
 import { createOpenClawLlmClient } from "../../adapters/openclaw/llm/openclaw-llm-client.js";
+import { resolveDebugConfig, type ResolvedAgenrOpenClawDebugConfig } from "../../adapters/openclaw/config.js";
+import { createAgenrDebugSink, createNoopAgenrDebugSink, type AgenrDebugSink } from "../../adapters/openclaw/debug/index.js";
 import type {
   AgenrOpenClawEmbeddingStatus,
   AgenrOpenClawHost,
@@ -16,6 +18,7 @@ import type {
   AgenrOpenClawServices,
   ResolvedAgenrOpenClawPluginConfig,
 } from "../../adapters/openclaw/types.js";
+import path from "node:path";
 import type { OpenClawRepository } from "./ports.js";
 import type { BeforeTurnDeps } from "../before-turn/index.js";
 import { attachCrossEncoderPort } from "../evals/recall/attach-cross-encoder.js";
@@ -37,6 +40,7 @@ interface OpenClawRuntimeServices {
     llm: LlmPort;
     config: ReturnType<typeof resolveClaimExtractionConfig>;
   };
+  debugSink: AgenrDebugSink;
   close(): Promise<void>;
 }
 
@@ -81,6 +85,7 @@ export async function createAgenrOpenClawServices(
     recall: runtimeServices.recall,
     claimExtraction: runtimeServices.claimExtraction,
     embeddingStatus: toPublicEmbeddingStatus(embeddingStatus),
+    debugSink: runtimeServices.debugSink,
     close: runtimeServices.close,
   };
 }
@@ -145,6 +150,7 @@ async function createRuntimeServices(
   const crossEncoder = resolveCrossEncoder(config);
   const recall: RecallPorts = attachCrossEncoderPort(baseRecall, crossEncoder);
   const claimExtraction = await createClaimExtractionRuntime(config, openClawContext.openClaw, openClawContext.pluginConfig);
+  const debugSink = createDebugSink(openClawContext.openClaw, openClawContext.pluginConfig);
   let closed = false;
 
   return {
@@ -173,15 +179,60 @@ async function createRuntimeServices(
     embedding,
     recall,
     claimExtraction,
+    debugSink,
     async close() {
       if (closed) {
         return;
       }
 
       closed = true;
+      await debugSink.close();
       await database.close();
     },
   };
+}
+
+/**
+ * Creates the adapter-owned debug sink based on the plugin config.
+ *
+ * Resolves a default log path relative to the OpenClaw state dir when
+ * the plugin config omits an explicit `debug.logPath`.
+ *
+ * @param openClaw - OpenClaw host used for state-dir resolution.
+ * @param pluginConfig - Plugin config supplied by OpenClaw.
+ * @returns Debug sink ready to accept structured events.
+ */
+function createDebugSink(openClaw: AgenrOpenClawHost, pluginConfig: AgenrOpenClawPluginConfig): AgenrDebugSink {
+  const resolved = resolveDebugConfig(pluginConfig.debug);
+  if (!resolved.enabled) {
+    return createNoopAgenrDebugSink();
+  }
+
+  const withLogPath = ensureDebugLogPath(resolved, openClaw);
+  return createAgenrDebugSink(withLogPath);
+}
+
+/**
+ * Ensures the resolved debug config always has an absolute log-file path.
+ *
+ * @param resolved - Resolved debug config with an optional log path.
+ * @param openClaw - OpenClaw host used for state-dir resolution.
+ * @returns Resolved config with a concrete log path applied.
+ */
+function ensureDebugLogPath(resolved: ResolvedAgenrOpenClawDebugConfig, openClaw: AgenrOpenClawHost): ResolvedAgenrOpenClawDebugConfig {
+  if (resolved.logPath) {
+    return resolved;
+  }
+
+  try {
+    const stateDir = openClaw.runtime.state.resolveStateDir(process.env);
+    return {
+      ...resolved,
+      logPath: path.join(stateDir, "agenr", "logs", "debug.jsonl"),
+    };
+  } catch {
+    return { ...resolved, enabled: false };
+  }
 }
 
 /**
