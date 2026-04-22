@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-04-22
+
+Recall ranking overhaul, before-turn memory patching, and eval/debug tooling minor release.
+
+### Added
+
+- **Before-turn memory patching and eval coverage ship as a first-class recall surface.** Agenr now supports hybrid session-start patch selection, dedicated before-turn patch selection and reranking, internal before-turn eval routes, richer diagnostics, and corpus-backed fixture seeding for replay coverage.
+- **Cross-encoder reranking and OpenClaw debug artifacts are now available.** The release adds an OpenAI-compatible cross-encoder stage, opt-in replay debug artifacts, and an agenr-only JSONL debug sink for OpenClaw runtime investigation.
+
+### Changed
+
+- **Recall ranking is now built around reciprocal rank fusion plus diversification.** Unified recall now uses RRF as the primary relevance combiner, typed neighborhood expansion, MMR diversification, lineage-aware shaping, and tighter ordering and abstention rules.
+- **Documentation and procedures were refreshed for the new recall model.** The recall guide was rewritten as a reference, procedural docs were updated, and the Obsidian LLM Wiki procedure was added to the repo-authored procedure set.
+
+### Fixed
+
+- **Before-turn selector edge cases are more stable.** The release fixes fallback selection, short-name family matching, cross-encoder wiring, and small-pool top-1 ranking regressions that showed up while hardening the new ranking stack.
+
+### Validation
+
+Changes since last push to `origin/master`:
+
+- Add Obsidian LLM Wiki procedure and refresh procedures documentation
+- Add before-turn memory patch selection, reranking, diagnostics, and internal eval seam
+- Adopt reciprocal rank fusion, typed neighborhood expansion, and MMR diversification across recall pipelines
+- Add cross-encoder reranking and wire it through recall and before-turn eval seams
+- Tune ordering, abstention, thresholds, and lineage shaping for snapshot and before-turn ranking quality
+- Add precision-first entity attribute recall
+- Refresh recall and eval documentation and land corpus-backed replay and debug tooling
+
 ## [2.0.1] - 2026-04-13
 
 OpenClaw startup-failure handling patch release.
