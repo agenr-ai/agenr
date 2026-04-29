@@ -6,6 +6,7 @@ import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sd
 
 import { runUnifiedRecall } from "../../../app/recall/index.js";
 import { ENTRY_TYPES } from "../../../core/types.js";
+import { formatUnifiedRecallResults } from "../../shared/recall-format.js";
 import { buildLiveRecallDebugArtifact } from "../debug/index.js";
 import type { AgenrOpenClawServices } from "../types.js";
 import {
@@ -13,7 +14,6 @@ import {
   asRecord,
   formatRecallToolSummary,
   formatUnifiedRecallLogSummary,
-  formatUnifiedRecallResults,
   logToolCall,
   logToolFailure,
   normalizeStringArray,
