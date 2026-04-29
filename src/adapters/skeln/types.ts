@@ -111,6 +111,21 @@ export interface SkelnToolResultLike<TDetails = unknown> {
 }
 
 /**
+ * User-facing subject Skeln can display in approval requests.
+ */
+export interface SkelnApprovalTargetLike {
+  /** Optional human-readable target or subject. */
+  target?: string;
+  /** Optional command-like action text. */
+  command?: string;
+}
+
+/**
+ * Extracts approval request metadata from untrusted tool arguments.
+ */
+export type SkelnApprovalTargetExtractorLike = (args: unknown) => SkelnApprovalTargetLike | undefined;
+
+/**
  * Structural Skeln tool shape.
  */
 export interface SkelnToolLike<TDetails = unknown> {
@@ -124,8 +139,20 @@ export interface SkelnToolLike<TDetails = unknown> {
   category: string;
   /** Tool risk label. */
   risk: "read" | "write" | "destructive" | "external";
-  /** Tool approval behavior. */
-  approval: "never" | "manual" | "always";
+  /**
+   * Deprecated for Agenr-owned defaults. Skeln should own final approval policy.
+   *
+   * Keep temporarily for compatibility with current Skeln versions that require
+   * every registered tool to expose approval metadata.
+   */
+  approval?: "never" | "manual" | "always";
+  /**
+   * Extracts the user-facing approval subject from tool args.
+   *
+   * Skeln needs this even when the final approval level is configured on the
+   * Skeln side.
+   */
+  approvalTarget?: SkelnApprovalTargetExtractorLike;
   /** JSON-schema-compatible parameter contract. */
   parameters: SkelnToolParametersLike;
   /** Executes the tool. */

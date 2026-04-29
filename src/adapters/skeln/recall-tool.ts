@@ -2,7 +2,7 @@ import { runUnifiedRecall } from "../../app/recall/index.js";
 import type { UnifiedRecallMode, UnifiedRecallResult } from "../../app/recall/index.js";
 import { formatUnifiedRecallResults } from "../shared/recall-format.js";
 import { ENTRY_TYPES, type EntryType } from "../../core/types.js";
-import type { AgenrSkelnServices, SkelnToolContextLike, SkelnToolLike, SkelnToolResultLike } from "./types.js";
+import type { AgenrSkelnServices, SkelnApprovalTargetLike, SkelnToolContextLike, SkelnToolLike, SkelnToolResultLike } from "./types.js";
 
 const RECALL_MODES = ["auto", "entries", "episodes", "procedures"] as const;
 const RECALL_TOOL_PARAMETERS = {
@@ -112,7 +112,11 @@ export function createAgenrRecallTool(
     label: "Agenr Recall",
     category: "memory",
     risk: "read",
+    /**
+     * Compatibility default only. Skeln should override this from its config.
+     */
     approval: "never",
+    approvalTarget: recallApprovalTarget,
     description:
       "Recall facts, decisions, procedures, prior states, and episodes from agenr memory. Use mode=auto normally, entries for facts and decisions, episodes for past activity, and procedures for methods or checklists.",
     parameters: RECALL_TOOL_PARAMETERS,
@@ -217,6 +221,19 @@ function buildRecallDetails(result: UnifiedRecallResult): AgenrSkelnRecallDetail
     })),
     notices: result.notices,
   };
+}
+
+/**
+ * Extracts the recall query Skeln can use as the approval target.
+ */
+function recallApprovalTarget(args: unknown): SkelnApprovalTargetLike {
+  try {
+    const params = asRecord(args);
+    const query = readRequiredString(params, "query");
+    return { target: query };
+  } catch {
+    return { target: "agenr memory recall" };
+  }
 }
 
 /**

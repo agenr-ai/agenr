@@ -11,6 +11,8 @@ import type {
 } from "./types.js";
 
 export type {
+  SkelnApprovalTargetExtractorLike,
+  SkelnApprovalTargetLike,
   AgenrSkelnLogger,
   AgenrSkelnMemoryProviderOptions,
   AgenrSkelnServices,

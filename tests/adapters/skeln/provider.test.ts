@@ -39,6 +39,16 @@ describe("createAgenrSkelnMemoryProvider", () => {
     expect(createAgenrSkelnServicesMock).not.toHaveBeenCalled();
   });
 
+  it("exposes a recall approval target without initializing services", async () => {
+    const { createAgenrSkelnMemoryProvider } = await import("../../../src/adapters/skeln/index.js");
+    const provider = createAgenrSkelnMemoryProvider();
+    const tool = (provider.tools?.({ sessionId: "session-1" }) ?? [])[0];
+
+    expect(tool?.approvalTarget?.({ query: "deployment decision" })).toEqual({ target: "deployment decision" });
+    expect(tool?.approvalTarget?.({ query: "" })).toEqual({ target: "agenr memory recall" });
+    expect(createAgenrSkelnServicesMock).not.toHaveBeenCalled();
+  });
+
   it("omits the recall tool when recall is disabled", async () => {
     const { createAgenrSkelnMemoryProvider } = await import("../../../src/adapters/skeln/index.js");
     const provider = createAgenrSkelnMemoryProvider({ tools: { recall: false } });
