@@ -1,5 +1,6 @@
 import type { MemoryRepository } from "../../app/memory/ports.js";
-import type { DatabasePort, EpisodeDatabasePort, ProcedureDatabasePort, RecallPorts } from "../../core/ports.js";
+import type { DatabasePort, EmbeddingPort, EpisodeDatabasePort, LlmPort, ProcedureDatabasePort, RecallPorts } from "../../core/ports.js";
+import type { ClaimExtractionConfig } from "../../core/store/claim-extraction.js";
 
 /**
  * Configuration accepted by the Skeln memory provider factory.
@@ -11,10 +12,14 @@ export interface AgenrSkelnMemoryProviderOptions {
   databasePath?: string;
   /** Optional tool enablement switches. */
   tools?: {
+    /** Enables the store tool. Defaults to true. */
+    store?: boolean;
     /** Enables the recall tool. Defaults to true. */
     recall?: boolean;
     /** Enables the update tool. Defaults to true. */
     update?: boolean;
+    /** Compatibility alias for enabling or disabling all agenr tools. Defaults to true. */
+    enabled?: boolean;
   };
   /** Optional host logger. */
   logger?: AgenrSkelnLogger;
@@ -187,8 +192,17 @@ export interface AgenrSkelnServices {
   procedures: ProcedureDatabasePort;
   /** DB-backed memory read-model repository. */
   memory: MemoryRepository;
+  /** Embedding port used by recall and store flows. */
+  embedding: EmbeddingPort;
   /** DB-backed entry recall ports. */
   recall: RecallPorts;
+  /** Optional claim-key extraction runtime used by the store tool. */
+  claimExtraction?: {
+    /** LLM port used for claim-key extraction. */
+    llm: LlmPort;
+    /** Claim-key extraction settings. */
+    config: ClaimExtractionConfig;
+  };
   /** Embedding availability facts. */
   embeddingStatus: AgenrSkelnEmbeddingStatus;
   /** Query embedding helper used when embeddings are configured. */

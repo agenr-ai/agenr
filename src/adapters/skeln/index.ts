@@ -1,5 +1,6 @@
 import { createAgenrRecallTool } from "./recall-tool.js";
 import { createAgenrSkelnServices } from "./runtime.js";
+import { createAgenrStoreTool } from "./store-tool.js";
 import { createAgenrUpdateTool } from "./update-tool.js";
 import type {
   AgenrSkelnMemoryProviderOptions,
@@ -10,6 +11,8 @@ import type {
   SkelnToolContextLike,
   SkelnToolLike,
 } from "./types.js";
+
+export type { AgenrSkelnStoreDetails } from "./store-tool.js";
 
 export type {
   SkelnApprovalTargetExtractorLike,
@@ -34,8 +37,10 @@ export type {
  * @returns Structural Skeln memory provider.
  */
 export function createAgenrSkelnMemoryProvider(options: AgenrSkelnMemoryProviderOptions = {}): SkelnMemoryProviderLike {
-  const recallEnabled = options.tools?.recall ?? true;
-  const updateEnabled = options.tools?.update ?? true;
+  const toolsEnabled = options.tools?.enabled ?? true;
+  const storeEnabled = options.tools?.store ?? toolsEnabled;
+  const recallEnabled = options.tools?.recall ?? toolsEnabled;
+  const updateEnabled = options.tools?.update ?? toolsEnabled;
   let servicesPromise: Promise<AgenrSkelnServices> | undefined;
   let disposed = false;
 
@@ -69,6 +74,9 @@ export function createAgenrSkelnMemoryProvider(options: AgenrSkelnMemoryProvider
     },
     tools(context: SkelnToolContextLike): SkelnToolLike[] {
       const tools: SkelnToolLike[] = [];
+      if (storeEnabled) {
+        tools.push(createAgenrStoreTool(context, services));
+      }
       if (recallEnabled) {
         tools.push(createAgenrRecallTool(context, services));
       }

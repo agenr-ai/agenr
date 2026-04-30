@@ -1,12 +1,12 @@
 import type { CrossEncoderPort, EmbeddingPort, RecallPorts } from "../../core/ports.js";
 import type { AgenrConfig } from "../../config.js";
-import { readConfig, resolveConfigPath, resolveDbPath } from "../../config.js";
+import { readConfig, resolveClaimExtractionConfig, resolveConfigPath, resolveDbPath } from "../../config.js";
 import { createOpenAICrossEncoder, resolveCrossEncoderApiKey } from "../cross-encoder/openai-cross-encoder.js";
 import { createDatabase } from "../db/client.js";
 import { createMemoryRepository } from "../db/memory-repository.js";
 import { createRecallAdapter } from "../db/recall-adapter.js";
 import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../embeddings.js";
-import { resolveModel } from "../llm.js";
+import { createLlmClient, resolveLlmApiKey, resolveModel } from "../llm.js";
 import { attachCrossEncoderPort } from "../../app/evals/recall/attach-cross-encoder.js";
 import type { AgenrSkelnEmbeddingStatus, AgenrSkelnServices } from "./types.js";
 
@@ -35,6 +35,7 @@ export async function createAgenrSkelnServices(options: CreateAgenrSkelnServices
     : createUnavailableEmbeddingPort(embeddingStatus.error ?? "Embeddings are unavailable.");
   const baseRecall = createRecallAdapter(database, embedding);
   const recall: RecallPorts = attachCrossEncoderPort(baseRecall, resolveCrossEncoder(config));
+  const claimExtraction = createClaimExtractionRuntime(config);
   let closed = false;
 
   return {
@@ -43,7 +44,9 @@ export async function createAgenrSkelnServices(options: CreateAgenrSkelnServices
     episodes: database,
     procedures: database,
     memory: createMemoryRepository(database),
+    embedding,
     recall,
+    ...(claimExtraction ? { claimExtraction } : {}),
     embeddingStatus: toPublicEmbeddingStatus(embeddingStatus),
     embedQuery: embeddingStatus.available
       ? async (text: string) => {
@@ -60,6 +63,27 @@ export async function createAgenrSkelnServices(options: CreateAgenrSkelnServices
       await database.close();
     },
   };
+}
+
+/**
+ * Creates the optional claim-key extraction runtime used by interactive store calls.
+ */
+function createClaimExtractionRuntime(config: AgenrConfig): AgenrSkelnServices["claimExtraction"] | undefined {
+  const claimExtractionConfig = resolveClaimExtractionConfig(config);
+  if (!claimExtractionConfig.enabled) {
+    return undefined;
+  }
+
+  try {
+    const { provider, modelId } = resolveModel(config, "claim");
+    const apiKey = resolveLlmApiKey(config, provider);
+    return {
+      llm: createLlmClient(provider, modelId, { apiKey }),
+      config: claimExtractionConfig,
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 /**
