@@ -22,6 +22,7 @@ describe("createAgenrSkelnMemoryProvider", () => {
 
     expect(provider.id).toBe("agenr");
     expect(provider.label.length).toBeGreaterThan(0);
+    expect(provider.requiredCapabilities).toEqual(["external-persistence"]);
   });
 
   it("keeps phase-1 context hooks disabled", async () => {
@@ -67,13 +68,6 @@ describe("createAgenrSkelnMemoryProvider", () => {
     expect((provider.tools?.({ sessionId: "session-1" }) ?? []).map((tool) => tool.name)).toEqual(["agenr_recall"]);
   });
 
-  it("omits both tools when tools are disabled globally", async () => {
-    const { createAgenrSkelnMemoryProvider } = await import("../../../src/adapters/skeln/index.js");
-    const provider = createAgenrSkelnMemoryProvider({ tools: { enabled: false } });
-
-    expect(provider.tools?.({ sessionId: "session-1" })).toEqual([]);
-  });
-
   it("exposes an update approval target without initializing services", async () => {
     const { createAgenrSkelnMemoryProvider } = await import("../../../src/adapters/skeln/index.js");
     const provider = createAgenrSkelnMemoryProvider();
@@ -85,34 +79,22 @@ describe("createAgenrSkelnMemoryProvider", () => {
     expect(createAgenrSkelnServicesMock).not.toHaveBeenCalled();
   });
 
-  it("returns a readable recall error result when services cannot initialize", async () => {
+  it("throws a readable recall error when services cannot initialize", async () => {
     createAgenrSkelnServicesMock.mockRejectedValue(new Error("database unavailable"));
     const { createAgenrSkelnMemoryProvider } = await import("../../../src/adapters/skeln/index.js");
     const provider = createAgenrSkelnMemoryProvider({ databasePath: "/tmp/missing.db" });
     const tool = findTool(provider.tools?.({ sessionId: "session-1" }) ?? [], "agenr_recall");
 
-    const result = await tool.execute("call-1", { query: "deployment decision" });
-
-    expect(result).toEqual({
-      content: [{ type: "text", text: "agenr_recall failed: database unavailable" }],
-      details: { error: "database unavailable" },
-      isError: true,
-    });
+    await expect(tool.execute("call-1", { query: "deployment decision" })).rejects.toThrow("agenr_recall failed: database unavailable");
   });
 
-  it("returns a readable update error result when services cannot initialize", async () => {
+  it("throws a readable update error when services cannot initialize", async () => {
     createAgenrSkelnServicesMock.mockRejectedValue(new Error("database unavailable"));
     const { createAgenrSkelnMemoryProvider } = await import("../../../src/adapters/skeln/index.js");
     const provider = createAgenrSkelnMemoryProvider({ databasePath: "/tmp/missing.db" });
     const tool = findTool(provider.tools?.({ sessionId: "session-1" }) ?? [], "agenr_update");
 
-    const result = await tool.execute("call-1", { id: "entry-1", importance: 8 });
-
-    expect(result).toEqual({
-      content: [{ type: "text", text: "agenr_update failed: database unavailable" }],
-      details: { error: "database unavailable" },
-      isError: true,
-    });
+    await expect(tool.execute("call-1", { id: "entry-1", importance: 8 })).rejects.toThrow("agenr_update failed: database unavailable");
   });
 
   it("updates an entry and returns a Skeln-shaped success result", async () => {
@@ -137,6 +119,8 @@ describe("createAgenrSkelnMemoryProvider", () => {
     const { createAgenrSkelnMemoryProvider } = await import("../../../src/adapters/skeln/index.js");
     const provider = createAgenrSkelnMemoryProvider();
     const tool = findTool(provider.tools?.({ sessionId: "session-1", sessionKey: "skeln-key-1" }) ?? [], "agenr_update");
+
+    expect(tool.executionMode).toBe("sequential");
 
     const result = await tool.execute("call-1", {
       id: "entry-1",
@@ -175,7 +159,6 @@ describe("createAgenrSkelnMemoryProvider", () => {
         claimKey: "project/deploy_strategy",
         validTo: "2026-02-01T00:00:00.000Z",
       },
-      isError: false,
     });
   });
 

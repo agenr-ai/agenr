@@ -34,8 +34,8 @@ export type {
  * @returns Structural Skeln memory provider.
  */
 export function createAgenrSkelnMemoryProvider(options: AgenrSkelnMemoryProviderOptions = {}): SkelnMemoryProviderLike {
-  const recallEnabled = options.tools?.recall ?? options.tools?.enabled ?? true;
-  const updateEnabled = options.tools?.update ?? options.tools?.enabled ?? true;
+  const recallEnabled = options.tools?.recall ?? true;
+  const updateEnabled = options.tools?.update ?? true;
   let servicesPromise: Promise<AgenrSkelnServices> | undefined;
   let disposed = false;
 
@@ -60,6 +60,7 @@ export function createAgenrSkelnMemoryProvider(options: AgenrSkelnMemoryProvider
   return {
     id: "agenr",
     label: "Agenr Memory",
+    requiredCapabilities: ["external-persistence"],
     async buildSessionStartContext(_context: SkelnMemoryContextLike): Promise<string | undefined> {
       return undefined;
     },

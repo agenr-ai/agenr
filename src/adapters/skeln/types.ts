@@ -15,8 +15,6 @@ export interface AgenrSkelnMemoryProviderOptions {
     recall?: boolean;
     /** Enables the update tool. Defaults to true. */
     update?: boolean;
-    /** Compatibility alias for hosts that pass a single enabled flag. */
-    enabled?: boolean;
   };
   /** Optional host logger. */
   logger?: AgenrSkelnLogger;
@@ -44,6 +42,8 @@ export interface SkelnMemoryProviderLike {
   id: "agenr";
   /** Human-readable provider label. */
   label: string;
+  /** Runtime capabilities required by the provider. */
+  requiredCapabilities?: string[];
   /** Builds optional session-start memory context. */
   buildSessionStartContext(context: SkelnMemoryContextLike): Promise<string | undefined>;
   /** Builds optional before-turn memory context. */
@@ -109,8 +109,6 @@ export interface SkelnToolResultLike<TDetails = unknown> {
   content: SkelnToolTextContentLike[];
   /** Structured details for host renderers and tests. */
   details: TDetails;
-  /** True when the tool failed without throwing to the host. */
-  isError?: boolean;
 }
 
 /**
@@ -142,13 +140,8 @@ export interface SkelnToolLike<TDetails = unknown> {
   category: string;
   /** Tool risk label. */
   risk: "read" | "write" | "destructive" | "external";
-  /**
-   * Deprecated for Agenr-owned defaults. Skeln should own final approval policy.
-   *
-   * Keep temporarily for compatibility with current Skeln versions that require
-   * every registered tool to expose approval metadata.
-   */
-  approval?: "never" | "manual" | "always";
+  /** Tool-provided default approval policy. Skeln config can override this. */
+  approval: "never" | "manual" | "always";
   /**
    * Extracts the user-facing approval subject from tool args.
    *
@@ -158,8 +151,10 @@ export interface SkelnToolLike<TDetails = unknown> {
   approvalTarget?: SkelnApprovalTargetExtractorLike;
   /** JSON-schema-compatible parameter contract. */
   parameters: SkelnToolParametersLike;
+  /** Optional per-tool execution mode override. */
+  executionMode?: "sequential" | "parallel";
   /** Executes the tool. */
-  execute(toolCallId: string, params: unknown): Promise<SkelnToolResultLike<TDetails>>;
+  execute(toolCallId: string, params: unknown, signal?: AbortSignal): Promise<SkelnToolResultLike<TDetails>>;
 }
 
 /**

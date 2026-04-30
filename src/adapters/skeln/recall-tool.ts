@@ -89,38 +89,24 @@ export interface AgenrSkelnRecallDetails {
 }
 
 /**
- * Structured failure details returned by `agenr_recall`.
- */
-export interface AgenrSkelnRecallFailureDetails {
-  /** Failure message. */
-  error: string;
-}
-
-/**
  * Creates the read-only agenr recall tool for a Skeln tool context.
  *
  * @param context - Skeln-like tool context.
  * @param services - Lazily resolves agenr services.
  * @returns Skeln-compatible recall tool.
  */
-export function createAgenrRecallTool(
-  context: SkelnToolContextLike,
-  services: () => Promise<AgenrSkelnServices>,
-): SkelnToolLike<AgenrSkelnRecallDetails | AgenrSkelnRecallFailureDetails> {
+export function createAgenrRecallTool(context: SkelnToolContextLike, services: () => Promise<AgenrSkelnServices>): SkelnToolLike<AgenrSkelnRecallDetails> {
   return {
     name: "agenr_recall",
     label: "Agenr Recall",
     category: "memory",
     risk: "read",
-    /**
-     * Compatibility default only. Skeln should override this from its config.
-     */
     approval: "never",
     approvalTarget: recallApprovalTarget,
     description:
       "Recall facts, decisions, procedures, prior states, and episodes from agenr memory. Use mode=auto normally, entries for facts and decisions, episodes for past activity, and procedures for methods or checklists.",
     parameters: RECALL_TOOL_PARAMETERS,
-    async execute(_toolCallId: string, rawParams: unknown): Promise<SkelnToolResultLike<AgenrSkelnRecallDetails | AgenrSkelnRecallFailureDetails>> {
+    async execute(_toolCallId: string, rawParams: unknown): Promise<SkelnToolResultLike<AgenrSkelnRecallDetails>> {
       try {
         const params = asRecord(rawParams);
         const query = readRequiredString(params, "query");
@@ -152,12 +138,7 @@ export function createAgenrRecallTool(
 
         return textResult(formatUnifiedRecallResults(result), buildRecallDetails(result));
       } catch (error) {
-        const message = formatErrorMessage(error);
-        return {
-          content: [{ type: "text", text: `agenr_recall failed: ${message}` }],
-          details: { error: message },
-          isError: true,
-        };
+        throw new Error(`agenr_recall failed: ${formatErrorMessage(error)}`, { cause: error });
       }
     },
   };
@@ -243,7 +224,6 @@ function textResult<TDetails>(text: string, details: TDetails): SkelnToolResultL
   return {
     content: [{ type: "text", text }],
     details,
-    isError: false,
   };
 }
 

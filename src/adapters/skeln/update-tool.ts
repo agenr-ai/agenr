@@ -67,44 +67,24 @@ export interface AgenrSkelnUpdateDetails {
 }
 
 /**
- * Structured failure details returned by `agenr_update`.
- */
-export type AgenrSkelnUpdateFailureDetails =
-  | {
-      /** Failed update status. */
-      status: "failed";
-      /** Entry id that could not be updated. */
-      entryId: string;
-    }
-  | {
-      /** Failure message. */
-      error: string;
-    };
-
-/**
  * Creates the write-capable agenr update tool for a Skeln tool context.
  *
  * @param context - Skeln-like tool context.
  * @param services - Lazily resolves agenr services.
  * @returns Skeln-compatible update tool.
  */
-export function createAgenrUpdateTool(
-  context: SkelnToolContextLike,
-  services: () => Promise<AgenrSkelnServices>,
-): SkelnToolLike<AgenrSkelnUpdateDetails | AgenrSkelnUpdateFailureDetails> {
+export function createAgenrUpdateTool(context: SkelnToolContextLike, services: () => Promise<AgenrSkelnServices>): SkelnToolLike<AgenrSkelnUpdateDetails> {
   return {
     name: "agenr_update",
     label: "Agenr Update",
     category: "memory",
     risk: "write",
-    /**
-     * Compatibility default only. Skeln should override this from its config.
-     */
     approval: "manual",
     approvalTarget: updateApprovalTarget,
     description: "Update an existing memory entry in place. Currently supports importance, expiry, claim_key, valid_from, and valid_to.",
     parameters: UPDATE_TOOL_PARAMETERS,
-    async execute(_toolCallId: string, rawParams: unknown): Promise<SkelnToolResultLike<AgenrSkelnUpdateDetails | AgenrSkelnUpdateFailureDetails>> {
+    executionMode: "sequential",
+    async execute(_toolCallId: string, rawParams: unknown): Promise<SkelnToolResultLike<AgenrSkelnUpdateDetails>> {
       try {
         const params = asRecord(rawParams);
         const importance = readOptionalInteger(params, "importance");
@@ -163,11 +143,7 @@ export function createAgenrUpdateTool(
         const updated = await resolvedServices.entries.updateEntry(entry.id, fields);
 
         if (!updated) {
-          return {
-            content: [{ type: "text", text: `Entry ${entry.id} is not active, so it could not be updated.` }],
-            details: { status: "failed", entryId: entry.id },
-            isError: true,
-          };
+          throw new Error(`Entry ${entry.id} is not active, so it could not be updated.`);
         }
 
         return {
@@ -183,15 +159,9 @@ export function createAgenrUpdateTool(
             ...(validFrom !== undefined ? { validFrom: normalizedValidFrom } : {}),
             ...(validTo !== undefined ? { validTo: normalizedValidTo } : {}),
           },
-          isError: false,
         };
       } catch (error) {
-        const message = formatErrorMessage(error);
-        return {
-          content: [{ type: "text", text: `agenr_update failed: ${message}` }],
-          details: { error: message },
-          isError: true,
-        };
+        throw new Error(`agenr_update failed: ${formatErrorMessage(error)}`, { cause: error });
       }
     },
   };
