@@ -1,12 +1,6 @@
 import { VECTOR_INDEX_NAME } from "./schema.js";
 import { EMBEDDING_DIMENSIONS } from "../embeddings.js";
-import type {
-  OpenClawClaimFamily,
-  OpenClawEntryTrace,
-  OpenClawMemoryStatusSnapshot,
-  OpenClawRepository,
-  OpenClawRecallEvent,
-} from "../../app/openclaw/ports.js";
+import type { ClaimFamily, EntryTrace, MemoryStatusSnapshot, MemoryRepository, EntryRecallEvent } from "../../app/memory/ports.js";
 import { resolveClaimSlotPolicy, type ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
 import type { Entry } from "../../core/types.js";
 import { buildActiveEntryClause, ENTRY_SELECT_COLUMNS, mapEntryRow, readNumber, readOptionalString, readRequiredString } from "./row-mapping.js";
@@ -15,18 +9,18 @@ import type { SqlExecutor } from "./queries.js";
 const ZERO_VECTOR = JSON.stringify(Array.from({ length: EMBEDDING_DIMENSIONS }, () => 0));
 
 /**
- * Creates the DB-backed OpenClaw repository used by adapter-facing runtime code.
+ * Creates the DB-backed memory repository used by adapter-facing runtime code.
  *
- * @param executor - SQL executor used for all OpenClaw read-model queries.
+ * @param executor - SQL executor used for all memory read-model queries.
  * @param options - Optional read-side policy overrides for claim-aware surfaces.
  * @returns Repository that hides DB internals behind feature-scoped methods.
  */
-export function createOpenClawRepository(
+export function createMemoryRepository(
   executor: SqlExecutor,
   options: {
     claimSlotPolicyConfig?: ClaimSlotPolicyConfig;
   } = {},
-): OpenClawRepository {
+): MemoryRepository {
   return {
     findEntryBySubject: async (subject) => findEntryBySubject(executor, subject),
     findMostRecentEntry: async () => findMostRecentEntry(executor),
@@ -101,7 +95,7 @@ async function findMostRecentEntry(executor: SqlExecutor): Promise<Entry | null>
  * @param entryId - Entry identifier to trace.
  * @returns Minimal provenance facts for the requested entry, or `null` when missing.
  */
-async function getEntryTrace(executor: SqlExecutor, entryId: string, claimSlotPolicyConfig?: ClaimSlotPolicyConfig): Promise<OpenClawEntryTrace | null> {
+async function getEntryTrace(executor: SqlExecutor, entryId: string, claimSlotPolicyConfig?: ClaimSlotPolicyConfig): Promise<EntryTrace | null> {
   const entry = await getEntryByIdIncludingInactive(executor, entryId);
   if (!entry) {
     return null;
@@ -124,12 +118,12 @@ async function getEntryTrace(executor: SqlExecutor, entryId: string, claimSlotPo
 }
 
 /**
- * Reads aggregate entry counts for the OpenClaw memory runtime status surface.
+ * Reads aggregate entry counts for host memory runtime status surfaces.
  *
  * @param executor - SQL executor used for the lookup.
  * @returns Count snapshot for active entries, active core entries, and distinct source files.
  */
-async function getMemoryStatusSnapshot(executor: SqlExecutor): Promise<OpenClawMemoryStatusSnapshot> {
+async function getMemoryStatusSnapshot(executor: SqlExecutor): Promise<MemoryStatusSnapshot> {
   const result = await executor.execute({
     sql: `
       SELECT
@@ -235,11 +229,7 @@ async function listSupersededEntries(executor: SqlExecutor, entryId: string): Pr
  * @param claimKey - Shared claim key to inspect.
  * @returns Ordered claim family, or undefined when the key is empty.
  */
-async function getClaimFamily(
-  executor: SqlExecutor,
-  claimKey: string,
-  claimSlotPolicyConfig?: ClaimSlotPolicyConfig,
-): Promise<OpenClawClaimFamily | undefined> {
+async function getClaimFamily(executor: SqlExecutor, claimKey: string, claimSlotPolicyConfig?: ClaimSlotPolicyConfig): Promise<ClaimFamily | undefined> {
   const normalizedClaimKey = claimKey.trim();
   if (normalizedClaimKey.length === 0) {
     return undefined;
@@ -274,7 +264,7 @@ async function getClaimFamily(
  * @param entryId - Entry identifier to inspect.
  * @returns Recent recall events ordered newest first.
  */
-async function listRecallEvents(executor: SqlExecutor, entryId: string): Promise<OpenClawRecallEvent[]> {
+async function listRecallEvents(executor: SqlExecutor, entryId: string): Promise<EntryRecallEvent[]> {
   const result = await executor.execute({
     sql: `
       SELECT

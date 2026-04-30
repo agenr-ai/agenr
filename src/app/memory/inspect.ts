@@ -1,12 +1,12 @@
 import { createDatabase } from "../../adapters/db/client.js";
-import { createOpenClawRepository } from "../../adapters/db/openclaw-repository.js";
-import type { OpenClawEntryTrace } from "./ports.js";
+import { createMemoryRepository } from "../../adapters/db/memory-repository.js";
+import type { EntryTrace } from "./ports.js";
 import { readConfig, resolveDbPath } from "../../config.js";
 
 /**
  * Selector accepted by the CLI trace runtime helper.
  */
-export interface OpenClawTraceSelector {
+export interface EntryTraceSelector {
   /** Trace one specific entry by canonical ID. */
   id?: string;
   /** Trace the most recent exact or substring subject match. */
@@ -21,7 +21,7 @@ export interface OpenClawTraceSelector {
  * @param input - Selector plus optional config and db-path overrides.
  * @returns Trace payload for the selected entry.
  */
-export async function loadOpenClawEntryTraceRuntime(input: OpenClawTraceSelector & { dbPath?: string; env?: NodeJS.ProcessEnv }): Promise<OpenClawEntryTrace> {
+export async function loadEntryTraceRuntime(input: EntryTraceSelector & { dbPath?: string; env?: NodeJS.ProcessEnv }): Promise<EntryTrace> {
   const selector = normalizeTraceSelector(input);
   const configPathOverride = normalizeOptionalString(input.env?.AGENR_CONFIG_PATH);
   const config = readConfig({
@@ -30,7 +30,7 @@ export async function loadOpenClawEntryTraceRuntime(input: OpenClawTraceSelector
   });
   const dbPath = normalizeOptionalString(input.dbPath) ?? normalizeOptionalString(input.env?.AGENR_DB_PATH) ?? resolveDbPath(config);
   const database = await createDatabase(dbPath);
-  const repository = createOpenClawRepository(database);
+  const repository = createMemoryRepository(database);
 
   try {
     const entryId = await resolveTraceEntryId(repository, selector);
@@ -48,13 +48,13 @@ export async function loadOpenClawEntryTraceRuntime(input: OpenClawTraceSelector
 /**
  * Resolves one validated selector into the corresponding trace entry ID.
  *
- * @param repository - OpenClaw read model used for lookups.
+ * @param repository - Memory read model used for lookups.
  * @param selector - Validated selector payload.
  * @returns Canonical entry ID for the selected entry.
  */
 async function resolveTraceEntryId(
-  repository: ReturnType<typeof createOpenClawRepository>,
-  selector: Required<Pick<OpenClawTraceSelector, "last">> & Pick<OpenClawTraceSelector, "id" | "subject">,
+  repository: ReturnType<typeof createMemoryRepository>,
+  selector: Required<Pick<EntryTraceSelector, "last">> & Pick<EntryTraceSelector, "id" | "subject">,
 ): Promise<string> {
   if (selector.last) {
     const entry = await repository.findMostRecentEntry();
@@ -83,9 +83,7 @@ async function resolveTraceEntryId(
  * @param selector - Raw selector payload.
  * @returns Normalized selector payload.
  */
-function normalizeTraceSelector(
-  selector: OpenClawTraceSelector,
-): Required<Pick<OpenClawTraceSelector, "last">> & Pick<OpenClawTraceSelector, "id" | "subject"> {
+function normalizeTraceSelector(selector: EntryTraceSelector): Required<Pick<EntryTraceSelector, "last">> & Pick<EntryTraceSelector, "id" | "subject"> {
   const id = normalizeOptionalString(selector.id);
   const subject = normalizeOptionalString(selector.subject);
   const last = selector.last === true;

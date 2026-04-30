@@ -7,7 +7,7 @@ import type {
 } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 
 import type { AgenrDebugSink } from "./debug/sink.js";
-import type { OpenClawRepository } from "../../app/openclaw/ports.js";
+import type { MemoryRepository } from "../../app/memory/ports.js";
 import type { BeforeTurnDeps } from "../../app/before-turn/index.js";
 import type { SessionStartDeps } from "../../app/session-start/index.js";
 import type { AgenrConfig } from "../../config.js";
@@ -199,7 +199,7 @@ export interface AgenrOpenClawServices {
   entries: DatabasePort;
   episodes: EpisodeDatabasePort;
   procedures: ProcedureDatabasePort;
-  memory: OpenClawRepository;
+  memory: MemoryRepository;
   sessionStart: SessionStartDeps;
   beforeTurn: BeforeTurnDeps;
   embedding: EmbeddingPort;

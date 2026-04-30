@@ -1,12 +1,12 @@
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { loadOpenClawEntryTraceRuntimeMock } = vi.hoisted(() => ({
-  loadOpenClawEntryTraceRuntimeMock: vi.fn(),
+const { loadEntryTraceRuntimeMock } = vi.hoisted(() => ({
+  loadEntryTraceRuntimeMock: vi.fn(),
 }));
 
-vi.mock("../../../src/app/openclaw/inspect.js", () => ({
-  loadOpenClawEntryTraceRuntime: loadOpenClawEntryTraceRuntimeMock,
+vi.mock("../../../src/app/memory/inspect.js", () => ({
+  loadEntryTraceRuntime: loadEntryTraceRuntimeMock,
 }));
 
 import { registerTraceCommand } from "../../../src/cli/commands/trace.js";
@@ -14,7 +14,7 @@ import { registerTraceCommand } from "../../../src/cli/commands/trace.js";
 describe("registerTraceCommand", () => {
   afterEach(() => {
     vi.restoreAllMocks();
-    loadOpenClawEntryTraceRuntimeMock.mockReset();
+    loadEntryTraceRuntimeMock.mockReset();
     process.exitCode = undefined;
   });
 
@@ -27,7 +27,7 @@ describe("registerTraceCommand", () => {
 
   it("renders claim-family lineage for one traced entry", async () => {
     const { program, stdout } = createProgramWithCapturedOutput();
-    loadOpenClawEntryTraceRuntimeMock.mockResolvedValue({
+    loadEntryTraceRuntimeMock.mockResolvedValue({
       entry: {
         id: "entry-1",
         type: "fact",
@@ -107,7 +107,7 @@ describe("registerTraceCommand", () => {
 
     await program.parseAsync(["trace", "--id", "entry-1"], { from: "user" });
 
-    expect(loadOpenClawEntryTraceRuntimeMock).toHaveBeenCalledWith(
+    expect(loadEntryTraceRuntimeMock).toHaveBeenCalledWith(
       expect.objectContaining({
         id: "entry-1",
         env: process.env,
@@ -120,7 +120,7 @@ describe("registerTraceCommand", () => {
 
   it("renders structured JSON trace output when requested", async () => {
     const { program, stdout } = createProgramWithCapturedOutput();
-    loadOpenClawEntryTraceRuntimeMock.mockResolvedValue({
+    loadEntryTraceRuntimeMock.mockResolvedValue({
       entry: {
         id: "entry-1",
         type: "fact",

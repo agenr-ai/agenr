@@ -26,10 +26,10 @@ The adapter is intentionally not a second memory brain. Durable memory, recall r
 - `src/adapters/openclaw/index.ts` - plugin entry, hook registration, tool registration, memory-runtime wiring, and shutdown cleanup.
 - `src/adapters/openclaw/openclaw.plugin.json` and `src/adapters/openclaw/config.ts` - manifest-backed config schema, validation, UI hints, and store-nudge defaults.
 - `packages/openclaw-plugin/package.json`, `packages/openclaw-plugin/openclaw.plugin.json`, and `packages/openclaw-plugin/src/index.ts` - publishable plugin package metadata and entrypoint.
-- `src/app/openclaw/runtime.ts` - shared runtime composition: config resolution, DB open, OpenClaw repository wiring, session-start and before-turn dependency wiring, recall adapter creation, embedding availability, and optional claim-extraction LLM wiring.
+- `src/app/openclaw/runtime.ts` - OpenClaw-specific runtime composition: plugin config resolution, DB open, memory repository wiring, session-start and before-turn dependency wiring, recall adapter creation, embedding availability, and optional claim-extraction LLM wiring.
 - `src/app/session-start/` - host-neutral session-start patch contract and selection service.
 - `src/app/before-turn/` - host-neutral before-turn patch contract and selection service.
-- `src/app/openclaw/ports.ts` - OpenClaw-owned read-model contracts for trace and memory status.
+- `src/app/memory/ports.ts` - host-neutral read-model contracts for trace and memory status.
 - `src/adapters/openclaw/runtime.ts` - thin re-export of the app-owned runtime composition function.
 - `src/adapters/db/session-start-repository.ts` - DB-backed session-start repository for always-on core-memory lookup.
 - `src/adapters/openclaw/tools/` - one file per OpenClaw tool plus shared parsing, logging, and target-resolution helpers.
@@ -47,7 +47,7 @@ The adapter is intentionally not a second memory brain. Durable memory, recall r
 - `src/adapters/openclaw/llm/openclaw-llm-client.ts` - lightweight OpenClaw-authenticated LLM client used for continuity, episode summaries, and optional claim extraction.
 - `src/adapters/openclaw/memory/runtime.ts` and `src/adapters/openclaw/memory/flush-plan.ts` - thin memory-runtime bridge and no-op flush-plan behavior.
 - `src/adapters/openclaw/transcript/` - OpenClaw JSONL parsing, cleanup, timestamp repair, tool summarization, and transcript-safe filtering.
-- `src/adapters/db/openclaw-repository.ts` - DB-backed OpenClaw repository for trace, subject lookup, and status probes.
+- `src/adapters/db/memory-repository.ts` - DB-backed host-neutral memory repository for trace, subject lookup, and status probes.
 
 ## Packaging and identity
 

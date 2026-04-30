@@ -554,7 +554,7 @@ The main formal seams are still the ports in `src/core/ports.ts`:
 
 Feature-scoped seams also matter:
 
-- `OpenClawRepository` in `src/app/openclaw/ports.ts`
+- `MemoryRepository` in `src/app/memory/ports.ts`
 - `SessionStartRepository` in `src/app/session-start/ports.ts`
 - before-turn dependency bundle in `src/app/before-turn/ports.ts`
 - surgeon runtime and persistence ports in `src/app/surgeon/ports.ts`

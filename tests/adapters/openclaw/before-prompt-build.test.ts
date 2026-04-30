@@ -16,7 +16,7 @@ vi.mock("../../../src/adapters/openclaw/llm/openclaw-llm-client.js", () => ({
 }));
 
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
-import { createOpenClawRepository } from "../../../src/adapters/db/openclaw-repository.js";
+import { createMemoryRepository } from "../../../src/adapters/db/memory-repository.js";
 import { createSessionStartRepository } from "../../../src/adapters/db/session-start-repository.js";
 import { createNoopAgenrDebugSink } from "../../../src/adapters/openclaw/debug/index.js";
 import { handleAgenrAfterToolCall } from "../../../src/adapters/openclaw/hooks/after-tool-call.js";
@@ -2523,7 +2523,7 @@ function createServices(
     entries: database,
     episodes: database,
     procedures: database,
-    memory: createOpenClawRepository(database),
+    memory: createMemoryRepository(database),
     sessionStart: {
       repository: createSessionStartRepository(database),
       recall,

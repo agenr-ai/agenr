@@ -2,9 +2,9 @@ import type { ClaimSlotPolicy } from "../../core/claim-slot-policy.js";
 import type { Entry } from "../../core/types.js";
 
 /**
- * Recent recall event metadata returned by the OpenClaw trace tool.
+ * Recent recall event metadata returned by memory trace surfaces.
  */
-export interface OpenClawRecallEvent {
+export interface EntryRecallEvent {
   query?: string;
   sessionKey?: string;
   recalledAt: string;
@@ -13,7 +13,7 @@ export interface OpenClawRecallEvent {
 /**
  * Narrow claim-family lineage view returned by trace surfaces.
  */
-export interface OpenClawClaimFamily {
+export interface ClaimFamily {
   /** Shared claim key for the family. */
   claimKey: string;
   /** Runtime slot-policy used when reading this lineage. */
@@ -27,27 +27,27 @@ export interface OpenClawClaimFamily {
 /**
  * Minimal provenance view available from the current v1 schema.
  */
-export interface OpenClawEntryTrace {
+export interface EntryTrace {
   entry: Entry;
   supersededBy?: Entry;
   supersedes: Entry[];
-  claimFamily?: OpenClawClaimFamily;
-  recallEvents: OpenClawRecallEvent[];
+  claimFamily?: ClaimFamily;
+  recallEvents: EntryRecallEvent[];
 }
 
 /**
- * Aggregate memory status facts used by the OpenClaw memory runtime.
+ * Aggregate memory status facts used by host memory runtimes.
  */
-export interface OpenClawMemoryStatusSnapshot {
+export interface MemoryStatusSnapshot {
   activeEntries: number;
   coreEntries: number;
   sourceFiles: number;
 }
 
 /**
- * OpenClaw-specific read model used by prompt injection, trace, and status flows.
+ * Host-neutral memory read model used by prompt injection, trace, and status flows.
  */
-export interface OpenClawRepository {
+export interface MemoryRepository {
   /**
    * Finds the most recent entry matching a subject string.
    *
@@ -69,14 +69,14 @@ export interface OpenClawRepository {
    * @param entryId - Entry identifier to inspect.
    * @returns Trace payload, or `null` when the entry is missing.
    */
-  getEntryTrace(entryId: string): Promise<OpenClawEntryTrace | null>;
+  getEntryTrace(entryId: string): Promise<EntryTrace | null>;
 
   /**
-   * Reads aggregate counts for the OpenClaw status surface.
+   * Reads aggregate counts for host status surfaces.
    *
    * @returns Current memory status snapshot.
    */
-  getMemoryStatusSnapshot(): Promise<OpenClawMemoryStatusSnapshot>;
+  getMemoryStatusSnapshot(): Promise<MemoryStatusSnapshot>;
 
   /**
    * Checks whether the configured vector index is available.

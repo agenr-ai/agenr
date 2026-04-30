@@ -3,7 +3,7 @@ import type { AgenrConfig } from "../../config.js";
 import { readConfig, resolveClaimExtractionConfig, resolveConfigPath, resolveDbPath } from "../../config.js";
 import { createOpenAICrossEncoder, resolveCrossEncoderApiKey } from "../../adapters/cross-encoder/openai-cross-encoder.js";
 import { createDatabase } from "../../adapters/db/client.js";
-import { createOpenClawRepository } from "../../adapters/db/openclaw-repository.js";
+import { createMemoryRepository } from "../../adapters/db/memory-repository.js";
 import { createSessionStartRepository } from "../../adapters/db/session-start-repository.js";
 import { createRecallAdapter } from "../../adapters/db/recall-adapter.js";
 import { createEmbeddingClient, EMBEDDING_MODEL, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
@@ -19,7 +19,7 @@ import type {
   ResolvedAgenrOpenClawPluginConfig,
 } from "../../adapters/openclaw/types.js";
 import path from "node:path";
-import type { OpenClawRepository } from "./ports.js";
+import type { MemoryRepository } from "../memory/ports.js";
 import type { BeforeTurnDeps } from "../before-turn/index.js";
 import { attachCrossEncoderPort } from "../evals/recall/attach-cross-encoder.js";
 import type { SessionStartDeps } from "../session-start/index.js";
@@ -31,7 +31,7 @@ interface OpenClawRuntimeServices {
   entries: DatabasePort;
   episodes: EpisodeDatabasePort;
   procedures: ProcedureDatabasePort;
-  memory: OpenClawRepository;
+  memory: MemoryRepository;
   sessionStart: SessionStartDeps;
   beforeTurn: BeforeTurnDeps;
   embedding: EmbeddingPort;
@@ -157,7 +157,7 @@ async function createRuntimeServices(
     entries: database,
     episodes: database,
     procedures: database,
-    memory: createOpenClawRepository(database, {
+    memory: createMemoryRepository(database, {
       claimSlotPolicyConfig: openClawContext.pluginConfig.memoryPolicy?.slotPolicies,
     }),
     sessionStart: {

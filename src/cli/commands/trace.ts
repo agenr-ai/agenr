@@ -1,7 +1,7 @@
 import { Option, type Command } from "commander";
 
-import { loadOpenClawEntryTraceRuntime } from "../../app/openclaw/inspect.js";
-import type { OpenClawEntryTrace } from "../../app/openclaw/ports.js";
+import { loadEntryTraceRuntime } from "../../app/memory/inspect.js";
+import type { EntryTrace } from "../../app/memory/ports.js";
 import { resolveClaimSlotPolicy } from "../../core/claim-slot-policy.js";
 import type { Entry } from "../../core/types.js";
 
@@ -28,7 +28,7 @@ export function registerTraceCommand(program: Command): void {
     .option("--json", "Emit structured JSON output")
     .action(async (options: TraceCommandOptions) => {
       try {
-        const trace = await loadOpenClawEntryTraceRuntime({
+        const trace = await loadEntryTraceRuntime({
           id: options.id,
           subject: options.subject,
           last: options.last === true,
@@ -48,7 +48,7 @@ export function registerTraceCommand(program: Command): void {
  * @param trace - Loaded trace payload.
  * @returns Human-readable trace output block.
  */
-function renderTrace(trace: OpenClawEntryTrace): string {
+function renderTrace(trace: EntryTrace): string {
   const entrySlotPolicy = resolveTraceSlotPolicy(trace);
   const lines = [
     `Trace for ${trace.entry.id} | ${trace.entry.subject}`,
@@ -110,7 +110,7 @@ function renderTrace(trace: OpenClawEntryTrace): string {
  * @param trace - Loaded trace payload.
  * @returns Pretty-printed JSON output.
  */
-function renderTraceJson(trace: OpenClawEntryTrace): string {
+function renderTraceJson(trace: EntryTrace): string {
   const slotPolicy = resolveTraceSlotPolicy(trace);
   const transitionSummary = trace.claimFamily ? summarizeClaimFamilyTransition(trace.claimFamily.entries) : undefined;
 
@@ -193,7 +193,7 @@ function summarizeClaimFamilyTransition(entries: Entry[]): string | undefined {
  * @param trace - Loaded trace payload.
  * @returns Effective slot-policy metadata for the traced family.
  */
-function resolveTraceSlotPolicy(trace: OpenClawEntryTrace): { policy: string; reason: string } {
+function resolveTraceSlotPolicy(trace: EntryTrace): { policy: string; reason: string } {
   if (trace.claimFamily) {
     const resolved = resolveClaimSlotPolicy(trace.claimFamily.claimKey);
     return {

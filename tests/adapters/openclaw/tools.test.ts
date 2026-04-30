@@ -19,7 +19,7 @@ vi.mock("@mariozechner/pi-ai", () => ({
 import type { Api, AssistantMessage, Model } from "@mariozechner/pi-ai";
 
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
-import { createOpenClawRepository } from "../../../src/adapters/db/openclaw-repository.js";
+import { createMemoryRepository } from "../../../src/adapters/db/memory-repository.js";
 import { createSessionStartRepository } from "../../../src/adapters/db/session-start-repository.js";
 import { createOpenClawLlmClient } from "../../../src/adapters/openclaw/llm/openclaw-llm-client.js";
 import { computeProcedureRevisionHash, computeProcedureSourceHash } from "../../../src/core/procedures/hashing.js";
@@ -120,7 +120,7 @@ describe("agenr OpenClaw tools", () => {
       expiry: "permanent",
       tags: ["rollout", "policy"],
     });
-    const storedEntry = await createOpenClawRepository(database).findEntryBySubject("feature flag policy");
+    const storedEntry = await createMemoryRepository(database).findEntryBySubject("feature flag policy");
 
     const updateResult = await updateTool.execute("tool-2", {
       id: storedEntry?.id,
@@ -744,7 +744,7 @@ describe("agenr OpenClaw tools", () => {
       content: "Jim lives in Austin, Texas.",
       claimKey: "jim/home_city",
     });
-    const original = await createOpenClawRepository(database).findEntryBySubject("Jim home city");
+    const original = await createMemoryRepository(database).findEntryBySubject("Jim home city");
 
     const replacementResult = await storeTool.execute("tool-14", {
       type: "fact",
@@ -799,7 +799,7 @@ describe("agenr OpenClaw tools", () => {
       subject: "Jim timezone",
       content: "Jim's timezone is America/Chicago.",
     });
-    const storedEntry = await createOpenClawRepository(database).findEntryBySubject("Jim timezone");
+    const storedEntry = await createMemoryRepository(database).findEntryBySubject("Jim timezone");
 
     const updateResult = await updateTool.execute("tool-17", {
       id: storedEntry?.id,
@@ -854,7 +854,7 @@ describe("agenr OpenClaw tools", () => {
       subject: "Jim timezone",
       content: "Jim's timezone is America/Chicago.",
     });
-    const storedEntry = await createOpenClawRepository(database).findEntryBySubject("Jim timezone");
+    const storedEntry = await createMemoryRepository(database).findEntryBySubject("Jim timezone");
 
     const updateResult = await updateTool.execute("tool-17-invalid-update", {
       id: storedEntry?.id,
@@ -881,7 +881,7 @@ describe("agenr OpenClaw tools", () => {
       content: "Jim's timezone is America/Chicago.",
       validTo: "2026-03-31T00:00:00.000Z",
     });
-    const storedEntry = await createOpenClawRepository(database).findEntryBySubject("Jim timezone");
+    const storedEntry = await createMemoryRepository(database).findEntryBySubject("Jim timezone");
 
     const updateResult = await updateTool.execute("tool-17b", {
       id: storedEntry?.id,
@@ -936,7 +936,7 @@ describe("agenr OpenClaw tools", () => {
       subject: "Jim timezone",
       content: "Jim's timezone is America/Chicago.",
     });
-    const storedEntry = await createOpenClawRepository(database).findEntryBySubject("Jim timezone");
+    const storedEntry = await createMemoryRepository(database).findEntryBySubject("Jim timezone");
 
     expect(result.details).toMatchObject({
       status: "stored",
@@ -1008,7 +1008,7 @@ function createServices(
     entries: database,
     episodes: database,
     procedures: database,
-    memory: createOpenClawRepository(database),
+    memory: createMemoryRepository(database),
     sessionStart: {
       repository: createSessionStartRepository(database),
       recall: options.recall,
