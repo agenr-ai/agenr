@@ -1,9 +1,23 @@
-import { failedTextResult, readStringParam } from "openclaw/plugin-sdk/agent-runtime";
+import { failedTextResult } from "openclaw/plugin-sdk/agent-runtime";
 import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sdk/core";
 
 import type { UnifiedRecallMode, UnifiedRecallResult } from "../../../app/recall/index.js";
 import { resolveClaimSlotPolicy } from "../../../core/claim-slot-policy.js";
-import { ENTRY_TYPES, EXPIRY_LEVELS, type Entry, type EntryType, type Expiry } from "../../../core/types.js";
+import { ENTRY_TYPES, type Entry, type EntryType, type Expiry } from "../../../core/types.js";
+import {
+  buildSessionSourceFile as buildSharedSessionSourceFile,
+  buildToolCallClaimSupport as buildSharedToolCallClaimSupport,
+} from "../../shared/claim-support.js";
+import {
+  EXPIRY_DESCRIPTION,
+  UPDATE_EXPIRY_DESCRIPTION,
+  asRecord,
+  formatErrorMessage,
+  formatTargetSelector,
+  parseExpiry,
+  sanitizeUpdateToolParams,
+} from "../../shared/entry-tools.js";
+import { readBooleanParam, resolveTargetEntry as resolveSharedTargetEntry } from "../../shared/resolve-target.js";
 import type { AgenrOpenClawServices } from "../types.js";
 
 /**
@@ -11,17 +25,6 @@ import type { AgenrOpenClawServices } from "../types.js";
  */
 const ENTRY_TYPE_DESCRIPTION =
   "Knowledge type to store. Use fact for durable truth about a person, system, place, or how something works. Use decision for a standing rule, constraint, policy, or chosen approach future sessions should follow - not a progress update or completed action. Use preference for what someone likes, wants, values, or wants avoided. Use lesson for a non-obvious takeaway learned from experience that should change future behavior. Use milestone for a rare one-time event with durable future significance - not ordinary execution progress. Use relationship for a meaningful durable connection between people, groups, or systems.";
-
-/**
- * Human-readable guidance shown in expiry-related tool schemas.
- */
-const EXPIRY_DESCRIPTION =
-  "Lifetime bucket: core (always injected at session start, use sparingly), permanent (durable and recalled on demand), or temporary (short-horizon).";
-
-/**
- * Human-readable guidance shown in the update tool schema.
- */
-const UPDATE_EXPIRY_DESCRIPTION = `${EXPIRY_DESCRIPTION} Accepted values: ${EXPIRY_LEVELS.join(", ")}.`;
 
 /**
  * Default recall limit used when building log summaries.
@@ -33,7 +36,19 @@ const DEFAULT_RECALL_LIMIT = 10;
  */
 const RECALL_MODES = ["auto", "entries", "episodes", "procedures"] as const;
 
-export { DEFAULT_RECALL_LIMIT, ENTRY_TYPE_DESCRIPTION, EXPIRY_DESCRIPTION, RECALL_MODES, UPDATE_EXPIRY_DESCRIPTION };
+export {
+  DEFAULT_RECALL_LIMIT,
+  ENTRY_TYPE_DESCRIPTION,
+  EXPIRY_DESCRIPTION,
+  RECALL_MODES,
+  UPDATE_EXPIRY_DESCRIPTION,
+  asRecord,
+  formatErrorMessage,
+  formatTargetSelector,
+  parseExpiry,
+  readBooleanParam,
+  sanitizeUpdateToolParams,
+};
 
 const RESULT_SUBJECT_LOG_LIMIT = 5;
 
@@ -52,58 +67,15 @@ export async function resolveTargetEntry(
     allowLast?: boolean;
   } = {},
 ): Promise<Entry> {
-  const id = readStringParam(params, "id");
-  const subject = readStringParam(params, "subject");
-  const last = options.allowLast ? readBooleanParam(params, "last") : undefined;
-  const selectorCount = (id ? 1 : 0) + (subject ? 1 : 0) + (last === true ? 1 : 0);
-  const selectorDescription = options.allowLast ? "id, subject, or last" : "id or subject";
-
-  if (selectorCount !== 1) {
-    throw new Error(`Provide exactly one target selector: ${selectorDescription}.`);
-  }
-
-  if (last) {
-    const entry = await services.memory.findMostRecentEntry();
-    if (!entry) {
-      throw new Error("No agenr entries exist yet.");
-    }
-    return entry;
-  }
-
-  if (id) {
-    const entry = (await services.entries.getEntry(id)) ?? (await services.memory.getEntryTrace(id))?.entry;
-    if (!entry) {
-      throw new Error(`No agenr entry found for id ${id}.`);
-    }
-    return entry;
-  }
-
-  const entry = await services.memory.findEntryBySubject(subject ?? "");
-  if (!entry) {
-    throw new Error(`No agenr entry found for subject "${subject}".`);
-  }
-
-  return entry;
-}
-
-/**
- * Parses an optional boolean field from tool params.
- *
- * @param params - Raw tool parameters.
- * @param key - Parameter name to parse.
- * @returns Boolean value, or undefined when absent.
- */
-export function readBooleanParam(params: Record<string, unknown>, key: string): boolean | undefined {
-  const value = params[key];
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (typeof value === "boolean") {
-    return value;
-  }
-
-  throw new Error(`${key} must be a boolean.`);
+  return resolveSharedTargetEntry(
+    {
+      getEntryById: async (id) => (await services.entries.getEntry(id)) ?? (await services.memory.getEntryTrace(id))?.entry ?? null,
+      findEntryBySubject: async (subject) => services.memory.findEntryBySubject(subject),
+      findMostRecentEntry: async () => services.memory.findMostRecentEntry(),
+    },
+    params,
+    options,
+  );
 }
 
 /**
@@ -149,24 +121,6 @@ export function parseEntryType(value: string): EntryType {
 }
 
 /**
- * Parses an optional expiry string into the agenr domain union.
- *
- * @param value - Candidate expiry value.
- * @returns Validated expiry value, or undefined when absent.
- */
-export function parseExpiry(value: string | undefined): Expiry | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (EXPIRY_LEVELS.includes(value as Expiry)) {
-    return value as Expiry;
-  }
-
-  throw new Error(`Unsupported expiry "${value}".`);
-}
-
-/**
  * Normalizes optional string arrays by trimming, deduplicating, and dropping empties.
  *
  * @param values - Candidate string values.
@@ -187,8 +141,7 @@ export function normalizeStringArray(values: string[] | undefined): string[] {
  * @returns Source-file label for stored entries.
  */
 export function buildSessionSourceFile(ctx: OpenClawPluginToolContext): string {
-  const target = ctx.sessionKey ?? ctx.sessionId ?? ctx.agentId ?? "unknown";
-  return `openclaw-session:${target}`;
+  return buildSharedSessionSourceFile(ctx, "openclaw-session");
 }
 
 /**
@@ -204,12 +157,7 @@ export function buildToolCallClaimSupport(
   toolName: string,
   observedAt: string,
 ): Pick<Entry, "claim_support_source_kind" | "claim_support_locator" | "claim_support_observed_at" | "claim_support_mode"> {
-  return {
-    claim_support_source_kind: "tool_call",
-    claim_support_locator: `${buildSessionSourceFile(ctx)}#${toolName}`,
-    claim_support_observed_at: observedAt,
-    claim_support_mode: "explicit",
-  };
+  return buildSharedToolCallClaimSupport(ctx, "openclaw-session", toolName, observedAt);
 }
 
 /**
@@ -244,30 +192,6 @@ export function logToolCall(
  */
 export function logToolFailure(logger: PluginLogger, toolName: string, ctx: OpenClawPluginToolContext, error: unknown): void {
   logger.warn(`[agenr] tool=${toolName} ${formatToolSessionContext(ctx)} failed: ${formatErrorMessage(error)}`);
-}
-
-/**
- * Formats a compact id-or-subject selector summary for tool call logs.
- *
- * @param id - Optional entry id.
- * @param subject - Optional entry subject.
- * @param last - Optional "last entry" selector.
- * @returns Log-friendly selector description.
- */
-export function formatTargetSelector(id?: string, subject?: string, last?: boolean): string {
-  if (last === true) {
-    return "last";
-  }
-
-  if (id) {
-    return `id:${JSON.stringify(id)}`;
-  }
-
-  if (subject) {
-    return `subject:${JSON.stringify(subject)}`;
-  }
-
-  return "unknown";
 }
 
 /**
@@ -380,32 +304,6 @@ export function sanitizeRetireToolParams(params: { id: string | undefined; subje
     ...(params.id ? { id: params.id } : {}),
     ...(params.subject ? { subject: params.subject } : {}),
     ...(params.reason !== undefined ? { reasonLength: params.reason.length } : {}),
-  };
-}
-
-/**
- * Sanitizes update parameters before debug logging.
- *
- * @param params - Parsed update-tool parameters.
- * @returns Redacted log payload.
- */
-export function sanitizeUpdateToolParams(params: {
-  id: string | undefined;
-  subject: string | undefined;
-  importance: number | undefined;
-  expiry: Expiry | undefined;
-  claimKey: string | undefined;
-  validFrom: string | undefined;
-  validTo: string | undefined;
-}): Record<string, unknown> {
-  return {
-    ...(params.id ? { id: params.id } : {}),
-    ...(params.subject ? { subject: params.subject } : {}),
-    ...(params.importance !== undefined ? { importance: params.importance } : {}),
-    ...(params.expiry !== undefined ? { expiry: params.expiry } : {}),
-    ...(params.claimKey !== undefined ? { hasClaimKey: true } : {}),
-    ...(params.validFrom !== undefined ? { hasValidFrom: true } : {}),
-    ...(params.validTo !== undefined ? { hasValidTo: true } : {}),
   };
 }
 
@@ -551,34 +449,6 @@ export function toolFailureResult(error: unknown) {
   return failedTextResult(formatErrorMessage(error), {
     status: "failed" as const,
   });
-}
-
-/**
- * Normalizes unknown tool failures into human-readable messages.
- *
- * @param error - Unknown failure value.
- * @returns Human-readable error message.
- */
-export function formatErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return String(error);
-}
-
-/**
- * Guards untrusted tool parameters and narrows them to a string-keyed object.
- *
- * @param value - Raw tool parameter payload.
- * @returns Object-like parameter payload.
- */
-export function asRecord(value: unknown): Record<string, unknown> {
-  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-
-  throw new Error("Tool parameters must be an object.");
 }
 
 /**
