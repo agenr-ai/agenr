@@ -3,6 +3,7 @@ import type { AgenrConfig } from "../../config.js";
 import { readConfig, resolveConfigPath, resolveDbPath } from "../../config.js";
 import { createOpenAICrossEncoder, resolveCrossEncoderApiKey } from "../cross-encoder/openai-cross-encoder.js";
 import { createDatabase } from "../db/client.js";
+import { createMemoryRepository } from "../db/memory-repository.js";
 import { createRecallAdapter } from "../db/recall-adapter.js";
 import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../embeddings.js";
 import { resolveModel } from "../llm.js";
@@ -38,8 +39,10 @@ export async function createAgenrSkelnServices(options: CreateAgenrSkelnServices
 
   return {
     dbPath,
+    entries: database,
     episodes: database,
     procedures: database,
+    memory: createMemoryRepository(database),
     recall,
     embeddingStatus: toPublicEmbeddingStatus(embeddingStatus),
     embedQuery: embeddingStatus.available

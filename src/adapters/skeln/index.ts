@@ -1,5 +1,6 @@
 import { createAgenrRecallTool } from "./recall-tool.js";
 import { createAgenrSkelnServices } from "./runtime.js";
+import { createAgenrUpdateTool } from "./update-tool.js";
 import type {
   AgenrSkelnMemoryProviderOptions,
   AgenrSkelnServices,
@@ -27,7 +28,6 @@ export type {
 /**
  * Creates a Skeln-compatible agenr memory provider.
  *
- * Phase 1 intentionally exposes only the read-only `agenr_recall` tool.
  * Session-start and before-turn context hooks are no-ops.
  *
  * @param options - Optional config, database, tool, and logger settings.
@@ -35,6 +35,7 @@ export type {
  */
 export function createAgenrSkelnMemoryProvider(options: AgenrSkelnMemoryProviderOptions = {}): SkelnMemoryProviderLike {
   const recallEnabled = options.tools?.recall ?? options.tools?.enabled ?? true;
+  const updateEnabled = options.tools?.update ?? options.tools?.enabled ?? true;
   let servicesPromise: Promise<AgenrSkelnServices> | undefined;
   let disposed = false;
 
@@ -66,7 +67,14 @@ export function createAgenrSkelnMemoryProvider(options: AgenrSkelnMemoryProvider
       return undefined;
     },
     tools(context: SkelnToolContextLike): SkelnToolLike[] {
-      return recallEnabled ? [createAgenrRecallTool(context, services)] : [];
+      const tools: SkelnToolLike[] = [];
+      if (recallEnabled) {
+        tools.push(createAgenrRecallTool(context, services));
+      }
+      if (updateEnabled) {
+        tools.push(createAgenrUpdateTool(context, services));
+      }
+      return tools;
     },
     async status(): Promise<SkelnProviderStatusLike> {
       try {

@@ -1,4 +1,5 @@
-import type { EpisodeDatabasePort, ProcedureDatabasePort, RecallPorts } from "../../core/ports.js";
+import type { MemoryRepository } from "../../app/memory/ports.js";
+import type { DatabasePort, EpisodeDatabasePort, ProcedureDatabasePort, RecallPorts } from "../../core/ports.js";
 
 /**
  * Configuration accepted by the Skeln memory provider factory.
@@ -8,10 +9,12 @@ export interface AgenrSkelnMemoryProviderOptions {
   configPath?: string;
   /** Optional database path override. */
   databasePath?: string;
-  /** Optional phase-1 tool enablement switches. */
+  /** Optional tool enablement switches. */
   tools?: {
     /** Enables the recall tool. Defaults to true. */
     recall?: boolean;
+    /** Enables the update tool. Defaults to true. */
+    update?: boolean;
     /** Compatibility alias for hosts that pass a single enabled flag. */
     enabled?: boolean;
   };
@@ -64,7 +67,7 @@ export interface SkelnProviderStatusLike {
 }
 
 /**
- * Structural memory context accepted by no-op phase-1 hooks.
+ * Structural memory context accepted by no-op hooks.
  */
 export interface SkelnMemoryContextLike {
   /** Current Skeln session id. */
@@ -181,10 +184,14 @@ export interface AgenrSkelnEmbeddingStatus {
 export interface AgenrSkelnServices {
   /** Resolved agenr database path. */
   dbPath: string;
+  /** DB-backed entry write and direct lookup port. */
+  entries: DatabasePort;
   /** DB-backed episode port. */
   episodes: EpisodeDatabasePort;
   /** DB-backed procedure port. */
   procedures: ProcedureDatabasePort;
+  /** DB-backed memory read-model repository. */
+  memory: MemoryRepository;
   /** DB-backed entry recall ports. */
   recall: RecallPorts;
   /** Embedding availability facts. */
