@@ -1,3 +1,5 @@
+export { resolveSessionIdentityKey } from "../../../app/plugin-runtime/session-tracking.js";
+
 /**
  * Derives one stable recall/session key from Skeln session identity and cwd.
  *
@@ -20,29 +22,4 @@ export function resolveSkelnSessionKey(sessionId: string, cwd: string): string {
   }
 
   return `skeln:session:${normalizedSessionId}:cwd:${normalizedCwd}`;
-}
-
-/**
- * Resolves one stable tracker key from Skeln session identifiers.
- *
- * Session ids are preferred because Skeln regenerates them on `/new` and
- * resume flows that start a fresh session file. Session keys remain the
- * fallback when the ephemeral session id is unavailable.
- *
- * @param sessionId - Ephemeral Skeln session identifier when available.
- * @param sessionKey - Stable agenr session key fallback.
- * @returns Tracker key, or `undefined` when no identity is available.
- */
-export function resolveSessionIdentityKey(sessionId?: string, sessionKey?: string): string | undefined {
-  const normalizedSessionId = sessionId?.trim();
-  if (normalizedSessionId) {
-    return `session:${normalizedSessionId}`;
-  }
-
-  const normalizedSessionKey = sessionKey?.trim();
-  if (normalizedSessionKey) {
-    return `key:${normalizedSessionKey}`;
-  }
-
-  return undefined;
 }

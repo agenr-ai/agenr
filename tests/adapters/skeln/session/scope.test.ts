@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  buildSkelnHostContext,
-  mergeSkelnHostContext,
-  normalizeSkelnScopeField,
-  toSkelnSessionScope,
-} from "../../../../src/adapters/skeln/session/scope.js";
+import { buildSkelnHostContext, mergeSkelnHostContext, normalizeSkelnScopeField, toSkelnSessionScope } from "../../../../src/adapters/skeln/session/scope.js";
 
 describe("buildSkelnHostContext", () => {
   it("builds host context with derived session key and optional git scope", () => {
@@ -60,19 +55,18 @@ describe("mergeSkelnHostContext", () => {
 });
 
 describe("toSkelnSessionScope", () => {
-  it("records previous session file facts from session_start", () => {
+  it("maps host context fields into session scope", () => {
     const hostContext = buildSkelnHostContext({
       sessionId: "session-2",
       cwd: "/tmp/project",
       gitRoot: "/tmp/project",
     });
 
-    expect(toSkelnSessionScope(hostContext, "session-2", "/tmp/old-session.jsonl")).toEqual({
+    expect(toSkelnSessionScope(hostContext, "session-2")).toEqual({
       sessionId: "session-2",
       sessionKey: "skeln:session:session-2:cwd:/tmp/project",
       cwd: "/tmp/project",
       gitRoot: "/tmp/project",
-      previousSessionFile: "/tmp/old-session.jsonl",
     });
   });
 });

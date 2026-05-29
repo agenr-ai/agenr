@@ -1,19 +1,12 @@
 import type { AgenrSkelnSessionScope } from "../types.js";
-import { resolveSessionIdentityKey } from "./identity.js";
+import {
+  createSessionStartTracker,
+  resolveSessionIdentityKey,
+  type SessionStartConsumeResult,
+  type SessionStartTracker,
+} from "../../../app/plugin-runtime/session-tracking.js";
 
-/**
- * Tracks which Skeln sessions have already consumed session-start recall.
- */
-export interface SessionStartTracker {
-  /**
-   * Marks a session as started and reports whether this is the first start signal.
-   *
-   * @param sessionId - Ephemeral Skeln session identifier when available.
-   * @param sessionKey - Stable agenr session key fallback.
-   * @returns Tracking facts for the attempted session-start event.
-   */
-  consume(sessionId?: string, sessionKey?: string): SessionStartConsumeResult;
-}
+export { createSessionStartTracker, resolveSessionIdentityKey, type SessionStartConsumeResult, type SessionStartTracker };
 
 /**
  * Tracks session-start scope facts recorded by Skeln lifecycle hooks.
@@ -40,54 +33,6 @@ export interface SkelnSessionScopeTracker {
    * @returns True when tracked scope was removed.
    */
   clear(sessionId?: string, sessionKey?: string): boolean;
-}
-
-/**
- * Structured tracking facts returned by the session-start tracker.
- */
-export interface SessionStartConsumeResult {
-  /**
-   * Reports whether the caller should run session-start recall.
-   */
-  isFirst: boolean;
-  /**
-   * Reports how many distinct session identities are currently tracked.
-   */
-  activeCount: number;
-}
-
-/**
- * Creates the per-process tracker used to avoid re-running session-start recall every turn.
- *
- * @returns Mutable session tracker for the Skeln adapter runtime.
- */
-export function createSessionStartTracker(): SessionStartTracker {
-  const seenSessionIdentities = new Set<string>();
-
-  return {
-    consume(sessionId, sessionKey) {
-      const identityKey = resolveSessionIdentityKey(sessionId, sessionKey);
-      if (!identityKey) {
-        return {
-          isFirst: true,
-          activeCount: seenSessionIdentities.size,
-        };
-      }
-
-      if (seenSessionIdentities.has(identityKey)) {
-        return {
-          isFirst: false,
-          activeCount: seenSessionIdentities.size,
-        };
-      }
-
-      seenSessionIdentities.add(identityKey);
-      return {
-        isFirst: true,
-        activeCount: seenSessionIdentities.size,
-      };
-    },
-  };
 }
 
 /**

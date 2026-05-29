@@ -1,6 +1,6 @@
 import type { OpenClawConfig, OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
-import type { PluginClaimSlotPolicyConfig } from "../plugin-runtime/types.js";
+import type { PluginInjectionMemoryPolicyConfig } from "../plugin-runtime/types.js";
 
 /**
  * Resolved store-nudge settings used by mid-session prompting.
@@ -43,30 +43,7 @@ export interface AgenrOpenClawDebugConfig {
 /**
  * Narrow memory-policy settings exposed through the OpenClaw plugin config.
  */
-export interface AgenrOpenClawMemoryPolicyConfig {
-  /** Read-time slot-policy overrides used by recall and trace surfaces. */
-  slotPolicies?: PluginClaimSlotPolicyConfig;
-  /** Session-start overrides for prompt-time memory injection behavior. */
-  sessionStart?: {
-    /** Enables or disables artifact-grounded "Relevant Durable Memory" injection. */
-    relevantDurableMemory?: boolean;
-  };
-  /** Before-turn overrides for proactive prompt-time memory injection behavior. */
-  beforeTurn?: {
-    /** Enables or disables the proactive before-turn patch path. */
-    enabled?: boolean;
-    /** Enables or disables proactive procedure suggestion inside the patch. */
-    procedureSuggestion?: boolean;
-    /** Normal durable-item cap before very-high-confidence expansion applies. */
-    maxDurableEntries?: number;
-    /** Durable-recall score threshold required before an entry can surface. */
-    recallThreshold?: number;
-    /** Durable-recall score threshold required before surfacing more than the normal cap. */
-    highConfidenceRecallThreshold?: number;
-    /** Procedure-recall score threshold required before a proactive procedure can surface. */
-    procedureThreshold?: number;
-  };
-}
+export type AgenrOpenClawMemoryPolicyConfig = PluginInjectionMemoryPolicyConfig;
 
 /**
  * Per-session in-memory state used for mid-session store nudging.

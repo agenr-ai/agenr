@@ -1,6 +1,6 @@
 import { createClaimExtractionFromAgenrConfig, createPluginMemoryRuntime, EMBEDDING_MODEL } from "../plugin-runtime/create-memory-runtime.js";
 import { resolvePluginRuntimeConfig } from "../plugin-runtime/resolve-paths.js";
-import type { PluginMemoryPolicyConfig, PluginMemoryRuntimeServices, ResolvedPluginPaths } from "../plugin-runtime/types.js";
+import type { PluginInjectionMemoryPolicyConfig, PluginMemoryRuntimeServices, ResolvedPluginPaths } from "../plugin-runtime/types.js";
 import type { AgenrConfig } from "../../config.js";
 
 /**
@@ -16,7 +16,7 @@ export interface AgenrSkelnConfig {
   /** Path to the agenr config.json file. */
   configPath?: string;
   /** Narrow runtime memory-policy overrides for claim-aware read surfaces. */
-  memoryPolicy?: PluginMemoryPolicyConfig;
+  memoryPolicy?: PluginInjectionMemoryPolicyConfig;
 }
 
 /**

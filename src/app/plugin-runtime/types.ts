@@ -22,6 +22,42 @@ export interface PluginMemoryPolicyConfig {
 }
 
 /**
+ * Session-start overrides for prompt-time memory injection behavior.
+ */
+export interface PluginSessionStartMemoryPolicyConfig {
+  /** Enables or disables artifact-grounded relevant durable memory injection. */
+  relevantDurableMemory?: boolean;
+}
+
+/**
+ * Before-turn overrides for proactive prompt-time memory injection behavior.
+ */
+export interface PluginBeforeTurnMemoryPolicyConfig {
+  /** Enables or disables the proactive before-turn patch path. */
+  enabled?: boolean;
+  /** Enables or disables proactive procedure suggestion inside the patch. */
+  procedureSuggestion?: boolean;
+  /** Normal durable-item cap before very-high-confidence expansion applies. */
+  maxDurableEntries?: number;
+  /** Durable-recall score threshold required before an entry can surface. */
+  recallThreshold?: number;
+  /** Durable-recall score threshold required before surfacing more than the normal cap. */
+  highConfidenceRecallThreshold?: number;
+  /** Procedure-recall score threshold required before a proactive procedure can surface. */
+  procedureThreshold?: number;
+}
+
+/**
+ * Memory-policy settings shared by host plugin adapters, including injection knobs.
+ */
+export interface PluginInjectionMemoryPolicyConfig extends PluginMemoryPolicyConfig {
+  /** Session-start overrides for prompt-time memory injection behavior. */
+  sessionStart?: PluginSessionStartMemoryPolicyConfig;
+  /** Before-turn overrides for proactive prompt-time memory injection behavior. */
+  beforeTurn?: PluginBeforeTurnMemoryPolicyConfig;
+}
+
+/**
  * Infrastructure path overrides shared by host plugin adapters.
  */
 export interface PluginPathConfig {

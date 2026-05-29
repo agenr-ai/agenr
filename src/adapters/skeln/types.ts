@@ -1,4 +1,4 @@
-import type { PluginClaimSlotPolicyConfig } from "../../app/plugin-runtime/types.js";
+import type { PluginInjectionMemoryPolicyConfig } from "../../app/plugin-runtime/types.js";
 
 export type { AgenrSkelnConfig, AgenrSkelnServices } from "../../app/skeln/runtime.js";
 
@@ -20,34 +20,6 @@ export interface SkelnHostContext {
 }
 
 /**
- * Narrow memory-policy settings exposed through the Skeln plugin config.
- */
-export interface AgenrSkelnMemoryPolicyConfig {
-  /** Read-time slot-policy overrides used by recall surfaces. */
-  slotPolicies?: PluginClaimSlotPolicyConfig;
-  /** Session-start overrides for prompt-time memory injection behavior. */
-  sessionStart?: {
-    /** Enables or disables artifact-grounded relevant durable memory injection. */
-    relevantDurableMemory?: boolean;
-  };
-  /** Before-turn overrides for proactive prompt-time memory injection behavior. */
-  beforeTurn?: {
-    /** Enables or disables the proactive before-turn patch path. */
-    enabled?: boolean;
-    /** Enables or disables proactive procedure suggestion inside the patch. */
-    procedureSuggestion?: boolean;
-    /** Normal durable-item cap before very-high-confidence expansion applies. */
-    maxDurableEntries?: number;
-    /** Durable-recall score threshold required before an entry can surface. */
-    recallThreshold?: number;
-    /** Durable-recall score threshold required before surfacing more than the normal cap. */
-    highConfidenceRecallThreshold?: number;
-    /** Procedure-recall score threshold required before a proactive procedure can surface. */
-    procedureThreshold?: number;
-  };
-}
-
-/**
  * Options accepted by {@link registerAgenrSkelnMemory}.
  */
 export interface RegisterAgenrSkelnMemoryOptions {
@@ -56,7 +28,7 @@ export interface RegisterAgenrSkelnMemoryOptions {
   /** Path to the agenr config.json file. */
   configPath?: string;
   /** Narrow runtime memory-policy overrides for claim-aware read surfaces. */
-  memoryPolicy?: AgenrSkelnMemoryPolicyConfig;
+  memoryPolicy?: PluginInjectionMemoryPolicyConfig;
   /**
    * Optional host callback that supplies Skeln-native scope facts. When absent,
    * the adapter derives cwd and sessionKey from the active extension context.
@@ -80,6 +52,4 @@ export interface AgenrSkelnSessionScope {
   gitBranch?: string;
   /** Optional project label when available. */
   project?: string;
-  /** Previous session file path recorded on session_start when supplied. */
-  previousSessionFile?: string;
 }

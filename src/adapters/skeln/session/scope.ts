@@ -41,12 +41,16 @@ export function buildSkelnHostContext(input: BuildSkelnHostContextInput): SkelnH
     throw new Error("Skeln cwd is required to build host context.");
   }
 
+  const gitRoot = normalizeSkelnScopeField(input.gitRoot);
+  const gitBranch = normalizeSkelnScopeField(input.gitBranch);
+  const project = normalizeSkelnScopeField(input.project);
+
   return {
     cwd,
     sessionKey: resolveSkelnSessionKey(input.sessionId, cwd),
-    ...(normalizeSkelnScopeField(input.gitRoot) ? { gitRoot: normalizeSkelnScopeField(input.gitRoot) } : {}),
-    ...(normalizeSkelnScopeField(input.gitBranch) ? { gitBranch: normalizeSkelnScopeField(input.gitBranch) } : {}),
-    ...(normalizeSkelnScopeField(input.project) ? { project: normalizeSkelnScopeField(input.project) } : {}),
+    ...(gitRoot ? { gitRoot } : {}),
+    ...(gitBranch ? { gitBranch } : {}),
+    ...(project ? { project } : {}),
   };
 }
 
@@ -91,10 +95,9 @@ export function mergeSkelnHostContext(defaults: SkelnHostContext, override?: Par
  *
  * @param hostContext - Effective host context for the active session.
  * @param sessionId - Ephemeral Skeln session identifier.
- * @param previousSessionFile - Optional predecessor session file from session_start.
  * @returns Resolved session scope for adapter hooks.
  */
-export function toSkelnSessionScope(hostContext: SkelnHostContext, sessionId: string, previousSessionFile?: string): AgenrSkelnSessionScope {
+export function toSkelnSessionScope(hostContext: SkelnHostContext, sessionId: string): AgenrSkelnSessionScope {
   const normalizedSessionId = sessionId.trim();
   if (!normalizedSessionId) {
     throw new Error("Skeln session id is required to build session scope.");
@@ -107,6 +110,5 @@ export function toSkelnSessionScope(hostContext: SkelnHostContext, sessionId: st
     ...(hostContext.gitRoot ? { gitRoot: hostContext.gitRoot } : {}),
     ...(hostContext.gitBranch ? { gitBranch: hostContext.gitBranch } : {}),
     ...(hostContext.project ? { project: hostContext.project } : {}),
-    ...(normalizeSkelnScopeField(previousSessionFile) ? { previousSessionFile: normalizeSkelnScopeField(previousSessionFile) } : {}),
   };
 }
