@@ -74,6 +74,47 @@ describe("handleAgenrSkelnBeforeAgentStart", () => {
     expect(result?.message).toBeUndefined();
   });
 
+  it("skips session-start injection when disabled by memory policy", async () => {
+    const coreEntry = createEntry({
+      id: "core-1",
+      subject: "branching workflow",
+      content: "Branch from local master before editing shared runtime code.",
+      expiry: "core",
+      importance: 10,
+    });
+    const services = createServices({
+      sessionStart: createSessionStartDeps([coreEntry]),
+      skelnConfig: {
+        memoryPolicy: {
+          sessionStart: {
+            enabled: false,
+          },
+        },
+      },
+    });
+    const sessionStartTracker = createSessionStartTracker();
+
+    const result = await handleAgenrSkelnBeforeAgentStart(
+      {
+        type: "before_agent_start",
+        prompt: "hello",
+        systemPrompt: "Base prompt.",
+      },
+      createContext([]),
+      {
+        servicesPromise: Promise.resolve(services),
+        sessionStartTracker,
+        resolveScope: async () => scope,
+      },
+    );
+
+    expect(result).toEqual({
+      systemPrompt: expect.stringContaining("## Memory Recall"),
+    });
+    expect(result?.message).toBeUndefined();
+    expect(extractText(result?.message)).not.toContain("Agenr Session Recall");
+  });
+
   it("skips before-turn injection when disabled by memory policy", async () => {
     const services = createServices({
       sessionStart: createSessionStartDeps([]),

@@ -29,6 +29,7 @@ export const DEFAULT_BEFORE_TURN_POLICY = {
 export function resolveSessionStartPolicy(memoryPolicy?: PluginInjectionMemoryPolicyConfig) {
   return {
     ...DEFAULT_SESSION_START_POLICY,
+    ...(memoryPolicy?.sessionStart?.coreMemory === false ? { maxCoreEntries: 0 } : {}),
     enableArtifactRecall: memoryPolicy?.sessionStart?.relevantDurableMemory !== false,
   };
 }

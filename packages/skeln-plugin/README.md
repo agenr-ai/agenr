@@ -20,6 +20,8 @@ Optional `memoryPolicy` accepts a JSON string with the same shape as the OpenCla
     "procedureSuggestion": false
   },
   "sessionStart": {
+    "enabled": false,
+    "coreMemory": false,
     "relevantDurableMemory": true
   },
   "slotPolicies": {

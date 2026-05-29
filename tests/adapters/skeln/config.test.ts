@@ -23,6 +23,8 @@ describe("Skeln memoryPolicy config", () => {
             procedureSuggestion: false,
           },
           sessionStart: {
+            enabled: false,
+            coreMemory: false,
             relevantDurableMemory: false,
           },
           slotPolicies: {
@@ -40,6 +42,8 @@ describe("Skeln memoryPolicy config", () => {
           procedureSuggestion: false,
         },
         sessionStart: {
+          enabled: false,
+          coreMemory: false,
           relevantDurableMemory: false,
         },
         slotPolicies: {

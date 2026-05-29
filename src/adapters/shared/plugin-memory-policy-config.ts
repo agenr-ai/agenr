@@ -78,9 +78,11 @@ function normalizeSessionStartMemoryPolicyConfig(
   }
 
   const errors: string[] = [];
+  const enabled = normalizeOptionalBoolean(value.enabled, "memoryPolicy.sessionStart.enabled", errors);
+  const coreMemory = normalizeOptionalBoolean(value.coreMemory, "memoryPolicy.sessionStart.coreMemory", errors);
   const relevantDurableMemory = normalizeOptionalBoolean(value.relevantDurableMemory, "memoryPolicy.sessionStart.relevantDurableMemory", errors);
 
-  const allowedKeys = new Set(["relevantDurableMemory"]);
+  const allowedKeys = new Set(["enabled", "coreMemory", "relevantDurableMemory"]);
   for (const key of Object.keys(value)) {
     if (!allowedKeys.has(key)) {
       errors.push(`unknown config field: memoryPolicy.sessionStart.${key}`);
@@ -93,7 +95,14 @@ function normalizeSessionStartMemoryPolicyConfig(
 
   return {
     ok: true,
-    value: relevantDurableMemory !== undefined ? { relevantDurableMemory } : undefined,
+    value:
+      enabled !== undefined || coreMemory !== undefined || relevantDurableMemory !== undefined
+        ? {
+            ...(enabled !== undefined ? { enabled } : {}),
+            ...(coreMemory !== undefined ? { coreMemory } : {}),
+            ...(relevantDurableMemory !== undefined ? { relevantDurableMemory } : {}),
+          }
+        : undefined,
   };
 }
 

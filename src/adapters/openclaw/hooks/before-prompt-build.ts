@@ -69,6 +69,11 @@ export async function handleAgenrBeforePromptBuild(
 
   try {
     const services = await params.servicesPromise;
+    if (services.pluginConfig.memoryPolicy?.sessionStart?.enabled === false) {
+      params.logger.info(`[agenr] session-start recall disabled by memoryPolicy for ${sessionContext}`);
+      return await resolveNonFirstTurnResult(event, ctx, sessionContext, params);
+    }
+
     const continuity = await resolveContinuity(ctx, params.tracker, services, params.logger);
     emitContinuityEvent(services.debugSink, ctx, continuity);
     void writeOpenClawPredecessorEpisode({

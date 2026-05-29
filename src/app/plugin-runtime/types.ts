@@ -25,6 +25,10 @@ export interface PluginMemoryPolicyConfig {
  * Session-start overrides for prompt-time memory injection behavior.
  */
 export interface PluginSessionStartMemoryPolicyConfig {
+  /** Enables or disables session-start memory injection. Defaults to true. */
+  enabled?: boolean;
+  /** Enables or disables always-on core memory injection at session start. Defaults to true. */
+  coreMemory?: boolean;
   /** Enables or disables artifact-grounded relevant durable memory injection. */
   relevantDurableMemory?: boolean;
 }

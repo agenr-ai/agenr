@@ -136,6 +136,8 @@ Example Skeln config fragment:
 
 Supported `memoryPolicy` keys match the shared plugin contract:
 
+- `memoryPolicy.sessionStart.enabled` - optional toggle for all session-start memory injection; defaults to true
+- `memoryPolicy.sessionStart.coreMemory` - optional toggle for always-on core memory injection at session start; defaults to true
 - `memoryPolicy.sessionStart.relevantDurableMemory` - optional toggle for artifact-grounded relevant durable memory during session-start injection
 - `memoryPolicy.beforeTurn.enabled` - optional toggle for the proactive before-turn patch path
 - `memoryPolicy.beforeTurn.procedureSuggestion` - optional toggle for the before-turn procedure section
@@ -267,6 +269,8 @@ Current session-start policy defaults:
 - `maxArtifactRecallEntries = 3`
 - `maxDurableEntries = 5`
 - `maxArtifactChars = 1200`
+- session-start memory injection enabled unless `memoryPolicy.sessionStart.enabled === false`
+- always-on core memory enabled unless `memoryPolicy.sessionStart.coreMemory === false`
 - artifact-grounded relevant durable memory enabled unless `memoryPolicy.sessionStart.relevantDurableMemory === false`
 
 Failures log a warning and still return the doctrine-augmented system prompt.

@@ -84,6 +84,10 @@ async function resolveSessionStartInjection(
 ): Promise<AgenrSkelnBeforeAgentStartResult | undefined> {
   try {
     const services = await servicesPromise;
+    if (services.skelnConfig.memoryPolicy?.sessionStart?.enabled === false) {
+      return { systemPrompt };
+    }
+
     const sessionStartPatch = await runSessionStart(
       {
         sessionKey: scope.sessionKey,
