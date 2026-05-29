@@ -42,7 +42,8 @@ The adapter is intentionally not a second memory brain. Durable memory, recall r
 - `src/adapters/openclaw/debug/` - adapter-owned JSONL debug sink (opt-in), event types, and live artifact builders shared with the eval seams.
 - `src/adapters/openclaw/hooks/before-prompt-build.ts` - session-start recall, before-turn recall, predecessor continuity injection, background predecessor episode write, and mid-session store nudge logic.
 - `src/adapters/openclaw/hooks/after-tool-call.ts` - mid-session tracker updates after `agenr_store`, `agenr_update`, and `agenr_retire`.
-- `src/adapters/openclaw/session/state.ts` - in-process session-start dedup plus per-session mid-session state.
+- `src/app/plugin-runtime/session-tracking.ts` - in-process session-start dedup shared by host plugins.
+- `src/adapters/openclaw/session/state.ts` - per-session mid-session store-nudge state.
 - `src/adapters/openclaw/session/continuity/` - predecessor resolution, continuity summary read/write, and recent-session tail rendering.
 - `src/adapters/openclaw/session/session-key-parser.ts`, `src/adapters/openclaw/session/session-id.ts`, `src/adapters/openclaw/session/session-registry.ts`, `src/adapters/openclaw/session/transcript-files.ts`, `src/adapters/openclaw/session/sessions-store-reader.ts`, and `src/adapters/openclaw/session/tui-lane.ts` - OpenClaw session identity and continuity helpers.
 - `src/adapters/openclaw/episode/episode-writer.ts` - best-effort predecessor episode ingest backed by the shared `app/episode-ingest` workflow.

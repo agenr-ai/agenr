@@ -1,5 +1,40 @@
 import type { AgenrSkelnSessionScope, SkelnHostContext } from "../types.js";
-import { resolveSkelnSessionKey } from "./identity.js";
+
+/**
+ * Skeln uses two session key shapes on purpose:
+ *
+ * - `resolveSkelnSessionKey` (this module) builds `skeln:session:…` recall/store
+ *   routing keys scoped to one Skeln session lifetime and cwd.
+ * - `resolveSessionIdentityKey` in `app/plugin-runtime/session-tracking` builds
+ *   `session:…` / `key:…` keys for in-process trackers such as
+ *   {@link createSkelnSessionScopeTracker}.
+ *
+ * Do not collapse these into one helper without revisiting recall provenance.
+ */
+
+/**
+ * Derives one stable recall/session key from Skeln session identity and cwd.
+ *
+ * The key scopes durable recall and store provenance to one Skeln session
+ * lifetime within one working directory.
+ *
+ * @param sessionId - Ephemeral Skeln session identifier.
+ * @param cwd - Active session working directory.
+ * @returns Stable session key used by agenr recall and store surfaces.
+ */
+export function resolveSkelnSessionKey(sessionId: string, cwd: string): string {
+  const normalizedSessionId = sessionId.trim();
+  const normalizedCwd = cwd.trim();
+  if (!normalizedSessionId) {
+    throw new Error("Skeln session id is required to derive a session key.");
+  }
+
+  if (!normalizedCwd) {
+    return `skeln:session:${normalizedSessionId}`;
+  }
+
+  return `skeln:session:${normalizedSessionId}:cwd:${normalizedCwd}`;
+}
 
 /**
  * Input facts used to build one {@link SkelnHostContext} without a Skeln host

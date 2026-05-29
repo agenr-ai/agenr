@@ -2,7 +2,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { createAgenrSkelnServices } from "../../../src/adapters/skeln/runtime.js";
+import { createAgenrSkelnServices } from "../../../src/app/skeln/runtime.js";
 import { createTempRoot, usePluginRuntimeEnv, writeJson } from "../../app/plugin-runtime/helpers.js";
 
 describe("createAgenrSkelnServices", () => {

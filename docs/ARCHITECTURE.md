@@ -52,6 +52,7 @@ src/
 │   ├── db/
 │   ├── files/
 │   ├── openclaw/
+│   ├── skeln/
 │   ├── surgeon/
 │   ├── embeddings.ts
 │   └── llm.ts

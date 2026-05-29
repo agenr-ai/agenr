@@ -15,7 +15,8 @@ import { buildStoreNudgeMessage } from "../format/nudge-format.js";
 import { formatAgenrSessionStartRecall } from "../format/recall-format.js";
 import { formatErrorMessage, formatSessionContext } from "../logging.js";
 import { resolvePredecessorContinuity as resolveContinuity } from "../session/continuity/index.js";
-import { createMidSessionTracker, type MidSessionTracker, type SessionStartTracker } from "../session/state.js";
+import type { SessionStartTracker } from "../../../app/plugin-runtime/session-tracking.js";
+import { createMidSessionTracker, type MidSessionTracker } from "../session/state.js";
 import type {
   AgenrOpenClawBeforePromptBuildDeps,
   AgenrOpenClawBeforePromptBuildEvent,

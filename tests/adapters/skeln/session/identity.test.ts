@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveSkelnSessionKey } from "../../../../src/adapters/skeln/session/identity.js";
+import { resolveSkelnSessionKey } from "../../../../src/adapters/skeln/session/scope.js";
 
 describe("resolveSkelnSessionKey", () => {
   it("derives a stable key from session id and cwd", () => {

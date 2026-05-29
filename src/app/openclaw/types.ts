@@ -1,7 +1,7 @@
-import type { AgenrDebugSink } from "../../adapters/openclaw/debug/sink.js";
 import type { AgenrConfig } from "../../config.js";
 import type { PluginMemoryRuntimeServices, ResolvedPluginPaths } from "../plugin-runtime/types.js";
 import type { AgenrOpenClawHost, AgenrOpenClawPluginConfig } from "./contract.js";
+import type { OpenClawPluginDebugSink } from "./debug-sink.js";
 
 export type { AgenrOpenClawHost, AgenrOpenClawPluginConfig } from "./contract.js";
 
@@ -14,5 +14,5 @@ export interface AgenrOpenClawServices extends PluginMemoryRuntimeServices {
   pluginConfig: AgenrOpenClawPluginConfig;
   agenrConfig: AgenrConfig;
   /** Opt-in JSONL debug sink shared by adapter paths that emit structured events. */
-  debugSink: AgenrDebugSink;
+  debugSink: OpenClawPluginDebugSink;
 }

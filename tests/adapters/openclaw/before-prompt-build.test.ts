@@ -21,7 +21,8 @@ import { createSessionStartRepository } from "../../../src/adapters/db/session-s
 import { createNoopAgenrDebugSink } from "../../../src/adapters/openclaw/debug/index.js";
 import { handleAgenrAfterToolCall } from "../../../src/adapters/openclaw/hooks/after-tool-call.js";
 import { handleAgenrBeforePromptBuild } from "../../../src/adapters/openclaw/hooks/before-prompt-build.js";
-import { createMidSessionTracker, createSessionStartTracker } from "../../../src/adapters/openclaw/session/state.js";
+import { createSessionStartTracker } from "../../../src/app/plugin-runtime/session-tracking.js";
+import { createMidSessionTracker } from "../../../src/adapters/openclaw/session/state.js";
 import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../src/adapters/openclaw/types.js";
 import { computeProcedureRevisionHash, computeProcedureSourceHash } from "../../../src/core/procedures/hashing.js";
 import { composeProcedureRecallText } from "../../../src/core/procedures/recall-text.js";

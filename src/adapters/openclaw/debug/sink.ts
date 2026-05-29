@@ -1,6 +1,7 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 
+import type { OpenClawPluginDebugSink } from "../../../app/openclaw/debug-sink.js";
 import type { ResolvedAgenrOpenClawDebugConfig } from "../config.js";
 import type { AgenrDebugEvent } from "./events.js";
 
@@ -12,7 +13,7 @@ import type { AgenrDebugEvent } from "./events.js";
  * call sites never need to null-check. When debug logging is disabled,
  * the returned instance is a no-op.
  */
-export interface AgenrDebugSink {
+export interface AgenrDebugSink extends OpenClawPluginDebugSink {
   /** Narrow feature flag exposed for adapter call sites. */
   readonly enabled: boolean;
   /** Resolved event-level the sink is configured to accept. */

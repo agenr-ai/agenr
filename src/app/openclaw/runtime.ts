@@ -3,7 +3,8 @@ import { resolveClaimExtractionConfig } from "../../config.js";
 import { createOpenClawLlmClient } from "../../adapters/openclaw/llm/openclaw-llm-client.js";
 import type { AgenrOpenClawHost, AgenrOpenClawPluginConfig } from "./contract.js";
 import { resolveDebugConfig, type ResolvedAgenrOpenClawDebugConfig } from "../../adapters/openclaw/config.js";
-import { createAgenrDebugSink, createNoopAgenrDebugSink, type AgenrDebugSink } from "../../adapters/openclaw/debug/index.js";
+import { createAgenrDebugSink, createNoopAgenrDebugSink } from "../../adapters/openclaw/debug/index.js";
+import type { OpenClawPluginDebugSink } from "./debug-sink.js";
 import path from "node:path";
 import { createPluginMemoryRuntime, EMBEDDING_MODEL } from "../plugin-runtime/create-memory-runtime.js";
 import { resolvePluginRuntimeConfig } from "../plugin-runtime/resolve-paths.js";
@@ -56,7 +57,7 @@ export async function createAgenrOpenClawServices(
  * @param pluginConfig - Plugin config supplied by OpenClaw.
  * @returns Debug sink ready to accept structured events.
  */
-function createDebugSink(openClaw: AgenrOpenClawHost, pluginConfig: AgenrOpenClawPluginConfig): AgenrDebugSink {
+function createDebugSink(openClaw: AgenrOpenClawHost, pluginConfig: AgenrOpenClawPluginConfig): OpenClawPluginDebugSink {
   const resolved = resolveDebugConfig(pluginConfig.debug);
   if (!resolved.enabled) {
     return createNoopAgenrDebugSink();

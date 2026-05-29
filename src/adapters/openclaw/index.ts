@@ -9,7 +9,8 @@ import { formatErrorMessage } from "./logging.js";
 import { buildAgenrMemoryFlushPlan } from "./memory/flush-plan.js";
 import { createAgenrMemoryRuntime } from "./memory/runtime.js";
 import { createAgenrOpenClawServices } from "./runtime.js";
-import { createMidSessionTracker, createSessionStartTracker } from "./session/state.js";
+import { createSessionStartTracker } from "../../app/plugin-runtime/session-tracking.js";
+import { createMidSessionTracker } from "./session/state.js";
 
 export default definePluginEntry({
   id: "agenr",

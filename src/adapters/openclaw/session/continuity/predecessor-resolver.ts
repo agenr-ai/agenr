@@ -7,7 +7,7 @@ import type { AgenrOpenClawHookContext, AgenrOpenClawRuntime } from "../../types
 import { deriveOpenClawSessionIdFromFilePath } from "../session-id.js";
 import { parseOpenClawSessionContinuityKey, type OpenClawSessionContinuityIdentity } from "../session-key-parser.js";
 import { readOpenClawSessionsStore, type OpenClawSessionsStoreEntry } from "../sessions-store-reader.js";
-import type { SessionStartTracker } from "../state.js";
+import type { SessionStartTracker } from "../../../../app/plugin-runtime/session-tracking.js";
 import type { OpenClawSessionPredecessor } from "./types.js";
 
 /**

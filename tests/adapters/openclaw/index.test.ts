@@ -48,9 +48,12 @@ vi.mock("../../../src/adapters/openclaw/runtime.js", () => ({
   createAgenrOpenClawServices: createAgenrOpenClawServicesMock,
 }));
 
+vi.mock("../../../src/app/plugin-runtime/session-tracking.js", () => ({
+  createSessionStartTracker: createSessionStartTrackerMock,
+}));
+
 vi.mock("../../../src/adapters/openclaw/session/state.js", () => ({
   createMidSessionTracker: createMidSessionTrackerMock,
-  createSessionStartTracker: createSessionStartTrackerMock,
 }));
 
 import agenrOpenClawPlugin from "../../../src/adapters/openclaw/index.js";

@@ -6,7 +6,7 @@ import { resolveStateDir as resolveOpenClawStateDir } from "openclaw/plugin-sdk/
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { resolveOpenClawSessionPredecessor } from "../../../../../src/adapters/openclaw/session/continuity/predecessor-resolver.js";
-import { createSessionStartTracker } from "../../../../../src/adapters/openclaw/session/state.js";
+import { createSessionStartTracker } from "../../../../../src/app/plugin-runtime/session-tracking.js";
 
 const tempPaths: string[] = [];
 const originalOpenClawStateDir = process.env.OPENCLAW_STATE_DIR;

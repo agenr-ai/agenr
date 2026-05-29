@@ -9,7 +9,7 @@ import { createMemoryRepository } from "../../../../src/adapters/db/memory-repos
 import { createSessionStartRepository } from "../../../../src/adapters/db/session-start-repository.js";
 import { createAgenrDebugSink } from "../../../../src/adapters/openclaw/debug/index.js";
 import { handleAgenrBeforePromptBuild } from "../../../../src/adapters/openclaw/hooks/before-prompt-build.js";
-import { createSessionStartTracker } from "../../../../src/adapters/openclaw/session/state.js";
+import { createSessionStartTracker } from "../../../../src/app/plugin-runtime/session-tracking.js";
 import { createAgenrRecallTool } from "../../../../src/adapters/openclaw/tools.js";
 import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../../src/adapters/openclaw/types.js";
 import type { EmbeddingPort, RecallPorts } from "../../../../src/core/ports.js";

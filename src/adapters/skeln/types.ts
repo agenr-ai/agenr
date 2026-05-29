@@ -1,7 +1,5 @@
 import type { PluginInjectionMemoryPolicyConfig } from "../../app/plugin-runtime/types.js";
 
-export type { AgenrSkelnConfig, AgenrSkelnServices } from "../../app/skeln/runtime.js";
-
 /**
  * Skeln-native scope facts gathered by the host extension and passed into the
  * agenr adapter for recall, store provenance, and session-start routing.

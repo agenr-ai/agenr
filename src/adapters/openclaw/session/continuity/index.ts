@@ -2,7 +2,7 @@ import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
 import { formatErrorMessage, formatSessionContext } from "../../logging.js";
 import type { AgenrOpenClawHookContext, AgenrOpenClawServices } from "../../types.js";
-import type { SessionStartTracker } from "../state.js";
+import type { SessionStartTracker } from "../../../../app/plugin-runtime/session-tracking.js";
 import { generateAndWriteOpenClawContinuitySummary } from "./continuity-summary-generator.js";
 import { readOpenClawContinuitySummaryFile } from "./continuity-summary-reader.js";
 import { resolveOpenClawSessionPredecessor } from "./predecessor-resolver.js";
