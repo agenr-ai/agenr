@@ -1,13 +1,10 @@
-import type { AgenrConfig } from "../../config.js";
-import { resolveClaimExtractionConfig } from "../../config.js";
 import { createOpenClawLlmClient } from "../../adapters/openclaw/llm/openclaw-llm-client.js";
 import type { AgenrOpenClawHost, AgenrOpenClawPluginConfig } from "./contract.js";
 import { resolveDebugConfig, type ResolvedAgenrOpenClawDebugConfig } from "../../adapters/openclaw/config.js";
 import { createAgenrDebugSink, createNoopAgenrDebugSink } from "../../adapters/openclaw/debug/index.js";
 import type { OpenClawPluginDebugSink } from "./debug-sink.js";
 import path from "node:path";
-import { createPluginMemoryRuntime, EMBEDDING_MODEL } from "../plugin-runtime/create-memory-runtime.js";
-import { resolvePluginRuntimeConfig } from "../plugin-runtime/resolve-paths.js";
+import { buildClaimExtractionRuntime, composeHostPluginServices, EMBEDDING_MODEL } from "../../adapters/plugin-runtime/index.js";
 import type { AgenrOpenClawServices } from "./types.js";
 
 export type { AgenrOpenClawServices } from "./types.js";
@@ -27,24 +24,26 @@ export async function createAgenrOpenClawServices(
     resolvePath?: (input: string) => string;
   },
 ): Promise<AgenrOpenClawServices> {
-  const { resolvedConfig, agenrConfig } = resolvePluginRuntimeConfig(config, options.resolvePath);
   const debugSink = createDebugSink(options.openClaw, config);
-  const runtimeServices = await createPluginMemoryRuntime({
-    dbPath: resolvedConfig.dbPath,
-    agenrConfig,
-    slotPolicies: config.memoryPolicy?.slotPolicies,
-    resolveClaimExtraction: (runtimeConfig) => createClaimExtractionFromOpenClaw(runtimeConfig, options.openClaw, config),
-    onBeforeClose: () => debugSink.close(),
-  });
 
-  return {
-    ...runtimeServices,
-    openClaw: options.openClaw,
-    config: resolvedConfig,
-    pluginConfig: config,
-    agenrConfig,
-    debugSink,
-  };
+  return composeHostPluginServices({
+    config,
+    resolvePath: options.resolvePath,
+    readSlotPolicies: (hostConfig) => hostConfig.memoryPolicy?.slotPolicies,
+    resolveClaimExtraction: ({ agenrConfig, hostConfig }) =>
+      buildClaimExtractionRuntime(agenrConfig, () =>
+        createOpenClawLlmClient(options.openClaw, hostConfig.claimExtractionModel, "claim extraction model override"),
+      ),
+    onBeforeClose: () => debugSink.close(),
+    extend: ({ resolvedConfig, agenrConfig, runtimeServices }) => ({
+      ...runtimeServices,
+      openClaw: options.openClaw,
+      config: resolvedConfig,
+      pluginConfig: config,
+      agenrConfig,
+      debugSink,
+    }),
+  });
 }
 
 /**
@@ -87,36 +86,5 @@ function ensureDebugLogPath(resolved: ResolvedAgenrOpenClawDebugConfig, openClaw
     };
   } catch {
     return { ...resolved, enabled: false };
-  }
-}
-
-/**
- * Resolves an optional claim-extraction runtime using OpenClaw's auth system.
- *
- * Claim extraction behavior comes from agenr config. The model override and
- * credentials come from OpenClaw's plugin config and provider auth profiles.
- *
- * @param config - Agenr runtime configuration used for claim-extraction behavior.
- * @param openClaw - OpenClaw host runtime used for model-auth resolution.
- * @param pluginConfig - Plugin config with an optional claim-extraction model override.
- * @returns Claim-extraction runtime when available, otherwise `undefined`.
- */
-async function createClaimExtractionFromOpenClaw(
-  config: AgenrConfig,
-  openClaw: AgenrOpenClawHost,
-  pluginConfig: AgenrOpenClawPluginConfig,
-): Promise<AgenrOpenClawServices["claimExtraction"]> {
-  const claimExtractionConfig = resolveClaimExtractionConfig(config);
-  if (!claimExtractionConfig.enabled) {
-    return undefined;
-  }
-
-  try {
-    return {
-      llm: await createOpenClawLlmClient(openClaw, pluginConfig.claimExtractionModel, "claim extraction model override"),
-      config: claimExtractionConfig,
-    };
-  } catch {
-    return undefined;
   }
 }

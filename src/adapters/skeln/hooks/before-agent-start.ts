@@ -9,7 +9,8 @@ import { formatAgenrSessionStartRecall } from "../../shared/injection/session-st
 import type { AgenrSkelnServices } from "../runtime.js";
 import type { AgenrSkelnSessionScope } from "../types.js";
 import { buildAgenrSkelnMemoryPromptSection } from "../format/prompt-section.js";
-import { extractRecentTurnsFromMessages, normalizePromptText } from "./message-text.js";
+import { resolveBeforeTurnPolicy, resolveSessionStartPolicy } from "../../shared/injection/policy.js";
+import { extractRecentTurnsFromMessages, normalizePromptText } from "../../shared/injection/message-text.js";
 
 /** Skeln before_agent_start event payload used by the agenr adapter. */
 export interface AgenrSkelnBeforeAgentStartEvent {
@@ -31,24 +32,6 @@ export interface AgenrSkelnBeforeAgentStartDeps {
   sessionStartTracker: SessionStartTracker;
   resolveScope: (context: ExtensionContext) => Promise<AgenrSkelnSessionScope>;
 }
-
-const DEFAULT_SESSION_START_POLICY = {
-  maxCoreEntries: 4,
-  maxArtifactRecallEntries: 3,
-  maxDurableEntries: 5,
-  maxArtifactChars: 1_200,
-} as const;
-
-const DEFAULT_BEFORE_TURN_POLICY = {
-  maxDurableEntries: 1,
-  maxHighConfidenceDurableEntries: 2,
-  maxRecentTurns: 2,
-  maxQueryChars: 450,
-  maxProcedureCandidates: 3,
-  recallThreshold: 0.6,
-  highConfidenceRecallThreshold: 0.85,
-  procedureThreshold: 0.72,
-} as const;
 
 /**
  * Runs agenr session-start or before-turn recall and injects the result into one Skeln turn.
@@ -104,7 +87,7 @@ async function resolveSessionStartInjection(
     const sessionStartPatch = await runSessionStart(
       {
         sessionKey: scope.sessionKey,
-        policy: resolveSessionStartPolicy(services),
+        policy: resolveSessionStartPolicy(services.skelnConfig.memoryPolicy),
       },
       services.sessionStart,
     );
@@ -141,15 +124,13 @@ async function resolveBeforeTurnInjection(
   }
 
   try {
-    const branchMessages = context.sessionManager
-      .getBranch()
-      .flatMap((entry) => (entry.type === "message" ? [entry.message] : []));
+    const branchMessages = context.sessionManager.getBranch().flatMap((entry) => (entry.type === "message" ? [entry.message] : []));
     const beforeTurnPatch = await runBeforeTurn(
       {
         sessionKey: scope.sessionKey,
         currentTurnText,
         recentTurns: extractRecentTurnsFromMessages(branchMessages),
-        policy: resolveBeforeTurnPolicy(services),
+        policy: resolveBeforeTurnPolicy(services.skelnConfig.memoryPolicy),
       },
       services.beforeTurn,
     );
@@ -166,32 +147,6 @@ async function resolveBeforeTurnInjection(
     logInjectionFailure("before-turn", scope, error);
     return undefined;
   }
-}
-
-function resolveSessionStartPolicy(services: AgenrSkelnServices) {
-  return {
-    ...DEFAULT_SESSION_START_POLICY,
-    enableArtifactRecall: services.skelnConfig.memoryPolicy?.sessionStart?.relevantDurableMemory !== false,
-  };
-}
-
-function resolveBeforeTurnPolicy(services: AgenrSkelnServices) {
-  return {
-    ...DEFAULT_BEFORE_TURN_POLICY,
-    enableProcedureSuggestion: services.skelnConfig.memoryPolicy?.beforeTurn?.procedureSuggestion !== false,
-    ...(services.skelnConfig.memoryPolicy?.beforeTurn?.maxDurableEntries !== undefined
-      ? { maxDurableEntries: services.skelnConfig.memoryPolicy.beforeTurn.maxDurableEntries }
-      : {}),
-    ...(services.skelnConfig.memoryPolicy?.beforeTurn?.recallThreshold !== undefined
-      ? { recallThreshold: services.skelnConfig.memoryPolicy.beforeTurn.recallThreshold }
-      : {}),
-    ...(services.skelnConfig.memoryPolicy?.beforeTurn?.highConfidenceRecallThreshold !== undefined
-      ? { highConfidenceRecallThreshold: services.skelnConfig.memoryPolicy.beforeTurn.highConfidenceRecallThreshold }
-      : {}),
-    ...(services.skelnConfig.memoryPolicy?.beforeTurn?.procedureThreshold !== undefined
-      ? { procedureThreshold: services.skelnConfig.memoryPolicy.beforeTurn.procedureThreshold }
-      : {}),
-  };
 }
 
 function logInjectionFailure(phase: "session-start" | "before-turn", scope: AgenrSkelnSessionScope, error: unknown): void {

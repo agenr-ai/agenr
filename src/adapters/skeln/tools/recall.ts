@@ -1,7 +1,13 @@
 import type { ExtensionAPI, ExtensionContext } from "skeln";
 
 import { formatUnifiedRecallResults } from "../../shared/recall-format.js";
-import { RECALL_TOOL_PARAMETERS, buildRecallToolDetails, parseRecallToolParams, runRecallMemoryTool } from "../../shared/memory-tools.js";
+import {
+  RECALL_TOOL_PARAMETERS,
+  buildRecallToolDetails,
+  buildRecallToolServices,
+  parseRecallToolParams,
+  runRecallMemoryTool,
+} from "../../shared/memory-tools.js";
 import type { AgenrSkelnServices } from "../runtime.js";
 import type { AgenrSkelnSessionScope } from "../types.js";
 import { SKELN_PARAM_READER, textToolResult, toolFailureResult, toolSchema } from "./shared.js";
@@ -28,7 +34,7 @@ export function registerAgenrSkelnRecallTool(
       try {
         const params = parseRecallToolParams(rawParams, SKELN_PARAM_READER);
         const [services, scope] = await Promise.all([servicesPromise, resolveScope(context)]);
-        const result = await runRecallMemoryTool(params, services, {
+        const result = await runRecallMemoryTool(params, buildRecallToolServices(services), {
           sessionKey: scope.sessionKey,
           slotPolicyConfig: services.skelnConfig.memoryPolicy?.slotPolicies,
         });

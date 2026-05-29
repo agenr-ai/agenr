@@ -1,16 +1,16 @@
 import type { CrossEncoderPort, EmbeddingPort } from "../../core/ports.js";
 import type { AgenrConfig } from "../../config.js";
-import { resolveClaimExtractionConfig } from "../../config.js";
-import { createOpenAICrossEncoder, resolveCrossEncoderApiKey } from "../../adapters/cross-encoder/openai-cross-encoder.js";
-import { createDatabase } from "../../adapters/db/client.js";
-import { createMemoryRepository } from "../../adapters/db/memory-repository.js";
-import { createSessionStartRepository } from "../../adapters/db/session-start-repository.js";
-import { createRecallAdapter } from "../../adapters/db/recall-adapter.js";
-import { createEmbeddingClient, EMBEDDING_MODEL, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
-import { createLlmClient, resolveLlmApiKey, resolveModel } from "../../adapters/llm.js";
-import type { BeforeTurnDeps } from "../before-turn/index.js";
-import { attachCrossEncoderPort } from "../evals/recall/attach-cross-encoder.js";
-import type { PluginClaimExtractionRuntime, PluginClaimSlotPolicyConfig, PluginEmbeddingStatus, PluginMemoryRuntimeServices } from "./types.js";
+import { createOpenAICrossEncoder, resolveCrossEncoderApiKey } from "../cross-encoder/openai-cross-encoder.js";
+import { createDatabase } from "../db/client.js";
+import { createMemoryRepository } from "../db/memory-repository.js";
+import { createSessionStartRepository } from "../db/session-start-repository.js";
+import { createRecallAdapter } from "../db/recall-adapter.js";
+import { createEmbeddingClient, EMBEDDING_MODEL, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../embeddings.js";
+import { resolveModel } from "../llm.js";
+import type { CreatePluginMemoryRuntimeInput, PluginMemoryRuntimeFactoryPort } from "../../app/plugin-runtime/ports.js";
+import type { PluginEmbeddingStatus, PluginMemoryRuntimeServices } from "../../app/plugin-runtime/types.js";
+import { attachCrossEncoderPort } from "../../app/evals/recall/attach-cross-encoder.js";
+import { createEmbedQuery } from "./embed-query.js";
 
 export { EMBEDDING_MODEL };
 
@@ -22,24 +22,11 @@ type ResolvedEmbeddingStatus = PluginEmbeddingStatus & {
 };
 
 /**
- * Input used to compose shared host plugin memory services.
+ * Adapter-owned factory that composes process-lifetime plugin memory services.
  */
-export interface CreatePluginMemoryRuntimeInput {
-  /** Resolved SQLite database path. */
-  dbPath: string;
-  /** Resolved agenr runtime configuration. */
-  agenrConfig: AgenrConfig;
-  /** Optional read-time slot-policy overrides for recall surfaces. */
-  slotPolicies?: PluginClaimSlotPolicyConfig;
-  /**
-   * Host-specific claim-extraction wiring.
-   *
-   * Return `undefined` when claim extraction should stay disabled.
-   */
-  resolveClaimExtraction?: (config: AgenrConfig) => Promise<PluginClaimExtractionRuntime | undefined> | PluginClaimExtractionRuntime | undefined;
-  /** Optional hook invoked before the database closes. */
-  onBeforeClose?: () => Promise<void>;
-}
+export const pluginMemoryRuntimeFactory: PluginMemoryRuntimeFactoryPort = {
+  createPluginMemoryRuntime,
+};
 
 /**
  * Creates the shared process-lifetime memory services used by host plugin runtimes.
@@ -55,7 +42,6 @@ export async function createPluginMemoryRuntime(input: CreatePluginMemoryRuntime
     : createUnavailableEmbeddingPort(embeddingStatus.error ?? "Embeddings are unavailable.");
   const baseRecall = createRecallAdapter(database, embedding);
   const recall = attachCrossEncoderPort(baseRecall, resolveCrossEncoder(input.agenrConfig));
-  const claimExtraction = input.resolveClaimExtraction ? await input.resolveClaimExtraction(input.agenrConfig) : undefined;
   const slotPolicies = input.slotPolicies;
   let closed = false;
 
@@ -79,7 +65,7 @@ export async function createPluginMemoryRuntime(input: CreatePluginMemoryRuntime
     },
     embedding,
     recall,
-    claimExtraction,
+    claimExtraction: input.claimExtraction,
     embeddingStatus: toPublicEmbeddingStatus(embeddingStatus),
     async close() {
       if (closed) {
@@ -102,7 +88,7 @@ export async function createPluginMemoryRuntime(input: CreatePluginMemoryRuntime
  * @param config - Agenr runtime configuration.
  * @returns Static embedding availability facts used by the runtime.
  */
-export function resolveEmbeddingStatus(config: AgenrConfig): ResolvedEmbeddingStatus {
+function resolveEmbeddingStatus(config: AgenrConfig): ResolvedEmbeddingStatus {
   const model = resolveEmbeddingModel(config);
   try {
     return {
@@ -129,60 +115,13 @@ export function resolveEmbeddingStatus(config: AgenrConfig): ResolvedEmbeddingSt
  * @param status - Internal embedding status that may include secrets.
  * @returns Public embedding status safe to share with runtime consumers.
  */
-export function toPublicEmbeddingStatus(status: ResolvedEmbeddingStatus): PluginEmbeddingStatus {
+function toPublicEmbeddingStatus(status: ResolvedEmbeddingStatus): PluginEmbeddingStatus {
   return {
     available: status.available,
     provider: status.provider,
     requestedProvider: status.requestedProvider,
     model: status.model,
     ...(status.error ? { error: status.error } : {}),
-  };
-}
-
-/**
- * Resolves an optional claim-extraction runtime using agenr config credentials.
- *
- * @param config - Agenr runtime configuration used for claim-extraction behavior.
- * @returns Claim-extraction runtime when available, otherwise `undefined`.
- */
-export function createClaimExtractionFromAgenrConfig(config: AgenrConfig): PluginClaimExtractionRuntime | undefined {
-  const claimExtractionConfig = resolveClaimExtractionConfig(config);
-  if (!claimExtractionConfig.enabled) {
-    return undefined;
-  }
-
-  try {
-    const { provider, modelId } = resolveModel(config, "claim");
-    const apiKey = resolveLlmApiKey(config, provider);
-    return {
-      llm: createLlmClient(provider, modelId, { apiKey }),
-      config: claimExtractionConfig,
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Creates a before-turn query embedder when embeddings are available.
- *
- * @param embedding - Embedding port used for query vectors.
- * @param available - Whether embedding credentials resolved successfully.
- * @returns Query embedder, or `undefined` when embeddings are unavailable.
- */
-function createEmbedQuery(embedding: EmbeddingPort, available: boolean): BeforeTurnDeps["embedQuery"] {
-  if (!available) {
-    return undefined;
-  }
-
-  return async (text: string) => {
-    const vectors = await embedding.embed([text]);
-    const vector = vectors[0];
-    if (!vector) {
-      throw new Error("Embedding provider returned no vector for the query.");
-    }
-
-    return vector;
   };
 }
 

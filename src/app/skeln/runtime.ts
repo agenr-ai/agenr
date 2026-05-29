@@ -1,6 +1,5 @@
-import { createClaimExtractionFromAgenrConfig, createPluginMemoryRuntime, EMBEDDING_MODEL } from "../plugin-runtime/create-memory-runtime.js";
-import { resolvePluginRuntimeConfig } from "../plugin-runtime/resolve-paths.js";
-import type { PluginInjectionMemoryPolicyConfig, PluginMemoryRuntimeServices, ResolvedPluginPaths } from "../plugin-runtime/types.js";
+import { composeHostPluginServices, createClaimExtractionFromAgenrConfig, EMBEDDING_MODEL } from "../../adapters/plugin-runtime/index.js";
+import type { PluginInjectionMemoryPolicyConfig, PluginMemoryRuntimeServices, PluginPathConfig, ResolvedPluginPaths } from "../plugin-runtime/types.js";
 import type { AgenrConfig } from "../../config.js";
 
 /**
@@ -10,11 +9,7 @@ import type { AgenrConfig } from "../../config.js";
  * config file on disk. Embeddings and claim extraction resolve from agenr
  * config credentials, not Skeln host auth.
  */
-export interface AgenrSkelnConfig {
-  /** Path to the shared agenr SQLite database. */
-  dbPath?: string;
-  /** Path to the agenr config.json file. */
-  configPath?: string;
+export interface AgenrSkelnConfig extends PluginPathConfig {
   /** Narrow runtime memory-policy overrides for claim-aware read surfaces. */
   memoryPolicy?: PluginInjectionMemoryPolicyConfig;
 }
@@ -37,18 +32,15 @@ export { EMBEDDING_MODEL };
  * @returns Shared services reused for the process lifetime.
  */
 export async function createAgenrSkelnServices(config: AgenrSkelnConfig = {}): Promise<AgenrSkelnServices> {
-  const { resolvedConfig, agenrConfig } = resolvePluginRuntimeConfig(config);
-  const runtimeServices = await createPluginMemoryRuntime({
-    dbPath: resolvedConfig.dbPath,
-    agenrConfig,
-    slotPolicies: config.memoryPolicy?.slotPolicies,
-    resolveClaimExtraction: createClaimExtractionFromAgenrConfig,
+  return composeHostPluginServices({
+    config,
+    readSlotPolicies: (hostConfig) => hostConfig.memoryPolicy?.slotPolicies,
+    resolveClaimExtraction: ({ agenrConfig }) => createClaimExtractionFromAgenrConfig(agenrConfig),
+    extend: ({ config: hostConfig, resolvedConfig, agenrConfig, runtimeServices }) => ({
+      ...runtimeServices,
+      config: resolvedConfig,
+      skelnConfig: hostConfig,
+      agenrConfig,
+    }),
   });
-
-  return {
-    ...runtimeServices,
-    config: resolvedConfig,
-    skelnConfig: config,
-    agenrConfig,
-  };
 }

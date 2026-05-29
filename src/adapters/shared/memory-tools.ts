@@ -5,7 +5,7 @@ import { storeEntriesDetailed } from "../../core/store/pipeline.js";
 import { validateTemporalValidityRange } from "../../core/temporal-validity.js";
 import { ENTRY_TYPES, type EntryType, type Expiry } from "../../core/types.js";
 import type { MemoryRepository } from "../../app/memory/ports.js";
-import type { PluginClaimExtractionRuntime, PluginEmbeddingStatus } from "../../app/plugin-runtime/types.js";
+import type { PluginClaimExtractionRuntime, PluginEmbeddingStatus, PluginMemoryRuntimeServices } from "../../app/plugin-runtime/types.js";
 import { runUnifiedRecall, type UnifiedRecallMode, type UnifiedRecallResult } from "../../app/recall/index.js";
 import { buildSessionSourceFile, buildToolCallClaimSupport, type SessionSourcePrefix, type ToolSessionLike } from "./claim-support.js";
 import {
@@ -14,13 +14,11 @@ import {
   RECALL_MODES,
   UPDATE_EXPIRY_DESCRIPTION,
   asRecord,
-  formatTargetSelector,
   normalizeStringArray,
   parseEntryType,
   parseEntryTypes,
   parseExpiry,
   parseRecallMode,
-  sanitizeUpdateToolParams,
 } from "./entry-tools.js";
 import { resolveTargetEntry } from "./resolve-target.js";
 
@@ -97,8 +95,24 @@ export interface RecallMemoryToolServices {
   episodes: EpisodeDatabasePort;
   procedures: ProcedureDatabasePort;
   recall: RecallPorts;
-  embedding: EmbeddingPort;
   embeddingStatus: PluginEmbeddingStatus;
+  embedQuery?: (text: string) => Promise<number[]>;
+}
+
+/**
+ * Builds recall-tool services from shared plugin runtime services.
+ *
+ * @param services - Shared plugin runtime services from a host adapter.
+ * @returns Recall-tool service bundle with canonical embedQuery wiring.
+ */
+export function buildRecallToolServices(services: PluginMemoryRuntimeServices): RecallMemoryToolServices {
+  return {
+    episodes: services.episodes,
+    procedures: services.procedures,
+    recall: services.recall,
+    embeddingStatus: services.embeddingStatus,
+    embedQuery: services.beforeTurn.embedQuery,
+  };
 }
 
 /** Shared agenr_store parameter schema. */
@@ -403,12 +417,7 @@ export async function runRecallMemoryTool(
       embeddingError: services.embeddingStatus.error,
       claimSlotPolicyConfig: options.slotPolicyConfig,
       debugLog: options.debugLog,
-      embedQuery: services.embeddingStatus.available
-        ? async (text: string) => {
-            const vectors = await services.embedding.embed([text]);
-            return vectors[0] ?? [];
-          }
-        : undefined,
+      embedQuery: services.embedQuery,
       recallOptions: {
         slotPolicyConfig: options.slotPolicyConfig,
       },
@@ -425,7 +434,6 @@ export async function runUpdateMemoryTool(
     sourcePrefix: SessionSourcePrefix;
     successDetails?: Record<string, unknown>;
     failureDetails?: Record<string, unknown>;
-    includeAuditDetails?: boolean;
   },
 ): Promise<MemoryToolOutcome> {
   const claimSupport =
@@ -499,20 +507,6 @@ export async function runUpdateMemoryTool(
     ...(params.validFrom !== undefined ? { validFrom: normalizedValidFrom } : {}),
     ...(params.validTo !== undefined ? { validTo: normalizedValidTo } : {}),
     ...options.successDetails,
-    ...(options.includeAuditDetails
-      ? {
-          target: formatTargetSelector(params.id, params.subject),
-          sanitized: sanitizeUpdateToolParams({
-            id: params.id,
-            subject: params.subject,
-            importance: params.importance,
-            expiry: params.expiry,
-            claimKey: normalizedClaimKeyUpdate?.claimKey,
-            validFrom: params.validFrom,
-            validTo: params.validTo,
-          }),
-        }
-      : {}),
   });
 }
 

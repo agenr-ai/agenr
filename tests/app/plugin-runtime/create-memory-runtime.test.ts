@@ -2,7 +2,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import * as embeddings from "../../../src/adapters/embeddings.js";
-import { createPluginMemoryRuntime } from "../../../src/app/plugin-runtime/create-memory-runtime.js";
+import { createPluginMemoryRuntime } from "../../../src/adapters/plugin-runtime/create-memory-runtime.js";
 import { resolvePluginRuntimeConfig } from "../../../src/app/plugin-runtime/resolve-paths.js";
 import { createTempRoot, usePluginRuntimeEnv, writeJson } from "./helpers.js";
 
@@ -279,9 +279,7 @@ describe("createPluginMemoryRuntime", () => {
       agenrConfig,
     });
 
-    await expect(services.beforeTurn.embedQuery?.("remember this")).rejects.toThrow(
-      "Embedding provider returned no vector for the query.",
-    );
+    await expect(services.beforeTurn.embedQuery?.("remember this")).rejects.toThrow("Embedding provider returned no vector for the query.");
 
     await services.close();
   });

@@ -6,12 +6,8 @@ import type { Entry } from "../../../core/types.js";
 import { truncate } from "../../shared/memory-tool-format.js";
 import type { MemoryToolOutcome, MemoryToolParamReader } from "../../shared/memory-tools.js";
 import {
-  buildSessionSourceFile as buildSharedSessionSourceFile,
-  buildToolCallClaimSupport as buildSharedToolCallClaimSupport,
-} from "../../shared/claim-support.js";
-import {
-  EXPIRY_DESCRIPTION,
   ENTRY_TYPE_DESCRIPTION,
+  EXPIRY_DESCRIPTION,
   RECALL_MODES,
   UPDATE_EXPIRY_DESCRIPTION,
   asRecord,
@@ -92,32 +88,6 @@ export async function resolveTargetEntry(
     params,
     options,
   );
-}
-
-/**
- * Builds a stable source-file provenance label from the OpenClaw session context.
- *
- * @param ctx - Tool invocation context.
- * @returns Source-file label for stored entries.
- */
-export function buildSessionSourceFile(ctx: OpenClawPluginToolContext): string {
-  return buildSharedSessionSourceFile(ctx, "openclaw-session");
-}
-
-/**
- * Builds conservative explicit tool-call support metadata for claim-key preservation.
- *
- * @param ctx - Tool invocation context.
- * @param toolName - Tool that carried the explicit claim key.
- * @param observedAt - Observation timestamp to persist alongside the support metadata.
- * @returns Support metadata suitable for explicit manual claim-key paths.
- */
-export function buildToolCallClaimSupport(
-  ctx: OpenClawPluginToolContext,
-  toolName: string,
-  observedAt: string,
-): Pick<Entry, "claim_support_source_kind" | "claim_support_locator" | "claim_support_observed_at" | "claim_support_mode"> {
-  return buildSharedToolCallClaimSupport(ctx, "openclaw-session", toolName, observedAt);
 }
 
 /**

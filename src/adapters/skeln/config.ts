@@ -4,9 +4,7 @@ import type { PluginInjectionMemoryPolicyConfig } from "../../app/plugin-runtime
 import { normalizePluginInjectionMemoryPolicyConfig } from "../shared/plugin-memory-policy-config.js";
 
 /** Result of parsing the Skeln `memoryPolicy` extension setting. */
-export type SkelnMemoryPolicySettingResult =
-  | { ok: true; value: PluginInjectionMemoryPolicyConfig | undefined }
-  | { ok: false; error: string };
+export type SkelnMemoryPolicySettingResult = { ok: true; value: PluginInjectionMemoryPolicyConfig | undefined } | { ok: false; error: string };
 
 /**
  * Parses one JSON-encoded `memoryPolicy` extension setting.
@@ -70,8 +68,7 @@ export function mergeSkelnMemoryPolicy(
   }
 
   const slotPolicies = mergeSlotPolicies(fromSettings.slotPolicies, fromOptions.slotPolicies);
-  const sessionStart =
-    fromSettings.sessionStart || fromOptions.sessionStart ? { ...fromSettings.sessionStart, ...fromOptions.sessionStart } : undefined;
+  const sessionStart = fromSettings.sessionStart || fromOptions.sessionStart ? { ...fromSettings.sessionStart, ...fromOptions.sessionStart } : undefined;
   const beforeTurn = fromSettings.beforeTurn || fromOptions.beforeTurn ? { ...fromSettings.beforeTurn, ...fromOptions.beforeTurn } : undefined;
 
   if (!slotPolicies && !sessionStart && !beforeTurn) {

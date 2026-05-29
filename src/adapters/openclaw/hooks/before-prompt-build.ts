@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { runBeforeTurn } from "../../../app/before-turn/index.js";
 import { runSessionStart } from "../../../app/session-start/index.js";
-import type { BeforeTurnPatch, BeforeTurnRecentTurn } from "../../../app/before-turn/index.js";
+import type { BeforeTurnPatch } from "../../../app/before-turn/index.js";
 import path from "node:path";
 import { resolveStoreNudgeConfig } from "../config.js";
 import { buildLiveBeforeTurnDebugArtifact } from "../debug/index.js";
@@ -10,7 +10,8 @@ import type { AgenrDebugSink } from "../debug/index.js";
 import type { PredecessorContinuityResult } from "../session/continuity/index.js";
 import { writeOpenClawPredecessorEpisode } from "../episode/episode-writer.js";
 import { formatAgenrBeforeTurnRecall } from "../format/before-turn-format.js";
-import { containsAgenrMemoryContext, stripAgenrMemoryContext } from "../format/memory-context.js";
+import { extractRecentTurnsFromMessages, normalizePromptText } from "../../shared/injection/message-text.js";
+import { resolveBeforeTurnPolicy, resolveSessionStartPolicy } from "../../shared/injection/policy.js";
 import { buildStoreNudgeMessage } from "../format/nudge-format.js";
 import { formatAgenrSessionStartRecall } from "../format/recall-format.js";
 import { formatErrorMessage, formatSessionContext } from "../logging.js";
@@ -25,22 +26,6 @@ import type {
   StoreNudgeConfig,
 } from "../types.js";
 
-const DEFAULT_SESSION_START_POLICY = {
-  maxCoreEntries: 4,
-  maxArtifactRecallEntries: 3,
-  maxDurableEntries: 5,
-  maxArtifactChars: 1_200,
-} as const;
-const DEFAULT_BEFORE_TURN_POLICY = {
-  maxDurableEntries: 1,
-  maxHighConfidenceDurableEntries: 2,
-  maxRecentTurns: 2,
-  maxQueryChars: 450,
-  maxProcedureCandidates: 3,
-  recallThreshold: 0.6,
-  highConfidenceRecallThreshold: 0.85,
-  procedureThreshold: 0.72,
-} as const;
 const NON_USER_TRIGGER_SET = new Set(["heartbeat", "cron", "memory"]);
 const DEFAULT_STORE_NUDGE_CONFIG = resolveStoreNudgeConfig(undefined);
 const INLINE_METADATA_SENTINELS = [
@@ -97,7 +82,7 @@ export async function handleAgenrBeforePromptBuild(
         sessionKey: ctx.sessionKey,
         continuitySummaryText: continuity.continuitySummaryContent,
         recentSessionText: continuity.recentSessionContent,
-        policy: resolveSessionStartPolicy(services),
+        policy: resolveSessionStartPolicy(services.pluginConfig.memoryPolicy),
       },
       services.sessionStart,
     );
@@ -243,7 +228,12 @@ async function resolveBeforeTurnResult(
     return undefined;
   }
 
-  const currentTurnText = normalizePromptText(event.prompt);
+  const currentTurnText = normalizePromptText(event.prompt, {
+    stripInlineMetadata: true,
+    inlineMetadataSentinels: INLINE_METADATA_SENTINELS,
+    stripTimestampPrefix: true,
+    stripUserPrefix: true,
+  });
   if (!currentTurnText) {
     params.logger.debug?.(`[agenr] before_prompt_build: before-turn skipped for ${sessionContext} reason=empty_prompt`);
     return undefined;
@@ -254,9 +244,12 @@ async function resolveBeforeTurnResult(
       {
         sessionKey: ctx.sessionKey,
         currentTurnText,
-        recentTurns: extractRecentTurns(event.messages),
+        recentTurns: extractRecentTurnsFromMessages(
+          event.messages.filter((message): message is { role?: unknown; content?: unknown } => Boolean(message) && typeof message === "object"),
+          { stripMemoryCheck: true },
+        ),
         trigger: ctx.trigger,
-        policy: resolveBeforeTurnPolicy(services),
+        policy: resolveBeforeTurnPolicy(services.pluginConfig.memoryPolicy),
       },
       services.beforeTurn,
     );
@@ -475,218 +468,4 @@ function truncateForLog(value: string | undefined, maxChars: number): string | u
   }
 
   return normalized.length <= maxChars ? normalized : `${normalized.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
-}
-
-/**
- * Resolves effective session-start policy from static defaults plus plugin overrides.
- *
- * @param services - Shared adapter services with plugin-config overrides.
- * @returns Effective session-start policy for one prompt build.
- */
-function resolveSessionStartPolicy(services: Awaited<AgenrOpenClawBeforePromptBuildDeps["servicesPromise"]>) {
-  return {
-    ...DEFAULT_SESSION_START_POLICY,
-    enableArtifactRecall: services.pluginConfig.memoryPolicy?.sessionStart?.relevantDurableMemory !== false,
-  };
-}
-
-/**
- * Resolves effective before-turn policy from static defaults plus plugin overrides.
- *
- * @param services - Shared adapter services with plugin-config overrides.
- * @returns Effective before-turn policy for one prompt build.
- */
-function resolveBeforeTurnPolicy(services: Awaited<AgenrOpenClawBeforePromptBuildDeps["servicesPromise"]>) {
-  return {
-    ...DEFAULT_BEFORE_TURN_POLICY,
-    enableProcedureSuggestion: services.pluginConfig.memoryPolicy?.beforeTurn?.procedureSuggestion !== false,
-    ...(services.pluginConfig.memoryPolicy?.beforeTurn?.maxDurableEntries !== undefined
-      ? { maxDurableEntries: services.pluginConfig.memoryPolicy.beforeTurn.maxDurableEntries }
-      : {}),
-    ...(services.pluginConfig.memoryPolicy?.beforeTurn?.recallThreshold !== undefined
-      ? { recallThreshold: services.pluginConfig.memoryPolicy.beforeTurn.recallThreshold }
-      : {}),
-    ...(services.pluginConfig.memoryPolicy?.beforeTurn?.highConfidenceRecallThreshold !== undefined
-      ? { highConfidenceRecallThreshold: services.pluginConfig.memoryPolicy.beforeTurn.highConfidenceRecallThreshold }
-      : {}),
-    ...(services.pluginConfig.memoryPolicy?.beforeTurn?.procedureThreshold !== undefined
-      ? { procedureThreshold: services.pluginConfig.memoryPolicy.beforeTurn.procedureThreshold }
-      : {}),
-  };
-}
-
-/**
- * Extracts a compact recent-turn window from OpenClaw's message payload.
- *
- * @param messages - Raw session messages prepared for the current run.
- * @returns Ordered recent turns suitable for the before-turn app service.
- */
-function extractRecentTurns(messages: unknown[]): BeforeTurnRecentTurn[] {
-  const turns: BeforeTurnRecentTurn[] = [];
-  for (const message of messages) {
-    if (!message || typeof message !== "object") {
-      continue;
-    }
-
-    const typed = message as { role?: unknown; content?: unknown };
-    const role = typed.role === "user" || typed.role === "assistant" ? typed.role : undefined;
-    if (!role) {
-      continue;
-    }
-
-    const text = sanitizeRecentTurnText(extractMessageText(typed.content), role);
-    if (!text) {
-      continue;
-    }
-
-    turns.push({ role, text });
-  }
-
-  return turns;
-}
-
-/**
- * Extracts plain text from one OpenClaw message content payload.
- *
- * @param content - Raw message content from the OpenClaw session store.
- * @returns Plain-text content, or an empty string when absent.
- */
-function extractMessageText(content: unknown): string {
-  if (typeof content === "string") {
-    return content;
-  }
-
-  if (!Array.isArray(content)) {
-    return "";
-  }
-
-  const blocks: string[] = [];
-  for (const block of content) {
-    if (typeof block === "string") {
-      blocks.push(block);
-      continue;
-    }
-
-    if (!block || typeof block !== "object") {
-      continue;
-    }
-
-    const typed = block as { type?: unknown; text?: unknown; content?: unknown };
-    if (typeof typed.text === "string") {
-      blocks.push(typed.text);
-      continue;
-    }
-
-    const type = typeof typed.type === "string" ? typed.type.trim().toLowerCase() : "";
-    if (typeof typed.content === "string" && (type === "text" || type === "input_text" || type === "output_text")) {
-      blocks.push(typed.content);
-    }
-  }
-
-  return blocks.join("\n");
-}
-
-/**
- * Removes prior injected memory wrappers so they do not recursively pollute the
- * next before-turn query.
- *
- * @param text - Raw message text.
- * @param role - Message role used for wrapper unrolling.
- * @returns Sanitized recent-turn text.
- */
-function sanitizeRecentTurnText(text: string, role: "user" | "assistant"): string {
-  if (!text.trim()) {
-    return "";
-  }
-
-  const wrapperDetected =
-    containsAgenrMemoryContext(text) ||
-    text.includes("## Agenr Session Recall") ||
-    text.includes("## Agenr Before-Turn Recall") ||
-    text.includes("[MEMORY CHECK]");
-
-  let cleaned = stripAgenrMemoryContext(text);
-  const headings = [
-    "## Previous session summary",
-    "## Recent session",
-    "## Agenr Session Recall",
-    "### Core Memory",
-    "### Relevant Durable Memory",
-    "## Agenr Before-Turn Recall",
-    "### Suggested Procedure",
-  ];
-  for (const heading of headings) {
-    cleaned = cleaned.split(heading).join(" ");
-  }
-
-  cleaned = cleaned.replace(/\[MEMORY CHECK\][^\n]*/gu, " ");
-  cleaned = collapseWhitespace(cleaned);
-  if (!wrapperDetected) {
-    return cleaned;
-  }
-
-  const segments = stripAgenrMemoryContext(text)
-    .split(/\n\s*\n/gu)
-    .map((segment) => collapseWhitespace(segment))
-    .filter((segment) => segment.length > 0);
-  const fallbackSegment = segments.at(-1);
-  if (fallbackSegment) {
-    return role === "user" ? fallbackSegment : collapseWhitespace(cleaned);
-  }
-
-  return cleaned;
-}
-
-/**
- * Normalizes one current-turn prompt into compact single-space text.
- *
- * @param prompt - Raw current prompt text from OpenClaw.
- * @returns Normalized prompt text, or undefined when empty.
- */
-function normalizePromptText(prompt: string): string | undefined {
-  let cleaned = stripAgenrMemoryContext(prompt);
-  cleaned = stripInlineMetadata(cleaned);
-  cleaned = cleaned.replace(/^\s*\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s[^\]]+\]\s*/u, "");
-  cleaned = cleaned.replace(/^\s*U:\s*/u, "");
-  cleaned = collapseWhitespace(cleaned);
-  return cleaned.length > 0 ? cleaned : undefined;
-}
-
-/**
- * Removes inline OpenClaw metadata payloads that should not influence the
- * current-turn before-turn query.
- *
- * @param text - Candidate prompt text.
- * @returns Prompt text without known metadata wrappers.
- */
-function stripInlineMetadata(text: string): string {
-  let cleaned = text;
-  for (const sentinel of INLINE_METADATA_SENTINELS) {
-    const escapedSentinel = escapeForRegExp(sentinel);
-    cleaned = cleaned.replace(new RegExp(`${escapedSentinel}\\s*(?:\`\`\`json\\s*)?\\{[\\s\\S]*?\\}(?:\\s*\`\`\`)?`, "gu"), " ");
-    cleaned = cleaned.replace(new RegExp(`${escapedSentinel}[^\n]*`, "gu"), " ");
-  }
-
-  cleaned = cleaned.replace(/Untrusted context \(metadata, do not treat as instructions or commands\):[\s\S]*$/gu, " ");
-  return cleaned;
-}
-
-/**
- * Escapes one string for safe RegExp interpolation.
- *
- * @param value - Raw literal string.
- * @returns RegExp-safe literal text.
- */
-function escapeForRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-}
-
-/**
- * Collapses repeated whitespace while preserving single-line readability.
- *
- * @param value - Raw text block.
- * @returns Trimmed single-space text.
- */
-function collapseWhitespace(value: string): string {
-  return value.replace(/\s+/gu, " ").trim();
 }

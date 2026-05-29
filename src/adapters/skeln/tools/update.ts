@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "skeln";
 
 import { UPDATE_TOOL_PARAMETERS, parseUpdateToolParams, runUpdateMemoryTool } from "../../shared/memory-tools.js";
+import { formatTargetSelector, sanitizeUpdateToolParams } from "../../shared/entry-tools.js";
 import type { AgenrSkelnServices } from "../runtime.js";
 import type { AgenrSkelnSessionScope } from "../types.js";
 import { SKELN_PARAM_READER, toSkelnToolResult, toolFailureResult, toolSchema } from "./shared.js";
@@ -22,15 +23,29 @@ export function registerAgenrSkelnUpdateTool(
       try {
         const params = parseUpdateToolParams(rawParams, SKELN_PARAM_READER);
         const [services, scope] = await Promise.all([servicesPromise, resolveScope(context)]);
-        return toSkelnToolResult(
-          await runUpdateMemoryTool(params, services, {
-            session: scope,
-            sourcePrefix: "skeln-session",
-            successDetails: { sessionKey: scope.sessionKey },
-            failureDetails: { sessionKey: scope.sessionKey },
-            includeAuditDetails: true,
-          }),
-        );
+        const outcome = await runUpdateMemoryTool(params, services, {
+          session: scope,
+          sourcePrefix: "skeln-session",
+          successDetails: { sessionKey: scope.sessionKey },
+          failureDetails: { sessionKey: scope.sessionKey },
+        });
+
+        return toSkelnToolResult({
+          ...outcome,
+          details: {
+            ...outcome.details,
+            target: formatTargetSelector(params.id, params.subject),
+            sanitized: sanitizeUpdateToolParams({
+              id: params.id,
+              subject: params.subject,
+              importance: params.importance,
+              expiry: params.expiry,
+              claimKey: params.claimKeyInput,
+              validFrom: params.validFrom,
+              validTo: params.validTo,
+            }),
+          },
+        });
       } catch (error) {
         return toolFailureResult(error);
       }

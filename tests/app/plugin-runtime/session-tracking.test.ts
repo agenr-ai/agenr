@@ -38,6 +38,15 @@ describe("createSessionStartTracker", () => {
     });
   });
 
+  it("does not treat missing session identity as a first start", () => {
+    const tracker = createSessionStartTracker();
+
+    expect(tracker.consume(undefined, undefined)).toEqual({
+      isFirst: false,
+      activeCount: 0,
+    });
+  });
+
   it("remembers session_start predecessor ids", () => {
     const tracker = createSessionStartTracker();
 

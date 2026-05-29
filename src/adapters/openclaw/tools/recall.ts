@@ -8,6 +8,7 @@ import { formatUnifiedRecallResults } from "../../shared/recall-format.js";
 import {
   RECALL_TOOL_PARAMETERS,
   buildRecallToolDetails,
+  buildRecallToolServices,
   formatRecallToolSummary,
   formatUnifiedRecallLogSummary,
   parseRecallToolParams,
@@ -47,7 +48,7 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
           ...(ctx.sessionKey ? { sessionKey: ctx.sessionKey } : {}),
           params: sanitizedParams,
         });
-        const result = await runRecallMemoryTool(params, services, {
+        const result = await runRecallMemoryTool(params, buildRecallToolServices(services), {
           sessionKey: ctx.sessionKey,
           slotPolicyConfig: services.pluginConfig.memoryPolicy?.slotPolicies,
           debugLog: (message: string) => {

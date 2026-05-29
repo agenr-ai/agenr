@@ -80,7 +80,7 @@ export function createSessionStartTracker(): SessionStartTracker {
       const identityKey = resolveSessionIdentityKey(sessionId, sessionKey);
       if (!identityKey) {
         return {
-          isFirst: true,
+          isFirst: false,
           activeCount: seenSessionIdentities.size,
         };
       }

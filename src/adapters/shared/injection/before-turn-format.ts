@@ -1,5 +1,7 @@
-import type { BeforeTurnPatch, BeforeTurnPatchItem, BeforeTurnProcedureSuggestion } from "../../../app/before-turn/index.js";
+import type { BeforeTurnPatch, BeforeTurnProcedureSuggestion } from "../../../app/before-turn/index.js";
 
+import { formatInjectionEntryBodyLines, formatInjectionEntryHeader } from "./entry-lines.js";
+import { truncate } from "../memory-tool-format.js";
 import { wrapAgenrMemoryContext } from "./memory-context.js";
 
 const MAX_CONTENT_CHARS = 220;
@@ -24,8 +26,8 @@ export function formatAgenrBeforeTurnRecall(patch: BeforeTurnPatch): string {
   if (patch.durableMemory.length > 0) {
     lines.push("### Relevant Durable Memory");
     for (const item of patch.durableMemory) {
-      lines.push(formatEntryHeader(item));
-      lines.push(...formatEntryBodyLines(item));
+      lines.push(formatInjectionEntryHeader(item));
+      lines.push(...formatInjectionEntryBodyLines(item));
     }
     lines.push("");
   }
@@ -38,37 +40,6 @@ export function formatAgenrBeforeTurnRecall(patch: BeforeTurnPatch): string {
   }
 
   return wrapAgenrMemoryContext(lines.join("\n").trim());
-}
-
-/** Formats one memory entry header line for prompt injection. */
-function formatEntryHeader(item: BeforeTurnPatchItem): string {
-  const metadata = [
-    `rank ${item.rank}`,
-    item.entry.id,
-    item.entry.type,
-    item.entry.expiry,
-    `importance ${item.entry.importance}`,
-    `score ${item.score.toFixed(2)}`,
-  ];
-
-  return `- [${metadata.join(" | ")}] ${item.entry.subject}`;
-}
-
-/** Formats one memory entry body block for prompt injection. */
-function formatEntryBodyLines(item: BeforeTurnPatchItem): string[] {
-  const lines = [`  ${truncate(item.entry.content.trim(), MAX_CONTENT_CHARS)}`];
-  lines.push(`  why: ${item.whySurfaced.summary}`);
-
-  const metadata = [
-    item.entry.tags.length > 0 ? `tags: ${item.entry.tags.join(", ")}` : undefined,
-    item.freshnessLabel ? `freshness: ${item.freshnessLabel}` : undefined,
-    item.provenanceSummary ? `provenance: ${truncate(item.provenanceSummary, MAX_CONTENT_CHARS)}` : undefined,
-  ].filter((value): value is string => value !== undefined);
-  if (metadata.length > 0) {
-    lines.push(`  ${metadata.join(" | ")}`);
-  }
-
-  return lines;
 }
 
 /** Formats one proactive procedure header line for prompt injection. */
@@ -98,13 +69,4 @@ function formatProcedureBodyLines(suggestion: BeforeTurnProcedureSuggestion): st
   }
 
   return lines;
-}
-
-/** Truncates long memory content to keep prompt injection bounded. */
-function truncate(value: string, maxChars: number): string {
-  if (value.length <= maxChars) {
-    return value;
-  }
-
-  return `${value.slice(0, maxChars - 3).trimEnd()}...`;
 }
