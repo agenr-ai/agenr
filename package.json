@@ -15,10 +15,10 @@
   "scripts": {
     "build": "pnpm run build:root && pnpm run build:plugin",
     "build:root": "tsup",
-    "build:plugin": "pnpm --filter @agenr/agenr-plugin build",
+    "build:plugin": "pnpm --filter @agenr/agenr-plugin build && pnpm --filter @agenr/skeln-plugin build",
     "build:debug": "pnpm run build:root:debug && pnpm run build:plugin:debug",
     "build:root:debug": "tsup --sourcemap",
-    "build:plugin:debug": "pnpm --filter @agenr/agenr-plugin build:debug",
+    "build:plugin:debug": "pnpm --filter @agenr/agenr-plugin build:debug && pnpm --filter @agenr/skeln-plugin build:debug",
     "dev": "tsup --watch",
     "internal:eval-server": "pnpm run build:root && node dist/internal-eval-server.js",
     "internal:recall-eval-server": "pnpm run internal:eval-server",
@@ -43,8 +43,12 @@
     "yaml": "^2.8.3"
   },
   "devDependencies": {
+    "@earendil-works/pi-agent-core": "^0.75.5",
+    "@earendil-works/pi-ai": "^0.75.5",
     "@eslint/js": "^10.0.1",
     "@types/node": "^25.5.0",
+    "skeln": "file:../skeln",
+    "typebox": "^1.1.38",
     "eslint": "^10.1.0",
     "eslint-plugin-jsdoc": "^62.8.1",
     "globals": "^17.4.0",
@@ -57,5 +61,12 @@
   "engines": {
     "node": ">=24"
   },
-  "license": "AGPL-3.0"
+  "license": "AGPL-3.0",
+  "pnpm": {
+    "peerDependencyRules": {
+      "ignoreMissing": [
+        "skeln"
+      ]
+    }
+  }
 }

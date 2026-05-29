@@ -1,0 +1,52 @@
+{
+  "name": "@agenr/skeln-plugin",
+  "version": "2.1.0",
+  "description": "agenr memory plugin for Skeln",
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "skeln": {
+    "id": "agenr",
+    "displayName": "agenr",
+    "description": "Durable memory for Skeln agents via agenr_store, agenr_update, and agenr_recall.",
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "config": {
+      "dbPath": {
+        "type": "string",
+        "description": "Optional override for the agenr knowledge database. Defaults to the dbPath in agenr config.json, then ~/.agenr/knowledge.db."
+      },
+      "configPath": {
+        "type": "string",
+        "description": "Optional path to agenr config.json. Defaults to AGENR_CONFIG_PATH, then config.json next to dbPath when dbPath is set, then ~/.agenr/config.json."
+      },
+      "memoryPolicy": {
+        "type": "object",
+        "description": "Optional runtime overrides for claim-aware read behavior, session-start memory injection, and proactive before-turn surfacing."
+      }
+    }
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "build:debug": "node build.mjs"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.17.2"
+  },
+  "devDependencies": {
+    "skeln": "file:../../../skeln"
+  },
+  "peerDependencies": {
+    "skeln": ">=0.1.0"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "license": "AGPL-3.0"
+}
