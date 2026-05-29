@@ -177,7 +177,12 @@ function createEmbedQuery(embedding: EmbeddingPort, available: boolean): BeforeT
 
   return async (text: string) => {
     const vectors = await embedding.embed([text]);
-    return vectors[0] ?? [];
+    const vector = vectors[0];
+    if (!vector) {
+      throw new Error("Embedding provider returned no vector for the query.");
+    }
+
+    return vector;
   };
 }
 

@@ -2,7 +2,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import { createPluginMemoryRuntime } from "../../../src/app/plugin-runtime/create-memory-runtime.js";
-import { resolvePluginPaths } from "../../../src/app/plugin-runtime/resolve-paths.js";
+import { resolvePluginPaths, resolvePluginRuntimeConfig } from "../../../src/app/plugin-runtime/resolve-paths.js";
 import { createTempRoot, usePluginRuntimeEnv, writeJson } from "./helpers.js";
 
 describe("createPluginMemoryRuntime", () => {
@@ -30,10 +30,10 @@ describe("createPluginMemoryRuntime", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const { resolvedConfig, agenrConfig } = resolvePluginPaths({});
+    const { resolvedConfig, agenrConfig } = resolvePluginRuntimeConfig({});
     const services = await createPluginMemoryRuntime({
       dbPath: resolvedConfig.dbPath,
-      agenrConfig: { ...agenrConfig, dbPath: resolvedConfig.dbPath },
+      agenrConfig,
     });
 
     expect(resolvedConfig).toMatchObject({
@@ -72,10 +72,10 @@ describe("createPluginMemoryRuntime", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const { resolvedConfig, agenrConfig } = resolvePluginPaths({ dbPath });
+    const { resolvedConfig, agenrConfig } = resolvePluginRuntimeConfig({ dbPath });
     const services = await createPluginMemoryRuntime({
       dbPath: resolvedConfig.dbPath,
-      agenrConfig: { ...agenrConfig, dbPath: resolvedConfig.dbPath },
+      agenrConfig,
     });
 
     expect(services.embeddingStatus).toMatchObject({
@@ -108,10 +108,10 @@ describe("createPluginMemoryRuntime", () => {
       },
     });
 
-    const { resolvedConfig, agenrConfig } = resolvePluginPaths({ dbPath });
+    const { resolvedConfig, agenrConfig } = resolvePluginRuntimeConfig({ dbPath });
     const services = await createPluginMemoryRuntime({
       dbPath: resolvedConfig.dbPath,
-      agenrConfig: { ...agenrConfig, dbPath: resolvedConfig.dbPath },
+      agenrConfig,
     });
 
     expect(services.recall.crossEncoder).toBeDefined();
@@ -141,10 +141,10 @@ describe("createPluginMemoryRuntime", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const { resolvedConfig, agenrConfig } = resolvePluginPaths({ dbPath, configPath });
+    const { resolvedConfig, agenrConfig } = resolvePluginRuntimeConfig({ dbPath, configPath });
     const services = await createPluginMemoryRuntime({
       dbPath: resolvedConfig.dbPath,
-      agenrConfig: { ...agenrConfig, dbPath: resolvedConfig.dbPath },
+      agenrConfig,
     });
 
     expect(services.embeddingStatus).toMatchObject({
@@ -161,10 +161,10 @@ describe("createPluginMemoryRuntime", () => {
     const dbPath = path.join(root, "knowledge.db");
     await writeJson(path.join(root, "config.json"), {});
 
-    const { resolvedConfig, agenrConfig } = resolvePluginPaths({ dbPath });
+    const { resolvedConfig, agenrConfig } = resolvePluginRuntimeConfig({ dbPath });
     const services = await createPluginMemoryRuntime({
       dbPath: resolvedConfig.dbPath,
-      agenrConfig: { ...agenrConfig, dbPath: resolvedConfig.dbPath },
+      agenrConfig,
     });
 
     expect(services.embeddingStatus).toMatchObject({
@@ -192,10 +192,10 @@ describe("createPluginMemoryRuntime", () => {
       },
     };
 
-    const { resolvedConfig, agenrConfig } = resolvePluginPaths({ dbPath });
+    const { resolvedConfig, agenrConfig } = resolvePluginRuntimeConfig({ dbPath });
     const services = await createPluginMemoryRuntime({
       dbPath: resolvedConfig.dbPath,
-      agenrConfig: { ...agenrConfig, dbPath: resolvedConfig.dbPath },
+      agenrConfig,
       slotPolicies,
     });
 
@@ -216,10 +216,10 @@ describe("createPluginMemoryRuntime", () => {
       },
     });
 
-    const { resolvedConfig, agenrConfig } = resolvePluginPaths({ dbPath });
+    const { resolvedConfig, agenrConfig } = resolvePluginRuntimeConfig({ dbPath });
     const services = await createPluginMemoryRuntime({
       dbPath: resolvedConfig.dbPath,
-      agenrConfig: { ...agenrConfig, dbPath: resolvedConfig.dbPath },
+      agenrConfig,
     });
     const closeSpy = vi.spyOn(services.entries, "close");
 
@@ -239,10 +239,10 @@ describe("createPluginMemoryRuntime", () => {
     });
     const events: string[] = [];
 
-    const { resolvedConfig, agenrConfig } = resolvePluginPaths({ dbPath });
+    const { resolvedConfig, agenrConfig } = resolvePluginRuntimeConfig({ dbPath });
     const services = await createPluginMemoryRuntime({
       dbPath: resolvedConfig.dbPath,
-      agenrConfig: { ...agenrConfig, dbPath: resolvedConfig.dbPath },
+      agenrConfig,
       onBeforeClose: async () => {
         events.push("before-close");
       },
@@ -257,6 +257,25 @@ describe("createPluginMemoryRuntime", () => {
     expect(closeSpy).toHaveBeenCalledTimes(1);
 
     await services.close();
+  });
+});
+
+describe("resolvePluginRuntimeConfig", () => {
+  usePluginRuntimeEnv();
+
+  it("merges the resolved dbPath into agenr config", async () => {
+    const root = await createTempRoot("agenr-plugin-runtime-");
+    const dbPath = path.join(root, "knowledge.db");
+    await writeJson(path.join(root, "config.json"), {
+      credentials: {
+        openaiApiKey: "config-key",
+      },
+    });
+
+    const { resolvedConfig, agenrConfig } = resolvePluginRuntimeConfig({ dbPath });
+
+    expect(resolvedConfig.dbPath).toBe(dbPath);
+    expect(agenrConfig.dbPath).toBe(dbPath);
   });
 });
 

@@ -120,6 +120,28 @@ describe("createAgenrOpenClawServices", () => {
 
     await services.close();
   });
+
+  it("applies the OpenClaw resolvePath hook when resolving plugin paths", async () => {
+    const root = await createTempRoot("agenr-openclaw-runtime-");
+    await writeJson(path.join(root, "config.json"), {
+      credentials: {
+        openaiApiKey: "config-key",
+      },
+    });
+
+    const services = await createAgenrOpenClawServices(
+      { dbPath: "relative/knowledge.db" },
+      {
+        openClaw: createOpenClawHost(),
+        resolvePath: (input) => path.join(root, input),
+      },
+    );
+
+    expect(services.dbPath).toBe(path.join(root, "relative/knowledge.db"));
+    expect(services.config.dbPath).toBe(path.join(root, "relative/knowledge.db"));
+
+    await services.close();
+  });
 });
 
 function createOpenClawHost(

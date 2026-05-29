@@ -1,8 +1,8 @@
 import type { OpenClawPluginConfigSchema } from "openclaw/plugin-sdk/plugin-entry";
 
+import type { PluginClaimSlotPolicyConfig } from "../../app/plugin-runtime/types.js";
 import type { ClaimSlotPolicy } from "../../core/claim-slot-policy.js";
 import type {
-  AgenrOpenClawClaimSlotPolicyConfig,
   AgenrOpenClawDebugConfig,
   AgenrOpenClawDebugEventLevel,
   AgenrOpenClawMemoryPolicyConfig,
@@ -512,7 +512,7 @@ function normalizeBeforeTurnMemoryPolicyConfig(
  * @param value - Raw nested config value.
  * @returns Normalized slot-policy config or stable validation errors.
  */
-function normalizeClaimSlotPolicyConfig(value: unknown): { ok: true; value: AgenrOpenClawClaimSlotPolicyConfig | undefined } | { ok: false; errors: string[] } {
+function normalizeClaimSlotPolicyConfig(value: unknown): { ok: true; value: PluginClaimSlotPolicyConfig | undefined } | { ok: false; errors: string[] } {
   if (value === undefined) {
     return { ok: true, value: undefined };
   }

@@ -1,13 +1,15 @@
 import type { AgenrConfig } from "../../config.js";
 import { resolveClaimExtractionConfig } from "../../config.js";
 import { createOpenClawLlmClient } from "../../adapters/openclaw/llm/openclaw-llm-client.js";
+import type { AgenrOpenClawHost, AgenrOpenClawPluginConfig } from "../../adapters/openclaw/contract.js";
 import { resolveDebugConfig, type ResolvedAgenrOpenClawDebugConfig } from "../../adapters/openclaw/config.js";
 import { createAgenrDebugSink, createNoopAgenrDebugSink, type AgenrDebugSink } from "../../adapters/openclaw/debug/index.js";
-import type { AgenrOpenClawHost, AgenrOpenClawPluginConfig, AgenrOpenClawServices } from "../../adapters/openclaw/types.js";
 import path from "node:path";
 import { createPluginMemoryRuntime, EMBEDDING_MODEL } from "../plugin-runtime/create-memory-runtime.js";
-import { resolvePluginPaths } from "../plugin-runtime/resolve-paths.js";
+import { resolvePluginRuntimeConfig } from "../plugin-runtime/resolve-paths.js";
+import type { AgenrOpenClawServices } from "./types.js";
 
+export type { AgenrOpenClawServices } from "./types.js";
 export { EMBEDDING_MODEL };
 
 /**
@@ -24,11 +26,7 @@ export async function createAgenrOpenClawServices(
     resolvePath?: (input: string) => string;
   },
 ): Promise<AgenrOpenClawServices> {
-  const { resolvedConfig, agenrConfig: loadedAgenrConfig } = resolvePluginPaths(config, options.resolvePath);
-  const agenrConfig: AgenrConfig = {
-    ...loadedAgenrConfig,
-    dbPath: resolvedConfig.dbPath,
-  };
+  const { resolvedConfig, agenrConfig } = resolvePluginRuntimeConfig(config, options.resolvePath);
   const debugSink = createDebugSink(options.openClaw, config);
   const runtimeServices = await createPluginMemoryRuntime({
     dbPath: resolvedConfig.dbPath,
@@ -39,23 +37,13 @@ export async function createAgenrOpenClawServices(
   });
 
   return {
+    ...runtimeServices,
     openClaw: options.openClaw,
     config: resolvedConfig,
     pluginConfig: config,
     agenrConfig,
     dbPath: resolvedConfig.dbPath,
-    entries: runtimeServices.entries,
-    episodes: runtimeServices.episodes,
-    procedures: runtimeServices.procedures,
-    memory: runtimeServices.memory,
-    sessionStart: runtimeServices.sessionStart,
-    beforeTurn: runtimeServices.beforeTurn,
-    embedding: runtimeServices.embedding,
-    recall: runtimeServices.recall,
-    claimExtraction: runtimeServices.claimExtraction,
-    embeddingStatus: runtimeServices.embeddingStatus,
     debugSink,
-    close: runtimeServices.close,
   };
 }
 

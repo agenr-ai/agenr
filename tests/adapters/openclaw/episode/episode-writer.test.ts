@@ -18,6 +18,7 @@ import { createDatabase, type SqlDatabase } from "../../../../src/adapters/db/cl
 import { createMemoryRepository } from "../../../../src/adapters/db/memory-repository.js";
 import { createSessionStartRepository } from "../../../../src/adapters/db/session-start-repository.js";
 import { writeOpenClawPredecessorEpisode } from "../../../../src/adapters/openclaw/episode/episode-writer.js";
+import { createNoopAgenrDebugSink } from "../../../../src/adapters/openclaw/debug/index.js";
 import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../../src/adapters/openclaw/types.js";
 import type { EmbeddingPort, LlmPort, RecallPorts } from "../../../../src/core/ports.js";
 
@@ -635,6 +636,7 @@ function createServices(
       model: "text-embedding-3-small",
       ...(options.embeddingAvailable === true ? {} : { error: "Embedding API key is required." }),
     },
+    debugSink: createNoopAgenrDebugSink(),
     async close() {
       await database.close();
     },
