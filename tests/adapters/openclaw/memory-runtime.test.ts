@@ -6,7 +6,10 @@ import type { AgenrOpenClawServices } from "../../../src/adapters/openclaw/types
 describe("createAgenrMemoryRuntime", () => {
   it("bridges status probes while leaving generic memory-host search empty", async () => {
     const services = {
-      dbPath: "/tmp/agenr/knowledge.db",
+      config: {
+        dbPath: "/tmp/agenr/knowledge.db",
+        configPath: "/tmp/agenr/config.json",
+      },
       embeddingStatus: {
         available: true,
         provider: "openai",

@@ -17,9 +17,8 @@ export type {
   AgenrOpenClawResolvedProviderAuth,
   AgenrOpenClawRuntime,
   MidSessionState,
-  ResolvedAgenrOpenClawPluginConfig,
   StoreNudgeConfig,
-} from "./contract.js";
+} from "../../app/openclaw/contract.js";
 export type { AgenrOpenClawServices } from "../../app/openclaw/types.js";
 
 /**

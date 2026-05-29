@@ -40,7 +40,9 @@ src/
 │   ├── recall/
 │   ├── session-start/
 │   ├── before-turn/
+│   ├── plugin-runtime/
 │   ├── openclaw/
+│   ├── skeln/
 │   ├── surgeon/
 │   ├── evals/recall/
 │   └── scenarios/claim-keys/
@@ -77,7 +79,7 @@ tests/
 Important points about the current tree:
 
 - `src/core/` contains the main domain model, claim-key lifecycle logic, procedure normalization and hashing, entry recall, episode search, ingest parsing, and pure port interfaces.
-- `src/app/` owns orchestration for durable ingest, episode ingest, procedure sync, unified recall, session-start patch selection, surgeon execution, OpenClaw runtime composition, the narrow recall-eval seam, and the repo-local claim-key scenario harness.
+- `src/app/` owns orchestration for durable ingest, episode ingest, procedure sync, unified recall, session-start patch selection, surgeon execution, shared host plugin memory composition (`plugin-runtime/`), OpenClaw and Skeln runtime composition, the narrow recall-eval seam, and the repo-local claim-key scenario harness.
 - `src/adapters/` implements libSQL persistence, transcript and procedure-file discovery, config parsing, external model clients, OpenClaw host translation, and the internal HTTP adapter.
 - `src/config.ts`, `src/logger.ts`, `src/ui.ts`, and `src/version.ts` are shared runtime infrastructure, not domain logic.
 - `packages/openclaw-plugin/` is a packaging wrapper that re-exports the built plugin entry from `dist/`.

@@ -26,7 +26,6 @@ export interface AgenrSkelnServices extends PluginMemoryRuntimeServices {
   config: ResolvedPluginPaths;
   skelnConfig: AgenrSkelnConfig;
   agenrConfig: AgenrConfig;
-  dbPath: string;
 }
 
 export { EMBEDDING_MODEL };
@@ -51,6 +50,5 @@ export async function createAgenrSkelnServices(config: AgenrSkelnConfig = {}): P
     config: resolvedConfig,
     skelnConfig: config,
     agenrConfig,
-    dbPath: resolvedConfig.dbPath,
   };
 }

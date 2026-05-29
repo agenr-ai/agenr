@@ -1,8 +1,9 @@
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+import * as embeddings from "../../../src/adapters/embeddings.js";
 import { createPluginMemoryRuntime } from "../../../src/app/plugin-runtime/create-memory-runtime.js";
-import { resolvePluginPaths, resolvePluginRuntimeConfig } from "../../../src/app/plugin-runtime/resolve-paths.js";
+import { resolvePluginRuntimeConfig } from "../../../src/app/plugin-runtime/resolve-paths.js";
 import { createTempRoot, usePluginRuntimeEnv, writeJson } from "./helpers.js";
 
 describe("createPluginMemoryRuntime", () => {
@@ -258,6 +259,32 @@ describe("createPluginMemoryRuntime", () => {
 
     await services.close();
   });
+
+  it("throws when embedQuery receives no embedding vector", async () => {
+    const root = await createTempRoot("agenr-plugin-runtime-");
+    const dbPath = path.join(root, "knowledge.db");
+    await writeJson(path.join(root, "config.json"), {
+      credentials: {
+        openaiApiKey: "config-key",
+      },
+    });
+
+    vi.spyOn(embeddings, "createEmbeddingClient").mockReturnValue({
+      embed: async () => [],
+    });
+
+    const { resolvedConfig, agenrConfig } = resolvePluginRuntimeConfig({ dbPath });
+    const services = await createPluginMemoryRuntime({
+      dbPath: resolvedConfig.dbPath,
+      agenrConfig,
+    });
+
+    await expect(services.beforeTurn.embedQuery?.("remember this")).rejects.toThrow(
+      "Embedding provider returned no vector for the query.",
+    );
+
+    await services.close();
+  });
 });
 
 describe("resolvePluginRuntimeConfig", () => {
@@ -277,10 +304,6 @@ describe("resolvePluginRuntimeConfig", () => {
     expect(resolvedConfig.dbPath).toBe(dbPath);
     expect(agenrConfig.dbPath).toBe(dbPath);
   });
-});
-
-describe("resolvePluginPaths", () => {
-  usePluginRuntimeEnv();
 
   it("applies an optional host path resolver", async () => {
     const root = await createTempRoot("agenr-plugin-runtime-");
@@ -290,7 +313,7 @@ describe("resolvePluginPaths", () => {
       },
     });
 
-    const { resolvedConfig } = resolvePluginPaths({ dbPath: "relative/knowledge.db" }, (input) => path.join(root, input));
+    const { resolvedConfig } = resolvePluginRuntimeConfig({ dbPath: "relative/knowledge.db" }, (input) => path.join(root, input));
 
     expect(resolvedConfig.dbPath).toBe(path.join(root, "relative/knowledge.db"));
   });

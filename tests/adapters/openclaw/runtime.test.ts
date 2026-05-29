@@ -137,7 +137,6 @@ describe("createAgenrOpenClawServices", () => {
       },
     );
 
-    expect(services.dbPath).toBe(path.join(root, "relative/knowledge.db"));
     expect(services.config.dbPath).toBe(path.join(root, "relative/knowledge.db"));
 
     await services.close();

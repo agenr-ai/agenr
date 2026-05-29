@@ -1,7 +1,7 @@
 import type { AgenrConfig } from "../../config.js";
 import { resolveClaimExtractionConfig } from "../../config.js";
 import { createOpenClawLlmClient } from "../../adapters/openclaw/llm/openclaw-llm-client.js";
-import type { AgenrOpenClawHost, AgenrOpenClawPluginConfig } from "../../adapters/openclaw/contract.js";
+import type { AgenrOpenClawHost, AgenrOpenClawPluginConfig } from "./contract.js";
 import { resolveDebugConfig, type ResolvedAgenrOpenClawDebugConfig } from "../../adapters/openclaw/config.js";
 import { createAgenrDebugSink, createNoopAgenrDebugSink, type AgenrDebugSink } from "../../adapters/openclaw/debug/index.js";
 import path from "node:path";
@@ -42,7 +42,6 @@ export async function createAgenrOpenClawServices(
     config: resolvedConfig,
     pluginConfig: config,
     agenrConfig,
-    dbPath: resolvedConfig.dbPath,
     debugSink,
   };
 }

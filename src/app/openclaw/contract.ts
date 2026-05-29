@@ -1,6 +1,6 @@
 import type { OpenClawConfig, OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
-import type { PluginClaimSlotPolicyConfig, ResolvedPluginPaths } from "../../app/plugin-runtime/types.js";
+import type { PluginClaimSlotPolicyConfig } from "../plugin-runtime/types.js";
 
 /**
  * Resolved store-nudge settings used by mid-session prompting.
@@ -117,9 +117,6 @@ export interface AgenrOpenClawPluginConfig {
   /** Opt-in JSONL debug sink config for live OpenClaw runs. */
   debug?: AgenrOpenClawDebugConfig;
 }
-
-/** @deprecated Use {@link ResolvedPluginPaths} from `app/plugin-runtime/types`. */
-export type ResolvedAgenrOpenClawPluginConfig = ResolvedPluginPaths;
 
 /**
  * Resolved provider auth from OpenClaw's credential system.

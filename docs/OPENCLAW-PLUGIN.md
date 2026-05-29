@@ -26,7 +26,9 @@ The adapter is intentionally not a second memory brain. Durable memory, recall r
 - `src/adapters/openclaw/index.ts` - plugin entry, hook registration, tool registration, memory-runtime wiring, and shutdown cleanup.
 - `src/adapters/openclaw/openclaw.plugin.json` and `src/adapters/openclaw/config.ts` - manifest-backed config schema, validation, UI hints, and store-nudge defaults.
 - `packages/openclaw-plugin/package.json`, `packages/openclaw-plugin/openclaw.plugin.json`, and `packages/openclaw-plugin/src/index.ts` - publishable plugin package metadata and entrypoint.
-- `src/app/openclaw/runtime.ts` - OpenClaw-specific runtime composition: plugin config resolution, DB open, memory repository wiring, session-start and before-turn dependency wiring, recall adapter creation, embedding availability, and optional claim-extraction LLM wiring.
+- `src/app/plugin-runtime/` - shared host plugin memory composition: path resolution, DB open, embeddings, recall, session-start and before-turn deps, and close lifecycle reused by OpenClaw and Skeln.
+- `src/app/openclaw/contract.ts` and `src/app/openclaw/types.ts` - canonical OpenClaw plugin config and composed service types.
+- `src/app/openclaw/runtime.ts` - OpenClaw-specific runtime composition: debug sink, OpenClaw-authenticated claim extraction, and wiring into `plugin-runtime`.
 - `src/app/session-start/` - host-neutral session-start patch contract and selection service.
 - `src/app/before-turn/` - host-neutral before-turn patch contract and selection service.
 - `src/app/memory/ports.ts` - host-neutral read-model contracts for trace and memory status.

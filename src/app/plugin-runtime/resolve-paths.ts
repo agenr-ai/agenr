@@ -3,13 +3,13 @@ import { readConfig, resolveConfigPath, resolveDbPath } from "../../config.js";
 import type { PluginPathConfig, ResolvedPluginPaths } from "./types.js";
 
 /**
- * Resolves plugin path overrides into concrete runtime paths before initialization.
+ * Resolves plugin path overrides into concrete runtime paths and merged agenr config.
  *
  * @param config - Raw plugin config supplied by a host adapter.
  * @param resolvePath - Optional host path resolver.
- * @returns Concrete runtime paths plus the agenr config loaded from disk.
+ * @returns Concrete runtime paths plus agenr config with the resolved dbPath applied.
  */
-export function resolvePluginPaths(
+export function resolvePluginRuntimeConfig(
   config: PluginPathConfig,
   resolvePath?: (input: string) => string,
 ): {
@@ -22,41 +22,20 @@ export function resolvePluginPaths(
     configPath: configPathOverride,
     dbPath: dbPathOverride,
   });
-  const agenrConfig = readConfig({
+  const loadedConfig = readConfig({
     configPath,
     dbPath: dbPathOverride,
   });
-  const dbPath = dbPathOverride ?? resolveDbPath(agenrConfig);
+  const dbPath = dbPathOverride ?? resolveDbPath(loadedConfig);
 
   return {
     resolvedConfig: {
       dbPath,
       configPath,
     },
-    agenrConfig,
-  };
-}
-
-/**
- * Resolves plugin paths and returns agenr config with the resolved dbPath applied.
- *
- * @param config - Raw plugin config supplied by a host adapter.
- * @param resolvePath - Optional host path resolver.
- * @returns Concrete runtime paths plus merged agenr runtime config.
- */
-export function resolvePluginRuntimeConfig(
-  config: PluginPathConfig,
-  resolvePath?: (input: string) => string,
-): {
-  resolvedConfig: ResolvedPluginPaths;
-  agenrConfig: AgenrConfig;
-} {
-  const { resolvedConfig, agenrConfig } = resolvePluginPaths(config, resolvePath);
-  return {
-    resolvedConfig,
     agenrConfig: {
-      ...agenrConfig,
-      dbPath: resolvedConfig.dbPath,
+      ...loadedConfig,
+      dbPath,
     },
   };
 }

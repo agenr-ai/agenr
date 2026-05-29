@@ -1004,7 +1004,6 @@ function createServices(
     },
     pluginConfig: {},
     agenrConfig: {},
-    dbPath: "test.db",
     entries: database,
     episodes: database,
     procedures: database,

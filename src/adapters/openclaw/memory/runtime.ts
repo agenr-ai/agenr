@@ -19,7 +19,7 @@ export function createAgenrMemoryRuntime(servicesPromise: Promise<AgenrOpenClawS
           backend: "builtin",
           provider: "agenr",
           model: services.embeddingStatus.model,
-          dbPath: services.dbPath,
+          dbPath: services.config.dbPath,
           files: snapshot.sourceFiles,
           chunks: snapshot.activeEntries,
           vector: {
