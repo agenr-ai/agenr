@@ -1,5 +1,5 @@
 import { createClient, type Client } from "@libsql/client";
-import { getModel } from "@mariozechner/pi-ai";
+import { getModel } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createSurgeonPort } from "../../../src/adapters/db/surgeon-port.js";

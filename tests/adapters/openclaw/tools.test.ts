@@ -11,12 +11,12 @@ const piAiMocks = vi.hoisted(() => ({
   getModel: vi.fn(),
 }));
 
-vi.mock("@mariozechner/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai", () => ({
   completeSimple: piAiMocks.completeSimple,
   getModel: piAiMocks.getModel,
 }));
 
-import type { Api, AssistantMessage, Model } from "@mariozechner/pi-ai";
+import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
 import { createMemoryRepository } from "../../../src/adapters/db/memory-repository.js";

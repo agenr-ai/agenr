@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import type { AgentEvent } from "@mariozechner/pi-agent-core";
+import type { AgentEvent } from "@earendil-works/pi-agent-core";
+import type { UserMessage } from "@earendil-works/pi-ai";
 
 import type { SurgeonRunAction } from "../../core/surgeon/domain/action-types.js";
 import { createLogger, type Logger } from "../../logger.js";
@@ -388,7 +389,7 @@ function extractAssistantText(message: AssistantMessageLike): string {
  * @param content - Raw user-message content.
  * @returns Human-readable user text.
  */
-function extractUserText(content: Extract<AgentEvent, { type: "message_end" }>["message"]["content"]): string {
+function extractUserText(content: UserMessage["content"]): string {
   if (typeof content === "string") {
     return truncate(content.trim(), TRACE_MAX_STRING_LENGTH);
   }

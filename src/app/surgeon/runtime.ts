@@ -2,7 +2,7 @@ import { copyFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { getModel, type Api, type Model } from "@mariozechner/pi-ai";
+import { getModel, type Api, type Model } from "@earendil-works/pi-ai";
 
 import { createDatabase } from "../../adapters/db/client.js";
 import { createSurgeonPort } from "../../adapters/db/surgeon-port.js";

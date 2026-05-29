@@ -10,13 +10,13 @@ const piAiMocks = vi.hoisted(() => ({
   getModel: vi.fn(),
 }));
 
-vi.mock("@mariozechner/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai", () => ({
   completeSimple: piAiMocks.completeSimple,
   getEnvApiKey: piAiMocks.getEnvApiKey,
   getModel: piAiMocks.getModel,
 }));
 
-import type { Api, AssistantMessage, Model } from "@mariozechner/pi-ai";
+import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 
 import { createLlmClient, probeLlmCredentials, resolveLlmApiKey, resolveModel, stripCodeFence } from "../../src/adapters/llm.js";
 

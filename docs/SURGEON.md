@@ -35,7 +35,7 @@ The goal is corpus health, not aggressive deletion. The surgeon is designed to p
 
 ## Runtime shape
 
-`claim_key_quality` and `proposal_resolution` are deterministic. `retirement` and `supersession` still use `@mariozechner/pi-agent-core`'s `runAgentLoop()` with sequential tool execution, but they now run as bounded fresh-context slices instead of one long continuation-heavy conversation.
+`claim_key_quality` and `proposal_resolution` are deterministic. `retirement` and `supersession` still use `@earendil-works/pi-agent-core`'s `runAgentLoop()` with sequential tool execution, but they now run as bounded fresh-context slices instead of one long continuation-heavy conversation.
 
 For every `agenr surgeon run`, agenr currently:
 

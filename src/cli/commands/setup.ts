@@ -1,4 +1,4 @@
-import { getModels } from "@mariozechner/pi-ai";
+import { getModels } from "@earendil-works/pi-ai";
 import type { Command } from "commander";
 
 import { createEmbeddingClient } from "../../adapters/embeddings.js";

@@ -1,4 +1,4 @@
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 
 import type { RecallPorts } from "../../../core/ports.js";
 import type { SurgeonRunAction } from "../../../core/surgeon/domain/action-types.js";

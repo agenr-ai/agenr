@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "@sinclair/typebox";
 
 import { normalizeManualClaimKeyUpdate } from "../../../core/claim-key-lifecycle.js";

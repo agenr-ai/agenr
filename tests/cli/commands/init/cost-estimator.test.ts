@@ -4,7 +4,7 @@ const piAiMocks = vi.hoisted(() => ({
   getModels: vi.fn(),
 }));
 
-vi.mock("@mariozechner/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai", () => ({
   getModels: piAiMocks.getModels,
 }));
 

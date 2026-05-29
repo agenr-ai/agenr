@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { runAgentLoop, type AfterToolCallContext, type AgentEvent, type AgentMessage, type BeforeToolCallContext } from "@mariozechner/pi-agent-core";
-import type { Api, AssistantMessage, Message, Model, Usage } from "@mariozechner/pi-ai";
+import { runAgentLoop, type AfterToolCallContext, type AgentEvent, type AgentMessage, type BeforeToolCallContext } from "@earendil-works/pi-agent-core";
+import type { Api, AssistantMessage, Message, Model, Usage } from "@earendil-works/pi-ai";
 
 import {
   DEFAULT_SURGEON_CONTEXT_LIMIT,

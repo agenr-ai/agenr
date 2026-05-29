@@ -36,7 +36,7 @@ If this file and the code disagree, the code wins. If this file and one of the d
 - `@clack/prompts` for interactive CLI flows
 - `chalk` for CLI output
 - `openclaw` for the production host integration
-- `@mariozechner/pi-agent-core` and `@mariozechner/pi-ai` for surgeon runtime loops
+- `@earendil-works/pi-agent-core` and `@earendil-works/pi-ai` for surgeon runtime loops
 - pnpm (not npm/yarn)
 - vitest for tests, tsup for builds, eslint + prettier for validation
 

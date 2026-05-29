@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 
-import { completeSimple, getEnvApiKey, getModel, type Api, type KnownProvider, type Model } from "@mariozechner/pi-ai";
+import { completeSimple, getEnvApiKey, getModel, type Api, type KnownProvider, type Model } from "@earendil-works/pi-ai";
 
 import { authMethodToProvider, isAgenrAuthMethod, type AgenrAuthMethod, type AgenrConfig, type AgenrStoredCredentials } from "../config.js";
 import type { LlmPort } from "../core/ports.js";

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { getModel } from "@mariozechner/pi-ai";
+import { getModel } from "@earendil-works/pi-ai";
 
 import { createSurgeonPort } from "../../../adapters/db/surgeon-port.js";
 import { getLastSurgeonRun } from "../../../adapters/db/surgeon-run-log.js";

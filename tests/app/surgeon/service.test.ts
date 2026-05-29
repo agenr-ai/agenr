@@ -2,17 +2,17 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import type { AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool } from "@mariozechner/pi-agent-core";
+import type { AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 
-import { getModel, type AssistantMessage, type Usage } from "@mariozechner/pi-ai";
+import { getModel, type AssistantMessage, type Usage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { runAgentLoopMock } = vi.hoisted(() => ({
   runAgentLoopMock: vi.fn(),
 }));
 
-vi.mock("@mariozechner/pi-agent-core", async () => {
-  const actual = await vi.importActual<typeof import("@mariozechner/pi-agent-core")>("@mariozechner/pi-agent-core");
+vi.mock("@earendil-works/pi-agent-core", async () => {
+  const actual = await vi.importActual<typeof import("@earendil-works/pi-agent-core")>("@earendil-works/pi-agent-core");
   return {
     ...actual,
     runAgentLoop: runAgentLoopMock,
