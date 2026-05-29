@@ -9,9 +9,9 @@ import type {
 import type { AgenrDebugSink } from "./debug/sink.js";
 import type { MemoryRepository } from "../../app/memory/ports.js";
 import type { BeforeTurnDeps } from "../../app/before-turn/index.js";
+import type { PluginClaimSlotPolicyConfig, PluginEmbeddingStatus, ResolvedPluginPaths } from "../../app/plugin-runtime/types.js";
 import type { SessionStartDeps } from "../../app/session-start/index.js";
 import type { AgenrConfig } from "../../config.js";
-import type { ClaimSlotPolicy, ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
 import type { DatabasePort, EmbeddingPort, EpisodeDatabasePort, LlmPort, ProcedureDatabasePort, RecallPorts } from "../../core/ports.js";
 import type { ClaimExtractionConfig } from "../../core/store/claim-extraction.js";
 
@@ -30,10 +30,7 @@ export interface StoreNudgeConfig {
 /**
  * Slot-policy overrides that the OpenClaw adapter can apply at runtime.
  */
-export interface AgenrOpenClawClaimSlotPolicyConfig extends ClaimSlotPolicyConfig {
-  /** Optional attribute-head policy overrides keyed by canonical attribute head. */
-  attributeHeads?: Readonly<Record<string, ClaimSlotPolicy>>;
-}
+export type AgenrOpenClawClaimSlotPolicyConfig = PluginClaimSlotPolicyConfig;
 
 /**
  * Stable event detail levels accepted by the agenr debug sink.
@@ -142,21 +139,12 @@ export interface AgenrOpenClawPluginConfig {
 /**
  * Concrete runtime paths derived from plugin config and agenr defaults.
  */
-export interface ResolvedAgenrOpenClawPluginConfig {
-  dbPath: string;
-  configPath: string;
-}
+export type ResolvedAgenrOpenClawPluginConfig = ResolvedPluginPaths;
 
 /**
  * Static embedding availability facts derived from plugin configuration.
  */
-export interface AgenrOpenClawEmbeddingStatus {
-  available: boolean;
-  provider: string;
-  requestedProvider: string;
-  model: string;
-  error?: string;
-}
+export type AgenrOpenClawEmbeddingStatus = PluginEmbeddingStatus;
 
 /**
  * Resolved provider auth from OpenClaw's credential system.
