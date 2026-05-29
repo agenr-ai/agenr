@@ -1,43 +1,40 @@
-import { failedTextResult } from "openclaw/plugin-sdk/agent-runtime";
+import { failedTextResult, readNumberParam, readStringArrayParam, readStringParam, textResult } from "openclaw/plugin-sdk/agent-runtime";
 import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sdk/core";
 
-import type { UnifiedRecallMode, UnifiedRecallResult } from "../../../app/recall/index.js";
 import { resolveClaimSlotPolicy } from "../../../core/claim-slot-policy.js";
-import { ENTRY_TYPES, type Entry, type EntryType, type Expiry } from "../../../core/types.js";
+import type { Entry } from "../../../core/types.js";
+import { truncate } from "../../shared/memory-tool-format.js";
+import type { MemoryToolOutcome, MemoryToolParamReader } from "../../shared/memory-tools.js";
 import {
   buildSessionSourceFile as buildSharedSessionSourceFile,
   buildToolCallClaimSupport as buildSharedToolCallClaimSupport,
 } from "../../shared/claim-support.js";
 import {
   EXPIRY_DESCRIPTION,
+  ENTRY_TYPE_DESCRIPTION,
+  RECALL_MODES,
   UPDATE_EXPIRY_DESCRIPTION,
   asRecord,
   formatErrorMessage,
   formatTargetSelector,
+  normalizeStringArray,
+  parseEntryType,
+  parseEntryTypes,
   parseExpiry,
+  parseRecallMode,
   sanitizeUpdateToolParams,
 } from "../../shared/entry-tools.js";
 import { readBooleanParam, resolveTargetEntry as resolveSharedTargetEntry } from "../../shared/resolve-target.js";
 import type { AgenrOpenClawServices } from "../types.js";
 
-/**
- * Human-readable guidance shown in the store tool schema.
- */
-const ENTRY_TYPE_DESCRIPTION =
-  "Knowledge type to store. Use fact for durable truth about a person, system, place, or how something works. Use decision for a standing rule, constraint, policy, or chosen approach future sessions should follow - not a progress update or completed action. Use preference for what someone likes, wants, values, or wants avoided. Use lesson for a non-obvious takeaway learned from experience that should change future behavior. Use milestone for a rare one-time event with durable future significance - not ordinary execution progress. Use relationship for a meaningful durable connection between people, groups, or systems.";
-
-/**
- * Default recall limit used when building log summaries.
- */
-const DEFAULT_RECALL_LIMIT = 10;
-
-/**
- * Supported recall-mode values accepted by `agenr_recall`.
- */
-const RECALL_MODES = ["auto", "entries", "episodes", "procedures"] as const;
+/** Shared OpenClaw param reader wired into host-neutral memory tool parsers. */
+export const OPENCLAW_PARAM_READER: MemoryToolParamReader = {
+  readString: readStringParam,
+  readNumber: readNumberParam,
+  readStringArray: readStringArrayParam,
+};
 
 export {
-  DEFAULT_RECALL_LIMIT,
   ENTRY_TYPE_DESCRIPTION,
   EXPIRY_DESCRIPTION,
   RECALL_MODES,
@@ -45,12 +42,31 @@ export {
   asRecord,
   formatErrorMessage,
   formatTargetSelector,
+  normalizeStringArray,
+  parseEntryType,
+  parseEntryTypes,
   parseExpiry,
+  parseRecallMode,
   readBooleanParam,
   sanitizeUpdateToolParams,
 };
 
-const RESULT_SUBJECT_LOG_LIMIT = 5;
+/**
+ * Maps a host-neutral memory tool outcome into an OpenClaw tool result.
+ *
+ * @param outcome - Shared store/update execution result.
+ * @returns OpenClaw text result payload.
+ */
+export function toOpenClawToolResult(outcome: MemoryToolOutcome) {
+  if (outcome.failed) {
+    return failedTextResult(outcome.text, {
+      ...outcome.details,
+      status: "failed",
+    });
+  }
+
+  return textResult(outcome.text, outcome.details);
+}
 
 /**
  * Resolves exactly one tool target selector into a concrete agenr entry.
@@ -76,62 +92,6 @@ export async function resolveTargetEntry(
     params,
     options,
   );
-}
-
-/**
- * Parses optional recall/store type filters into validated agenr entry types.
- *
- * @param values - Candidate entry-type strings.
- * @returns Validated entry types.
- */
-export function parseEntryTypes(values: string[] | undefined): EntryType[] {
-  return normalizeStringArray(values).map((value) => parseEntryType(value));
-}
-
-/**
- * Parses the optional unified recall mode parameter.
- *
- * @param value - Candidate recall mode.
- * @returns Validated recall mode, or undefined when absent.
- */
-export function parseRecallMode(value: string | undefined): UnifiedRecallMode | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (value === "auto" || value === "entries" || value === "episodes" || value === "procedures") {
-    return value;
-  }
-
-  throw new Error(`Unsupported recall mode "${value}".`);
-}
-
-/**
- * Parses one entry type string into the agenr domain union.
- *
- * @param value - Candidate entry type.
- * @returns Validated entry type.
- */
-export function parseEntryType(value: string): EntryType {
-  if (ENTRY_TYPES.includes(value as EntryType)) {
-    return value as EntryType;
-  }
-
-  throw new Error(`Unsupported entry type "${value}".`);
-}
-
-/**
- * Normalizes optional string arrays by trimming, deduplicating, and dropping empties.
- *
- * @param values - Candidate string values.
- * @returns Normalized string list.
- */
-export function normalizeStringArray(values: string[] | undefined): string[] {
-  if (!values) {
-    return [];
-  }
-
-  return Array.from(new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)));
 }
 
 /**
@@ -195,105 +155,6 @@ export function logToolFailure(logger: PluginLogger, toolName: string, ctx: Open
 }
 
 /**
- * Sanitizes store parameters before debug logging.
- *
- * @param params - Parsed store-tool parameters.
- * @returns Redacted log payload.
- */
-export function sanitizeStoreToolParams(params: {
-  type: EntryType;
-  subject: string;
-  content: string;
-  importance: number | undefined;
-  expiry: Expiry | undefined;
-  tags: string[];
-  sourceContext: string | undefined;
-  supersedes: string | undefined;
-  claimKey: string | undefined;
-  validFrom: string | undefined;
-  validTo: string | undefined;
-}): Record<string, unknown> {
-  return {
-    type: params.type,
-    subject: params.subject,
-    ...(params.importance !== undefined ? { importance: params.importance } : {}),
-    ...(params.expiry !== undefined ? { expiry: params.expiry } : {}),
-    ...(params.tags.length > 0 ? { tags: params.tags } : {}),
-    contentLength: params.content.length,
-    ...(params.sourceContext !== undefined ? { sourceContextLength: params.sourceContext.length } : {}),
-    ...(params.supersedes !== undefined ? { hasSupersedes: true } : {}),
-    ...(params.claimKey !== undefined ? { hasClaimKey: true } : {}),
-    ...(params.validFrom !== undefined ? { hasValidFrom: true } : {}),
-    ...(params.validTo !== undefined ? { hasValidTo: true } : {}),
-  };
-}
-
-/**
- * Formats the visible recall call summary for tool logging.
- *
- * @param params - Parsed recall-tool parameters.
- * @returns Log summary string.
- */
-export function formatRecallToolSummary(params: {
-  query: string;
-  mode: UnifiedRecallMode | undefined;
-  limit: number | undefined;
-  types: EntryType[];
-  tags: string[];
-  asOf?: string;
-}): string {
-  const parts = [`query=${JSON.stringify(truncate(params.query, 80))}`];
-
-  if (params.mode) {
-    parts.push(`mode=${params.mode}`);
-  }
-
-  if (params.limit !== undefined && params.limit !== DEFAULT_RECALL_LIMIT) {
-    parts.push(`limit=${params.limit}`);
-  }
-
-  if (params.types.length > 0) {
-    parts.push(`types=${JSON.stringify(params.types)}`);
-  }
-
-  if (params.tags.length > 0) {
-    parts.push(`tags=${JSON.stringify(params.tags)}`);
-  }
-
-  if (params.asOf) {
-    parts.push(`as_of=${JSON.stringify(params.asOf)}`);
-  }
-
-  return parts.join(" ");
-}
-
-/**
- * Sanitizes recall parameters before info logging.
- *
- * @param params - Parsed recall-tool parameters.
- * @returns Redacted log payload.
- */
-export function sanitizeRecallToolParams(params: {
-  query: string;
-  mode: UnifiedRecallMode | undefined;
-  limit: number | undefined;
-  threshold: number | undefined;
-  types: EntryType[];
-  tags: string[];
-  asOf?: string;
-}): Record<string, unknown> {
-  return {
-    query: params.query,
-    ...(params.mode ? { mode: params.mode } : {}),
-    ...(params.limit !== undefined ? { limit: params.limit } : {}),
-    ...(params.threshold !== undefined ? { threshold: params.threshold } : {}),
-    ...(params.types.length > 0 ? { types: params.types } : {}),
-    ...(params.tags.length > 0 ? { tags: params.tags } : {}),
-    ...(params.asOf ? { asOf: params.asOf } : {}),
-  };
-}
-
-/**
  * Sanitizes retire parameters before debug logging.
  *
  * @param params - Parsed retire-tool parameters.
@@ -319,29 +180,6 @@ export function sanitizeTraceToolParams(params: { id: string | undefined; subjec
     ...(params.subject ? { subject: params.subject } : {}),
     ...(params.last !== undefined ? { last: params.last } : {}),
   };
-}
-
-/**
- * Formats a concise unified recall summary for info-level logging.
- *
- * @param result - Unified recall result payload.
- * @returns Log summary string.
- */
-export function formatUnifiedRecallLogSummary(result: UnifiedRecallResult): string {
-  const procedureCount = result.procedureCandidates.length;
-  const procedureSummary = result.procedure ? ` [procedure: ${JSON.stringify(truncate(result.procedure.title, 80))}]` : "";
-  const entrySubjects = result.entries.map((entry) => entry.entry.subject.trim()).filter((subject) => subject.length > 0);
-  const displayed = entrySubjects.slice(0, RESULT_SUBJECT_LOG_LIMIT).map((subject) => JSON.stringify(truncate(subject, 80)));
-  const remaining = entrySubjects.length - RESULT_SUBJECT_LOG_LIMIT;
-  const suffix = displayed.length === 0 ? "" : ` [entry subjects: ${displayed.join(", ")}${remaining > 0 ? `, ... and ${remaining} more` : ""}]`;
-  const entryEpisodeSummary = `${result.episodes.length} episode${result.episodes.length === 1 ? "" : "s"}, ${result.entries.length} entr${
-    result.entries.length === 1 ? "y" : "ies"
-  }`;
-  if (procedureCount === 0 && !result.procedure) {
-    return `${entryEpisodeSummary}${suffix}`;
-  }
-
-  return `${procedureCount} procedure candidate${procedureCount === 1 ? "" : "s"}, ${entryEpisodeSummary}${procedureSummary}${suffix}`;
 }
 
 /**
@@ -422,21 +260,6 @@ export function formatTrace(
   }
 
   return lines.join("\n");
-}
-
-/**
- * Truncates tool text output to avoid oversized results.
- *
- * @param value - Text to truncate.
- * @param maxChars - Maximum character count.
- * @returns Truncated string when needed.
- */
-export function truncate(value: string, maxChars: number): string {
-  if (value.length <= maxChars) {
-    return value;
-  }
-
-  return `${value.slice(0, maxChars - 3).trimEnd()}...`;
 }
 
 /**

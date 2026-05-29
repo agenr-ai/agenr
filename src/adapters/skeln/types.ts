@@ -1,3 +1,5 @@
+import type { ExtensionContext } from "skeln";
+
 import type { PluginInjectionMemoryPolicyConfig } from "../../app/plugin-runtime/types.js";
 
 /**
@@ -31,7 +33,7 @@ export interface RegisterAgenrSkelnMemoryOptions {
    * Optional host callback that supplies Skeln-native scope facts. When absent,
    * the adapter derives cwd and sessionKey from the active extension context.
    */
-  getHostContext?: () => SkelnHostContext | Promise<SkelnHostContext>;
+  getHostContext?: (context: ExtensionContext) => Partial<SkelnHostContext> | Promise<Partial<SkelnHostContext>>;
 }
 
 /**

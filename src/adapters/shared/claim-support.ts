@@ -15,7 +15,7 @@ export interface ToolSessionLike {
 /**
  * Host prefixes used in source-file labels for tool-call provenance.
  */
-export type SessionSourcePrefix = "openclaw-session";
+export type SessionSourcePrefix = "openclaw-session" | "skeln-session";
 
 /**
  * Builds a stable source-file provenance label from a host session context.

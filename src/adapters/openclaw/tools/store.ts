@@ -1,82 +1,9 @@
 import type { AnyAgentTool } from "openclaw/plugin-sdk/agent-runtime";
-import { failedTextResult, readNumberParam, readStringArrayParam, readStringParam, textResult } from "openclaw/plugin-sdk/agent-runtime";
 import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sdk/core";
 
-import { storeEntriesDetailed } from "../../../core/store/pipeline.js";
-import { ENTRY_TYPES } from "../../../core/types.js";
+import { STORE_TOOL_PARAMETERS, parseStoreToolParams, runStoreMemoryTool, sanitizeStoreToolParams } from "../../shared/memory-tools.js";
 import type { AgenrOpenClawServices } from "../types.js";
-import {
-  ENTRY_TYPE_DESCRIPTION,
-  EXPIRY_DESCRIPTION,
-  asRecord,
-  buildToolCallClaimSupport,
-  buildSessionSourceFile,
-  logToolCall,
-  logToolFailure,
-  normalizeStringArray,
-  parseEntryType,
-  parseExpiry,
-  sanitizeStoreToolParams,
-  toolFailureResult,
-} from "./shared.js";
-
-const STORE_TOOL_PARAMETERS = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    type: {
-      type: "string",
-      enum: [...ENTRY_TYPES],
-      description: ENTRY_TYPE_DESCRIPTION,
-    },
-    subject: {
-      type: "string",
-      description: "Short subject line future recall can match. Name the durable takeaway, person, system, rule, relationship, or milestone directly.",
-    },
-    content: {
-      type: "string",
-      description: "What a fresh session should remember. Store the durable takeaway, not the activity log, canonical record, or transient progress snapshot.",
-    },
-    importance: {
-      type: "integer",
-      minimum: 1,
-      maximum: 10,
-      description: "Importance from 1 to 10. Use 7 for normal durable memory, 9 for critical constraints, and 10 only rarely.",
-    },
-    expiry: {
-      type: "string",
-      enum: ["core", "permanent", "temporary"],
-      description: EXPIRY_DESCRIPTION,
-    },
-    tags: {
-      type: "array",
-      items: { type: "string" },
-      description: "Optional tags for entities, systems, teams, or themes that should improve later recall.",
-    },
-    sourceContext: {
-      type: "string",
-      description: "Optional provenance note explaining why this memory was stored or what situation produced it.",
-    },
-    supersedes: {
-      type: "string",
-      description: "ID of an entry this replaces. The old entry will be marked as superseded.",
-    },
-    claimKey: {
-      type: "string",
-      description:
-        'Slot key identifying the specific knowledge slot (entity/attribute format, e.g., "project_name/deploy_strategy" or "postgres/max_connections"). Entries with the same claim key are candidates for supersession.',
-    },
-    validFrom: {
-      type: "string",
-      description: "ISO 8601 timestamp for when this fact became true in the world.",
-    },
-    validTo: {
-      type: "string",
-      description: "ISO 8601 timestamp for when this fact stopped being true.",
-    },
-  },
-  required: ["type", "subject", "content"],
-} as const;
+import { OPENCLAW_PARAM_READER, logToolCall, logToolFailure, toOpenClawToolResult, toolFailureResult } from "./shared.js";
 
 /**
  * Creates the agenr store tool bound to one OpenClaw session context.
@@ -95,103 +22,18 @@ export function createAgenrStoreTool(ctx: OpenClawPluginToolContext, servicesPro
     parameters: STORE_TOOL_PARAMETERS,
     async execute(_toolCallId, rawParams) {
       try {
-        const params = asRecord(rawParams);
-        const type = parseEntryType(readStringParam(params, "type", { required: true, label: "type" }));
-        const subject = readStringParam(params, "subject", { required: true, label: "subject" });
-        const content = readStringParam(params, "content", { required: true, label: "content" });
-        const importance = readNumberParam(params, "importance", { integer: true, strict: true });
-        const expiry = parseExpiry(readStringParam(params, "expiry"));
-        const tags = normalizeStringArray(readStringArrayParam(params, "tags"));
-        const sourceContext = readStringParam(params, "sourceContext");
-        const supersedes = readStringParam(params, "supersedes");
-        const claimKey = readStringParam(params, "claimKey", { trim: false });
-        const validFrom = readStringParam(params, "validFrom");
-        const validTo = readStringParam(params, "validTo");
-        const claimSupportObservedAt = new Date().toISOString();
-        logToolCall(
-          logger,
-          "agenr_store",
-          ctx,
-          `store 1 entry subject=${JSON.stringify(subject)} type=${type}`,
-          sanitizeStoreToolParams({
-            type,
-            subject,
-            content,
-            importance,
-            expiry,
-            tags,
-            sourceContext,
-            supersedes,
-            claimKey,
-            validFrom,
-            validTo,
-          }),
-        );
+        const params = parseStoreToolParams(rawParams, OPENCLAW_PARAM_READER);
+        logToolCall(logger, "agenr_store", ctx, `store 1 entry subject=${JSON.stringify(params.subject)} type=${params.type}`, sanitizeStoreToolParams(params));
 
         const services = await servicesPromise;
-        const result = await storeEntriesDetailed(
-          [
-            {
-              type,
-              subject,
-              content,
-              ...(importance !== undefined ? { importance } : {}),
-              ...(expiry !== undefined ? { expiry } : {}),
-              ...(tags.length > 0 ? { tags } : {}),
-              ...(supersedes ? { supersedes } : {}),
-              ...(claimKey
-                ? {
-                    claim_key: claimKey,
-                    claim_key_raw: claimKey,
-                    ...buildToolCallClaimSupport(ctx, "agenr_store", claimSupportObservedAt),
-                  }
-                : {}),
-              ...(validFrom ? { valid_from: validFrom } : {}),
-              ...(validTo ? { valid_to: validTo } : {}),
-              source_file: buildSessionSourceFile(ctx),
-              source_context: sourceContext ?? "Stored via agenr_store from OpenClaw.",
-            },
-          ],
-          services.entries,
-          services.embedding,
-          {
-            ...(services.claimExtraction
-              ? {
-                  claimExtraction: {
-                    llm: services.claimExtraction.llm,
-                    db: services.entries,
-                    config: services.claimExtraction.config,
-                  },
-                }
-              : {}),
+        return toOpenClawToolResult(
+          await runStoreMemoryTool(params, services, {
+            session: ctx,
+            sourcePrefix: "openclaw-session",
+            defaultSourceContext: "Stored via agenr_store from OpenClaw.",
             onWarning: (warning) => logger.warn(`[agenr] tool=agenr_store session=${ctx.sessionId ?? "unknown"} warning: ${warning}`),
-          },
+          }),
         );
-        const storedEntry = await services.memory.findEntryBySubject(subject);
-
-        if (result.stored > 0) {
-          return textResult(`Stored "${subject}".`, {
-            status: "stored",
-            subject,
-            entryId: storedEntry?.id,
-            result,
-          });
-        }
-
-        if (result.skipped > 0) {
-          return textResult(`Skipped "${subject}" because an active duplicate already exists.`, {
-            status: "skipped",
-            subject,
-            entryId: storedEntry?.id,
-            result,
-          });
-        }
-
-        return failedTextResult(`Rejected "${subject}". Check the supplied type, content, and metadata.`, {
-          status: "failed",
-          subject,
-          result,
-        });
       } catch (error) {
         logToolFailure(logger, "agenr_store", ctx, error);
         return toolFailureResult(error);

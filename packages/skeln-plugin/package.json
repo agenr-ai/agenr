@@ -27,8 +27,8 @@
         "description": "Optional path to agenr config.json. Defaults to AGENR_CONFIG_PATH, then config.json next to dbPath when dbPath is set, then ~/.agenr/config.json."
       },
       "memoryPolicy": {
-        "type": "object",
-        "description": "Optional runtime overrides for claim-aware read behavior, session-start memory injection, and proactive before-turn surfacing."
+        "type": "string",
+        "description": "JSON object of memory-policy overrides for slot policies, session-start injection, and before-turn recall. Same shape as the OpenClaw agenr plugin memoryPolicy block."
       }
     }
   },
@@ -37,7 +37,9 @@
     "build:debug": "node build.mjs"
   },
   "dependencies": {
-    "@libsql/client": "^0.17.2"
+    "@libsql/client": "^0.17.2",
+    "@mariozechner/pi-ai": "^0.63.2",
+    "yaml": "^2.8.3"
   },
   "devDependencies": {
     "skeln": "file:../../../skeln"

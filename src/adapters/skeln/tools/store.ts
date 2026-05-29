@@ -1,0 +1,44 @@
+import type { ExtensionAPI, ExtensionContext } from "skeln";
+
+import { STORE_TOOL_PARAMETERS, parseStoreToolParams, runStoreMemoryTool } from "../../shared/memory-tools.js";
+import type { AgenrSkelnServices } from "../runtime.js";
+import type { AgenrSkelnSessionScope } from "../types.js";
+import { SKELN_PARAM_READER, toSkelnToolResult, toolFailureResult, toolSchema } from "./shared.js";
+
+/** Registers the Skeln-native agenr_store tool. */
+export function registerAgenrSkelnStoreTool(
+  skeln: ExtensionAPI,
+  servicesPromise: Promise<AgenrSkelnServices>,
+  resolveScope: (context: ExtensionContext) => Promise<AgenrSkelnSessionScope>,
+): void {
+  skeln.registerTool({
+    name: "agenr_store",
+    label: "Agenr Store",
+    description:
+      "Store a new durable memory entry in agenr. Store only durable facts, decisions, preferences, lessons, milestones, and relationships that help a future Skeln session make a better decision.",
+    promptSnippet: "Use agenr_store to persist durable memory that should survive across Skeln sessions.",
+    promptGuidelines: [
+      "Do not store progress logs, plans, or data already canonical in git, tickets, calendars, signed docs, chat/email, or databases.",
+      "Store the durable takeaway, standing rule, preference, risk, lesson, or relationship instead of raw activity.",
+      "Use claimKey for slot-like facts that may be superseded later, such as versions, strategies, owners, or limits.",
+    ],
+    parameters: toolSchema(STORE_TOOL_PARAMETERS),
+    execute: async (_toolCallId, rawParams, _signal, _onUpdate, context) => {
+      try {
+        const params = parseStoreToolParams(rawParams, SKELN_PARAM_READER);
+        const [services, scope] = await Promise.all([servicesPromise, resolveScope(context)]);
+        return toSkelnToolResult(
+          await runStoreMemoryTool(params, services, {
+            session: scope,
+            sourcePrefix: "skeln-session",
+            defaultSourceContext: "Stored via agenr_store from Skeln.",
+            extraDetails: { sessionKey: scope.sessionKey },
+            onWarning: (warning) => console.warn(`[agenr] tool=agenr_store session=${scope.sessionId} warning: ${warning}`),
+          }),
+        );
+      } catch (error) {
+        return toolFailureResult(error);
+      }
+    },
+  });
+}

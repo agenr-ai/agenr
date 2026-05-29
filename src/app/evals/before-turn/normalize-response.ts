@@ -1,4 +1,4 @@
-import { formatAgenrBeforeTurnRecall } from "../../../adapters/openclaw/format/before-turn-format.js";
+import { formatAgenrBeforeTurnRecall } from "../../../adapters/shared/injection/before-turn-format.js";
 import type { BeforeTurnPatch } from "../../before-turn/index.js";
 import type { RecallEvalSandboxContext } from "../recall/ports.js";
 import { buildBeforeTurnDebugArtifact } from "./build-debug-artifact.js";
