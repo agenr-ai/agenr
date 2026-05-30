@@ -38,7 +38,7 @@
   },
   "dependencies": {
     "@libsql/client": "^0.17.2",
-    "@earendil-works/pi-ai": "^0.77.0",
+    "@earendil-works/pi-ai": "^0.78.0",
     "yaml": "^2.8.3"
   },
   "devDependencies": {

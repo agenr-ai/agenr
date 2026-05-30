@@ -130,6 +130,14 @@
             "additionalProperties": false,
             "description": "Optional session-start overrides for prompt-time memory injection behavior.",
             "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Enable or disable all session-start memory injection. Defaults to true."
+              },
+              "coreMemory": {
+                "type": "boolean",
+                "description": "Enable or disable always-on Core Memory injection at session start. Defaults to true."
+              },
               "relevantDurableMemory": {
                 "type": "boolean",
                 "description": "Enable or disable artifact-grounded Relevant Durable Memory injection at session start. Defaults to true."
