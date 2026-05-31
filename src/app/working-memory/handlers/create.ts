@@ -1,3 +1,4 @@
+import { INITIAL_GOAL_GENERATION } from "../goal-generation.js";
 import { createToolSuccessProjection } from "../projection.js";
 import type { AgenrWorkParams } from "../mutations.js";
 import { isWorkingSetCreateFailure, type WorkingMemoryRepository } from "../repository.js";
@@ -39,6 +40,7 @@ export async function handleCreate(
     objective: operation.objective,
     status: "active",
     snapshot: {
+      goalGeneration: INITIAL_GOAL_GENERATION,
       objective: operation.objective,
       continuation: { policy: params.continuationPolicy ?? "manual" },
       ...(params.initialBudget ? { budgets: params.initialBudget } : {}),

@@ -196,6 +196,8 @@ export type WorkingCandidate = WorkingEpisodicCandidate | WorkingDurableCandidat
  * scope facts, but task content lives here only.
  */
 export interface WorkingSnapshot {
+  /** Monotonic goal identity generation; assigned on create and bumps on objective replace. */
+  goalGeneration?: number;
   /** Current task objective. */
   objective?: string;
   /** Success criteria for the task. */

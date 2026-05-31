@@ -57,6 +57,7 @@ describe("goal alias tools", () => {
           objective: "Implement Phase 1.5 goal aliases.",
           status: "active",
           revision: 1,
+          goalGeneration: 1,
           tokenBudget: 500,
           tokensUsed: 0,
           turnsUsed: 0,

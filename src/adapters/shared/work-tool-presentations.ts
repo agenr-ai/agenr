@@ -1,5 +1,6 @@
 import type { WorkingMemoryResult } from "../../app/working-memory/results.js";
 import type { WorkingSetRecord } from "../../app/working-memory/records.js";
+import { readGoalGeneration } from "../../app/working-memory/goal-generation.js";
 
 /**
  * Builds structured tool details for agenr_work get responses and related host surfaces.
@@ -14,6 +15,7 @@ export function buildWorkingSetGetDetails(workingSet: WorkingSetRecord, eventsRe
     action: "get",
     workingSetId: workingSet.id,
     revision: workingSet.revision,
+    goalGeneration: readGoalGeneration(workingSet.snapshot),
     goalStatus: workingSet.status,
     objective: workingSet.snapshot.objective ?? workingSet.objective ?? null,
     checkpoint: workingSet.snapshot.checkpoint ?? null,
@@ -49,6 +51,7 @@ export function buildWorkingMemoryDetails(result: WorkingMemoryResult): Record<s
         action: "create",
         workingSetId: result.workingSet.id,
         revision: result.workingSet.revision,
+        goalGeneration: readGoalGeneration(result.workingSet.snapshot),
       };
     case "update":
       return {
@@ -56,6 +59,7 @@ export function buildWorkingMemoryDetails(result: WorkingMemoryResult): Record<s
         action: "update",
         workingSetId: result.workingSet.id,
         revision: result.workingSet.revision,
+        goalGeneration: readGoalGeneration(result.workingSet.snapshot),
       };
     case "close":
       return {
@@ -63,6 +67,7 @@ export function buildWorkingMemoryDetails(result: WorkingMemoryResult): Record<s
         action: "close",
         workingSetId: result.workingSet.id,
         revision: result.workingSet.revision,
+        goalGeneration: readGoalGeneration(result.workingSet.snapshot),
         candidateCount: result.candidates.length,
       };
     case "prepare_external_goal_mutation":

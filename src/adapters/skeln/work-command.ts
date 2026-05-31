@@ -6,6 +6,7 @@ import type { WorkingScope } from "../../app/working-memory/scope.js";
 import type { WorkingBudgetState, WorkingCheckpoint, WorkingUsageDelta } from "../../app/working-memory/snapshot.js";
 import type { WorkingContinuationPolicy } from "../../app/working-memory/constants.js";
 import { workingMemoryResultToToolOutcome } from "../shared/work-tools.js";
+import { scheduleSkelnGoalCloseEpisodePromotion } from "./episode/goal-close-episode.js";
 import type { createAgenrSkelnServices } from "./runtime.js";
 import { toWorkingScopeFromSkelnSession } from "./session/scope.js";
 import type { AgenrSkelnSessionScope } from "./types.js";
@@ -176,6 +177,16 @@ export async function executeAgenrSkelnWorkCommand(
           ...toAgenrWorkParams(params),
           scope: workingScope,
         });
+  if (!result.ok) {
+    return workingMemoryResultToToolOutcome(result);
+  }
+  if (params.action === "close" && params.createEpisode && result.action === "close") {
+    scheduleSkelnGoalCloseEpisodePromotion({
+      context,
+      services,
+      closeResult: result,
+    });
+  }
   return workingMemoryResultToToolOutcome(result);
 }
 

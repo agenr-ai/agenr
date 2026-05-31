@@ -1,6 +1,7 @@
 import type { WorkingSetStatus } from "../../app/working-memory/constants.js";
 import type { WorkingSetRecord } from "../../app/working-memory/records.js";
 import type { WorkingCheckpoint } from "../../app/working-memory/snapshot.js";
+import { readGoalGeneration } from "../../app/working-memory/goal-generation.js";
 
 /** Codex-compatible goal object returned by goal alias tools. */
 export interface GoalToolGoal {
@@ -8,6 +9,8 @@ export interface GoalToolGoal {
   workingSetId: string;
   /** Monotonic Agenr working-set revision. */
   revision: number;
+  /** Monotonic goal identity generation for Codex-style goal_id guards. */
+  goalGeneration: number;
   /** Current goal objective. */
   objective: string;
   /** Current goal status. */
@@ -62,6 +65,7 @@ export function toGoalToolGoal(workingSet: WorkingSetRecord): GoalToolGoal {
   return {
     workingSetId: workingSet.id,
     revision: workingSet.revision,
+    goalGeneration: readGoalGeneration(workingSet.snapshot),
     objective: workingSet.snapshot.objective ?? workingSet.objective ?? "",
     status: workingSet.status,
     ...(budgets?.tokenBudget !== undefined ? { tokenBudget: budgets.tokenBudget } : {}),

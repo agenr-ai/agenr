@@ -1,3 +1,4 @@
+import { nextGoalGenerationAfterObjectiveChange } from "./goal-generation.js";
 import type { AgenrWorkUpdateOperation } from "./mutations.js";
 import type { WorkingSetRecord } from "./records.js";
 import { createFailure, type WorkingMemoryFailure } from "./results.js";
@@ -40,6 +41,7 @@ export function applyOperation(
 
   switch (operation.type) {
     case "set_objective":
+      snapshot.goalGeneration = nextGoalGenerationAfterObjectiveChange(snapshot, operation.objective);
       snapshot.objective = operation.objective;
       objective = operation.objective;
       title = operation.title ?? title;

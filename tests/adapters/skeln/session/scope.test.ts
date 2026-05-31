@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { resolveWorkingScope } from "../../../../src/app/working-memory/scope-resolver.js";
 import {
   buildSkelnHostContext,
   mergeSkelnHostContext,
@@ -107,5 +108,64 @@ describe("toWorkingScopeFromSkelnSession", () => {
       gitBranch: "main",
       project: "agenr",
     });
+  });
+
+  it("does not emit scopeKey or sessionKey working-memory facts", () => {
+    const facts = toWorkingScopeFromSkelnSession({
+      sessionId: "session-1",
+      sessionKey: "skeln:session:session-1:cwd:/tmp/project",
+      cwd: "/tmp/project",
+      conversationKey: "session-1",
+    });
+
+    expect(facts).not.toHaveProperty("scopeKey");
+    expect(facts).not.toHaveProperty("sessionKey");
+  });
+});
+
+describe("Skeln goal scope stability", () => {
+  it("resolves the same conversation scope when cwd changes within one session", () => {
+    const sessionId = "session-cwd-change";
+    const firstCwd = "/tmp/project";
+    const secondCwd = "/tmp/project/packages/core";
+
+    const firstScope = toSkelnSessionScope(
+      buildSkelnHostContext({
+        sessionId,
+        cwd: firstCwd,
+        gitRoot: "/tmp/project",
+        gitBranch: "main",
+        project: "agenr",
+      }),
+      sessionId,
+    );
+    const secondScope = toSkelnSessionScope(
+      buildSkelnHostContext({
+        sessionId,
+        cwd: secondCwd,
+        gitRoot: "/tmp/project",
+        gitBranch: "main",
+        project: "agenr",
+      }),
+      sessionId,
+    );
+
+    expect(firstScope.sessionKey).not.toEqual(secondScope.sessionKey);
+
+    const firstResolved = resolveWorkingScope(toWorkingScopeFromSkelnSession(firstScope));
+    const secondResolved = resolveWorkingScope(toWorkingScopeFromSkelnSession(secondScope));
+
+    expect(firstResolved.ok).toBe(true);
+    expect(secondResolved.ok).toBe(true);
+    if (!firstResolved.ok || !secondResolved.ok) {
+      return;
+    }
+
+    expect(firstResolved.scope.scopeKey).toBe(`conversation:${sessionId}`);
+    expect(secondResolved.scope.scopeKey).toBe(`conversation:${sessionId}`);
+    expect(firstResolved.scope.scopeKind).toBe("conversation");
+    expect(secondResolved.scope.scopeKind).toBe("conversation");
+    expect(firstResolved.scope.cwd).toBe(firstCwd);
+    expect(secondResolved.scope.cwd).toBe(secondCwd);
   });
 });
