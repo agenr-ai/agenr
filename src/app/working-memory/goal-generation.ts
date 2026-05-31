@@ -1,6 +1,8 @@
 import type { WorkingSnapshot } from "./snapshot.js";
 
-/** Initial goal generation assigned when a working set is created. */
+/**
+ * Initial goal generation assigned when a working set is created.
+ */
 export const INITIAL_GOAL_GENERATION = 1;
 
 /**
