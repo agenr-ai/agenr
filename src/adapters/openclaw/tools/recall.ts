@@ -70,6 +70,9 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
   };
 }
 
+/**
+ * Emits bounded debug artifacts for a successful OpenClaw recall tool call.
+ */
 function emitRecallDebugArtifacts(
   services: AgenrOpenClawServices,
   ctx: OpenClawPluginToolContext,
@@ -116,6 +119,9 @@ function emitRecallDebugArtifacts(
   });
 }
 
+/**
+ * Emits a best-effort debug event for a failed OpenClaw recall tool call.
+ */
 async function emitRecallError(servicesPromise: Promise<AgenrOpenClawServices>, ctx: OpenClawPluginToolContext, error: unknown): Promise<void> {
   try {
     const services = await servicesPromise;

@@ -1,7 +1,7 @@
 # Comprehensive plan: Skeln session memory, working memory, and `/goal`
 
 Date: 2026-05-30
-Status: Implementation-ready synthesis
+Status: Phase 0, Phase 1, Phase 1.5, Phase 2, Phase 3, Phase 4, and the Agenr-owned Phase 5 storage and mutation contract are complete; Skeln runtime parity work remains open
 Audience: Agenr core/app, Skeln host adapter, and OpenClaw parity work where noted
 
 Sources combined:
@@ -10,6 +10,16 @@ Sources combined:
 - [Prior-art review](./reviews/2026-05-29-skeln-working-memory-prior-art-review.md)
 
 Scope assumption: Agenr and Skeln may both change. There is no backward-compatibility constraint for the new working-memory contract.
+
+Phase 0 implementation note: this document is the frozen implementation contract for working memory, session tree memory, and `/goal` integration. Phase 0 added typed stubs and default-off feature flags only. It did not create `knowledge.db` schema v11 or v12 tables.
+
+Phase 1 implementation note: schema v11, `agenr_work`, transient WIP injection, and `/goal set|clear|show` shipped. A live goal-run audit (2026-05-30) showed that Phase 1 delivers scoped WIP storage and command wiring, but not Codex-style autonomous `/goal`. Phase 1.5 closes the model-contract and injection gaps before session-tree work continues. Phases 5a and 5b own Codex runtime parity.
+
+Phase 2 implementation note: schema v12, DB-backed `session_lineage_edges` and `session_artifacts`, feature-gated lifecycle intake, Skeln session-start resume refs, and a host-neutral predecessor-continuity lookup service shipped. Fork enforcement and autonomous `/goal` continuation remain later phases.
+
+Phase 3 implementation note: compaction checkpoint artifacts, branch-abandonment artifacts from Skeln branch summaries, active working-set checkpoint refresh after compaction, and before-turn filtering of archived pre-compaction branch messages shipped behind `sessionTreeCompaction`.
+
+Phase 5 implementation note: Agenr now exposes the trusted host contract needed by Skeln's Codex-style goal runtime: `continuation_policy` supports `manual` and `on_idle`, trusted host operations can configure budgets, account token/time/turn usage, record runtime lease and stale metadata, and call `prepare_external_goal_mutation` before `/goal set`, `/goal clear`, pause, resume, compaction, fork, handoff, scheduled delay, or shutdown. The Skeln idle loop, locks, status pill, menus, steering templates, approvals, and auto-start behavior remain host-owned Skeln work.
 
 ## Executive summary
 
@@ -24,6 +34,8 @@ The combined design keeps the original layered architecture and applies the prio
 5. Close is consolidation, not automatic durable truth. It creates a final snapshot and optional episode/candidate payloads, never silent semantic entries.
 6. Lifecycle capture and checkpoint reliability come before autonomous continuation.
 7. Skeln owns execution, approvals, interrupts, budgets, and continuation gates. Agenr owns the durable working ledger and consolidation state.
+
+Phase status: Phase 0, Phase 1, Phase 1.5, Phase 2, Phase 3, Phase 4, and the Agenr-owned Phase 5 contract are complete. Codex `/goal` runtime parity is still Skeln-owned Phase 5b work.
 
 ## Prior-art conclusions
 
@@ -271,7 +283,7 @@ Agenr Phase 1 tests:
 - before-turn renderer refuses ambiguous scopes
 - working memory and durable memory stay separate
 
-Skeln Phase 1 tests:
+Skeln Phase 1 tests (completed; extend in Phase 1.5):
 
 - transient Agenr work context reaches provider context
 - transient context is not appended as a session `message`
@@ -279,6 +291,12 @@ Skeln Phase 1 tests:
 - compaction input excludes transient working-context projections
 - `/goal` commands use Agenr-first mutation order
 - `/goal` volatile state does not advance when Agenr mutation fails
+
+Skeln Phase 1.5 tests:
+
+- per-turn WIP audit pointer when `wip` is enabled
+- `update_goal` / `merge_checkpoint` tool contract
+- revision increments after material checkpoint
 
 Phase 2 and 3 cross-repo tests:
 
@@ -316,16 +334,18 @@ Skeln adopts Codex's user experience and continuation discipline while using Age
 | Token and time budgets | `working_sets.budget_json`, enforced by Skeln |
 | Continuation policy | `working_sets.continuation_policy` |
 | `<goal_context>` | transient `<agenr_work_context>` |
-| `get_goal`, `create_goal`, `update_goal` | optional aliases over `agenr_work` only |
+| `get_goal`, `create_goal`, `update_goal` | Codex-compatible aliases over `agenr_work` (Phase 1.5) |
 | Host SQLite goal state | no semantic ledger in Skeln, read-through UI cache only |
 
-Phase 1 command surface:
+Phase 1 command surface (shipped):
 
 | Command | Agenr action | Skeln volatile action after success |
 |---|---|---|
 | `/goal` | `agenr_work get` | refresh UI cache |
 | `/goal set <objective>` | create or replace active working set at resolved scope | store `workingSetId` and `revision` |
 | `/goal clear` | close or abandon per explicit user intent | clear volatile runtime |
+
+Phase 1 does not auto-start a work turn after `/goal set`. That behavior is Phase 5b (Codex parity).
 
 Phase 5b adds:
 
@@ -336,7 +356,7 @@ Phase 5b adds:
 - stop-after controls
 - require-review-after controls
 
-Model tools may mark the working set blocked or request close through strict audit rules. User and runtime control pause, resume, budget limit, usage limit, waiting, cancellation, and continuation enablement.
+Model tools mark the working set `complete` or `blocked` through `update_goal` (Phase 1.5 alias over `agenr_work set_status`). Close remains user-only via `/goal clear`. User and runtime control pause, resume, budget limit, usage limit, waiting, cancellation, and continuation enablement.
 
 ## End-to-end flows
 
@@ -347,6 +367,7 @@ Model tools may mark the working set blocked or request close through strict aud
 3. Skeln calls Agenr to create or update the working set with `status=active` and `continuation_policy=manual`.
 4. Agenr writes `created` or `snapshot_updated`, returns `workingSetId` and `revision`.
 5. Skeln updates volatile runtime only after Agenr succeeds.
+6. Phase 5b only: Skeln calls `maybe_continue_goal_if_idle` to start the first work turn without a manual user prompt.
 
 ### Before each goal turn
 
@@ -673,6 +694,14 @@ type WorkingCandidate =
 - `update`
 - `close`
 
+Codex-compatible aliases (Phase 1.5):
+
+- `get_goal` -> `get`
+- `create_goal` -> create path with `set_objective` (fail if active set exists)
+- `update_goal` -> `update` with `set_status` only (`complete` or `blocked`)
+
+Alias response shape follows Codex `GoalToolResponse`: `goal`, `remainingTokens`, optional `completionBudgetReport` on completion.
+
 ```ts
 interface AgenrWorkParams {
   action: "get" | "list" | "update" | "close";
@@ -698,7 +727,7 @@ Status authority:
 
 | Actor | May set |
 |---|---|
-| Model | `blocked`, and close request under tool rules |
+| Model | `complete` and `blocked` via `update_goal` (Phase 1.5); not `close` |
 | User | `active`, `paused`, `closed`, `abandoned` |
 | Skeln runtime | `budget_limited`, `usage_limited`, `waiting`, `needs_review` |
 | Consolidation job | candidate promotion status only |
@@ -785,7 +814,7 @@ Feature flags:
 | `workingMemory` | v11 tables, `agenr_work`, transient WIP injection |
 | `sessionTreeLineage` | v12 lineage, fork/resume handoff |
 | `sessionTreeCompaction` | compaction refresh and branch-abandonment capture |
-| `goalContinuation` | idle continuation and long-horizon `/goal` controls |
+| `goalContinuation` | idle continuation and long-horizon `/goal` controls (Phase 5b; Phase 0 stub only until then) |
 
 All default off until their owning phase ships.
 
@@ -831,7 +860,7 @@ Later:
 
 ## Rollout plan
 
-### Phase 0: Contract re-freeze
+### Phase 0: Contract re-freeze (completed)
 
 Deliverables:
 
@@ -844,13 +873,13 @@ Deliverables:
 - Confirm Phase 1 has no session-tree table dependency.
 - Add typed stubs behind feature flags, no migration yet.
 
-Exit criteria:
+Exit criteria (met):
 
 - Types compile.
 - No `knowledge.db` migration has landed.
 - Cross-repo Skeln contract for transient context is documented.
 
-### Phase 1: Smaller working-memory MVP
+### Phase 1: Smaller working-memory MVP (completed)
 
 Agenr:
 
@@ -880,17 +909,198 @@ Out of scope:
 - automatic lifecycle mining
 - semantic or procedural auto-promotion
 
-Delivers:
+Delivers (shipped):
 
 - restart resume by scope
 - no durable pollution
 - close handoff
 - conservative ambiguity behavior
 
+Known gaps carried to Phase 1.5 and 5b: Codex tool aliases, typed operation schema in tool params, per-turn WIP verification, idle continuation, auto-start after set, terminal status via `update_goal`.
+
+#### Phase 1 audit findings (2026-05-30)
+
+A live Skeln goal run (`/goal set` + manual `work the goal`) validated Phase 1 storage and command wiring, but not long-horizon autonomy. Observed gaps:
+
+| Finding | Implication |
+|---|---|
+| Single user turn, no idle continuation | Expected for Phase 1 (`continuation_policy=manual`); Codex runtime not yet ported |
+| Working set stayed at revision 1 | Model failed `merge_checkpoint` calls due to untyped operation schema |
+| Model declared "done" in prose only | No `update_goal` alias; no terminal status transition |
+| One WIP audit pointer for the session | Per-turn injection must be verified and hardened in Phase 1.5 |
+| `/goal set` did not start work | Expected for Phase 1; auto-start is Phase 5b |
+
+Estimated Codex `/goal` parity after Phase 1: roughly 15-20% (persistence and commands only).
+
+### Phase 1.5: Goal contract hardening (required before Phase 2)
+
+Phase 1 shipped the ledger and host wiring. Phase 1.5 closes model-contract and injection gaps discovered in the audit so later phases build on a trustworthy goal surface. This phase does not add idle continuation (that remains Phase 5b).
+
+#### Agenr deliverables
+
+- Tighten `agenr_work` tool schema: document typed `operation` variants explicitly (`merge_checkpoint`, `set_status`, and the rest) so models cannot guess `checkpoint` or omit `type`.
+- Register Codex-compatible tool aliases:
+  - `get_goal` -> `agenr_work get` with structured JSON response (`goal`, `remainingTokens`, optional `completionBudgetReport`)
+  - `create_goal` -> `agenr_work create` (fail when an active set exists)
+  - `update_goal` -> `agenr_work update` + `set_status` (`complete` or `blocked` only; copy Codex audit language)
+- Keep `agenr_work close` reserved for `/goal clear`; model must not close via tools.
+- Replace the Phase 0 `goalContinuation` service stub message with a narrow host callback port if needed, but do not implement the continuation loop in Agenr.
+
+#### Skeln deliverables
+
+- Verify transient WIP injection on every agent turn when `workingMemory` and `wip` (or `memoryPolicy.workingContext.enabled`) are on; assert a `prompt_context` audit pointer per turn in tests.
+- Ensure `/goal set` refreshes volatile `workingSetId` and `revision` cache after Agenr succeeds (already required; add regression test).
+- Document that Phase 1 `/goal set` does not auto-start a turn; optional `--start` flag may land here if cheap, but default auto-start remains Phase 5b.
+
+#### Cross-repo tests
+
+- Model can call `merge_checkpoint` and `set_status` without schema confusion.
+- `update_goal` with `complete` transitions status and returns Codex-shaped response.
+- Rendered `<agenr_work_context>` is injected through `transientMessages` on each turn, not replayed as a user message.
+- Replay fixture from the 2026-05-30 audit: after a goal turn, revision increments when the model records a checkpoint.
+
+#### Exit criteria
+
+- Codex tool names available alongside `agenr_work`.
+- Per-turn WIP injection verified in Skeln tests.
+- No Phase 1 behavior regresses; session-tree work (Phase 2) can proceed without revisiting tool contracts.
+
+### Codex `/goal` parity reference
+
+This section maps Codex `codex-rs/core/src/goals.rs` and related files to Skeln and Agenr targets. Use it when implementing Phases 5a and 5b. Skeln owns execution runtime; Agenr owns the working-set ledger (`working_sets` replaces Codex `thread_goals`).
+
+#### Architecture split
+
+```text
+Codex today:
+  tui /goal UI -> app-server thread_goal_* -> codex_thread -> core/goals.rs -> state/thread_goals
+  model tools: get_goal, create_goal, update_goal
+
+Skeln target:
+  skeln TUI /goal -> packages/agenr/goal-commands.ts -> skeln/runtime/goal/* -> agenr_work + working_sets
+  model tools: get_goal, create_goal, update_goal (aliases) + agenr_work (general WIP)
+```
+
+Rule: Skeln executes and schedules turns. Agenr remembers objective, snapshot, checkpoints, status, and budget counters.
+
+#### Parity by layer (after Phase 1)
+
+| Layer | Codex | Skeln/Agenr after Phase 1 | Target phase |
+|---|---|---|---|
+| Persistence (`thread_goals`) | one row per thread | `working_sets` + events (richer) | Phase 1 done |
+| Slash commands | set/get/clear/edit/pause | set/get/clear only | 1 done; edit/pause 5a/5b |
+| Model tools | get/create/update_goal | `agenr_work` only | 1.5 |
+| Core runtime (`goals.rs`) | continuation, accounting, locks | not implemented | 5b |
+| TUI status pill, menus | yes | no | 5b |
+| Idle continuation | yes | no | 5b |
+
+#### File-by-file parity matrix
+
+##### Core runtime (Codex `goals.rs` equivalent)
+
+| Codex source | Responsibility | Skeln / Agenr target | Phase |
+|---|---|---|---|
+| `core/src/goals.rs` | `GoalRuntimeState`, accounting lock, continuation lock | `skeln/src/runtime/goal/runtime-state.ts` | 5b |
+| same | `GoalRuntimeEvent` dispatcher | `skeln/src/runtime/goal/events.ts` | 5b |
+| same | `maybe_start_goal_continuation_turn` | `skeln/src/runtime/goal/continuation.ts` | 5b |
+| same | `goal_continuation_candidate_if_active` guards | same file | 5b |
+| same | `apply_external_thread_goal_status` (auto-continue on set) | `goal-commands.ts` + runtime hook | 5b |
+| same | `finish_thread_goal_turn` + no-progress suppression | `continuation.ts` | 5b |
+| same | Token/wall-clock accounting | `skeln/src/runtime/goal/accounting.ts` + Agenr budget writes | 5b |
+| same | Steering templates (continuation, objective updated, budget limit) | `skeln/src/runtime/goal/templates/*.md` | 5b |
+| same | `goal_context_input_item` hidden contextual user fragment | `transientMessages` via before-agent-start (separate from WIP block) | 5b |
+| `core/src/codex_thread.rs` | `continue_active_goal_if_idle`, external set/clear | `skeln/src/runtime/goal/thread-handle.ts` | 5b |
+| `core/src/tasks/mod.rs` | `TurnFinished` -> `MaybeContinueIfIdle` | `skeln/src/runtime/prompt/turn.ts` or agent lifecycle hook | 5b |
+| `core/src/tools/registry.rs` | `ToolCompleted` -> account progress | Skeln tool-result hook | 5b |
+
+Suggested Skeln module tree:
+
+```text
+skeln/src/runtime/goal/
+  runtime-state.ts
+  events.ts
+  continuation.ts
+  accounting.ts
+  steering.ts
+  templates/
+    continuation.md
+    objective-updated.md
+    budget-limit.md
+  thread-handle.ts
+  types.ts
+  index.ts
+```
+
+Reuse the existing compaction auto-continue pattern in `skeln/src/runtime/compaction/pipeline.ts` (`scheduleAutoContinue` -> `agent.continue()`) as the scheduling primitive for goal continuation.
+
+##### Persistence
+
+| Codex source | Skeln / Agenr target | Phase 1 status | Remaining |
+|---|---|---|---|
+| `state/src/model/thread_goal.rs` | `agenr/.../working-memory/constants.ts` statuses | done | Map names 1:1 in adapters |
+| `state/src/runtime/goals.rs` | `working-memory-repository.ts` + budget accounting API | partial | `accountWorkingSetUsage`, budget-limit transition | 5b |
+| `thread_goals` one row per thread | `working_sets` one-open-per-scope | done | intentional scope model |
+
+##### Model tools
+
+| Codex tool | Skeln / Agenr target | Phase |
+|---|---|---|
+| `get_goal` | alias -> `agenr_work get` + structured JSON | 1.5 |
+| `create_goal` | alias -> `agenr_work create` | 1.5 |
+| `update_goal` | alias -> `agenr_work set_status` (`complete` \| `blocked`) | 1.5 |
+| `goal_spec.rs` descriptions | shared spec module; copy completion/blocked audit text | 1.5 |
+| `agenr_work` (general WIP) | existing tool | Phase 1 done |
+
+##### External command and UI
+
+| Codex source | Skeln target | Phase |
+|---|---|---|
+| `app-server/.../thread_goal_processor.rs` | `packages/agenr/src/goal-commands.ts` | 1 done; prepare-mutation accounting 5a |
+| `tui/.../thread_goal_actions.rs` | `skeln/src/tui/goal/` | 5a/5b |
+| `tui/goal_display.rs` | TUI status line (objective, tokens, elapsed) | 5b |
+
+##### WIP vs continuation injection
+
+Two distinct transient injections when a goal is active:
+
+1. `<agenr_work_context>` - snapshot WIP from Agenr (every turn when WIP enabled; Phase 1.5 hardening).
+2. Continuation steering - Codex-style prompt from templates (idle continuation turns only; Phase 5b).
+
+Do not merge these into one block.
+
+#### `goals.rs` symbol checklist (Phase 5b)
+
+| Codex symbol | Skeln action |
+|---|---|
+| `GoalRuntimeState::new` | Create per-session goal runtime on instance init |
+| `goal_runtime_apply` | Central event dispatcher |
+| `mark_thread_goal_turn_started` | Hook at prompt turn start |
+| `account_thread_goal_progress` | Hook after each non-`update_goal` tool |
+| `finish_thread_goal_turn` | Hook at turn finish; detect no-progress |
+| `maybe_continue_goal_if_idle_runtime` | Schedule after idle |
+| `maybe_start_goal_continuation_turn` | Enqueue continuation prompt + start agent |
+| `goal_continuation_candidate_if_active` | Guards before schedule |
+| `apply_external_thread_goal_status` | Call from `/goal set` after Agenr OK |
+| `prepare_external_goal_mutation` | Call before `/goal set` or `/goal clear` |
+| `restore_thread_goal_runtime_after_resume` | Session resume path |
+| `usage_limit_active_thread_goal_for_turn` | Provider usage-limit callback |
+| `continuation_prompt` / templates | Port from Codex `templates/goals/*.md` |
+
+#### Test parity
+
+| Codex test area | Skeln / Agenr test to add |
+|---|---|
+| `core/src/session/tests.rs` goal runtime | `tests/runtime/goal/continuation.test.ts` |
+| TUI goal snapshots | TUI status pill snapshots |
+| End-to-end set -> continue -> complete | Integration: multi-turn goal with `update_goal` |
+
 ### Phase 2: Session-tree and lifecycle foundation
+
+Implementation status: complete for the Agenr foundation. Schema v12 tables and indexes exist, the DB repository persists lineage edges and artifacts, the app-layer trigger router consumes transition reasons and predecessor refs behind feature flags, Skeln session-start resume refs are routed into Agenr, and predecessor continuity can be resolved from host-neutral lineage/artifact rows.
 
 Preconditions:
 
+- Phase 1.5 complete (Codex tool aliases, typed operation schema, per-turn WIP verification).
 - Confirm exact Skeln payloads for `session_start.reason`, predecessor refs, fork/clone signals, and lifecycle hooks.
 - Wire `session_tree` after-event to extension handlers or remove it as a dependency.
 
@@ -915,6 +1125,8 @@ Delivers:
 
 ### Phase 3: Compaction and branch abandonment
 
+Implementation status: complete for the Agenr and Skeln adapter slice. `session_compact` records `compaction_checkpoint` artifacts and refreshes the active working-set checkpoint when one resolves. Skeln before-turn recall now filters archived pre-compaction branch messages when the compaction boundary is available. `session_tree` branch summaries record `branch_abandonment` artifacts behind `sessionTreeCompaction`; Agenr-owned branch-summary generation remains unimplemented and default-off for later policy work.
+
 Preconditions:
 
 - `session_compact` payload includes compaction entry, summary, and `firstKeptEntryId`.
@@ -935,6 +1147,8 @@ Delivers:
 
 ### Phase 4: Close, shutdown, and episode consolidation v1
 
+Phase 4 implementation note: shared episode ingest is now source-aware for OpenClaw and Skeln, Skeln has a JSONL transcript parser and feature-gated shutdown episode writer, `session_shutdown` records a lifecycle checkpoint against the active working set without closing it, and successful subagent results append bounded command notes to the parent working set when one is active.
+
 Deliverables:
 
 - Unified episode writer for Skeln JSONL exports and OpenClaw transcripts.
@@ -948,43 +1162,66 @@ Delivers:
 - reliable shutdown resume
 - common episode path across adapters
 
-### Phase 5a: Checkpoint resume
+### Phase 5a: Checkpoint resume and external mutation discipline
+
+Precondition: Phase 1.5 complete.
+
+Implementation note: Agenr now has the resume-readable state and trusted `prepare_external_goal_mutation` hook for this phase. Skeln must still call that hook from its goal command and lifecycle gates before externally mutating goal state.
 
 Deliverables:
 
 - Hard checkpoint requirement before pause, compaction, handoff, fork, scheduled delay, and shutdown when a goal is active.
 - Process restart and interrupt resume through Agenr scope lookup plus `/goal get`.
-- Optional `/goal edit`.
-- Manual continuation only.
+- `prepare_external_goal_mutation` ordering: account progress before `/goal set` or `/goal clear` (Codex `thread_goal_processor` parity).
+- Optional `/goal edit` with objective-updated steering on the active turn when implemented.
+- Manual continuation only; no idle loop yet.
+- Restore active goal into volatile runtime cache on session resume (`restore_thread_goal_runtime_after_resume` parity).
+
+Skeln files (new or extended):
+
+- `skeln/src/runtime/goal/thread-handle.ts` - prepare/set/clear/resume facade
+- Extension lifecycle hooks - checkpoint gate before compact/fork/shutdown
+- `packages/agenr/src/goal-commands.ts` - call prepare before mutations
+
+Agenr:
+
+- No idle continuation; ensure checkpoint and status fields are readable for resume.
 
 Delivers:
 
 - multi-session task continuity without idle continuation
+- safe external goal mutations with progress accounting
 
-### Phase 5b: Long-horizon `/goal`
+### Phase 5b: Long-horizon `/goal` (Codex runtime parity)
 
-Precondition:
+Preconditions:
 
+- Phase 1.5 complete.
+- Phase 5a checkpoint and resume paths reliable.
 - User ran `/goal set`; model tools alone cannot enable `on_idle`.
+
+Implement the Codex `goals.rs` runtime in Skeln (see [Codex `/goal` parity reference](#codex-goal-parity-reference)). Agenr stores state; Skeln owns the loop.
+
+Implementation note: Agenr's Phase 5b-owned storage contract is in place: trusted host calls can set `on_idle`, update `budget_json` counters, transition exhausted goals to `budget_limited`, and store heartbeat, lease, resume, and stale metadata. Agenr still does not schedule continuation turns.
 
 Skeln owns:
 
-- continuation lock
-- no-active-turn check
-- mailbox and pending-input checks
-- approval gates
-- interrupt handling
-- budget watchdogs
-- stop-on-user-input
-- status pill and UI
+- `GoalRuntimeState` with accounting lock and continuation lock
+- `goal_runtime_apply` event dispatcher wired to turn start/finish, tool complete, usage limit, external set/clear, abort
+- Idle continuation: `TurnFinished` -> `MaybeContinueIfIdle` -> re-fetch Agenr inside continuation lock -> inject continuation steering -> start next turn
+- Continuation guards: no active turn, no pending user input, no pending approvals, active status only, plan mode off, goal id/revision still current
+- No-progress suppression: continuation turn with zero counted autonomous activity suppresses the next auto-continue until user/tool/external activity resets it
+- Auto-start first turn after `/goal set` when goal becomes active (Codex `apply_external_thread_goal_status`)
+- Approval gates, Ctrl+C, mailbox checks, stop-on-user-input
+- Token and wall-clock budget watchdogs (read/write counters through Agenr)
+- Status pill and `/goal` menus (pause, resume, budgets)
+- Port steering templates from Codex `core/templates/goals/*.md`
 
 Agenr owns:
 
-- objective
-- status
-- counters
-- checkpoint
-- next actions
+- objective, status, revision, checkpoint, plan, next actions
+- `budget_json` counters updated by Skeln accounting hooks
+- `continuation_policy`: `manual` (default) or `on_idle` (set only when user runs `/goal set` with continuation enabled)
 - lease and stale metadata when enabled
 
 Controls:
@@ -996,7 +1233,19 @@ Controls:
 - stop-after turns or wall clock, default off
 - require-review-after, default 4 hours
 
+Model tools:
+
+- `update_goal` with `complete` or `blocked` only (Phase 1.5 alias)
+- `agenr_work merge_checkpoint` during long runs
+
 Skeln re-fetches Agenr state inside the continuation lock immediately before starting another turn.
+
+Exit criteria:
+
+- Multi-turn goal run without manual "work the goal" between continuations
+- `update_goal complete` or strict blocked audit ends the loop
+- Budget limit transitions to `budget_limited` and injects budget-limit steering
+- Replay test: set -> auto-continue -> checkpoint rev increment -> complete
 
 ### Phase 6: Consolidation maturity
 
@@ -1010,7 +1259,13 @@ Deliverables:
 
 ## Success criteria
 
-Phase 1:
+Phase 0 (completed):
+
+- Types compile.
+- No `knowledge.db` migration landed in Phase 0.
+- Cross-repo Skeln contract for transient context is documented.
+
+Phase 1 (completed):
 
 - Model can create, read, update, and close scoped WIP through `agenr_work`.
 - `/goal` reads from Agenr and `/goal set|clear` mutate Agenr first.
@@ -1019,6 +1274,13 @@ Phase 1:
 - Close produces final snapshot and optional candidate handoff without silent semantic entries.
 - Existing durable memory behavior remains unchanged.
 - Tests prove rendered working context is not persisted as a Skeln message.
+
+Phase 1.5:
+
+- Codex tool aliases (`get_goal`, `create_goal`, `update_goal`) registered and tested.
+- Typed operation schema prevents `merge_checkpoint` confusion.
+- Per-turn WIP injection verified when enabled.
+- Goal turn can increment working-set revision via checkpoint.
 
 Phases 2 and 3:
 
@@ -1029,8 +1291,10 @@ Phases 2 and 3:
 
 Phase 5:
 
-- Restart, interrupt, handoff, and scheduled pause resume from the last checkpoint.
-- Idle continuation respects budgets, user input, approvals, and fresh Agenr state.
+- Restart, interrupt, handoff, and scheduled pause resume from the last checkpoint (5a).
+- Idle continuation respects budgets, user input, approvals, and fresh Agenr state (5b).
+- Multi-turn autonomous goal without manual re-prompt between continuations (5b).
+- Terminal status set only through `update_goal`, not prose (5b).
 
 Phase 6:
 
@@ -1049,8 +1313,11 @@ Phase 6:
 | Prompt bloat | snapshot-first render, salience trimming, single budget coordinator |
 | Stale WIP trusted as fact | rendered staleness warning and authority ordering |
 | Duplicate summaries | reference host compaction/branch summaries by source ref |
-| Premature continuation | continuation delayed until checkpoints and lifecycle hooks are reliable |
-| Runaway long-horizon work | Skeln watchdogs, budgets, review gates, stop-on-user-input |
+| Premature continuation | continuation delayed until Phase 1.5, checkpoint resume (5a), and lifecycle hooks are reliable |
+| Model marks goal done in prose | Phase 1.5 `update_goal` alias with Codex completion audit rules |
+| Untyped operation schema | Phase 1.5 explicit operation variants in tool schema |
+| Per-turn WIP missing | Phase 1.5 injection verification tests |
+| Runaway long-horizon work | Skeln watchdogs, budgets, review gates, stop-on-user-input (5b) |
 
 ## Non-goals
 
@@ -1061,7 +1328,8 @@ Phase 6:
 - Reimplementing Skeln session persistence inside Agenr core.
 - Auto-storing durable entries from compaction, branch summaries, or close.
 - Building a full project manager, calendar, or ticket sync.
-- Shipping autonomous continuation before checkpoint reliability.
+- Shipping autonomous continuation before checkpoint reliability (Phase 5b after 5a).
+- Treating Phase 1 `/goal set` as Codex-parity autonomous `/goal` (requires Phase 5b).
 
 ## References
 
@@ -1086,3 +1354,4 @@ Phase 6:
 - [Skeln plugin docs](../../SKELN-PLUGIN.md)
 - [OpenClaw plugin docs](../../OPENCLAW-PLUGIN.md)
 - [Episodes docs](../../EPISODES.md)
+- Codex reference: `codex-cli-src/codex-rs/core/src/goals.rs` (goal runtime), `core/templates/goals/*.md` (steering), `core/src/tools/handlers/goal/` (model tools)

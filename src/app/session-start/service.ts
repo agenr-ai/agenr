@@ -2,6 +2,7 @@ import { recall, type RecallExecutionTraceSummary, type RecallOutput } from "../
 import type { Entry } from "../../core/types.js";
 
 import { projectClaimCentricRecallEntry } from "../recall/claim-centric.js";
+import { buildSessionStartContextSections } from "./context-sections.js";
 
 import type { SessionStartDeps } from "./ports.js";
 import type {
@@ -28,7 +29,7 @@ const DEFAULT_MAX_ARTIFACT_CHARS = 1_200;
  */
 export async function runSessionStart(input: SessionStartInput, deps: SessionStartDeps): Promise<SessionStartPatch> {
   const policy = normalizePolicy(input.policy);
-  const contextSections = buildContextSections(input);
+  const contextSections = buildSessionStartContextSections(input.continuitySummaryText, input.recentSessionText);
   const coreEntries = await deps.repository.listCoreEntries(policy.maxCoreEntries);
   const coreItems = coreEntries.map((entry) => buildCorePatchItem(entry));
   const diagnostics: SessionStartPatchDiagnostics = {
@@ -53,35 +54,6 @@ export async function runSessionStart(input: SessionStartInput, deps: SessionSta
     durableMemory,
     diagnostics,
   };
-}
-
-/**
- * Normalizes optional host artifacts into the preserved non-memory context sections.
- *
- * @param input - Raw session-start input.
- * @returns Ordered non-empty context sections.
- */
-function buildContextSections(input: SessionStartInput): SessionStartContextSection[] {
-  const sections: SessionStartContextSection[] = [];
-  const continuitySummaryText = normalizeOptionalString(input.continuitySummaryText);
-  if (continuitySummaryText) {
-    sections.push({
-      kind: "continuity_summary",
-      title: "Previous session summary",
-      content: continuitySummaryText,
-    });
-  }
-
-  const recentSessionText = normalizeOptionalString(input.recentSessionText);
-  if (recentSessionText) {
-    sections.push({
-      kind: "recent_session",
-      title: "Recent session",
-      content: recentSessionText,
-    });
-  }
-
-  return sections;
 }
 
 /**

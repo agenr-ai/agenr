@@ -5,7 +5,7 @@ import type { RecallDegradedTrace, RecallNoResultReason } from "../../core/recal
  * Default top-K candidate cap applied when a recall debug artifact
  * is requested without supplying an explicit override.
  */
-export const RECALL_DEBUG_ARTIFACT_DEFAULT_TOP_K = 10;
+const RECALL_DEBUG_ARTIFACT_DEFAULT_TOP_K = 10;
 
 /**
  * Hard upper bound for the recall debug-artifact top-K candidate list.
@@ -13,7 +13,9 @@ export const RECALL_DEBUG_ARTIFACT_DEFAULT_TOP_K = 10;
  * larger in-process request defensively so artifacts stay bounded and
  * predictable for agent-driven consumers.
  */
-export const RECALL_DEBUG_ARTIFACT_MAX_TOP_K = 25;
+const RECALL_DEBUG_ARTIFACT_MAX_TOP_K = 25;
+
+export { RECALL_DEBUG_ARTIFACT_DEFAULT_TOP_K, RECALL_DEBUG_ARTIFACT_MAX_TOP_K };
 
 /**
  * Stable schema version tag for the recall replay debug artifact.

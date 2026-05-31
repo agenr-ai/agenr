@@ -1,10 +1,11 @@
-import type { Episode, EpisodeActivityLevel } from "../../core/types.js";
+import type { Episode, EpisodeActivityLevel, EpisodeSource } from "../../core/types.js";
+import type { EpisodeActivityThreshold } from "./activity-threshold.js";
 import type { EpisodeIngestModelInfo, EpisodeIngestUsageStats, SessionMetaSource } from "./ports.js";
 
 /**
  * Skip reasons emitted by the Stage 1 episode-ingest preflight.
  */
-export type EpisodeIngestSkipReason = "skipped_short" | "skipped_active" | "skipped_exists";
+export type EpisodeIngestSkipReason = "skipped_short" | "skipped_active" | "skipped_exists" | "below_activity_threshold";
 
 /**
  * Candidate session prepared for later LLM-backed episode generation.
@@ -245,6 +246,10 @@ export interface EpisodeIngestCandidateOverrides {
  */
 export interface IngestEpisodeTranscriptOptions {
   /**
+   * Episode source persisted with the generated row. Defaults to `openclaw`.
+   */
+  source?: EpisodeSource;
+  /**
    * Generator version written onto persisted episode rows.
    */
   genVersion: string;
@@ -265,6 +270,10 @@ export interface IngestEpisodeTranscriptOptions {
    * Optional host-specific metadata overrides applied after transcript parsing.
    */
   candidateOverrides?: EpisodeIngestCandidateOverrides;
+  /**
+   * Optional minimum activity gate applied after generic short-session checks.
+   */
+  activityThreshold?: EpisodeActivityThreshold;
 }
 
 /**
@@ -389,6 +398,10 @@ export interface EpisodeIngestSessionResult {
  * Runtime options for the Stage 2 execution pass.
  */
 export interface ExecuteEpisodeIngestPlanOptions {
+  /**
+   * Episode source persisted with generated rows. Defaults to `openclaw`.
+   */
+  source?: EpisodeSource;
   /**
    * Maximum number of concurrent summary-generation workers.
    */

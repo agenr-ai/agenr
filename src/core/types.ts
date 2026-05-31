@@ -63,7 +63,7 @@ export type ClaimKeySource = (typeof CLAIM_KEY_SOURCES)[number];
 export type ClaimSupportMode = (typeof CLAIM_SUPPORT_MODES)[number];
 
 /** Ordered list of supported episode sources. */
-const EPISODE_SOURCES = ["openclaw", "codex", "cli", "synthesis"] as const;
+const EPISODE_SOURCES = ["openclaw", "skeln", "codex", "cli", "synthesis"] as const;
 
 /** Ordered list of supported episode activity levels. */
 const EPISODE_ACTIVITY_LEVELS = ["substantial", "minimal", "none"] as const;

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { canonicalizeAgenrConfigInput, parseAgenrConfig, toAgenrConfigInput } from "../../../src/adapters/config/parse-agenr-config.js";
 import {
   DEFAULT_API_PORT,
+  DEFAULT_AGENR_FEATURE_FLAGS,
   DEFAULT_CLAIM_EXTRACTION_CONCURRENCY,
   DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD,
   DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES,
@@ -57,6 +58,7 @@ describe("parseAgenrConfig", () => {
             },
           },
         },
+        features: DEFAULT_AGENR_FEATURE_FLAGS,
       },
     });
   });
@@ -77,6 +79,10 @@ describe("parseAgenrConfig", () => {
           },
         },
         apiPort: "3000",
+        features: {
+          workingMemory: "yes",
+          extraFlag: true,
+        },
       },
       { defaultDbPath: DEFAULT_DB_PATH },
     );
@@ -93,8 +99,36 @@ describe("parseAgenrConfig", () => {
         { path: "claimExtraction.concurrency", message: "Expected a positive integer." },
         { path: "surgeon.passes.retirement.protectMinImportance", message: "Expected a non-negative integer." },
         { path: "apiPort", message: "Expected an integer from 1 to 65535." },
+        { path: "features.workingMemory", message: "Expected a boolean." },
+        { path: "features.extraFlag", message: "Unexpected field." },
       ]),
     );
+  });
+
+  it("parses feature flags as default-off sparse rollout controls", () => {
+    const result = parseAgenrConfig(
+      {
+        features: {
+          workingMemory: true,
+          sessionTreeLineage: false,
+          sessionTreeCompaction: true,
+          goalContinuation: false,
+        },
+      },
+      { defaultDbPath: DEFAULT_DB_PATH },
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      value: expect.objectContaining({
+        features: {
+          workingMemory: true,
+          sessionTreeLineage: false,
+          sessionTreeCompaction: true,
+          goalContinuation: false,
+        },
+      }),
+    });
   });
 
   it("rejects mismatched auth and provider combinations", () => {
@@ -125,6 +159,10 @@ describe("canonicalizeAgenrConfigInput", () => {
         claimExtraction: {
           enabled: false,
         },
+        features: {
+          workingMemory: true,
+          sessionTreeLineage: false,
+        },
       },
       { defaultDbPath: DEFAULT_DB_PATH },
     );
@@ -139,6 +177,9 @@ describe("canonicalizeAgenrConfigInput", () => {
         },
         claimExtraction: {
           enabled: false,
+        },
+        features: {
+          workingMemory: true,
         },
       },
     });
@@ -155,6 +196,9 @@ describe("toAgenrConfigInput", () => {
         claimExtraction: {
           enabled: false,
         },
+        features: {
+          workingMemory: true,
+        },
       },
       { defaultDbPath: DEFAULT_DB_PATH },
     );
@@ -169,6 +213,9 @@ describe("toAgenrConfigInput", () => {
       dbPath: "/tmp/custom.db",
       claimExtraction: {
         enabled: false,
+      },
+      features: {
+        workingMemory: true,
       },
     });
   });

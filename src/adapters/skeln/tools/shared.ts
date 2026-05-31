@@ -3,17 +3,19 @@ import type { TSchema } from "typebox";
 
 import { readNumberParam, readStringArrayParam, readStringParam } from "../../shared/param-readers.js";
 import type { MemoryToolOutcome, MemoryToolParamReader } from "../../shared/memory-tools.js";
-import { formatErrorMessage } from "../../shared/entry-tools.js";
+import { formatErrorMessage } from "../../shared/errors.js";
 
 /** Text-only Skeln tool result details shape. */
 export type SkelnToolDetails = Record<string, unknown>;
 
 /** Shared Skeln param reader wired into host-neutral memory tool parsers. */
-export const SKELN_PARAM_READER: MemoryToolParamReader = {
+const SKELN_PARAM_READER: MemoryToolParamReader = {
   readString: readStringParam,
   readNumber: readNumberParam,
   readStringArray: readStringArrayParam,
 };
+
+export { SKELN_PARAM_READER };
 
 /** Casts host-neutral JSON schema literals into Skeln's TypeBox schema contract. */
 export function toolSchema(value: object): TSchema {

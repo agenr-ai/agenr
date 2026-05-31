@@ -3,7 +3,9 @@ import type { DatabasePort, EmbeddingPort, EpisodeDatabasePort, LlmPort, Procedu
 import type { ClaimExtractionConfig } from "../../core/store/claim-extraction.js";
 import type { BeforeTurnDeps } from "../before-turn/index.js";
 import type { MemoryRepository } from "../memory/ports.js";
+import type { SessionMemoryRepository } from "../session-memory/index.js";
 import type { SessionStartDeps } from "../session-start/index.js";
+import type { WorkingMemoryRepository } from "../working-memory/index.js";
 
 /**
  * Slot-policy overrides shared by host plugin adapters at runtime.
@@ -52,6 +54,14 @@ export interface PluginBeforeTurnMemoryPolicyConfig {
 }
 
 /**
+ * Working-context overrides for transient per-turn WIP injection.
+ */
+export interface PluginWorkingContextMemoryPolicyConfig {
+  /** Enables or disables automatic working-context injection. Defaults to true when working memory is enabled. */
+  enabled?: boolean;
+}
+
+/**
  * Memory-policy settings shared by host plugin adapters, including injection knobs.
  */
 export interface PluginInjectionMemoryPolicyConfig extends PluginMemoryPolicyConfig {
@@ -59,6 +69,8 @@ export interface PluginInjectionMemoryPolicyConfig extends PluginMemoryPolicyCon
   sessionStart?: PluginSessionStartMemoryPolicyConfig;
   /** Before-turn overrides for proactive prompt-time memory injection behavior. */
   beforeTurn?: PluginBeforeTurnMemoryPolicyConfig;
+  /** Working-context overrides for transient per-turn WIP injection. */
+  workingContext?: PluginWorkingContextMemoryPolicyConfig;
 }
 
 /**
@@ -106,6 +118,8 @@ export interface PluginMemoryRuntimeServices {
   episodes: EpisodeDatabasePort;
   procedures: ProcedureDatabasePort;
   memory: MemoryRepository;
+  workingMemoryRepository?: WorkingMemoryRepository;
+  sessionMemoryRepository?: SessionMemoryRepository;
   sessionStart: SessionStartDeps;
   beforeTurn: BeforeTurnDeps;
   embedding: EmbeddingPort;

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { MAX_EPISODE_TRANSCRIPT_CHARS, MIN_EPISODE_MESSAGES, capEpisodeTranscript, renderTranscript } from "../../../src/core/episode/transcript-render.js";
+import {
+  MAX_EPISODE_TRANSCRIPT_CHARS,
+  MIN_EPISODE_MESSAGES,
+  capEpisodeTranscript,
+  countMaterialTranscriptTurns,
+  renderTranscript,
+} from "../../../src/core/episode/transcript-render.js";
 
 describe("episode transcript render helpers", () => {
   it("renders cleaned transcript messages with stable role prefixes", () => {
@@ -20,6 +26,10 @@ describe("episode transcript render helpers", () => {
     expect(capped).toContain("[Earlier middle transcript omitted for brevity]");
     expect(capped.startsWith("User: alpha")).toBe(true);
     expect(capped).toContain("omega omega");
+  });
+
+  it("counts only non-empty transcript messages as material turns", () => {
+    expect(countMaterialTranscriptTurns([{ text: "hello" }, { text: "   " }, { text: "world" }])).toBe(2);
   });
 
   it("exports the shared episode transcript constants", () => {

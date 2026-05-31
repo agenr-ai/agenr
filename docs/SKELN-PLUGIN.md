@@ -10,10 +10,11 @@ This document describes the current codebase, not an aspirational design.
 
 The Skeln plugin is a translator around agenr's existing core and app workflows. It currently does all of the following:
 
-- registers three agent tools: `agenr_store`, `agenr_recall`, and `agenr_update`
+- registers seven agent tools: `agenr_store`, `agenr_recall`, `agenr_update`, `agenr_work`, `get_goal`, `create_goal`, and `update_goal`
 - injects session-start durable-memory context on the first turn of each Skeln session
 - injects conservative before-turn recall on later turns when confidence warrants it
-- appends static memory doctrine to the Skeln system prompt
+- injects transient `<agenr_work_context>` working memory via non-persistent `transientMessages` when `features.workingMemory` is enabled
+- appends static memory doctrine to the Skeln system prompt on the first turn (and on later turns when recall injects)
 - resolves embeddings and optional claim extraction from agenr config credentials, not Skeln host auth
 - closes the shared agenr database handle when Skeln shuts down with reason `quit`
 
@@ -145,6 +146,7 @@ Supported `memoryPolicy` keys match the shared plugin contract:
 - `memoryPolicy.beforeTurn.recallThreshold` - optional durable-recall score floor for before-turn recall
 - `memoryPolicy.beforeTurn.highConfidenceRecallThreshold` - optional score floor required before before-turn recall can expand beyond the normal durable-item cap
 - `memoryPolicy.beforeTurn.procedureThreshold` - optional score floor for proactive procedure suggestion
+- `memoryPolicy.workingContext.enabled` - optional toggle for automatic transient `<agenr_work_context>` injection; defaults to true when `features.workingMemory` is enabled
 - `memoryPolicy.slotPolicies.attributeHeads` - optional attribute-head overrides for read-time claim-slot policy classes
 
 Unknown keys inside the parsed JSON object are rejected.
@@ -302,6 +304,52 @@ Configured thresholds and caps from `memoryPolicy.beforeTurn` override the defau
 
 Injection messages are real `@earendil-works/pi-agent-core` `AgentMessage` objects. Skeln persists them and adds them to model context as non-user background text.
 
+### Phase 0 working-context contract
+
+Working memory uses a separate transient context contract from the durable session-start and before-turn recall path above.
+
+Phase 0 chooses Skeln's non-persistent `context` provider path for future `<agenr_work_context>` delivery. Skeln may expose this as a `context` lifecycle event or provider-context transform. If Skeln later offers equivalent `before_agent_start` context fields, they must be explicitly non-persistent, such as `transientMessages` or `contextMessages` with `persist: false`.
+
+Agenr will return this projection shape:
+
+```ts
+interface WorkingContextProjection {
+  kind: "working_set";
+  renderMode: "stub" | "full";
+  content: string;
+  workingSetId?: string;
+  revision?: number;
+  sourceRef: string;
+  byteLength: number;
+}
+```
+
+Skeln must not append the rendered projection to persisted session messages. If Skeln persists an audit record, it should persist only a compact pointer:
+
+```ts
+interface WorkingContextAuditPointer {
+  source: "agenr_work";
+  workingSetId: string;
+  revision: number;
+  sourceRef: string;
+  bytes: number;
+  summary?: string;
+}
+```
+
+That audit pointer is not live replay text. Compaction, branch summarization, and episode mining must exclude rendered `<agenr_work_context>` by default. The current hidden-message durable recall path may stay as-is until it is intentionally redesigned, but volatile working context may not use that persisted path.
+
+The working-memory scope contract uses host-neutral `conversationKey` or `runtimeThreadKey` when the host has a cross-session conversation identity. Skeln is not required to supply `threadId`; `hostThreadId` is compatibility-only when a host actually names that field.
+
+Phase 0 defines four agenr config feature flags, all defaulting to false:
+
+- `features.workingMemory`
+- `features.sessionTreeLineage`
+- `features.sessionTreeCompaction`
+- `features.goalContinuation`
+
+`features.workingMemory` enables the v11 ledger, `agenr_work`, trusted Skeln work commands, and `/goal` aliases. `features.sessionTreeLineage` enables v12 lineage intake for lifecycle events such as resume, fork, clone, and subagent spawn. `features.sessionTreeCompaction` enables v12 checkpoint artifact intake. Automatic per-turn working-context injection is controlled separately through `memoryPolicy.workingContext.enabled` and defaults to on when working memory is enabled.
+
 ## Tool behavior
 
 The plugin registers three tools from `src/adapters/skeln/tools/`.
@@ -347,6 +395,18 @@ Current behavior:
 
 There is no Skeln `agenr_retire` tool in the first deliverable. Retire flows must go through the CLI or another host surface.
 
+### `agenr_work` and Goal Aliases
+
+`agenr_work` is the model-facing working-memory tool. It exposes typed WIP operations such as `merge_checkpoint`, file notes, command notes, decisions, assumptions, next actions, and candidate memories. Host-only operations are intentionally not in the model schema.
+
+The plugin also registers Codex-compatible `get_goal`, `create_goal`, and `update_goal` aliases:
+
+- `get_goal` returns structured goal JSON with status, revision, checkpoint, continuation policy, budget counters, and remaining token budget.
+- `create_goal` creates one active working set for the resolved scope and may initialize a token budget when the model was explicitly instructed to do so.
+- `update_goal` only allows `complete` or `blocked`; pause, resume, budget, usage, and close state remain trusted host controls.
+
+Trusted Skeln UI and lifecycle code can call `executeWorkCommand(...)` on the controller returned by `registerAgenrSkelnMemory(...)`. That path can set `continuationPolicy: "on_idle"`, configure budgets, account token/time/turn usage, record heartbeat, lease, resume, and stale metadata, and call `prepare_external_goal_mutation` before external `/goal` mutations. These trusted operations update Agenr state but do not schedule continuation turns; Skeln owns the runtime loop.
+
 ## Tool failure signaling
 
 Skeln's `AgentToolResult` type does not accept an inline `isError` flag on the result object.
@@ -376,10 +436,10 @@ If this document and the code disagree, the code wins.
 The Skeln integration is the front edge of the Working Memory PRD seam:
 
 - `getHostContext()` and `SkelnHostContext` are the extension point for richer scope fields
-- `src/app/skeln/runtime.ts` is where future working-set repositories and an `agenr_work` tool would compose in
-- `before_agent_start` is the hook future post-compaction re-injection would reuse
+- `src/app/skeln/runtime.ts` composes working-set repositories, `agenr_work`, and goal aliases
+- `before_agent_start` is the hook used for transient working-context injection
 
-Those working-memory surfaces are not implemented in the current Skeln plugin.
+Autonomous idle continuation is still host-owned future work. Agenr persists the goal state, budgets, and runtime metadata that Skeln's loop will consume.
 
 ## Current test coverage
 
@@ -389,6 +449,7 @@ The current adapter and app tests cover:
 - session-key derivation and host-context merge
 - session scope tracker behavior
 - before-agent-start session-start and before-turn injection behavior
+- working-memory goal aliases and trusted Skeln work commands
 - Skeln runtime claim-extraction wiring from agenr config
 
 See:

@@ -1,5 +1,17 @@
 import type { ClaimExtractionConfig } from "../../core/store/claim-extraction.js";
 import { ENTRY_TYPES, type EntryType } from "../../core/types.js";
+import {
+  AGENR_FEATURE_FLAG_KEYS,
+  DEFAULT_AGENR_FEATURE_FLAGS,
+  type AgenrFeatureFlagConfig,
+  type AgenrFeatureFlagKey,
+  type AgenrFeatureFlags,
+} from "../../app/features/types.js";
+
+/** Fully resolved runtime feature flags. */
+export type ResolvedAgenrFeatureFlags = AgenrFeatureFlags;
+
+export type { AgenrFeatureFlagConfig, AgenrFeatureFlagKey };
 
 /**
  * Supported auth methods for agenr-managed LLM access.
@@ -130,6 +142,8 @@ export interface AgenrConfigInput {
   claimExtraction?: AgenrClaimExtractionConfig;
   /** Surgeon module configuration. */
   surgeon?: SurgeonConfig;
+  /** Staged rollout feature flags. All default to false. */
+  features?: AgenrFeatureFlagConfig;
   /** Database file path. */
   dbPath?: string;
   /** HTTP API port. */
@@ -189,6 +203,8 @@ export interface ResolvedAgenrConfig extends Omit<AgenrConfigInput, "claimExtrac
   claimExtraction: ResolvedAgenrClaimExtractionConfig;
   /** Surgeon module configuration with defaults applied. */
   surgeon: ResolvedSurgeonConfig;
+  /** Feature flags with defaults applied. */
+  features: ResolvedAgenrFeatureFlags;
   /** Database file path after config resolution. */
   dbPath: string;
   /** HTTP API port after config resolution. */
@@ -294,6 +310,8 @@ const AUTH_METHOD_SET = new Set<AgenrAuthMethod>(AUTH_METHOD_DEFINITIONS.map((de
 export {
   AUTH_METHOD_DEFINITIONS,
   DEFAULT_API_PORT,
+  DEFAULT_AGENR_FEATURE_FLAGS,
+  AGENR_FEATURE_FLAG_KEYS,
   DEFAULT_CLAIM_EXTRACTION_CONCURRENCY,
   DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD,
   DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES,

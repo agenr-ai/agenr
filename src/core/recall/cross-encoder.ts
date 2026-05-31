@@ -25,14 +25,16 @@ import type { RecallCrossEncoderDegradedReason } from "./trace.js";
  * Default top-K shortlist size. Bounded small so cross-encoder latency
  * and provider cost stay predictable even at full recall fan-out.
  */
-export const DEFAULT_CROSS_ENCODER_TOP_K = 10;
+const DEFAULT_CROSS_ENCODER_TOP_K = 10;
 
 /**
  * Default blend weight between the cross-encoder score and the prior
  * composite score. Chosen to let the cross-encoder dominate while still
  * letting prior shaping stages shape the final order.
  */
-export const DEFAULT_CROSS_ENCODER_ALPHA = 0.6;
+const DEFAULT_CROSS_ENCODER_ALPHA = 0.6;
+
+export { DEFAULT_CROSS_ENCODER_ALPHA, DEFAULT_CROSS_ENCODER_TOP_K };
 
 /**
  * One input candidate for the cross-encoder rerank helper.

@@ -3,8 +3,12 @@
   "version": "2.1.0",
   "description": "agenr memory plugin for Skeln",
   "type": "module",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
   "files": [
     "dist",
@@ -25,6 +29,14 @@
       "configPath": {
         "type": "string",
         "description": "Optional path to agenr config.json. Defaults to AGENR_CONFIG_PATH, then config.json next to dbPath when dbPath is set, then ~/.agenr/config.json."
+      },
+      "project": {
+        "type": "string",
+        "description": "Optional project label for agenr recall and store scope. Defaults to the basename of the git repository root when available."
+      },
+      "wip": {
+        "type": "boolean",
+        "description": "When true, inject transient working-set context before each turn. Overrides memoryPolicy.workingContext.enabled."
       },
       "memoryPolicy": {
         "type": "string",

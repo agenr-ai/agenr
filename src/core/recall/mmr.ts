@@ -22,7 +22,7 @@ import { cosineSimilarity } from "./scoring.js";
  * diversity penalty room to demote near-duplicate candidates. Matches the
  * value called out in the phase 3 plan.
  */
-export const DEFAULT_MMR_LAMBDA = 0.7;
+const DEFAULT_MMR_LAMBDA = 0.7;
 
 /**
  * Minimum candidate-pool size for MMR diversification to run. When the
@@ -40,14 +40,16 @@ export const DEFAULT_MMR_LAMBDA = 0.7;
  * Callers can override via `MmrOptions.minPoolSize` or through the
  * `rankingPolicy.mmrMinPoolSize` policy field; `0` disables the gate.
  */
-export const DEFAULT_MMR_MIN_POOL_SIZE = 4;
+const DEFAULT_MMR_MIN_POOL_SIZE = 4;
 
 /**
  * Threshold above which two candidate embeddings are treated as near
  * duplicates for trace accounting. Only influences the
  * `droppedDuplicateCount` counter; it does not affect the MMR ordering.
  */
-export const NEAR_DUPLICATE_SIMILARITY = 0.95;
+const NEAR_DUPLICATE_SIMILARITY = 0.95;
+
+export { DEFAULT_MMR_LAMBDA, DEFAULT_MMR_MIN_POOL_SIZE, NEAR_DUPLICATE_SIMILARITY };
 
 /**
  * Input candidate consumed by the MMR helper.

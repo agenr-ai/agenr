@@ -10,6 +10,7 @@ import type {
   ExecuteEpisodeIngestPlanOptions,
   IngestEpisodeTranscriptOptions,
 } from "../types.js";
+import type { EpisodeSource } from "../../../core/types.js";
 import { classifyPreflightTranscript } from "./preflight.js";
 import {
   addUsageStats,
@@ -43,6 +44,7 @@ export async function ingestEpisodeTranscript(
     referenceNow: options.now ?? new Date(),
     regenerate: options.regenerate === true,
     skipActiveSessionCheck: options.skipActiveSessionCheck === true,
+    activityThreshold: options.activityThreshold,
   });
   if (classification.kind === "skipped") {
     return {
@@ -59,7 +61,16 @@ export async function ingestEpisodeTranscript(
   }
 
   const candidate = applyCandidateOverrides(classification.value, options.candidateOverrides);
-  const session = await executeEpisodeCandidate(candidate, createSummaryLlm, ports, options.genVersion, async <T>(task: () => Promise<T>) => task());
+  const session = await executeEpisodeCandidate(
+    candidate,
+    createSummaryLlm,
+    ports,
+    {
+      source: options.source ?? DEFAULT_EPISODE_SOURCE,
+      genVersion: options.genVersion,
+    },
+    async <T>(task: () => Promise<T>) => task(),
+  );
 
   return {
     kind: "executed",
@@ -126,7 +137,16 @@ export async function executeEpisodeIngestPlan(
           return;
         }
 
-        const result = await executeEpisodeCandidate(candidate, createSummaryLlm, ports, options.genVersion, runSerializedWrite);
+        const result = await executeEpisodeCandidate(
+          candidate,
+          createSummaryLlm,
+          ports,
+          {
+            source: options.source ?? DEFAULT_EPISODE_SOURCE,
+            genVersion: options.genVersion,
+          },
+          runSerializedWrite,
+        );
         results[currentIndex] = result;
 
         completed += 1;
@@ -165,7 +185,7 @@ async function executeEpisodeCandidate(
   candidate: EpisodeIngestCandidate,
   createSummaryLlm: NonNullable<EpisodeIngestPorts["createSummaryLlm"]>,
   ports: EpisodeIngestPorts,
-  genVersion: string,
+  writeOptions: EpisodeCandidateWriteOptions,
   runSerializedWrite: <T>(task: () => Promise<T>) => Promise<T>,
 ): Promise<EpisodeIngestSessionResult> {
   const startedAt = trimOptionalString(candidate.startedAt) ?? trimOptionalString(candidate.existingEpisode?.startedAt);
@@ -197,7 +217,7 @@ async function executeEpisodeCandidate(
     const embedding = await embedEpisodeSummary(structured.summary, ports);
     const writeResult = await runSerializedWrite(async () =>
       ports.episodes.upsertEpisode({
-        source: "openclaw",
+        source: writeOptions.source,
         ...(candidate.sessionId ? { sourceId: candidate.sessionId } : {}),
         sourceRef: candidate.metadataSource === "registry" || !existingEpisode?.sourceRef ? candidate.sourceRef : existingEpisode.sourceRef,
         transcriptHash: candidate.transcriptHash,
@@ -214,7 +234,7 @@ async function executeEpisodeCandidate(
         activityLevel: structured.activityLevel,
         ...(structured.project ? { project: structured.project } : {}),
         genModel: llm.metadata.modelRef,
-        genVersion,
+        genVersion: writeOptions.genVersion,
         messageCount: candidate.messageCount,
         ...(embedding ? { embedding } : {}),
       }),
@@ -237,6 +257,17 @@ async function executeEpisodeCandidate(
       usage: cloneUsageStats(llm.metadata.usage),
     };
   }
+}
+
+/** Default source retained for existing OpenClaw ingest callers. */
+const DEFAULT_EPISODE_SOURCE: EpisodeSource = "openclaw";
+
+/** Source-specific write options for one episode candidate. */
+interface EpisodeCandidateWriteOptions {
+  /** Episode source persisted with the row. */
+  source: EpisodeSource;
+  /** Generator version persisted with the row. */
+  genVersion: string;
 }
 
 /**

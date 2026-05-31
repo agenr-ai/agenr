@@ -1,0 +1,179 @@
+import type { AgenrWorkMutationActor, AgenrWorkMutationSource, WorkingSetStatus } from "./constants.js";
+import type { WorkingEventType } from "./events.js";
+import type { ResolvedWorkingScope, WorkingScope } from "./scope.js";
+import type { WorkingSnapshot } from "./snapshot.js";
+import type { WorkingEventRecord, WorkingSetRecord } from "./records.js";
+
+/** Filter accepted by working-set list queries. */
+export interface WorkingSetListFilter {
+  /** Optional raw scope facts used to narrow the list to one resolved scope. */
+  scope?: ResolvedWorkingScope;
+  /** Optional explicit statuses to include. */
+  statuses?: WorkingSetStatus[];
+  /** Maximum number of rows to return. */
+  limit?: number;
+}
+
+/** Successful create response from the repository. */
+export interface WorkingSetCreateSuccess {
+  /** Newly persisted working set. */
+  workingSet: WorkingSetRecord;
+  /** Created lifecycle event. */
+  event: WorkingEventRecord;
+}
+
+/** Failure returned when one open set already exists for the scope. */
+export interface WorkingSetCreateFailure {
+  /** Failure discriminator. */
+  kind: "active_set_exists";
+  /** Canonical scope key that already has an open set. */
+  scopeKey: string;
+}
+
+/** Result returned when a repository creates one working set. */
+export type WorkingSetCreateResult = WorkingSetCreateSuccess | WorkingSetCreateFailure;
+
+/** Result returned when a repository mutates one working set. */
+export interface WorkingSetMutationResult {
+  /** Updated working set after the event is committed. */
+  workingSet: WorkingSetRecord;
+  /** Event written for the mutation. */
+  event: WorkingEventRecord;
+}
+
+/** Input used to persist a newly created working set. */
+export interface CreateWorkingSetInput {
+  /** Resolved canonical scope for the set. */
+  scope: ResolvedWorkingScope;
+  /** Initial display title. */
+  title?: string;
+  /** Initial objective mirrored for list surfaces. */
+  objective?: string;
+  /** Initial status. */
+  status: WorkingSetStatus;
+  /** Initial snapshot. */
+  snapshot: WorkingSnapshot;
+  /** Actor that initiated creation. */
+  actor?: AgenrWorkMutationActor;
+  /** Source surface that initiated creation. */
+  source?: AgenrWorkMutationSource;
+  /** Adapter or runtime source label stored on the row. */
+  sourceLabel?: string;
+  /** Stable host session id when available. */
+  sessionId?: string;
+  /** Timestamp to use for row and event creation. */
+  now: string;
+}
+
+/** Input used to persist an update event and snapshot revision. */
+export interface UpdateWorkingSetInput {
+  /** Working-set id to mutate. */
+  workingSetId: string;
+  /** Revision observed by the caller. */
+  expectedRevision: number;
+  /** Event type to append. */
+  eventType: WorkingEventType;
+  /** JSON-serializable event payload. */
+  payload: unknown;
+  /** Next status for the working set. */
+  status: WorkingSetStatus;
+  /** Next snapshot payload. */
+  snapshot: WorkingSnapshot;
+  /** Optional display title update. */
+  title?: string;
+  /** Optional objective mirror update. */
+  objective?: string;
+  /** Close timestamp for terminal updates. */
+  closedAt?: string;
+  /** Close or abandon reason for terminal updates. */
+  closeReason?: string;
+  /** Episode id emitted from the set when one exists. */
+  episodeId?: string;
+  /** Optional heartbeat timestamp update. */
+  heartbeatAt?: string;
+  /** Optional lease owner update. Null releases the owner. */
+  leaseOwner?: string | null;
+  /** Optional lease expiry update. Null clears the expiry. */
+  leaseExpiresAt?: string | null;
+  /** Actor that initiated the mutation. */
+  actor?: AgenrWorkMutationActor;
+  /** Source surface that initiated the mutation. */
+  source?: AgenrWorkMutationSource;
+  /** Timestamp to use for row and event updates. */
+  now: string;
+}
+
+/** Failure returned when a revision-guarded repository mutation cannot apply. */
+export type WorkingSetWriteFailure =
+  | { kind: "not_found" }
+  | { kind: "revision_conflict"; actualRevision: number }
+  | { kind: "terminal_status"; status: WorkingSetStatus };
+
+/** Repository response for revision-guarded updates. */
+export type WorkingSetWriteResult = WorkingSetMutationResult | WorkingSetWriteFailure;
+
+/** Returns true when a repository create result is a failure. */
+export function isWorkingSetCreateFailure(result: WorkingSetCreateResult): result is WorkingSetCreateFailure {
+  return "kind" in result;
+}
+
+/** Returns true when a repository write result is a failure. */
+export function isWorkingSetWriteFailure(result: WorkingSetWriteResult): result is WorkingSetWriteFailure {
+  return "kind" in result;
+}
+
+/** Persistence port for Phase 1 working-memory storage. */
+export interface WorkingMemoryRepository {
+  /**
+   * Loads one working set by id.
+   *
+   * @param id - Working-set identifier.
+   * @returns Stored set, or null when it does not exist.
+   */
+  getWorkingSet(id: string): Promise<WorkingSetRecord | null>;
+
+  /**
+   * Finds current working sets for one resolved scope, including completed
+   * goals that still occupy the scope until explicit user clear.
+   *
+   * @param scope - Canonical scope selected by the app service.
+   * @returns Matching current working sets ordered by recency.
+   */
+  findCurrentWorkingSets(scope: ResolvedWorkingScope): Promise<WorkingSetRecord[]>;
+
+  /**
+   * Lists working sets for inspection or tool output.
+   *
+   * @param filter - Optional scope, status, and limit filters.
+   * @returns Matching working sets ordered by recency.
+   */
+  listWorkingSets(filter: WorkingSetListFilter): Promise<WorkingSetRecord[]>;
+
+  /**
+   * Lists recent events for one working set.
+   *
+   * @param workingSetId - Working set to inspect.
+   * @param limit - Maximum number of events to return.
+   * @returns Events ordered by sequence ascending.
+   */
+  listWorkingEvents(workingSetId: string, limit?: number): Promise<WorkingEventRecord[]>;
+
+  /**
+   * Creates one working set and its initial event atomically.
+   *
+   * @param input - Initial working-set state.
+   * @returns Persisted working set plus created event.
+   */
+  createWorkingSet(input: CreateWorkingSetInput): Promise<WorkingSetCreateResult>;
+
+  /**
+   * Applies one revision-guarded working-set mutation atomically.
+   *
+   * @param input - Update event, expected revision, and next snapshot.
+   * @returns Updated row and event, or a stable write failure.
+   */
+  updateWorkingSet(input: UpdateWorkingSetInput): Promise<WorkingSetWriteResult>;
+}
+
+/** Builds a projection-safe scope filter from raw host facts. */
+export type WorkingScopeInput = Partial<WorkingScope>;

@@ -13,7 +13,7 @@
  * conservative anchor that flattens the contribution of the top handful of
  * ranks without letting any single channel dominate.
  */
-export const DEFAULT_RRF_RANK_CONSTANT = 60;
+const DEFAULT_RRF_RANK_CONSTANT = 60;
 
 /**
  * Small-pool override for the RRF rank constant. When the fused candidate
@@ -30,7 +30,7 @@ export const DEFAULT_RRF_RANK_CONSTANT = 60;
  * setting the value to `DEFAULT_RRF_RANK_CONSTANT` effectively disables
  * the small-pool sharpening.
  */
-export const DEFAULT_RRF_SMALL_POOL_RANK_CONSTANT = 8;
+const DEFAULT_RRF_SMALL_POOL_RANK_CONSTANT = 8;
 
 /**
  * Upper bound of the fused-pool size that qualifies for the small-pool
@@ -38,7 +38,9 @@ export const DEFAULT_RRF_SMALL_POOL_RANK_CONSTANT = 8;
  * standard `k = 60` so the paper's flattening contract is preserved on
  * mature shortlists.
  */
-export const SMALL_POOL_RRF_POOL_SIZE = 4;
+const SMALL_POOL_RRF_POOL_SIZE = 4;
+
+export { DEFAULT_RRF_RANK_CONSTANT, DEFAULT_RRF_SMALL_POOL_RANK_CONSTANT, SMALL_POOL_RRF_POOL_SIZE };
 
 /**
  * One input channel of ranked identifiers.

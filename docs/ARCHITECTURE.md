@@ -250,13 +250,14 @@ The adapter is responsible for:
 - durable entry CRUD and ingest log writes
 - episode upsert and embedding backfill writes
 - procedure upsert, active-key lookup, lexical/vector lookup, embedding backfill, and lifecycle writes
+- working-memory and session-memory repository writes for host adapters
 - recall queries
 - surgeon persistence and reporting support
 - transaction-scoped execution where the backend supports it
 
 ### 6.2 Schema
 
-The current logical schema version is `10`.
+The current logical schema version is `12`.
 
 Key tables:
 
@@ -270,9 +271,13 @@ Key tables:
 - `surgeon_runs`
 - `surgeon_run_actions`
 - `surgeon_run_proposals`
+- `working_sets`
+- `working_events`
+- `session_lineage_edges`
+- `session_artifacts`
 - `_meta`
 
-The `entries` table now carries claim-key lifecycle fields, validity windows, supersession metadata, quality and recall tracking, project and user scoping, and retirement state. The `episodes` table carries source identity, transcript and summary hashes, timing, summary metadata, embeddings, and lifecycle state. The `procedures` table carries canonical normalized body JSON, deterministic recall text, authored-source and revision hashes, optional embeddings, and lifecycle state.
+The `entries` table now carries claim-key lifecycle fields, validity windows, supersession metadata, quality and recall tracking, project and user scoping, and retirement state. The `episodes` table carries source identity, transcript and summary hashes, timing, summary metadata, embeddings, and lifecycle state. The `procedures` table carries canonical normalized body JSON, deterministic recall text, authored-source and revision hashes, optional embeddings, and lifecycle state. The working-memory tables store scoped active-task snapshots, ordered working events, checkpoint mirrors, budget counters, continuation policy, and host runtime lease metadata. The session-memory tables store host-neutral lineage edges and bounded session artifacts such as continuity summaries, recent-session tails, compaction checkpoints, branch-abandonment summaries, and episode pointers.
 
 ### 6.3 Search and indexing
 
@@ -292,7 +297,7 @@ Episodes do not currently use FTS. Episode retrieval is time-window and vector b
 
 `src/adapters/db/schema.ts` owns more than table creation. It also manages:
 
-- migrations up to schema version `10`
+- migrations up to schema version `12`
 - FTS trigger creation and rebuilds
 - vector index creation and feature probing
 - interrupted bulk-write recovery via `_meta`

@@ -232,6 +232,9 @@ async function rankSinglePassage(params: {
   }
 }
 
+/**
+ * Classified outcome for one OpenAI cross-encoder HTTP request.
+ */
 type RequestOutcome = { kind: "score"; value: number } | { kind: "fatal" } | { kind: "retryable" };
 
 /**

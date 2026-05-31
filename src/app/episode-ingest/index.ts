@@ -1,4 +1,5 @@
 export { backfillEpisodeEmbeddings, createEpisodeIngestPlan, executeEpisodeIngestPlan, ingestEpisodeTranscript, prepareEpisodeIngest } from "./service.js";
+export { createSingleTranscriptDiscoveryPort } from "./single-transcript.js";
 export type {
   EpisodeIngestFilePort,
   EpisodeIngestLlmMetadata,

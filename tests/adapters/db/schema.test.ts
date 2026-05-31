@@ -44,6 +44,10 @@ describe("initSchema", () => {
             'surgeon_runs',
             'surgeon_run_actions',
             'surgeon_run_proposals',
+            'working_sets',
+            'working_events',
+            'session_lineage_edges',
+            'session_artifacts',
             '_meta'
           )
       `,
@@ -67,6 +71,10 @@ describe("initSchema", () => {
         "surgeon_runs",
         "surgeon_run_actions",
         "surgeon_run_proposals",
+        "working_sets",
+        "working_events",
+        "session_lineage_edges",
+        "session_artifacts",
         "_meta",
       ]),
     );
@@ -222,6 +230,80 @@ describe("initSchema", () => {
       "applied_action_count",
       "created_at",
     ]);
+    expect(await tableColumns(client, "working_sets")).toEqual([
+      "id",
+      "scope_key",
+      "scope_kind",
+      "title",
+      "objective",
+      "status",
+      "summary",
+      "snapshot_json",
+      "checkpoint_json",
+      "budget_json",
+      "continuation_policy",
+      "revision",
+      "event_count",
+      "heartbeat_at",
+      "resume_after",
+      "stale_after",
+      "lease_owner",
+      "lease_expires_at",
+      "user_id",
+      "project",
+      "surface",
+      "session_id",
+      "session_key",
+      "conversation_key",
+      "runtime_thread_key",
+      "host_thread_id",
+      "cwd",
+      "git_root",
+      "git_branch",
+      "task_id",
+      "source",
+      "created_at",
+      "updated_at",
+      "last_active_at",
+      "closed_at",
+      "close_reason",
+      "episode_id",
+    ]);
+    expect(await tableColumns(client, "working_events")).toEqual([
+      "id",
+      "working_set_id",
+      "sequence",
+      "event_type",
+      "payload_json",
+      "actor",
+      "source",
+      "host_event_id",
+      "turn_id",
+      "created_at",
+    ]);
+    expect(await tableColumns(client, "session_lineage_edges")).toEqual([
+      "id",
+      "child_session_key",
+      "parent_session_key",
+      "parent_source_ref",
+      "reason",
+      "fork_entry_id",
+      "fork_position",
+      "observed_at",
+    ]);
+    expect(await tableColumns(client, "session_artifacts")).toEqual([
+      "id",
+      "kind",
+      "session_key",
+      "source",
+      "source_id",
+      "source_ref",
+      "content_hash",
+      "summary",
+      "metadata_json",
+      "created_at",
+      "expires_at",
+    ]);
     expect(await indexExists(client, "idx_surgeon_run_actions_run_id")).toBe(true);
     expect(await indexExists(client, "idx_surgeon_run_actions_entry_id")).toBe(true);
     expect(await indexExists(client, "idx_surgeon_run_actions_created_at")).toBe(true);
@@ -230,6 +312,24 @@ describe("initSchema", () => {
     expect(await indexExists(client, "idx_surgeon_run_proposals_created_at")).toBe(true);
     expect(await indexExists(client, "idx_surgeon_run_proposals_review_status")).toBe(true);
     expect(await indexExists(client, "idx_surgeon_run_proposals_open_issue")).toBe(true);
+    expect(await indexExists(client, "idx_working_sets_status_last_active")).toBe(true);
+    expect(await indexExists(client, "idx_working_sets_scope_status")).toBe(true);
+    expect(await indexExists(client, "idx_working_sets_git_branch_status")).toBe(true);
+    expect(await indexExists(client, "idx_working_sets_session_key_status")).toBe(true);
+    expect(await indexExists(client, "idx_working_sets_conversation_key_status")).toBe(true);
+    expect(await indexExists(client, "idx_working_sets_runtime_thread_key_status")).toBe(true);
+    expect(await indexExists(client, "idx_working_sets_status_resume_after")).toBe(true);
+    expect(await indexExists(client, "idx_working_sets_lease_expires_at")).toBe(true);
+    expect(await indexExists(client, "idx_working_events_working_set_created_at")).toBe(true);
+    expect(await indexExists(client, "working_sets_one_open_per_scope")).toBe(true);
+    expect(await indexExists(client, "idx_session_lineage_edges_child_observed")).toBe(true);
+    expect(await indexExists(client, "idx_session_lineage_edges_parent_observed")).toBe(true);
+    expect(await indexExists(client, "idx_session_lineage_edges_reason_observed")).toBe(true);
+    expect(await indexExists(client, "idx_session_artifacts_session_kind")).toBe(true);
+    expect(await indexExists(client, "idx_session_artifacts_source")).toBe(true);
+    expect(await indexExists(client, "idx_session_artifacts_source_ref_kind")).toBe(true);
+    expect(await indexExists(client, "idx_session_artifacts_content_hash")).toBe(true);
+    expect(await indexExists(client, "idx_session_artifacts_expires_at")).toBe(true);
     expect(await indexExists(client, "idx_entries_claim_key")).toBe(true);
     expect(await indexExists(client, "idx_entries_valid_from")).toBe(true);
     expect(await indexExists(client, "idx_entries_valid_to")).toBe(true);
@@ -255,7 +355,7 @@ describe("initSchema", () => {
     await expect(initSchema(client)).resolves.toBeUndefined();
 
     const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("10");
+    expect(version.rows[0]?.value).toBe("12");
     expect(await indexExists(client, "idx_episodes_started_at")).toBe(true);
   });
 
@@ -267,6 +367,17 @@ describe("initSchema", () => {
     await insertTestProcedure(client, "procedure-a", "First active revision.", "agenr/release");
 
     await expect(insertTestProcedure(client, "procedure-b", "Second active revision.", "agenr/release")).rejects.toThrow();
+  });
+
+  it("enforces one open working set per scope", async () => {
+    const client = createClient({ url: ":memory:" });
+    clients.push(client);
+
+    await initSchema(client);
+    await insertTestWorkingSet(client, "working-a", "scope:one", "active");
+
+    await expect(insertTestWorkingSet(client, "working-b", "scope:one", "blocked")).rejects.toThrow();
+    await expect(insertTestWorkingSet(client, "working-c", "scope:one", "closed")).resolves.toBeUndefined();
   });
 
   it("migrates a v5 database to the current schema version", async () => {
@@ -425,7 +536,7 @@ describe("initSchema", () => {
     });
 
     const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("10");
+    expect(version.rows[0]?.value).toBe("12");
   });
 
   it("migrates a v7 database to the current schema version", async () => {
@@ -579,7 +690,7 @@ describe("initSchema", () => {
     });
 
     const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("10");
+    expect(version.rows[0]?.value).toBe("12");
   });
 
   it("migrates a v9 database to the current schema version", async () => {
@@ -612,7 +723,45 @@ describe("initSchema", () => {
     expect(await indexExists(client, "idx_procedures_active_procedure_key")).toBe(true);
 
     const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("10");
+    expect(version.rows[0]?.value).toBe("12");
+  });
+
+  it("migrates a v11 database to the session-tree schema", async () => {
+    const client = createClient({ url: ":memory:" });
+    clients.push(client);
+
+    await client.execute("CREATE TABLE _meta (key TEXT PRIMARY KEY, value TEXT)");
+    await client.execute("INSERT INTO _meta (key, value) VALUES ('schema_version', '11')");
+
+    await initSchema(client);
+
+    expect(await tableColumns(client, "session_lineage_edges")).toEqual([
+      "id",
+      "child_session_key",
+      "parent_session_key",
+      "parent_source_ref",
+      "reason",
+      "fork_entry_id",
+      "fork_position",
+      "observed_at",
+    ]);
+    expect(await tableColumns(client, "session_artifacts")).toEqual([
+      "id",
+      "kind",
+      "session_key",
+      "source",
+      "source_id",
+      "source_ref",
+      "content_hash",
+      "summary",
+      "metadata_json",
+      "created_at",
+      "expires_at",
+    ]);
+    expect(await indexExists(client, "idx_session_artifacts_session_kind")).toBe(true);
+
+    const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
+    expect(version.rows[0]?.value).toBe("12");
   });
 
   for (const version of ["2", "3", "4"] as const) {
@@ -977,6 +1126,40 @@ async function insertTestProcedure(client: Client, id: string, content: string, 
       null,
       "2026-03-26T00:00:00.000Z",
       "2026-03-26T00:00:00.000Z",
+    ],
+  });
+}
+
+async function insertTestWorkingSet(client: Client, id: string, scopeKey: string, status: string): Promise<void> {
+  await client.execute({
+    sql: `
+      INSERT INTO working_sets (
+        id,
+        scope_key,
+        scope_kind,
+        status,
+        snapshot_json,
+        revision,
+        event_count,
+        created_at,
+        updated_at,
+        last_active_at,
+        closed_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    args: [
+      id,
+      scopeKey,
+      "session",
+      status,
+      JSON.stringify({ objective: `Objective ${id}` }),
+      1,
+      1,
+      "2026-05-30T00:00:00.000Z",
+      "2026-05-30T00:00:00.000Z",
+      "2026-05-30T00:00:00.000Z",
+      status === "closed" ? "2026-05-30T00:00:00.000Z" : null,
     ],
   });
 }

@@ -4,9 +4,10 @@ Episodes are agenr's historical memory layer. Durable entries capture distilled 
 
 That split lets the system answer questions like "what happened yesterday?", "what were we doing last week?", or "what was the previous deployment approach?" without flattening every session recap into permanent semantic memory.
 
-Current production behavior is centered on OpenClaw sessions:
+Current production behavior covers OpenClaw and Skeln sessions:
 
 - the OpenClaw plugin writes predecessor-session episodes in the background at session start
+- the Skeln plugin can write bounded shutdown episodes when `sessionTreeLineage` is enabled and activity thresholds pass
 - the `agenr ingest episodes` CLI backfills or regenerates episodes from OpenClaw transcript files
 - unified recall can query episodes directly or alongside durable entries
 
@@ -36,7 +37,7 @@ The stored `Episode` shape in `src/core/types.ts` includes:
 - retrieval fields: optional `embedding`
 - lifecycle fields: `retired`, `retiredAt`, `retiredReason`, `supersededBy`, `createdAt`, `updatedAt`
 
-The schema supports episode sources `openclaw`, `codex`, `cli`, and `synthesis`, but the current OpenClaw session ingest path writes `source: "openclaw"`.
+The schema supports episode sources `openclaw`, `skeln`, `codex`, `cli`, and `synthesis`. OpenClaw session ingest writes `source: "openclaw"` and Skeln shutdown ingest writes `source: "skeln"`.
 
 Episode writes are idempotent:
 
@@ -48,7 +49,7 @@ Episode recall and embedding backfill operate on active episodes only, meaning r
 
 ## How Episodes Are Generated
 
-Episodes are generated through two current paths.
+Episodes are generated through three current paths.
 
 ### 1. Automatic predecessor write at session start
 
@@ -65,7 +66,22 @@ Important current behavior:
 
 If the predecessor already has an episode, the write is skipped. If parsing fails, the summary call fails, or the timeout is hit, the session still continues normally.
 
-### 2. CLI backfill and regeneration
+### 2. Skeln shutdown write
+
+When the Skeln adapter receives `session_shutdown`, it first routes the lifecycle event through session-memory intake. If an active working set exists, agenr records a `merge_checkpoint` update and leaves the set open. Shutdown never closes a working set implicitly.
+
+After the checkpoint attempt, the adapter may write a Skeln episode through the same shared `app/episode-ingest` workflow used by OpenClaw and CLI ingest. This path is gated by `sessionTreeLineage`, uses Skeln JSONL parsing, and writes `source: "skeln"`.
+
+The shutdown writer is bounded and conservative:
+
+- it skips sessions below both phase 4 thresholds: fewer than 8 material user or assistant turns and under 20 minutes
+- it skips active-session checks because Skeln has already emitted shutdown
+- it uses the configured agenr episode model and credentials
+- it applies a 45 second write timeout
+- it embeds the summary only when embeddings are available and enough timeout budget remains
+- it logs skipped, invalid, failed, timed-out, written, updated, or unchanged outcomes
+
+### 3. CLI backfill and regeneration
 
 The CLI repair and backfill path is:
 

@@ -1,11 +1,19 @@
 import type { Client } from "@libsql/client";
 
 import type { SqlExecutor } from "./queries.js";
+import { SESSION_MEMORY_SCHEMA_STATEMENTS } from "./schema/session-memory.js";
+import {
+  CREATE_SURGEON_RUN_PROPOSALS_REVIEW_STATUS_INDEX_SQL,
+  SURGEON_CORE_SCHEMA_STATEMENTS,
+  SURGEON_PROPOSAL_INITIAL_SCHEMA_STATEMENTS,
+  SURGEON_PROPOSAL_SCHEMA_STATEMENTS,
+} from "./schema/surgeon.js";
+import { WORKING_MEMORY_SCHEMA_STATEMENTS } from "./schema/working-memory.js";
 
 /**
  * Logical schema version stored in the metadata table.
  */
-const SCHEMA_VERSION = "10";
+const SCHEMA_VERSION = "12";
 
 /**
  * libSQL vector index name for entry embeddings.
@@ -239,108 +247,6 @@ const CREATE_RECALL_EVENTS_TABLE_SQL = `
   )
 `;
 
-/** SQL statement that stores surgeon maintenance run metadata. */
-const CREATE_SURGEON_RUNS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS surgeon_runs (
-    id TEXT PRIMARY KEY,
-    pass_type TEXT NOT NULL DEFAULT 'retirement',
-    project TEXT,
-    started_at TEXT NOT NULL,
-    completed_at TEXT,
-    status TEXT NOT NULL DEFAULT 'running',
-    input_tokens INTEGER DEFAULT 0,
-    output_tokens INTEGER DEFAULT 0,
-    estimated_cost_usd REAL DEFAULT 0,
-    model TEXT,
-    actions_taken INTEGER DEFAULT 0,
-    actions_skipped INTEGER DEFAULT 0,
-    entries_retired INTEGER DEFAULT 0,
-    summary TEXT,
-    summary_json TEXT,
-    error TEXT,
-    dry_run INTEGER NOT NULL DEFAULT 1,
-    config_json TEXT
-  )
-`;
-
-/** SQL statement that stores the per-action audit trail for surgeon runs. */
-const CREATE_SURGEON_RUN_ACTIONS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS surgeon_run_actions (
-    id TEXT PRIMARY KEY,
-    run_id TEXT NOT NULL REFERENCES surgeon_runs(id),
-    action_type TEXT NOT NULL,
-    entry_id TEXT,
-    entry_ids TEXT NOT NULL DEFAULT '[]',
-    reasoning TEXT NOT NULL DEFAULT '',
-    recall_delta TEXT,
-    details_json TEXT,
-    created_at TEXT NOT NULL
-  )
-`;
-
-const CREATE_SURGEON_RUN_ACTIONS_RUN_ID_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_surgeon_run_actions_run_id
-  ON surgeon_run_actions(run_id)
-`;
-
-const CREATE_SURGEON_RUN_ACTIONS_ENTRY_ID_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_surgeon_run_actions_entry_id
-  ON surgeon_run_actions(entry_id)
-`;
-
-const CREATE_SURGEON_RUN_ACTIONS_CREATED_AT_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_surgeon_run_actions_created_at
-  ON surgeon_run_actions(created_at)
-`;
-
-/** SQL statement that stores structured unresolved proposals for surgeon runs. */
-const CREATE_SURGEON_RUN_PROPOSALS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS surgeon_run_proposals (
-    id TEXT PRIMARY KEY,
-    run_id TEXT NOT NULL REFERENCES surgeon_runs(id),
-    group_id TEXT NOT NULL,
-    issue_kind TEXT NOT NULL,
-    scope TEXT NOT NULL,
-    entry_ids TEXT NOT NULL DEFAULT '[]',
-    current_claim_keys TEXT NOT NULL DEFAULT '[]',
-    proposed_claim_keys TEXT NOT NULL DEFAULT '[]',
-    rationale TEXT NOT NULL DEFAULT '',
-    confidence REAL NOT NULL DEFAULT 0,
-    source TEXT NOT NULL DEFAULT '',
-    eligible_for_apply INTEGER NOT NULL DEFAULT 0,
-    review_status TEXT NOT NULL DEFAULT 'open',
-    reviewed_at TEXT,
-    review_reason TEXT,
-    applied_action_count INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
-  )
-`;
-
-const CREATE_SURGEON_RUN_PROPOSALS_RUN_ID_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_surgeon_run_proposals_run_id
-  ON surgeon_run_proposals(run_id)
-`;
-
-const CREATE_SURGEON_RUN_PROPOSALS_GROUP_ID_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_surgeon_run_proposals_group_id
-  ON surgeon_run_proposals(group_id)
-`;
-
-const CREATE_SURGEON_RUN_PROPOSALS_CREATED_AT_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_surgeon_run_proposals_created_at
-  ON surgeon_run_proposals(created_at)
-`;
-
-const CREATE_SURGEON_RUN_PROPOSALS_REVIEW_STATUS_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_surgeon_run_proposals_review_status
-  ON surgeon_run_proposals(review_status)
-`;
-
-const CREATE_SURGEON_RUN_PROPOSALS_OPEN_ISSUE_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_surgeon_run_proposals_open_issue
-  ON surgeon_run_proposals(review_status, group_id, issue_kind)
-`;
-
 /** SQL statement that stores key-value metadata for the database. */
 const CREATE_META_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS _meta (
@@ -536,17 +442,10 @@ const SCHEMA_STATEMENTS = [
   CREATE_PROCEDURES_FTS_DELETE_TRIGGER_SQL,
   CREATE_PROCEDURES_FTS_UPDATE_TRIGGER_SQL,
   CREATE_RECALL_EVENTS_TABLE_SQL,
-  CREATE_SURGEON_RUNS_TABLE_SQL,
-  CREATE_SURGEON_RUN_ACTIONS_TABLE_SQL,
-  CREATE_SURGEON_RUN_ACTIONS_RUN_ID_INDEX_SQL,
-  CREATE_SURGEON_RUN_ACTIONS_ENTRY_ID_INDEX_SQL,
-  CREATE_SURGEON_RUN_ACTIONS_CREATED_AT_INDEX_SQL,
-  CREATE_SURGEON_RUN_PROPOSALS_TABLE_SQL,
-  CREATE_SURGEON_RUN_PROPOSALS_RUN_ID_INDEX_SQL,
-  CREATE_SURGEON_RUN_PROPOSALS_GROUP_ID_INDEX_SQL,
-  CREATE_SURGEON_RUN_PROPOSALS_CREATED_AT_INDEX_SQL,
-  CREATE_SURGEON_RUN_PROPOSALS_REVIEW_STATUS_INDEX_SQL,
-  CREATE_SURGEON_RUN_PROPOSALS_OPEN_ISSUE_INDEX_SQL,
+  ...SURGEON_CORE_SCHEMA_STATEMENTS,
+  ...WORKING_MEMORY_SCHEMA_STATEMENTS,
+  ...SESSION_MEMORY_SCHEMA_STATEMENTS,
+  ...SURGEON_PROPOSAL_SCHEMA_STATEMENTS,
   CREATE_META_TABLE_SQL,
   CREATE_ENTRIES_CONTENT_HASH_INDEX_SQL,
   CREATE_ENTRIES_NORM_CONTENT_HASH_INDEX_SQL,
@@ -618,6 +517,14 @@ export async function initSchema(db: Client): Promise<void> {
     await migrateV9ToV10(db);
     currentVersion = "10";
   }
+  if (currentVersion === "10") {
+    await migrateV10ToV11(db);
+    currentVersion = "11";
+  }
+  if (currentVersion === "11") {
+    await migrateV11ToV12(db);
+    currentVersion = "12";
+  }
   const hadEntriesFts = await tableExists(db, "entries_fts");
   const hadProceduresFts = await tableExists(db, "procedures_fts");
 
@@ -660,6 +567,8 @@ async function assertSupportedSchemaState(db: Client, currentVersion: string | n
     currentVersion !== "7" &&
     currentVersion !== "8" &&
     currentVersion !== "9" &&
+    currentVersion !== "10" &&
+    currentVersion !== "11" &&
     currentVersion !== SCHEMA_VERSION
   ) {
     throw new Error(
@@ -722,10 +631,9 @@ async function migrateV6ToV7(db: Client): Promise<void> {
     }
   }
 
-  await db.execute(CREATE_SURGEON_RUN_PROPOSALS_TABLE_SQL);
-  await db.execute(CREATE_SURGEON_RUN_PROPOSALS_RUN_ID_INDEX_SQL);
-  await db.execute(CREATE_SURGEON_RUN_PROPOSALS_GROUP_ID_INDEX_SQL);
-  await db.execute(CREATE_SURGEON_RUN_PROPOSALS_CREATED_AT_INDEX_SQL);
+  for (const statement of SURGEON_PROPOSAL_INITIAL_SCHEMA_STATEMENTS) {
+    await db.execute(statement);
+  }
 }
 
 /**
@@ -766,10 +674,9 @@ async function migrateV7ToV8(db: Client): Promise<void> {
  */
 async function migrateV8ToV9(db: Client): Promise<void> {
   if (!(await tableExists(db, "surgeon_run_proposals"))) {
-    await db.execute(CREATE_SURGEON_RUN_PROPOSALS_TABLE_SQL);
-    await db.execute(CREATE_SURGEON_RUN_PROPOSALS_RUN_ID_INDEX_SQL);
-    await db.execute(CREATE_SURGEON_RUN_PROPOSALS_GROUP_ID_INDEX_SQL);
-    await db.execute(CREATE_SURGEON_RUN_PROPOSALS_CREATED_AT_INDEX_SQL);
+    for (const statement of SURGEON_PROPOSAL_INITIAL_SCHEMA_STATEMENTS) {
+      await db.execute(statement);
+    }
     await db.execute(CREATE_SURGEON_RUN_PROPOSALS_REVIEW_STATUS_INDEX_SQL);
     return;
   }
@@ -807,6 +714,30 @@ async function migrateV9ToV10(db: Client): Promise<void> {
   await db.execute(CREATE_PROCEDURES_RETIRED_INDEX_SQL);
   await db.execute(CREATE_PROCEDURES_CREATED_AT_INDEX_SQL);
   await db.execute(CREATE_PROCEDURES_ACTIVE_KEY_UNIQUE_INDEX_SQL);
+}
+
+/**
+ * Migrates a v10 database to the v11 working-memory schema.
+ *
+ * @param db - libSQL client connected to the target database.
+ * @returns Promise that resolves once the migration completes.
+ */
+async function migrateV10ToV11(db: Client): Promise<void> {
+  for (const statement of WORKING_MEMORY_SCHEMA_STATEMENTS) {
+    await db.execute(statement);
+  }
+}
+
+/**
+ * Migrates a v11 database to the v12 session-tree schema.
+ *
+ * @param db - libSQL client connected to the target database.
+ * @returns Promise that resolves once the migration completes.
+ */
+async function migrateV11ToV12(db: Client): Promise<void> {
+  for (const statement of SESSION_MEMORY_SCHEMA_STATEMENTS) {
+    await db.execute(statement);
+  }
 }
 
 /**

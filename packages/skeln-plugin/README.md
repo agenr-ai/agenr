@@ -24,6 +24,9 @@ Optional `memoryPolicy` accepts a JSON string with the same shape as the OpenCla
     "coreMemory": false,
     "relevantDurableMemory": true
   },
+  "workingContext": {
+    "enabled": false
+  },
   "slotPolicies": {
     "attributeHeads": {
       "preference": "multivalued"

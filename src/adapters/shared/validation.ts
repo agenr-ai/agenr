@@ -31,6 +31,31 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * Reads one optional trimmed string without collecting validation issues.
+ *
+ * @param value - Raw field value from an untrusted payload.
+ * @returns Trimmed non-empty string, or undefined when absent.
+ */
+export function readOptionalTrimmedString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+/**
+ * Reads one optional finite number without collecting validation issues.
+ *
+ * @param value - Raw field value from an untrusted payload.
+ * @returns Finite number, or undefined when absent.
+ */
+export function readOptionalFiniteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/**
  * Appends one structured validation issue to the collector.
  *
  * @param issues - Mutable validation issue collection.

@@ -70,8 +70,10 @@ export function mergeSkelnMemoryPolicy(
   const slotPolicies = mergeSlotPolicies(fromSettings.slotPolicies, fromOptions.slotPolicies);
   const sessionStart = fromSettings.sessionStart || fromOptions.sessionStart ? { ...fromSettings.sessionStart, ...fromOptions.sessionStart } : undefined;
   const beforeTurn = fromSettings.beforeTurn || fromOptions.beforeTurn ? { ...fromSettings.beforeTurn, ...fromOptions.beforeTurn } : undefined;
+  const workingContext =
+    fromSettings.workingContext || fromOptions.workingContext ? { ...fromSettings.workingContext, ...fromOptions.workingContext } : undefined;
 
-  if (!slotPolicies && !sessionStart && !beforeTurn) {
+  if (!slotPolicies && !sessionStart && !beforeTurn && !workingContext) {
     return undefined;
   }
 
@@ -79,6 +81,7 @@ export function mergeSkelnMemoryPolicy(
     ...(slotPolicies ? { slotPolicies } : {}),
     ...(sessionStart ? { sessionStart } : {}),
     ...(beforeTurn ? { beforeTurn } : {}),
+    ...(workingContext ? { workingContext } : {}),
   };
 }
 

@@ -116,7 +116,7 @@ export function buildRecallToolServices(services: PluginMemoryRuntimeServices): 
 }
 
 /** Shared agenr_store parameter schema. */
-export const STORE_TOOL_PARAMETERS = {
+const STORE_TOOL_PARAMETERS = {
   type: "object",
   additionalProperties: false,
   properties: {
@@ -175,7 +175,7 @@ export const STORE_TOOL_PARAMETERS = {
 } as const;
 
 /** Shared agenr_recall parameter schema. */
-export const RECALL_TOOL_PARAMETERS = {
+const RECALL_TOOL_PARAMETERS = {
   type: "object",
   additionalProperties: false,
   properties: {
@@ -224,7 +224,7 @@ export const RECALL_TOOL_PARAMETERS = {
 } as const;
 
 /** Shared agenr_update parameter schema. */
-export const UPDATE_TOOL_PARAMETERS = {
+const UPDATE_TOOL_PARAMETERS = {
   type: "object",
   additionalProperties: false,
   properties: {
@@ -510,10 +510,18 @@ export async function runUpdateMemoryTool(
   });
 }
 
+export { RECALL_TOOL_PARAMETERS, STORE_TOOL_PARAMETERS, UPDATE_TOOL_PARAMETERS };
+
+/**
+ * Builds a successful host-neutral memory tool outcome.
+ */
 function okOutcome(text: string, details: Record<string, unknown>): MemoryToolOutcome {
   return { text, details, failed: false };
 }
 
+/**
+ * Builds a failed host-neutral memory tool outcome.
+ */
 function failedOutcome(text: string, details: Record<string, unknown>): MemoryToolOutcome {
   return { text, details, failed: true };
 }

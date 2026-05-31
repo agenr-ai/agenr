@@ -1,3 +1,4 @@
+import type { WorkingScope } from "../../../app/working-memory/scope.js";
 import type { AgenrSkelnSessionScope, SkelnHostContext } from "../types.js";
 
 /**
@@ -121,6 +122,21 @@ export function mergeSkelnHostContext(defaults: SkelnHostContext, override?: Par
     merged.project = project;
   }
 
+  const conversationKey = normalizeSkelnScopeField(override.conversationKey) ?? defaults.conversationKey;
+  if (conversationKey) {
+    merged.conversationKey = conversationKey;
+  }
+
+  const runtimeThreadKey = normalizeSkelnScopeField(override.runtimeThreadKey) ?? defaults.runtimeThreadKey;
+  if (runtimeThreadKey) {
+    merged.runtimeThreadKey = runtimeThreadKey;
+  }
+
+  const hostThreadId = normalizeSkelnScopeField(override.hostThreadId) ?? defaults.hostThreadId;
+  if (hostThreadId) {
+    merged.hostThreadId = hostThreadId;
+  }
+
   return merged;
 }
 
@@ -145,5 +161,29 @@ export function toSkelnSessionScope(hostContext: SkelnHostContext, sessionId: st
     ...(hostContext.gitRoot ? { gitRoot: hostContext.gitRoot } : {}),
     ...(hostContext.gitBranch ? { gitBranch: hostContext.gitBranch } : {}),
     ...(hostContext.project ? { project: hostContext.project } : {}),
+    ...(hostContext.conversationKey ? { conversationKey: hostContext.conversationKey } : {}),
+    ...(hostContext.runtimeThreadKey ? { runtimeThreadKey: hostContext.runtimeThreadKey } : {}),
+    ...(hostContext.hostThreadId ? { hostThreadId: hostContext.hostThreadId } : {}),
+  };
+}
+
+/**
+ * Converts one Skeln session scope into raw working-memory scope facts.
+ *
+ * @param scope - Resolved Skeln session scope for the active turn.
+ * @returns Raw scope facts accepted by the working-memory service.
+ */
+export function toWorkingScopeFromSkelnSession(scope: AgenrSkelnSessionScope): Partial<WorkingScope> {
+  return {
+    sessionId: scope.sessionId,
+    sessionKey: scope.sessionKey,
+    scopeKey: `session:${scope.sessionKey}`,
+    cwd: scope.cwd,
+    ...(scope.gitRoot ? { gitRoot: scope.gitRoot } : {}),
+    ...(scope.gitBranch ? { gitBranch: scope.gitBranch } : {}),
+    ...(scope.project ? { project: scope.project } : {}),
+    ...(scope.conversationKey ? { conversationKey: scope.conversationKey } : {}),
+    ...(scope.runtimeThreadKey ? { runtimeThreadKey: scope.runtimeThreadKey } : {}),
+    ...(scope.hostThreadId ? { hostThreadId: scope.hostThreadId } : {}),
   };
 }

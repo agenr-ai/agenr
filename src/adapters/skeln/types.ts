@@ -1,5 +1,6 @@
 import type { ExtensionContext } from "skeln";
 
+import type { AgenrFeatureFlagConfig } from "../../app/features/types.js";
 import type { PluginInjectionMemoryPolicyConfig } from "../../app/plugin-runtime/types.js";
 
 /**
@@ -15,6 +16,12 @@ export interface SkelnHostContext {
   gitBranch?: string;
   /** Optional project label supplied by the host extension. */
   project?: string;
+  /** Optional host-neutral conversation identifier supplied by Skeln. */
+  conversationKey?: string;
+  /** Optional host-neutral runtime thread identifier supplied by Skeln. */
+  runtimeThreadKey?: string;
+  /** Optional compatibility host thread id when Skeln exposes one. */
+  hostThreadId?: string;
   /** Stable recall/session key derived from Skeln session identity and cwd. */
   sessionKey: string;
 }
@@ -29,6 +36,8 @@ export interface RegisterAgenrSkelnMemoryOptions {
   configPath?: string;
   /** Narrow runtime memory-policy overrides for claim-aware read surfaces. */
   memoryPolicy?: PluginInjectionMemoryPolicyConfig;
+  /** Optional Skeln host feature-flag overrides merged over agenr config features. */
+  featureFlags?: AgenrFeatureFlagConfig;
   /**
    * Optional host callback that supplies Skeln-native scope facts. When absent,
    * the adapter derives cwd and sessionKey from the active extension context.
@@ -52,4 +61,10 @@ export interface AgenrSkelnSessionScope {
   gitBranch?: string;
   /** Optional project label when available. */
   project?: string;
+  /** Optional host-neutral conversation identifier. */
+  conversationKey?: string;
+  /** Optional host-neutral runtime thread identifier. */
+  runtimeThreadKey?: string;
+  /** Optional compatibility host thread id. */
+  hostThreadId?: string;
 }

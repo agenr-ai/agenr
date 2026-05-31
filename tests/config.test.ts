@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   configFileExists,
   DEFAULT_API_PORT,
+  DEFAULT_AGENR_FEATURE_FLAGS,
   DEFAULT_CLAIM_EXTRACTION_CONCURRENCY,
   DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD,
   DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES,
@@ -73,6 +74,7 @@ describe("writeConfig", () => {
           },
         },
       },
+      features: DEFAULT_AGENR_FEATURE_FLAGS,
     });
 
     const raw = await readFile(configPath, "utf8");

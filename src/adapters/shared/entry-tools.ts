@@ -1,4 +1,7 @@
 import { ENTRY_TYPES, EXPIRY_LEVELS, type EntryType, type Expiry } from "../../core/types.js";
+import { formatErrorMessage } from "./errors.js";
+
+export { formatErrorMessage };
 
 /**
  * Human-readable guidance shown in store tool schemas.
@@ -36,20 +39,6 @@ export function asRecord(value: unknown): Record<string, unknown> {
   }
 
   throw new Error("Tool parameters must be an object.");
-}
-
-/**
- * Normalizes unknown tool failures into human-readable messages.
- *
- * @param error - Unknown failure value.
- * @returns Human-readable error message.
- */
-export function formatErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return String(error);
 }
 
 /**

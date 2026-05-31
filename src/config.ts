@@ -10,9 +10,11 @@ import { fileURLToPath } from "node:url";
 import { canonicalizeAgenrConfigInput, parseAgenrConfig, toAgenrConfigInput } from "./adapters/config/parse-agenr-config.js";
 import {
   authMethodToProvider,
+  AGENR_FEATURE_FLAG_KEYS,
   getAuthMethodDefinition,
   isAgenrAuthMethod,
   DEFAULT_API_PORT,
+  DEFAULT_AGENR_FEATURE_FLAGS,
   DEFAULT_CLAIM_EXTRACTION_CONCURRENCY,
   DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD,
   DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES,
@@ -26,11 +28,14 @@ import {
   type AgenrClaimExtractionConfig,
   type AgenrConfig,
   type AgenrConfigInput,
+  type AgenrFeatureFlagConfig,
+  type AgenrFeatureFlagKey,
   type AgenrProvider,
   type AgenrStoredCredentials,
   type AuthMethodDefinition,
   type ModelConfig,
   type ResolvedAgenrConfig,
+  type ResolvedAgenrFeatureFlags,
   type SurgeonConfig,
   type SurgeonPassConfig,
 } from "./adapters/config/types.js";
@@ -53,7 +58,9 @@ const CONFIG_FILE_MODE = 0o600;
 
 export {
   authMethodToProvider,
+  AGENR_FEATURE_FLAG_KEYS,
   DEFAULT_API_PORT,
+  DEFAULT_AGENR_FEATURE_FLAGS,
   DEFAULT_CLAIM_EXTRACTION_CONCURRENCY,
   DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD,
   DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES,
@@ -70,11 +77,14 @@ export {
   type AgenrClaimExtractionConfig,
   type AgenrConfig,
   type AgenrConfigInput,
+  type AgenrFeatureFlagConfig,
+  type AgenrFeatureFlagKey,
   type AgenrProvider,
   type AgenrStoredCredentials,
   type AuthMethodDefinition,
   type ModelConfig,
   type ResolvedAgenrConfig,
+  type ResolvedAgenrFeatureFlags,
   type SurgeonConfig,
   type SurgeonPassConfig,
 };

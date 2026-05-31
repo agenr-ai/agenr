@@ -3,6 +3,7 @@ import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sd
 
 import { resolveClaimSlotPolicy } from "../../../core/claim-slot-policy.js";
 import type { Entry } from "../../../core/types.js";
+import { formatErrorMessage } from "../../shared/errors.js";
 import { truncate } from "../../shared/memory-tool-format.js";
 import type { MemoryToolOutcome, MemoryToolParamReader } from "../../shared/memory-tools.js";
 import {
@@ -11,7 +12,6 @@ import {
   RECALL_MODES,
   UPDATE_EXPIRY_DESCRIPTION,
   asRecord,
-  formatErrorMessage,
   formatTargetSelector,
   normalizeStringArray,
   parseEntryType,
@@ -24,13 +24,14 @@ import { readBooleanParam, resolveTargetEntry as resolveSharedTargetEntry } from
 import type { AgenrOpenClawServices } from "../types.js";
 
 /** Shared OpenClaw param reader wired into host-neutral memory tool parsers. */
-export const OPENCLAW_PARAM_READER: MemoryToolParamReader = {
+const OPENCLAW_PARAM_READER: MemoryToolParamReader = {
   readString: readStringParam,
   readNumber: readNumberParam,
   readStringArray: readStringArrayParam,
 };
 
 export {
+  OPENCLAW_PARAM_READER,
   ENTRY_TYPE_DESCRIPTION,
   EXPIRY_DESCRIPTION,
   RECALL_MODES,

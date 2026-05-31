@@ -7,9 +7,11 @@ import {
   isRecord,
   type ValidationIssue,
 } from "../shared/validation.js";
+import { parseFeatureFlags, toFeatureFlagInput } from "./parse-feature-flags.js";
 import {
   authMethodToProvider,
   DEFAULT_API_PORT,
+  DEFAULT_AGENR_FEATURE_FLAGS,
   DEFAULT_CLAIM_EXTRACTION_CONCURRENCY,
   DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD,
   DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES,
@@ -119,6 +121,11 @@ export function toAgenrConfigInput(config: ResolvedAgenrConfig, options: Partial
     ...(hasModelConfig(config.crossEncoderModel) ? { crossEncoderModel: config.crossEncoderModel } : {}),
   };
 
+  const features = toFeatureFlagInput(config.features);
+  if (features) {
+    input.features = features;
+  }
+
   const claimExtraction = toClaimExtractionInput(config.claimExtraction);
   if (claimExtraction) {
     input.claimExtraction = claimExtraction;
@@ -170,6 +177,7 @@ function normalizeAgenrConfig(value: unknown, options: ParseAgenrConfigOptions):
       resolved: {
         claimExtraction: claimDefaults,
         surgeon: surgeonDefaults,
+        features: { ...DEFAULT_AGENR_FEATURE_FLAGS },
         dbPath: options.defaultDbPath,
         apiPort: DEFAULT_API_PORT,
       },
@@ -197,6 +205,7 @@ function normalizeAgenrConfig(value: unknown, options: ParseAgenrConfigOptions):
   const crossEncoderModel = parseModelConfig(value.crossEncoderModel, "crossEncoderModel", issues);
   const claimExtraction = parseClaimExtractionConfig(value.claimExtraction, "claimExtraction", issues);
   const surgeon = parseSurgeonConfig(value.surgeon, "surgeon", issues);
+  const features = parseFeatureFlags(value.features, "features", issues);
   const dbPath = parseOptionalTrimmedString(value.dbPath, "dbPath", issues);
   const apiPort = parseOptionalIntegerInRange(value.apiPort, "apiPort", issues, {
     min: 1,
@@ -227,6 +236,7 @@ function normalizeAgenrConfig(value: unknown, options: ParseAgenrConfigOptions):
     ...(crossEncoderModel ? { crossEncoderModel } : {}),
     ...(claimExtraction.input ? { claimExtraction: claimExtraction.input } : {}),
     ...(surgeon.input ? { surgeon: surgeon.input } : {}),
+    ...(features.input ? { features: features.input } : {}),
     ...(dbPath ? { dbPath } : {}),
     ...(apiPort !== undefined ? { apiPort } : {}),
   };
@@ -247,6 +257,7 @@ function normalizeAgenrConfig(value: unknown, options: ParseAgenrConfigOptions):
       ...(crossEncoderModel ? { crossEncoderModel } : {}),
       claimExtraction: claimExtraction.resolved,
       surgeon: surgeon.resolved,
+      features: features.resolved,
       dbPath: dbPath ?? options.defaultDbPath,
       apiPort: apiPort ?? DEFAULT_API_PORT,
     },
@@ -273,6 +284,7 @@ function pushTopLevelIssues(value: Record<string, unknown>, issues: ValidationIs
     "crossEncoderModel",
     "claimExtraction",
     "surgeon",
+    "features",
     "dbPath",
     "apiPort",
     "apiKey",

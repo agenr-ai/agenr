@@ -57,10 +57,10 @@ export interface EntryNeighborhoodRequest {
 }
 
 /** Default total-rows budget for one neighborhood expansion call. */
-export const DEFAULT_NEIGHBORHOOD_BUDGET = 24;
+const DEFAULT_NEIGHBORHOOD_BUDGET = 24;
 
 /** Default top-N size used when choosing strong rerank seeds. */
-export const DEFAULT_STRONG_SEED_TOP_N = 3;
+const DEFAULT_STRONG_SEED_TOP_N = 3;
 
 /**
  * Minimum score gap that separates strong seeds from the pack.
@@ -69,7 +69,7 @@ export const DEFAULT_STRONG_SEED_TOP_N = 3;
  * (common when RRF produces ties) from promoting every candidate into a
  * seed, which would collapse seededRerank into "boost everything".
  */
-export const DEFAULT_STRONG_SEED_SCORE_GAP = 0.05;
+const DEFAULT_STRONG_SEED_SCORE_GAP = 0.05;
 
 /**
  * Default positive delta applied to candidates that share lineage with a
@@ -77,7 +77,9 @@ export const DEFAULT_STRONG_SEED_SCORE_GAP = 0.05;
  * boosts so the stage cannot override claim-key shaping or historical
  * trust suppression.
  */
-export const DEFAULT_SEEDED_RERANK_WEIGHT = 0.03;
+const DEFAULT_SEEDED_RERANK_WEIGHT = 0.03;
+
+export { DEFAULT_NEIGHBORHOOD_BUDGET, DEFAULT_SEEDED_RERANK_WEIGHT, DEFAULT_STRONG_SEED_SCORE_GAP, DEFAULT_STRONG_SEED_TOP_N };
 
 /** Shared shape used by all seededRerank callers. */
 export interface SeededRerankCandidate {

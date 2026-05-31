@@ -3,7 +3,9 @@ import type { AgenrConfig } from "../../config.js";
 import { createOpenAICrossEncoder, resolveCrossEncoderApiKey } from "../cross-encoder/openai-cross-encoder.js";
 import { createDatabase } from "../db/client.js";
 import { createMemoryRepository } from "../db/memory-repository.js";
+import { createSessionMemoryRepository } from "../db/session-memory-repository.js";
 import { createSessionStartRepository } from "../db/session-start-repository.js";
+import { createWorkingMemoryRepository } from "../db/working-memory-repository.js";
 import { createRecallAdapter } from "../db/recall-adapter.js";
 import { createEmbeddingClient, EMBEDDING_MODEL, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../embeddings.js";
 import { resolveModel } from "../llm.js";
@@ -12,7 +14,7 @@ import type { PluginEmbeddingStatus, PluginMemoryRuntimeServices } from "../../a
 import { attachCrossEncoderPort } from "../../app/evals/recall/attach-cross-encoder.js";
 import { createEmbedQuery } from "./embed-query.js";
 
-export { EMBEDDING_MODEL };
+export { EMBEDDING_MODEL, pluginMemoryRuntimeFactory };
 
 /**
  * Internal embedding status shape that includes the resolved API key.
@@ -24,7 +26,7 @@ type ResolvedEmbeddingStatus = PluginEmbeddingStatus & {
 /**
  * Adapter-owned factory that composes process-lifetime plugin memory services.
  */
-export const pluginMemoryRuntimeFactory: PluginMemoryRuntimeFactoryPort = {
+const pluginMemoryRuntimeFactory: PluginMemoryRuntimeFactoryPort = {
   createPluginMemoryRuntime,
 };
 
@@ -52,6 +54,8 @@ export async function createPluginMemoryRuntime(input: CreatePluginMemoryRuntime
     memory: createMemoryRepository(database, {
       claimSlotPolicyConfig: slotPolicies,
     }),
+    workingMemoryRepository: createWorkingMemoryRepository(database),
+    sessionMemoryRepository: createSessionMemoryRepository(database),
     sessionStart: {
       repository: createSessionStartRepository(database),
       recall,

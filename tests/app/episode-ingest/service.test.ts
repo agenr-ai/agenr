@@ -501,6 +501,7 @@ describe("ingestEpisodeTranscript", () => {
         embedSummary,
       }),
       {
+        source: "skeln",
         genVersion: "openclaw-episodic-summary-v1",
         now: new Date("2026-03-30T10:00:00.000Z"),
         skipActiveSessionCheck: true,
@@ -531,6 +532,7 @@ describe("ingestEpisodeTranscript", () => {
     expect(embedSummary).toHaveBeenCalledWith("Shared workflow summary.");
     expect(database.upsertInputs[0]).toEqual(
       expect.objectContaining({
+        source: "skeln",
         sourceId: "override-session",
         agentId: "main",
         surface: "tui",
@@ -538,6 +540,42 @@ describe("ingestEpisodeTranscript", () => {
         genVersion: "openclaw-episodic-summary-v1",
       }),
     );
+  });
+
+  it("returns below_activity_threshold when configured activity gates reject the transcript", async () => {
+    const filePath = "/tmp/low-activity.jsonl";
+    const createSummaryLlm = vi.fn(() => new MockSummaryLlm({ response: buildSummaryJson("Should not run.") }));
+
+    const result = await ingestEpisodeTranscript(
+      filePath,
+      createPorts({
+        transcript: new MockTranscriptPort({
+          [filePath]: buildTranscript({
+            sessionId: "low-activity",
+            endedAt: "2026-03-30T09:03:00.000Z",
+            messages: buildMessages(4),
+          }),
+        }),
+        createSummaryLlm,
+      }),
+      {
+        genVersion: "skeln-episodic-summary-v1",
+        skipActiveSessionCheck: true,
+        activityThreshold: {
+          minMaterialTurns: 8,
+          minDurationMs: 20 * 60 * 1000,
+        },
+      },
+    );
+
+    expect(result).toEqual({
+      kind: "skipped",
+      skipped: expect.objectContaining({
+        reason: "below_activity_threshold",
+        messageCount: 4,
+      }),
+    });
+    expect(createSummaryLlm).not.toHaveBeenCalled();
   });
 
   it("returns shared skip results without invoking the summary generator", async () => {

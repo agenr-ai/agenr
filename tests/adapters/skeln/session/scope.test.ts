@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { buildSkelnHostContext, mergeSkelnHostContext, normalizeSkelnScopeField, toSkelnSessionScope } from "../../../../src/adapters/skeln/session/scope.js";
+import {
+  buildSkelnHostContext,
+  mergeSkelnHostContext,
+  normalizeSkelnScopeField,
+  toSkelnSessionScope,
+  toWorkingScopeFromSkelnSession,
+} from "../../../../src/adapters/skeln/session/scope.js";
 
 describe("buildSkelnHostContext", () => {
   it("builds host context with derived session key and optional git scope", () => {
@@ -75,5 +81,28 @@ describe("normalizeSkelnScopeField", () => {
   it("returns undefined for blank values", () => {
     expect(normalizeSkelnScopeField("   ")).toBeUndefined();
     expect(normalizeSkelnScopeField(undefined)).toBeUndefined();
+  });
+});
+
+describe("toWorkingScopeFromSkelnSession", () => {
+  it("pins session scope so git facts do not override Skeln session identity", () => {
+    expect(
+      toWorkingScopeFromSkelnSession({
+        sessionId: "session-1",
+        sessionKey: "skeln:session:session-1:cwd:/tmp/project",
+        cwd: "/tmp/project",
+        gitRoot: "/tmp/project",
+        gitBranch: "main",
+        project: "agenr",
+      }),
+    ).toEqual({
+      sessionId: "session-1",
+      sessionKey: "skeln:session:session-1:cwd:/tmp/project",
+      scopeKey: "session:skeln:session:session-1:cwd:/tmp/project",
+      cwd: "/tmp/project",
+      gitRoot: "/tmp/project",
+      gitBranch: "main",
+      project: "agenr",
+    });
   });
 });

@@ -11,6 +11,16 @@ const MAX_EPISODE_TRANSCRIPT_CHARS = 14_000;
 export { MAX_EPISODE_TRANSCRIPT_CHARS, MIN_EPISODE_MESSAGES };
 
 /**
+ * Counts transcript messages with non-empty text for episode eligibility checks.
+ *
+ * @param messages - Parsed transcript messages.
+ * @returns Number of material user or assistant turns.
+ */
+export function countMaterialTranscriptTurns(messages: Array<{ text: string }>): number {
+  return messages.filter((message) => message.text.trim().length > 0).length;
+}
+
+/**
  * Renders cleaned transcript messages into prompt text for episode generation.
  *
  * @param messages - Cleaned transcript messages.

@@ -1,6 +1,14 @@
 import path from "node:path";
 
-import { MAX_EPISODE_TRANSCRIPT_CHARS, MIN_EPISODE_MESSAGES, capEpisodeTranscript, renderTranscript } from "../../../core/episode/transcript-render.js";
+import { resolveEpisodeActivityEligibility } from "../activity-threshold.js";
+import type { EpisodeActivityThreshold } from "../activity-threshold.js";
+import {
+  MAX_EPISODE_TRANSCRIPT_CHARS,
+  MIN_EPISODE_MESSAGES,
+  capEpisodeTranscript,
+  countMaterialTranscriptTurns,
+  renderTranscript,
+} from "../../../core/episode/transcript-render.js";
 import type { Episode } from "../../../core/types.js";
 import type { EpisodeIngestPorts, SessionMeta } from "../ports.js";
 import type {
@@ -38,6 +46,10 @@ export interface ClassifyPreflightTranscriptOptions {
    * Whether to bypass the active-session skip rule.
    */
   skipActiveSessionCheck?: boolean;
+  /**
+   * Optional minimum activity gate applied after generic short-session checks.
+   */
+  activityThreshold?: EpisodeActivityThreshold;
 }
 
 /**
@@ -144,6 +156,7 @@ export async function classifyPreflightTranscript(
 ): Promise<PreflightTranscriptClassification> {
   const parsedTranscript = await ports.transcript.parseFile(filePath);
   const cleanedMessages = parsedTranscript.messages.filter((message) => message.text.trim().length > 0);
+  const materialTurns = countMaterialTranscriptTurns(parsedTranscript.messages);
   const parsedSessionId = parsedTranscript.metadata.sessionId?.trim() || undefined;
   const registryMeta = parsedSessionId ? await ports.sessionRegistry?.getSessionMeta(parsedSessionId) : undefined;
   const reconstructedMeta = registryMeta
@@ -203,6 +216,32 @@ export async function classifyPreflightTranscript(
         metadataSource: resolvedMeta.metadataSource,
       },
     };
+  }
+
+  if (options.activityThreshold) {
+    const eligibility = resolveEpisodeActivityEligibility(
+      materialTurns,
+      parsedTranscript.metadata.startedAt,
+      parsedTranscript.metadata.endedAt,
+      options.activityThreshold,
+    );
+    if (!eligibility.eligible) {
+      return {
+        kind: "skipped",
+        value: {
+          filePath,
+          reason: eligibility.reason,
+          sessionId: resolvedMeta.sessionId,
+          transcriptHash: parsedTranscript.metadata.transcriptHash,
+          messageCount: eligibility.materialTurns,
+          startedAt: parsedTranscript.metadata.startedAt,
+          endedAt: parsedTranscript.metadata.endedAt,
+          agentId: resolvedMeta.agentId,
+          surface: resolvedMeta.surface,
+          metadataSource: resolvedMeta.metadataSource,
+        },
+      };
+    }
   }
 
   if (options.skipActiveSessionCheck !== true && isActiveSession(parsedTranscript.metadata.endedAt, options.referenceNow)) {

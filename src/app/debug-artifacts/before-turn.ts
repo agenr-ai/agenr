@@ -4,14 +4,16 @@ import type { BeforeTurnPatchDiagnostics } from "../before-turn/index.js";
  * Default top-K candidate cap applied when a before-turn debug
  * artifact is requested without supplying an explicit override.
  */
-export const BEFORE_TURN_DEBUG_ARTIFACT_DEFAULT_TOP_K = 10;
+const BEFORE_TURN_DEBUG_ARTIFACT_DEFAULT_TOP_K = 10;
 
 /**
  * Hard upper bound for the before-turn debug-artifact top-K candidate
  * list. Builders clamp any larger in-process request defensively so
  * artifacts stay bounded and predictable for agent consumers.
  */
-export const BEFORE_TURN_DEBUG_ARTIFACT_MAX_TOP_K = 25;
+const BEFORE_TURN_DEBUG_ARTIFACT_MAX_TOP_K = 25;
+
+export { BEFORE_TURN_DEBUG_ARTIFACT_DEFAULT_TOP_K, BEFORE_TURN_DEBUG_ARTIFACT_MAX_TOP_K };
 
 /**
  * Stable schema version tag for the before-turn replay debug artifact.

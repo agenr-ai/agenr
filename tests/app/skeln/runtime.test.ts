@@ -79,6 +79,41 @@ describe("createAgenrSkelnServices", () => {
     expect(services.skelnConfig).toEqual({ dbPath });
     expect(services.sessionStart.repository).toBeDefined();
     expect(services.beforeTurn.recall).toBe(services.recall);
+    expect(services.workingMemory).toBeDefined();
+    expect(services.workingMemoryRepository).toBeDefined();
+    expect(services.routeSessionMemoryTrigger).toBeTypeOf("function");
+    expect(services.goalContinuation).toBeDefined();
+    expect(services.capabilities).toEqual({
+      workingMemory: "disabled",
+      sessionMemory: "disabled",
+      shutdownEpisodes: false,
+      goalContinuation: "disabled",
+    });
+
+    await services.close();
+  });
+
+  it("resolves feature flags from agenr config at the composition boundary", async () => {
+    const root = await createTempRoot("agenr-skeln-runtime-");
+    const dbPath = path.join(root, "knowledge.db");
+    await writeJson(path.join(root, "config.json"), {
+      credentials: {
+        openaiApiKey: "config-key",
+      },
+      features: {
+        workingMemory: true,
+        sessionTreeLineage: false,
+      },
+    });
+
+    const services = await createAgenrSkelnServices({ dbPath });
+
+    expect(services.runtimePolicy.featureFlags).toEqual({
+      workingMemory: true,
+      sessionTreeLineage: false,
+      sessionTreeCompaction: false,
+      goalContinuation: false,
+    });
 
     await services.close();
   });
