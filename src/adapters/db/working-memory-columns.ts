@@ -16,20 +16,9 @@ const WORKING_SET_COLUMN_NAMES = [
   "summary",
   "snapshot_json",
   "revision",
-  "event_count",
-  "heartbeat_at",
-  "resume_after",
-  "stale_after",
-  "lease_owner",
-  "lease_expires_at",
-  "user_id",
   "project",
-  "surface",
   "session_id",
-  "session_key",
   "conversation_key",
-  "runtime_thread_key",
-  "host_thread_id",
   "cwd",
   "git_root",
   "git_branch",
@@ -52,7 +41,7 @@ const WORKING_SET_INSERT_COLUMNS = WORKING_SET_COLUMN_NAMES.join(",\n          "
 /** Placeholder list for INSERT VALUES over working_sets. */
 const WORKING_SET_INSERT_PLACEHOLDERS = WORKING_SET_COLUMN_NAMES.map(() => "?").join(", ");
 
-/** Mutable working-set columns updated on revision-guarded writes. */
+/** Mutable working-set columns updated on revision-guarded semantic writes. */
 const WORKING_SET_UPDATE_COLUMNS = [
   "title",
   "objective",
@@ -60,18 +49,18 @@ const WORKING_SET_UPDATE_COLUMNS = [
   "summary",
   "snapshot_json",
   "revision",
-  "event_count",
-  "heartbeat_at",
-  "resume_after",
-  "stale_after",
-  "lease_owner",
-  "lease_expires_at",
   "updated_at",
   "last_active_at",
   "closed_at",
   "close_reason",
   "episode_id",
 ] as const;
+
+/** Semantic-only columns excluded from trusted usage patches. */
+const WORKING_SET_SEMANTIC_ONLY_UPDATE_COLUMNS = new Set<(typeof WORKING_SET_UPDATE_COLUMNS)[number]>(["revision", "closed_at", "close_reason", "episode_id"]);
+
+/** Mutable working-set columns updated by trusted usage patches without revision bumps. */
+const WORKING_SET_USAGE_PATCH_COLUMNS = WORKING_SET_UPDATE_COLUMNS.filter((column) => !WORKING_SET_SEMANTIC_ONLY_UPDATE_COLUMNS.has(column));
 
 const WORKING_EVENT_SELECT_COLUMNS = `
   id,
@@ -86,9 +75,14 @@ const WORKING_EVENT_SELECT_COLUMNS = `
   created_at
 `;
 
-/** Builds the UPDATE SET clause for working_sets. */
+/** Builds the UPDATE SET clause for semantic working-set mutations. */
 function buildWorkingSetUpdateSetClause(): string {
   return WORKING_SET_UPDATE_COLUMNS.map((column) => `${column} = ?`).join(",\n            ");
+}
+
+/** Builds the UPDATE SET clause for trusted usage patches. */
+function buildWorkingSetUsagePatchSetClause(): string {
+  return WORKING_SET_USAGE_PATCH_COLUMNS.map((column) => `${column} = ?`).join(",\n            ");
 }
 
 /** Maps a database row into the app working-set record. */
@@ -104,20 +98,9 @@ function mapWorkingSetRow(row: Row): WorkingSetRecord {
     summary: readOptionalString(row, "summary"),
     snapshot,
     revision: readNumber(row, "revision", 0),
-    eventCount: readNumber(row, "event_count", 0),
-    heartbeatAt: readOptionalString(row, "heartbeat_at"),
-    resumeAfter: readOptionalString(row, "resume_after"),
-    staleAfter: readOptionalString(row, "stale_after"),
-    leaseOwner: readOptionalString(row, "lease_owner"),
-    leaseExpiresAt: readOptionalString(row, "lease_expires_at"),
-    userId: readOptionalString(row, "user_id"),
     project: readOptionalString(row, "project"),
-    surface: readOptionalString(row, "surface"),
     sessionId: readOptionalString(row, "session_id"),
-    sessionKey: readOptionalString(row, "session_key"),
     conversationKey: readOptionalString(row, "conversation_key"),
-    runtimeThreadKey: readOptionalString(row, "runtime_thread_key"),
-    hostThreadId: readOptionalString(row, "host_thread_id"),
     cwd: readOptionalString(row, "cwd"),
     gitRoot: readOptionalString(row, "git_root"),
     gitBranch: readOptionalString(row, "git_branch"),
@@ -160,6 +143,7 @@ function parseJson<T>(value: string, column: string): T {
 
 export {
   buildWorkingSetUpdateSetClause,
+  buildWorkingSetUsagePatchSetClause,
   mapWorkingEventRow,
   mapWorkingSetRow,
   WORKING_EVENT_SELECT_COLUMNS,

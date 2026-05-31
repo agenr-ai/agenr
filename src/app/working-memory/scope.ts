@@ -4,12 +4,8 @@ import type { WorkingScopeKind } from "./constants.js";
  * Raw scope facts supplied by a host runtime.
  */
 export interface WorkingScope {
-  /** Host session id when distinct from the stable session key. */
+  /** Host session id used for provenance columns. */
   sessionId?: string;
-  /** Explicit canonical scope key when the host already resolved it. */
-  scopeKey?: string;
-  /** Host session key for the active transcript or session tree. */
-  sessionKey?: string;
   /** Git repository root when known. */
   gitRoot?: string;
   /** Active Git branch when known. */
@@ -22,10 +18,6 @@ export interface WorkingScope {
   taskId?: string;
   /** Host-neutral conversation identifier. */
   conversationKey?: string;
-  /** Host-neutral runtime thread identifier. */
-  runtimeThreadKey?: string;
-  /** Compatibility thread identifier when a host actually uses that term. */
-  hostThreadId?: string;
 }
 
 /**

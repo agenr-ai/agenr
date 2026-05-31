@@ -41,16 +41,9 @@ describe("attachWorkingCheckpointRefresh compaction", () => {
     ).resolves.toEqual(result);
   });
 
-  it("falls back to sessionKey when workingScope is absent", async () => {
+  it("skips refresh when workingScope is absent", async () => {
     const workingMemory = createWorkingMemory({
-      run: vi.fn().mockResolvedValue({
-        ok: true,
-        action: "update",
-        workingSet: {
-          id: "ws-1",
-          revision: 2,
-        },
-      }),
+      run: vi.fn(),
     });
     const result = compactionAcceptedResult();
 
@@ -72,16 +65,12 @@ describe("attachWorkingCheckpointRefresh compaction", () => {
       ),
     ).resolves.toMatchObject({
       workingCheckpointRefresh: {
-        ok: true,
-        action: "working_checkpoint_refreshed",
+        ok: false,
+        reason: "missing_scope",
       },
     });
 
-    expect(workingMemory.run).toHaveBeenCalledWith(
-      expect.objectContaining({
-        scope: { sessionKey: "session-1" },
-      }),
-    );
+    expect(workingMemory.run).not.toHaveBeenCalled();
   });
 
   it("returns working_memory_unavailable when the working service rejects the update", async () => {
@@ -99,8 +88,7 @@ describe("attachWorkingCheckpointRefresh compaction", () => {
           type: "session_compact",
           sessionKey: "session-1",
           workingScope: {
-            sessionKey: "session-1",
-            scopeKey: "session:session-1",
+            conversationKey: "session-1",
           },
           artifact: {
             kind: "compaction_checkpoint",
@@ -138,8 +126,7 @@ describe("attachWorkingCheckpointRefresh compaction", () => {
           type: "session_compact",
           sessionKey: "session-1",
           workingScope: {
-            sessionKey: "session-1",
-            scopeKey: "session:session-1",
+            conversationKey: "session-1",
           },
           artifact: {
             kind: "compaction_checkpoint",

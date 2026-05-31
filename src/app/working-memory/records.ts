@@ -3,10 +3,10 @@ import type { WorkingEventType } from "./events.js";
 import type { WorkingSnapshot } from "./snapshot.js";
 
 /**
- * Schema v11 working-set row shape frozen for Phase 1 implementation.
+ * Lean working-set row shape for the goal control plane.
  *
  * Task state lives in `snapshot` only. Top-level scope columns exist for
- * indexing and one-open-set cardinality checks, not as a second source of truth.
+ * provenance and one-open-set cardinality checks, not as a second source of truth.
  */
 export interface WorkingSetRecord {
   /** Primary key. */
@@ -25,36 +25,14 @@ export interface WorkingSetRecord {
   summary?: string;
   /** Canonical snapshot JSON and sole source of task-state truth. */
   snapshot: WorkingSnapshot;
-  /** Monotonic snapshot revision. */
+  /** Monotonic optimistic-concurrency revision advanced only on semantic writes. */
   revision: number;
-  /** Number of events written for this working set. */
-  eventCount: number;
-  /** Optional heartbeat timestamp. */
-  heartbeatAt?: string;
-  /** Optional resume timestamp used by future schedulers. */
-  resumeAfter?: string;
-  /** Optional staleness timestamp used by future schedulers. */
-  staleAfter?: string;
-  /** Optional lease owner. */
-  leaseOwner?: string;
-  /** Optional lease expiry timestamp. */
-  leaseExpiresAt?: string;
-  /** Optional user id. */
-  userId?: string;
   /** Optional project label. */
   project?: string;
-  /** Optional host surface. */
-  surface?: string;
   /** Optional host session id. */
   sessionId?: string;
-  /** Optional host session key. */
-  sessionKey?: string;
   /** Optional host-neutral conversation key. */
   conversationKey?: string;
-  /** Optional host-neutral runtime thread key. */
-  runtimeThreadKey?: string;
-  /** Optional compatibility host thread id. */
-  hostThreadId?: string;
   /** Optional current working directory. */
   cwd?: string;
   /** Optional Git repository root. */
@@ -80,14 +58,14 @@ export interface WorkingSetRecord {
 }
 
 /**
- * Schema v11 working-event row shape frozen for Phase 1 implementation.
+ * Working-event row shape stored in the append-only event log.
  */
 export interface WorkingEventRecord {
   /** Primary key. */
   id: string;
   /** Owning working-set id. */
   workingSetId: string;
-  /** Monotonic sequence within the working set. */
+  /** Monotonic sequence within the working set, aligned with revision on semantic writes. */
   sequence: number;
   /** Closed event type union. */
   eventType: WorkingEventType;

@@ -239,24 +239,10 @@ describe("initSchema", () => {
       "status",
       "summary",
       "snapshot_json",
-      "checkpoint_json",
-      "budget_json",
-      "continuation_policy",
       "revision",
-      "event_count",
-      "heartbeat_at",
-      "resume_after",
-      "stale_after",
-      "lease_owner",
-      "lease_expires_at",
-      "user_id",
       "project",
-      "surface",
       "session_id",
-      "session_key",
       "conversation_key",
-      "runtime_thread_key",
-      "host_thread_id",
       "cwd",
       "git_root",
       "git_branch",
@@ -314,12 +300,6 @@ describe("initSchema", () => {
     expect(await indexExists(client, "idx_surgeon_run_proposals_open_issue")).toBe(true);
     expect(await indexExists(client, "idx_working_sets_status_last_active")).toBe(true);
     expect(await indexExists(client, "idx_working_sets_scope_status")).toBe(true);
-    expect(await indexExists(client, "idx_working_sets_git_branch_status")).toBe(true);
-    expect(await indexExists(client, "idx_working_sets_session_key_status")).toBe(true);
-    expect(await indexExists(client, "idx_working_sets_conversation_key_status")).toBe(true);
-    expect(await indexExists(client, "idx_working_sets_runtime_thread_key_status")).toBe(true);
-    expect(await indexExists(client, "idx_working_sets_status_resume_after")).toBe(true);
-    expect(await indexExists(client, "idx_working_sets_lease_expires_at")).toBe(true);
     expect(await indexExists(client, "idx_working_events_working_set_created_at")).toBe(true);
     expect(await indexExists(client, "working_sets_one_open_per_scope")).toBe(true);
     expect(await indexExists(client, "idx_session_lineage_edges_child_observed")).toBe(true);
@@ -1140,21 +1120,19 @@ async function insertTestWorkingSet(client: Client, id: string, scopeKey: string
         status,
         snapshot_json,
         revision,
-        event_count,
         created_at,
         updated_at,
         last_active_at,
         closed_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     args: [
       id,
       scopeKey,
-      "session",
+      "conversation",
       status,
       JSON.stringify({ objective: `Objective ${id}` }),
-      1,
       1,
       "2026-05-30T00:00:00.000Z",
       "2026-05-30T00:00:00.000Z",

@@ -14,7 +14,7 @@ describe("resolveCreateScope", () => {
       resolveCreateScope(
         {
           scope: {
-            sessionKey: "skeln:session:1",
+            conversationKey: "session-1",
             cwd: "/tmp/project",
           },
         },
@@ -23,10 +23,10 @@ describe("resolveCreateScope", () => {
     ).resolves.toEqual({
       ok: true,
       scope: {
-        sessionKey: "skeln:session:1",
+        conversationKey: "session-1",
         cwd: "/tmp/project",
-        scopeKind: "session",
-        scopeKey: "session:skeln:session:1",
+        scopeKind: "conversation",
+        scopeKey: "conversation:session-1",
       },
     });
   });
@@ -34,14 +34,14 @@ describe("resolveCreateScope", () => {
   it("returns active_set_exists when an open set matches the scope", async () => {
     const repository = {
       getWorkingSet: vi.fn(async () => undefined),
-      findCurrentWorkingSets: vi.fn(async () => [{ id: "ws-1", scopeKey: "session:skeln:session:1" }]),
+      findCurrentWorkingSets: vi.fn(async () => [{ id: "ws-1", scopeKey: "conversation:session-1" }]),
     } as unknown as WorkingMemoryRepository;
 
     await expect(
       resolveCreateScope(
         {
           scope: {
-            sessionKey: "skeln:session:1",
+            conversationKey: "session-1",
           },
         },
         repository,
@@ -51,7 +51,7 @@ describe("resolveCreateScope", () => {
       code: "active_set_exists",
       details: {
         workingSetId: "ws-1",
-        scopeKey: "session:skeln:session:1",
+        scopeKey: "conversation:session-1",
       },
     });
   });

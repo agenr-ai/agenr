@@ -5,10 +5,10 @@ import type { WorkingSetRecord } from "../../app/working-memory/records.js";
  * Builds structured tool details for agenr_work get responses and related host surfaces.
  *
  * @param workingSet - Loaded working set.
- * @param eventCount - Optional recent event count included in the response.
+ * @param eventsReturned - Number of recent events included in the response payload.
  * @returns Structured details payload.
  */
-export function buildWorkingSetGetDetails(workingSet: WorkingSetRecord, eventCount = 0): Record<string, unknown> {
+export function buildWorkingSetGetDetails(workingSet: WorkingSetRecord, eventsReturned = 0): Record<string, unknown> {
   return {
     status: "ok",
     action: "get",
@@ -19,7 +19,7 @@ export function buildWorkingSetGetDetails(workingSet: WorkingSetRecord, eventCou
     checkpoint: workingSet.snapshot.checkpoint ?? null,
     continuation: workingSet.snapshot.continuation ?? null,
     budgets: workingSet.snapshot.budgets ?? null,
-    eventCount,
+    eventsReturned,
   };
 }
 
@@ -72,7 +72,7 @@ export function buildWorkingMemoryDetails(result: WorkingMemoryResult): Record<s
         prepared: result.prepared,
         workingSetId: result.workingSet?.id ?? null,
         revision: result.workingSet?.revision ?? null,
-        eventCount: result.events.length,
+        eventsReturned: result.events.length,
       };
   }
 }

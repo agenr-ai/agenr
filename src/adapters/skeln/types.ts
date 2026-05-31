@@ -18,10 +18,6 @@ export interface SkelnHostContext {
   project?: string;
   /** Optional host-neutral conversation identifier supplied by Skeln. */
   conversationKey?: string;
-  /** Optional host-neutral runtime thread identifier supplied by Skeln. */
-  runtimeThreadKey?: string;
-  /** Optional compatibility host thread id when Skeln exposes one. */
-  hostThreadId?: string;
   /** Stable recall/session key derived from Skeln session identity and cwd. */
   sessionKey: string;
 }
@@ -63,8 +59,4 @@ export interface AgenrSkelnSessionScope {
   project?: string;
   /** Optional host-neutral conversation identifier. */
   conversationKey?: string;
-  /** Optional host-neutral runtime thread identifier. */
-  runtimeThreadKey?: string;
-  /** Optional compatibility host thread id. */
-  hostThreadId?: string;
 }

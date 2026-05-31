@@ -141,24 +141,6 @@ export interface WorkingUsageDelta {
 }
 
 /**
- * Runtime metadata maintained by a host-side goal loop.
- */
-export interface WorkingRuntimeStateUpdate {
-  /** Heartbeat timestamp for the active runtime cache. */
-  heartbeatAt?: string;
-  /** ISO timestamp after which the host may resume. */
-  resumeAfter?: string | null;
-  /** ISO timestamp after which the working set should be treated as stale. */
-  staleAfter?: string | null;
-  /** Runtime owner currently holding the continuation lease. */
-  leaseOwner?: string | null;
-  /** ISO timestamp when the continuation lease expires. */
-  leaseExpiresAt?: string | null;
-  /** Reason continuation is currently stopped. */
-  stopReason?: string | null;
-}
-
-/**
  * Provenance for a memory candidate derived from working events.
  */
 export interface CandidateProvenance {

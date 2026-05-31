@@ -26,19 +26,23 @@ const WORK_TOOL_PARAMETERS = {
     },
     scope: {
       type: "object",
+      description:
+        "Working-memory scope facts. Session-scoped goals require conversationKey (or taskId / gitRoot+gitBranch / gitRoot+cwd). sessionKey and scopeKey are not accepted.",
       additionalProperties: false,
       properties: {
-        scopeKey: { type: "string" },
-        sessionId: { type: "string" },
-        sessionKey: { type: "string" },
+        sessionId: {
+          type: "string",
+          description: "Host session id stored as provenance; does not select scope by itself.",
+        },
+        conversationKey: {
+          type: "string",
+          description: "Primary session/thread identity for goal binding (preferred for Skeln sessions).",
+        },
         gitRoot: { type: "string" },
         gitBranch: { type: "string" },
         cwd: { type: "string" },
         project: { type: "string" },
         taskId: { type: "string" },
-        conversationKey: { type: "string" },
-        runtimeThreadKey: { type: "string" },
-        hostThreadId: { type: "string" },
       },
     },
     operation: createOperationSchema(MODEL_VISIBLE_OPERATION_SCHEMAS),
@@ -114,7 +118,12 @@ function parseAction(value: string | undefined): AgenrWorkParams["action"] {
   throw new Error(`Unsupported agenr_work action "${value ?? ""}".`);
 }
 
-/** Parses an optional nested scope object. */
+/**
+ * Parses an optional nested scope object.
+ *
+ * Accepted keys match {@link WorkingScope}: taskId, conversationKey, gitRoot, gitBranch, cwd, and project.
+ * Legacy keys such as sessionKey and scopeKey are rejected by additionalProperties: false.
+ */
 function parseScope(value: unknown, reader: MemoryToolParamReader): Partial<WorkingScope> {
   if (value === undefined || value === null) {
     return {};
@@ -122,17 +131,13 @@ function parseScope(value: unknown, reader: MemoryToolParamReader): Partial<Work
 
   const record = asRecord(value);
   return {
-    ...optionalStringParam(record, "scopeKey", reader),
     ...optionalStringParam(record, "sessionId", reader),
-    ...optionalStringParam(record, "sessionKey", reader),
     ...optionalStringParam(record, "gitRoot", reader),
     ...optionalStringParam(record, "gitBranch", reader),
     ...optionalStringParam(record, "cwd", reader),
     ...optionalStringParam(record, "project", reader),
     ...optionalStringParam(record, "taskId", reader),
     ...optionalStringParam(record, "conversationKey", reader),
-    ...optionalStringParam(record, "runtimeThreadKey", reader),
-    ...optionalStringParam(record, "hostThreadId", reader),
   };
 }
 

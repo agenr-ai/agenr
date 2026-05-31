@@ -18,7 +18,7 @@ const MODEL_VISIBLE_OPERATION_TYPES = [
 ] as const;
 
 /** Operations reserved for trusted host runtime paths (not model-visible). */
-const TRUSTED_HOST_ONLY_OPERATION_TYPES = ["configure_budget", "account_usage", "set_continuation_policy", "record_runtime_state"] as const;
+const TRUSTED_HOST_ONLY_OPERATION_TYPES = ["configure_budget", "account_usage", "set_continuation_policy"] as const;
 
 /** All host-only operation types accepted on the update path. */
 const HOST_ONLY_OPERATION_TYPES = ["set_status", ...TRUSTED_HOST_ONLY_OPERATION_TYPES] as const;

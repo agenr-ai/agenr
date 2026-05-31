@@ -1,4 +1,4 @@
-export /** SQL statement that creates schema v11 working sets. */
+export /** SQL statement that creates lean working sets for fresh database setup. */
 const CREATE_WORKING_SETS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS working_sets (
     id TEXT PRIMARY KEY,
@@ -9,24 +9,10 @@ const CREATE_WORKING_SETS_TABLE_SQL = `
     status TEXT NOT NULL,
     summary TEXT,
     snapshot_json TEXT NOT NULL,
-    checkpoint_json TEXT,
-    budget_json TEXT,
-    continuation_policy TEXT,
     revision INTEGER NOT NULL DEFAULT 0,
-    event_count INTEGER NOT NULL DEFAULT 0,
-    heartbeat_at TEXT,
-    resume_after TEXT,
-    stale_after TEXT,
-    lease_owner TEXT,
-    lease_expires_at TEXT,
-    user_id TEXT,
     project TEXT,
-    surface TEXT,
     session_id TEXT,
-    session_key TEXT,
     conversation_key TEXT,
-    runtime_thread_key TEXT,
-    host_thread_id TEXT,
     cwd TEXT,
     git_root TEXT,
     git_branch TEXT,
@@ -70,42 +56,6 @@ const CREATE_WORKING_SETS_SCOPE_STATUS_INDEX_SQL = `
   ON working_sets(scope_key, status)
 `;
 
-export /** Index for git-branch scoped working-set lookups. */
-const CREATE_WORKING_SETS_GIT_BRANCH_STATUS_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_working_sets_git_branch_status
-  ON working_sets(git_root, git_branch, status)
-`;
-
-export /** Index for session-key scoped working-set lookups. */
-const CREATE_WORKING_SETS_SESSION_KEY_STATUS_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_working_sets_session_key_status
-  ON working_sets(session_key, status)
-`;
-
-export /** Index for conversation-key scoped working-set lookups. */
-const CREATE_WORKING_SETS_CONVERSATION_KEY_STATUS_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_working_sets_conversation_key_status
-  ON working_sets(conversation_key, status)
-`;
-
-export /** Index for runtime-thread scoped working-set lookups. */
-const CREATE_WORKING_SETS_RUNTIME_THREAD_KEY_STATUS_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_working_sets_runtime_thread_key_status
-  ON working_sets(runtime_thread_key, status)
-`;
-
-export /** Index for resume scheduling sweeps. */
-const CREATE_WORKING_SETS_STATUS_RESUME_AFTER_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_working_sets_status_resume_after
-  ON working_sets(status, resume_after)
-`;
-
-export /** Index for lease-expiry sweeps. */
-const CREATE_WORKING_SETS_LEASE_EXPIRES_AT_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_working_sets_lease_expires_at
-  ON working_sets(lease_expires_at)
-`;
-
 export /** Index for working-event history ordered by creation time. */
 const CREATE_WORKING_EVENTS_WORKING_SET_CREATED_AT_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_working_events_working_set_created_at
@@ -119,18 +69,12 @@ const CREATE_WORKING_SETS_ONE_OPEN_PER_SCOPE_INDEX_SQL = `
   WHERE status NOT IN ('closed', 'abandoned')
 `;
 
-export /** Schema v11 working-memory DDL applied during init and v10 migrations. */
+export /** Lean working-memory DDL applied during init. */
 const WORKING_MEMORY_SCHEMA_STATEMENTS = [
   CREATE_WORKING_SETS_TABLE_SQL,
   CREATE_WORKING_EVENTS_TABLE_SQL,
   CREATE_WORKING_SETS_STATUS_LAST_ACTIVE_INDEX_SQL,
   CREATE_WORKING_SETS_SCOPE_STATUS_INDEX_SQL,
-  CREATE_WORKING_SETS_GIT_BRANCH_STATUS_INDEX_SQL,
-  CREATE_WORKING_SETS_SESSION_KEY_STATUS_INDEX_SQL,
-  CREATE_WORKING_SETS_CONVERSATION_KEY_STATUS_INDEX_SQL,
-  CREATE_WORKING_SETS_RUNTIME_THREAD_KEY_STATUS_INDEX_SQL,
-  CREATE_WORKING_SETS_STATUS_RESUME_AFTER_INDEX_SQL,
-  CREATE_WORKING_SETS_LEASE_EXPIRES_AT_INDEX_SQL,
   CREATE_WORKING_EVENTS_WORKING_SET_CREATED_AT_INDEX_SQL,
   CREATE_WORKING_SETS_ONE_OPEN_PER_SCOPE_INDEX_SQL,
 ] as const;

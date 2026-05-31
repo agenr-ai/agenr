@@ -22,7 +22,7 @@ export interface WorkingScopeResolutionSuccess {
 export type WorkingScopeResolutionResult = WorkingScopeResolutionSuccess | WorkingScopeResolutionFailure;
 
 /**
- * Resolves raw host facts into the canonical Phase 1 working-memory scope.
+ * Resolves raw host facts into the canonical working-memory scope.
  *
  * @param input - Raw scope facts supplied by a host adapter or tool call.
  * @returns Resolved scope or a stable missing-scope failure.
@@ -40,25 +40,13 @@ export function resolveWorkingScope(input: Partial<WorkingScope> | undefined): W
     };
   }
 
-  const conversationKey = scope.conversationKey ?? scope.runtimeThreadKey;
-  if (conversationKey) {
+  if (scope.conversationKey) {
     return {
       ok: true,
       scope: {
         ...scope,
         scopeKind: "conversation",
-        scopeKey: `conversation:${conversationKey}`,
-      },
-    };
-  }
-
-  if (scope.scopeKey) {
-    return {
-      ok: true,
-      scope: {
-        ...scope,
-        scopeKind: "session",
-        scopeKey: scope.scopeKey,
+        scopeKey: `conversation:${scope.conversationKey}`,
       },
     };
   }
@@ -85,32 +73,10 @@ export function resolveWorkingScope(input: Partial<WorkingScope> | undefined): W
     };
   }
 
-  if (scope.sessionKey) {
-    return {
-      ok: true,
-      scope: {
-        ...scope,
-        scopeKind: "session",
-        scopeKey: `session:${scope.sessionKey}`,
-      },
-    };
-  }
-
-  if (scope.sessionId) {
-    return {
-      ok: true,
-      scope: {
-        ...scope,
-        scopeKind: "session_id",
-        scopeKey: `session_id:${scope.sessionId}`,
-      },
-    };
-  }
-
   return {
     ok: false,
     code: "missing_scope",
-    message: "Working memory needs a task, conversation, git, session key, or session id scope.",
+    message: "Working memory needs a task, conversation, or git scope.",
   };
 }
 
@@ -124,16 +90,12 @@ export function normalizeWorkingScope(input: Partial<WorkingScope> | undefined):
   const scope = input ?? {};
   return {
     ...normalizeField("sessionId", scope.sessionId),
-    ...normalizeField("scopeKey", scope.scopeKey),
-    ...normalizeField("sessionKey", scope.sessionKey),
     ...normalizeField("gitRoot", scope.gitRoot),
     ...normalizeField("gitBranch", scope.gitBranch),
     ...normalizeField("cwd", scope.cwd),
     ...normalizeField("project", scope.project),
     ...normalizeField("taskId", scope.taskId),
     ...normalizeField("conversationKey", scope.conversationKey),
-    ...normalizeField("runtimeThreadKey", scope.runtimeThreadKey),
-    ...normalizeField("hostThreadId", scope.hostThreadId),
   };
 }
 

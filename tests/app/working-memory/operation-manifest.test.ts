@@ -41,7 +41,6 @@ describe("working-memory operation manifest", () => {
       "configure_budget",
       "account_usage",
       "set_continuation_policy",
-      "record_runtime_state",
     ];
 
     expect(unionTypes.sort()).toEqual([...WORKING_UPDATE_OPERATION_TYPES].sort());

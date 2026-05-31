@@ -12,16 +12,19 @@ import type { WorkingEventType } from "../../app/working-memory/events.js";
 import { normalizeBoundedLimit } from "../../app/working-memory/limits.js";
 import type {
   CreateWorkingSetInput,
+  PatchWorkingSetUsageInput,
   UpdateWorkingSetInput,
   WorkingMemoryRepository,
   WorkingSetCreateResult,
   WorkingSetListFilter,
+  WorkingSetUsagePatchWriteResult,
   WorkingSetWriteResult,
 } from "../../app/working-memory/repository.js";
 import type { SqlDatabase } from "./client.js";
 import type { SqlExecutor } from "./queries.js";
 import {
   buildWorkingSetUpdateSetClause,
+  buildWorkingSetUsagePatchSetClause,
   mapWorkingEventRow,
   mapWorkingSetRow,
   WORKING_EVENT_SELECT_COLUMNS,
@@ -31,7 +34,7 @@ import {
 } from "./working-memory-columns.js";
 
 /**
- * Creates a libSQL-backed repository for schema v11 working memory.
+ * Creates a libSQL-backed repository for lean working memory.
  *
  * @param database - Initialized agenr database.
  * @returns Working-memory repository.
@@ -44,6 +47,7 @@ export function createWorkingMemoryRepository(database: SqlDatabase): WorkingMem
     listWorkingEvents: (workingSetId, limit) => listWorkingEvents(database, workingSetId, limit),
     createWorkingSet: (input) => createWorkingSet(database, input),
     updateWorkingSet: (input) => updateWorkingSet(database, input),
+    patchWorkingSetUsage: (input) => patchWorkingSetUsage(database, input),
   };
 }
 
@@ -177,20 +181,9 @@ async function createWorkingSet(database: SqlDatabase, input: CreateWorkingSetIn
         toNullableString(input.snapshot.summary),
         serializeJson(input.snapshot),
         1,
-        1,
-        null,
-        toNullableString(input.snapshot.continuation?.resumeAfter),
-        toNullableString(input.snapshot.continuation?.staleAfter),
-        null,
-        null,
-        null,
         toNullableString(input.scope.project),
-        null,
         toNullableString(input.sessionId ?? input.scope.sessionId),
-        toNullableString(input.scope.sessionKey),
         toNullableString(input.scope.conversationKey),
-        toNullableString(input.scope.runtimeThreadKey),
-        toNullableString(input.scope.hostThreadId),
         toNullableString(input.scope.cwd),
         toNullableString(input.scope.gitRoot),
         toNullableString(input.scope.gitBranch),
@@ -211,7 +204,7 @@ async function createWorkingSet(database: SqlDatabase, input: CreateWorkingSetIn
   });
 }
 
-/** Applies one revision-guarded update. */
+/** Applies one revision-guarded semantic update. */
 async function updateWorkingSet(database: SqlDatabase, input: UpdateWorkingSetInput): Promise<WorkingSetWriteResult> {
   return database.withTransaction(async (transaction) => {
     const executor = transaction as SqlDatabase;
@@ -229,10 +222,9 @@ async function updateWorkingSet(database: SqlDatabase, input: UpdateWorkingSetIn
     }
 
     const nextRevision = current.revision + 1;
-    const nextEventCount = current.eventCount + 1;
     const event = buildEvent({
       workingSetId: current.id,
-      sequence: nextEventCount,
+      sequence: nextRevision,
       eventType: input.eventType,
       payload: input.payload,
       actor: input.actor,
@@ -245,32 +237,81 @@ async function updateWorkingSet(database: SqlDatabase, input: UpdateWorkingSetIn
         UPDATE working_sets
         SET ${buildWorkingSetUpdateSetClause()}
         WHERE id = ?
+          AND revision = ?
       `,
       args: [
-        toNullableString(input.title ?? current.title),
-        toNullableString(input.objective ?? input.snapshot.objective),
-        input.status,
-        toNullableString(input.snapshot.summary),
-        serializeJson(input.snapshot),
+        ...buildWorkingSetSnapshotUpdateArgs({
+          title: input.title,
+          objective: input.objective,
+          status: input.status,
+          snapshot: input.snapshot,
+          current,
+        }),
         nextRevision,
-        nextEventCount,
-        toNullableString(input.heartbeatAt ?? current.heartbeatAt),
-        toNullableString(input.snapshot.continuation?.resumeAfter),
-        toNullableString(input.snapshot.continuation?.staleAfter),
-        toNullableString("leaseOwner" in input ? (input.leaseOwner ?? undefined) : current.leaseOwner),
-        toNullableString("leaseExpiresAt" in input ? (input.leaseExpiresAt ?? undefined) : current.leaseExpiresAt),
         input.now,
         input.now,
         toNullableString(input.closedAt ?? current.closedAt),
         toNullableString(input.closeReason ?? current.closeReason),
         toNullableString(input.episodeId ?? current.episodeId),
         current.id,
+        input.expectedRevision,
       ],
     });
-    await insertWorkingEvent(executor, event);
     const workingSet = await requireWorkingSet(executor, current.id);
+    if (workingSet.revision !== nextRevision) {
+      return { kind: "revision_conflict", actualRevision: workingSet.revision };
+    }
+
+    await insertWorkingEvent(executor, event);
 
     return { workingSet, event };
+  });
+}
+
+/** Applies one trusted usage patch without advancing revision or appending events. */
+async function patchWorkingSetUsage(database: SqlDatabase, input: PatchWorkingSetUsageInput): Promise<WorkingSetUsagePatchWriteResult> {
+  return database.withTransaction(async (transaction) => {
+    const executor = transaction as SqlDatabase;
+    const current = await getWorkingSet(executor, input.workingSetId);
+    if (!current) {
+      return { kind: "not_found" };
+    }
+
+    if (!canApplyWorkingSetUpdate(current.status, input.status)) {
+      return { kind: "terminal_status", status: current.status };
+    }
+
+    if (current.revision !== input.expectedRevision) {
+      return { kind: "revision_conflict", actualRevision: current.revision };
+    }
+
+    await executor.execute({
+      sql: `
+        UPDATE working_sets
+        SET ${buildWorkingSetUsagePatchSetClause()}
+        WHERE id = ?
+          AND revision = ?
+      `,
+      args: [
+        ...buildWorkingSetSnapshotUpdateArgs({
+          title: input.title,
+          objective: input.objective,
+          status: input.status,
+          snapshot: input.snapshot,
+          current,
+        }),
+        input.now,
+        input.now,
+        current.id,
+        input.expectedRevision,
+      ],
+    });
+    const workingSet = await requireWorkingSet(executor, current.id);
+    if (workingSet.revision !== input.expectedRevision) {
+      return { kind: "revision_conflict", actualRevision: workingSet.revision };
+    }
+
+    return { workingSet };
   });
 }
 
@@ -305,6 +346,23 @@ async function insertWorkingEvent(executor: SqlExecutor, event: WorkingEventReco
       event.createdAt,
     ],
   });
+}
+
+/** Builds UPDATE args for snapshot mirrors shared by semantic writes and usage patches. */
+function buildWorkingSetSnapshotUpdateArgs(input: {
+  title?: string;
+  objective?: string;
+  status: WorkingSetStatus;
+  snapshot: WorkingSetRecord["snapshot"];
+  current: WorkingSetRecord;
+}): Array<string | null | WorkingSetStatus> {
+  return [
+    toNullableString(input.title ?? input.current.title),
+    toNullableString(input.objective ?? input.snapshot.objective),
+    input.status,
+    toNullableString(input.snapshot.summary),
+    serializeJson(input.snapshot),
+  ];
 }
 
 /** Builds an in-memory event record before insertion. */

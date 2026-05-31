@@ -84,6 +84,7 @@ export function buildSkelnHostContext(input: BuildSkelnHostContextInput): SkelnH
   return {
     cwd,
     sessionKey: resolveSkelnSessionKey(input.sessionId, cwd),
+    conversationKey: input.sessionId.trim(),
     ...(gitRoot ? { gitRoot } : {}),
     ...(gitBranch ? { gitBranch } : {}),
     ...(project ? { project } : {}),
@@ -105,6 +106,7 @@ export function mergeSkelnHostContext(defaults: SkelnHostContext, override?: Par
   const merged: SkelnHostContext = {
     cwd: normalizeSkelnScopeField(override.cwd) ?? defaults.cwd,
     sessionKey: normalizeSkelnScopeField(override.sessionKey) ?? defaults.sessionKey,
+    conversationKey: normalizeSkelnScopeField(override.conversationKey) ?? defaults.conversationKey,
   };
 
   const gitRoot = normalizeSkelnScopeField(override.gitRoot) ?? defaults.gitRoot;
@@ -120,21 +122,6 @@ export function mergeSkelnHostContext(defaults: SkelnHostContext, override?: Par
   const project = normalizeSkelnScopeField(override.project) ?? defaults.project;
   if (project) {
     merged.project = project;
-  }
-
-  const conversationKey = normalizeSkelnScopeField(override.conversationKey) ?? defaults.conversationKey;
-  if (conversationKey) {
-    merged.conversationKey = conversationKey;
-  }
-
-  const runtimeThreadKey = normalizeSkelnScopeField(override.runtimeThreadKey) ?? defaults.runtimeThreadKey;
-  if (runtimeThreadKey) {
-    merged.runtimeThreadKey = runtimeThreadKey;
-  }
-
-  const hostThreadId = normalizeSkelnScopeField(override.hostThreadId) ?? defaults.hostThreadId;
-  if (hostThreadId) {
-    merged.hostThreadId = hostThreadId;
   }
 
   return merged;
@@ -158,12 +145,10 @@ export function toSkelnSessionScope(hostContext: SkelnHostContext, sessionId: st
     sessionId: normalizedSessionId,
     sessionKey: hostContext.sessionKey,
     cwd: hostContext.cwd,
+    conversationKey: hostContext.conversationKey ?? normalizedSessionId,
     ...(hostContext.gitRoot ? { gitRoot: hostContext.gitRoot } : {}),
     ...(hostContext.gitBranch ? { gitBranch: hostContext.gitBranch } : {}),
     ...(hostContext.project ? { project: hostContext.project } : {}),
-    ...(hostContext.conversationKey ? { conversationKey: hostContext.conversationKey } : {}),
-    ...(hostContext.runtimeThreadKey ? { runtimeThreadKey: hostContext.runtimeThreadKey } : {}),
-    ...(hostContext.hostThreadId ? { hostThreadId: hostContext.hostThreadId } : {}),
   };
 }
 
@@ -176,14 +161,10 @@ export function toSkelnSessionScope(hostContext: SkelnHostContext, sessionId: st
 export function toWorkingScopeFromSkelnSession(scope: AgenrSkelnSessionScope): Partial<WorkingScope> {
   return {
     sessionId: scope.sessionId,
-    sessionKey: scope.sessionKey,
-    scopeKey: `session:${scope.sessionKey}`,
+    conversationKey: scope.conversationKey ?? scope.sessionId,
     cwd: scope.cwd,
     ...(scope.gitRoot ? { gitRoot: scope.gitRoot } : {}),
     ...(scope.gitBranch ? { gitBranch: scope.gitBranch } : {}),
     ...(scope.project ? { project: scope.project } : {}),
-    ...(scope.conversationKey ? { conversationKey: scope.conversationKey } : {}),
-    ...(scope.runtimeThreadKey ? { runtimeThreadKey: scope.runtimeThreadKey } : {}),
-    ...(scope.hostThreadId ? { hostThreadId: scope.hostThreadId } : {}),
   };
 }

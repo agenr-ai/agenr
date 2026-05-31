@@ -89,12 +89,6 @@ export interface UpdateWorkingSetInput {
   closeReason?: string;
   /** Episode id emitted from the set when one exists. */
   episodeId?: string;
-  /** Optional heartbeat timestamp update. */
-  heartbeatAt?: string;
-  /** Optional lease owner update. Null releases the owner. */
-  leaseOwner?: string | null;
-  /** Optional lease expiry update. Null clears the expiry. */
-  leaseExpiresAt?: string | null;
   /** Actor that initiated the mutation. */
   actor?: AgenrWorkMutationActor;
   /** Source surface that initiated the mutation. */
@@ -112,13 +106,40 @@ export type WorkingSetWriteFailure =
 /** Repository response for revision-guarded updates. */
 export type WorkingSetWriteResult = WorkingSetMutationResult | WorkingSetWriteFailure;
 
+/** Input used to persist a trusted usage patch without advancing revision. */
+export interface PatchWorkingSetUsageInput {
+  /** Working-set id to mutate. */
+  workingSetId: string;
+  /** Revision observed by the caller; must match the stored row without incrementing. */
+  expectedRevision: number;
+  /** Next status for the working set. */
+  status: WorkingSetStatus;
+  /** Next snapshot payload. */
+  snapshot: WorkingSnapshot;
+  /** Optional display title update. */
+  title?: string;
+  /** Optional objective mirror update. */
+  objective?: string;
+  /** Timestamp to use for row updates. */
+  now: string;
+}
+
+/** Successful usage patch response from the repository. */
+export interface WorkingSetUsagePatchResult {
+  /** Updated working set after the patch is committed. */
+  workingSet: WorkingSetRecord;
+}
+
+/** Repository response for trusted usage patches. */
+export type WorkingSetUsagePatchWriteResult = WorkingSetUsagePatchResult | WorkingSetWriteFailure;
+
 /** Returns true when a repository create result is a failure. */
 export function isWorkingSetCreateFailure(result: WorkingSetCreateResult): result is WorkingSetCreateFailure {
   return "kind" in result;
 }
 
 /** Returns true when a repository write result is a failure. */
-export function isWorkingSetWriteFailure(result: WorkingSetWriteResult): result is WorkingSetWriteFailure {
+export function isWorkingSetWriteFailure(result: WorkingSetWriteResult | WorkingSetUsagePatchWriteResult): result is WorkingSetWriteFailure {
   return "kind" in result;
 }
 
@@ -173,6 +194,14 @@ export interface WorkingMemoryRepository {
    * @returns Updated row and event, or a stable write failure.
    */
   updateWorkingSet(input: UpdateWorkingSetInput): Promise<WorkingSetWriteResult>;
+
+  /**
+   * Applies one trusted usage patch without advancing revision or appending events.
+   *
+   * @param input - Next snapshot and status guarded by expectedRevision compare-and-swap.
+   * @returns Updated row or a stable write failure.
+   */
+  patchWorkingSetUsage(input: PatchWorkingSetUsageInput): Promise<WorkingSetUsagePatchWriteResult>;
 }
 
 /** Builds a projection-safe scope filter from raw host facts. */

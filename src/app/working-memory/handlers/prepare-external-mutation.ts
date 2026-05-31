@@ -1,9 +1,9 @@
 import { applyOperation } from "../apply-operation.js";
-import { commitAppliedWorkingSetMutation } from "./commit-applied-mutation.js";
+import { commitAppliedWorkingSetChange, isAppliedWorkingSetCommitFailure } from "./commit-applied-change.js";
 import { isMutableWorkingSetStatus, isTrustedHostMutationSource } from "../constants.js";
 import type { AgenrWorkUpdateOperation, PrepareExternalGoalMutationParams } from "../mutations.js";
 import type { WorkingEventRecord, WorkingSetRecord } from "../records.js";
-import { isWorkingSetWriteFailure, type WorkingMemoryRepository } from "../repository.js";
+import type { WorkingMemoryRepository } from "../repository.js";
 import { createFailure, writeFailureToResult, type WorkingMemoryResult } from "../results.js";
 import { selectWorkingSet } from "../select-working-set.js";
 
@@ -61,30 +61,32 @@ export async function handlePrepareExternalGoalMutation(
   let workingSet: WorkingSetRecord = selection.workingSet;
 
   // The active set is selected once, then each accounting operation is committed in
-  // order against the threaded record. Distinct audit events (usage, checkpoint) are
-  // preserved while avoiding the redundant re-selection of routing through handleUpdate.
+  // order against the threaded record. Usage patches preserve revision so a later
+  // semantic checkpoint commit can reuse the same expectedRevision.
   for (const { operation, updateReason } of resolvePrepareOperations(params)) {
     const applied = applyOperation(workingSet, operation, updateReason);
     if (!applied.ok) {
       return applied;
     }
 
-    const writeResult = await commitAppliedWorkingSetMutation(repository, {
+    const writeResult = await commitAppliedWorkingSetChange(repository, {
       workingSetId: workingSet.id,
       expectedRevision: workingSet.revision,
-      eventType: operation.type,
-      payload: { operation, updateReason },
+      operation,
+      updateReason,
       applied,
       actor: params.actor,
       source: params.source,
       now: timestamp,
     });
-    if (isWorkingSetWriteFailure(writeResult)) {
+    if (isAppliedWorkingSetCommitFailure(writeResult)) {
       return writeFailureToResult(workingSet.id, writeResult);
     }
 
     workingSet = writeResult.workingSet;
-    events.push(writeResult.event);
+    if (writeResult.type === "semantic") {
+      events.push(writeResult.event);
+    }
   }
 
   return {

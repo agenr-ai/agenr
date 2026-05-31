@@ -44,6 +44,7 @@ describe("executeAgenrSkelnWorkCommand", () => {
     const scope: AgenrSkelnSessionScope = {
       sessionId: "session-1",
       sessionKey: "skeln:session:1",
+      conversationKey: "session-1",
       cwd: "/tmp/project",
     };
 
@@ -93,7 +94,7 @@ describe("executeAgenrSkelnWorkCommand", () => {
       expect(prepared.details).toMatchObject({
         action: "prepare_external_goal_mutation",
         prepared: true,
-        eventCount: 2,
+        eventsReturned: 1,
       });
 
       const closed = await executeAgenrSkelnWorkCommand(servicesPromise, async () => scope, context, {

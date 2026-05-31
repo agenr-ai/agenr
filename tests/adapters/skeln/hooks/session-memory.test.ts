@@ -15,6 +15,7 @@ const scope: AgenrSkelnSessionScope = {
   sessionId: "session-1",
   sessionKey: "skeln:session:session-1:cwd:/tmp/project",
   cwd: "/tmp/project",
+  conversationKey: "session-1",
 };
 
 describe("buildSkelnSessionStartTriggerEvent", () => {
@@ -81,8 +82,7 @@ describe("buildSkelnSessionCompactTriggerEvent", () => {
       },
       workingScope: {
         sessionId: scope.sessionId,
-        sessionKey: scope.sessionKey,
-        scopeKey: `session:${scope.sessionKey}`,
+        conversationKey: scope.sessionId,
         cwd: scope.cwd,
       },
     });
@@ -135,8 +135,7 @@ describe("checkpoint-relevant lifecycle triggers", () => {
       shutdownReason: "reload",
       workingScope: {
         sessionId: scope.sessionId,
-        sessionKey: scope.sessionKey,
-        scopeKey: `session:${scope.sessionKey}`,
+        conversationKey: scope.sessionId,
         cwd: scope.cwd,
       },
     });

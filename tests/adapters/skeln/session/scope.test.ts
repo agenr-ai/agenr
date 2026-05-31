@@ -21,6 +21,7 @@ describe("buildSkelnHostContext", () => {
     ).toEqual({
       cwd: "/tmp/project",
       sessionKey: "skeln:session:session-1:cwd:/tmp/project",
+      conversationKey: "session-1",
       gitRoot: "/tmp/project",
       gitBranch: "main",
       project: "agenr",
@@ -53,6 +54,7 @@ describe("mergeSkelnHostContext", () => {
     ).toEqual({
       cwd: "/tmp/project",
       sessionKey: "skeln:session:session-1:cwd:/tmp/project",
+      conversationKey: "session-1",
       gitRoot: "/tmp/project",
       gitBranch: "feat/skeln",
       project: "agenr",
@@ -73,6 +75,7 @@ describe("toSkelnSessionScope", () => {
       sessionKey: "skeln:session:session-2:cwd:/tmp/project",
       cwd: "/tmp/project",
       gitRoot: "/tmp/project",
+      conversationKey: "session-2",
     });
   });
 });
@@ -85,7 +88,7 @@ describe("normalizeSkelnScopeField", () => {
 });
 
 describe("toWorkingScopeFromSkelnSession", () => {
-  it("pins session scope so git facts do not override Skeln session identity", () => {
+  it("maps session identity to conversation-scoped working-memory facts", () => {
     expect(
       toWorkingScopeFromSkelnSession({
         sessionId: "session-1",
@@ -94,11 +97,11 @@ describe("toWorkingScopeFromSkelnSession", () => {
         gitRoot: "/tmp/project",
         gitBranch: "main",
         project: "agenr",
+        conversationKey: "session-1",
       }),
     ).toEqual({
       sessionId: "session-1",
-      sessionKey: "skeln:session:session-1:cwd:/tmp/project",
-      scopeKey: "session:skeln:session:session-1:cwd:/tmp/project",
+      conversationKey: "session-1",
       cwd: "/tmp/project",
       gitRoot: "/tmp/project",
       gitBranch: "main",

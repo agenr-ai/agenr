@@ -4,7 +4,7 @@ import { resolveWorkingScope } from "../../../src/app/working-memory/scope-resol
 
 describe("resolveWorkingScope", () => {
   it("prefers task scope when taskId is present", () => {
-    expect(resolveWorkingScope({ taskId: "TASK-1", sessionKey: "session:a" })).toEqual({
+    expect(resolveWorkingScope({ taskId: "TASK-1", conversationKey: "thread-1" })).toEqual({
       ok: true,
       scope: expect.objectContaining({
         scopeKind: "task",
@@ -15,7 +15,7 @@ describe("resolveWorkingScope", () => {
   });
 
   it("resolves conversation scope from conversationKey", () => {
-    expect(resolveWorkingScope({ conversationKey: "thread-1", sessionKey: "session:a" })).toEqual({
+    expect(resolveWorkingScope({ conversationKey: "thread-1" })).toEqual({
       ok: true,
       scope: expect.objectContaining({
         scopeKind: "conversation",
@@ -30,7 +30,6 @@ describe("resolveWorkingScope", () => {
         project: "agenr",
         gitRoot: "/repo",
         gitBranch: "main",
-        sessionKey: "session:a",
       }),
     ).toEqual({
       ok: true,
@@ -41,28 +40,18 @@ describe("resolveWorkingScope", () => {
     });
   });
 
-  it("resolves session scope from sessionKey", () => {
-    expect(resolveWorkingScope({ sessionKey: "skeln:session:1", cwd: "/tmp/project" })).toEqual({
-      ok: true,
-      scope: expect.objectContaining({
-        scopeKind: "session",
-        scopeKey: "session:skeln:session:1",
-      }),
-    });
-  });
-
-  it("prefers explicit scopeKey over git branch scope", () => {
+  it("resolves git cwd scope when gitRoot and cwd are present without higher-priority facts", () => {
     expect(
       resolveWorkingScope({
-        scopeKey: "session:skeln:session:1",
+        project: "agenr",
         gitRoot: "/repo",
-        gitBranch: "main",
+        cwd: "/repo/src",
       }),
     ).toEqual({
       ok: true,
       scope: expect.objectContaining({
-        scopeKind: "session",
-        scopeKey: "session:skeln:session:1",
+        scopeKind: "git_cwd",
+        scopeKey: "git_cwd:agenr:/repo:/repo/src",
       }),
     });
   });
@@ -71,7 +60,7 @@ describe("resolveWorkingScope", () => {
     expect(resolveWorkingScope({ cwd: "/tmp/project" })).toEqual({
       ok: false,
       code: "missing_scope",
-      message: "Working memory needs a task, conversation, git, session key, or session id scope.",
+      message: "Working memory needs a task, conversation, or git scope.",
     });
   });
 });

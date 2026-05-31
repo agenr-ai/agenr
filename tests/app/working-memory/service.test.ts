@@ -10,7 +10,8 @@ describe("createWorkingMemoryService", () => {
       const created = await service.run({
         action: "create",
         scope: {
-          sessionKey: "skeln:session:1",
+          conversationKey: "session-1",
+          sessionId: "session-1",
           cwd: "/tmp/project",
         },
         operation: {
@@ -28,7 +29,6 @@ describe("createWorkingMemoryService", () => {
         action: "create",
         workingSet: {
           revision: 1,
-          eventCount: 1,
           status: "active",
           snapshot: {
             objective: "Implement Phase 1 working memory.",
@@ -82,7 +82,6 @@ describe("createWorkingMemoryService", () => {
         action: "update",
         workingSet: {
           revision: 2,
-          eventCount: 2,
           snapshot: {
             files: [
               {
@@ -102,7 +101,8 @@ describe("createWorkingMemoryService", () => {
         action: "update",
         source: "tool",
         scope: {
-          sessionKey: "skeln:session:1",
+          conversationKey: "session-1",
+          sessionId: "session-1",
           cwd: "/tmp/project",
         },
         operation: {
@@ -124,7 +124,8 @@ describe("createWorkingMemoryService", () => {
         action: "update",
         source: "goal_command",
         scope: {
-          sessionKey: "skeln:session:1",
+          conversationKey: "session-1",
+          sessionId: "session-1",
           cwd: "/tmp/project",
         },
         operation: {
@@ -151,7 +152,8 @@ describe("createWorkingMemoryService", () => {
       const duplicateCreate = await service.run({
         action: "create",
         scope: {
-          sessionKey: "skeln:session:1",
+          conversationKey: "session-1",
+          sessionId: "session-1",
           cwd: "/tmp/project",
         },
         operation: {
@@ -172,7 +174,8 @@ describe("createWorkingMemoryService", () => {
       const projection = await service.renderProjection({
         sourceRef: "test:before-turn",
         scope: {
-          sessionKey: "skeln:session:1",
+          conversationKey: "session-1",
+          sessionId: "session-1",
           cwd: "/tmp/project",
         },
       });
@@ -206,7 +209,8 @@ describe("createWorkingMemoryService", () => {
       const projectionWithDecision = await service.renderProjection({
         sourceRef: "test:decision",
         scope: {
-          sessionKey: "skeln:session:1",
+          conversationKey: "session-1",
+          sessionId: "session-1",
           cwd: "/tmp/project",
         },
       });
@@ -253,7 +257,8 @@ describe("createWorkingMemoryService", () => {
       const recreated = await service.run({
         action: "create",
         scope: {
-          sessionKey: "skeln:session:2",
+          conversationKey: "session-2",
+          sessionId: "session-2",
           cwd: "/tmp/other",
         },
         operation: {
@@ -289,7 +294,8 @@ describe("createWorkingMemoryService", () => {
       const afterCloseProjection = await service.renderProjection({
         sourceRef: "test:after-close",
         scope: {
-          sessionKey: "skeln:session:1",
+          conversationKey: "session-1",
+          sessionId: "session-1",
           cwd: "/tmp/project",
         },
       });
@@ -309,7 +315,8 @@ describe("createWorkingMemoryService", () => {
       const created = await service.run({
         action: "create",
         scope: {
-          sessionKey: "skeln:session:checkpoint",
+          conversationKey: "session-checkpoint",
+          sessionId: "session-checkpoint",
           cwd: "/tmp/project",
         },
         operation: {
@@ -395,7 +402,8 @@ describe("createWorkingMemoryService", () => {
         service.run({
           action: "create",
           scope: {
-            sessionKey: "skeln:session:checkpoint",
+            conversationKey: "session-checkpoint",
+            sessionId: "session-checkpoint",
             cwd: "/tmp/project",
           },
           operation: {
@@ -413,7 +421,8 @@ describe("createWorkingMemoryService", () => {
         service.run({
           action: "get",
           scope: {
-            sessionKey: "skeln:session:checkpoint",
+            conversationKey: "session-checkpoint",
+            sessionId: "session-checkpoint",
             cwd: "/tmp/project",
           },
         }),
@@ -431,7 +440,8 @@ describe("createWorkingMemoryService", () => {
         service.run({
           action: "close",
           scope: {
-            sessionKey: "skeln:session:checkpoint",
+            conversationKey: "session-checkpoint",
+            sessionId: "session-checkpoint",
             cwd: "/tmp/project",
           },
           closeReason: "User cleared completed goal without explicit revision.",
@@ -453,12 +463,13 @@ describe("createWorkingMemoryService", () => {
     }
   });
 
-  it("stores phase 5 continuation, budget, runtime, and external mutation prep state", async () => {
+  it("stores phase 5 continuation, budget, and external mutation prep state", async () => {
     const { database, dbPath, service } = await createWorkingMemoryTestService();
 
     try {
       const scope = {
-        sessionKey: "skeln:session:phase-5",
+        conversationKey: "session-phase-5",
+        sessionId: "session-phase-5",
         cwd: "/tmp/project",
       };
       const created = await service.run({
@@ -496,33 +507,6 @@ describe("createWorkingMemoryService", () => {
         throw new Error("Expected phase 5 create success.");
       }
 
-      const runtime = await service.run({
-        action: "update",
-        workingSetId: created.workingSet.id,
-        operation: {
-          type: "record_runtime_state",
-          runtime: {
-            heartbeatAt: "2026-05-30T12:05:00.000Z",
-            staleAfter: "2026-05-30T13:00:00.000Z",
-            leaseOwner: "skeln-runtime-1",
-            leaseExpiresAt: "2026-05-30T12:06:00.000Z",
-          },
-        },
-        updateReason: "Runtime refreshed goal lease.",
-        actor: "runtime",
-        source: "lifecycle_hook",
-      });
-      expect(runtime).toMatchObject({
-        ok: true,
-        action: "update",
-        workingSet: {
-          heartbeatAt: "2026-05-30T12:05:00.000Z",
-          staleAfter: "2026-05-30T13:00:00.000Z",
-          leaseOwner: "skeln-runtime-1",
-          leaseExpiresAt: "2026-05-30T12:06:00.000Z",
-        },
-      });
-
       const configuredBudget = await service.run({
         action: "update",
         workingSetId: created.workingSet.id,
@@ -545,7 +529,7 @@ describe("createWorkingMemoryService", () => {
         ok: true,
         action: "update",
         workingSet: {
-          revision: 3,
+          revision: 2,
           snapshot: {
             budgets: {
               tokenBudget: 100,
@@ -581,7 +565,7 @@ describe("createWorkingMemoryService", () => {
         prepared: true,
         workingSet: {
           status: "budget_limited",
-          revision: 5,
+          revision: 3,
           snapshot: {
             checkpoint: {
               summary: "Progress accounted before clear.",
@@ -594,10 +578,7 @@ describe("createWorkingMemoryService", () => {
             },
           },
         },
-        events: [
-          { eventType: "account_usage", sequence: 4 },
-          { eventType: "merge_checkpoint", sequence: 5 },
-        ],
+        events: [{ eventType: "merge_checkpoint", sequence: 3 }],
       });
 
       await expect(
@@ -624,7 +605,7 @@ describe("createWorkingMemoryService", () => {
         service.prepareExternalGoalMutation({
           mutationKind: "fork",
           scope: {
-            sessionKey: "skeln:session:missing",
+            conversationKey: "session-missing",
           },
           requireCheckpoint: true,
           actor: "runtime",

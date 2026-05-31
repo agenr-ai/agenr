@@ -49,7 +49,7 @@ describe("goal alias tools", () => {
     const { database, dbPath, service } = await createService();
 
     try {
-      const scope = { sessionKey: "skeln:session:goal-1", cwd: "/tmp/project" };
+      const scope = { conversationKey: "goal-1", sessionId: "goal-1", cwd: "/tmp/project" };
       const created = await runGoalAliasTool("create_goal", { objective: "Implement Phase 1.5 goal aliases.", token_budget: 500 }, scope, READER, service);
       expect(created.failed).toBe(false);
       expect(readGoalResponse(created.text)).toMatchObject({
@@ -101,7 +101,7 @@ describe("goal alias tools", () => {
       expect(readGoalResponse(blocked.text)).toMatchObject({
         goal: {
           status: "blocked",
-          revision: 3,
+          revision: 2,
           tokensUsed: 125,
           turnsUsed: 1,
         },
@@ -114,7 +114,7 @@ describe("goal alias tools", () => {
       expect(readGoalResponse(completed.text)).toMatchObject({
         goal: {
           status: "complete",
-          revision: 4,
+          revision: 3,
           tokenBudget: 500,
           tokensUsed: 125,
         },
@@ -127,7 +127,7 @@ describe("goal alias tools", () => {
       expect(readGoalResponse(getAfterComplete.text)).toMatchObject({
         goal: {
           status: "complete",
-          revision: 4,
+          revision: 3,
         },
       });
 
@@ -155,7 +155,7 @@ describe("goal alias tools", () => {
       },
     } as unknown as WorkingMemoryService;
 
-    await expect(runGoalAliasTool("update_goal", { status: "paused" }, { sessionKey: "session-1" }, READER, service)).resolves.toMatchObject({
+    await expect(runGoalAliasTool("update_goal", { status: "paused" }, { conversationKey: "session-1" }, READER, service)).resolves.toMatchObject({
       failed: true,
       text: "update_goal can only mark the existing goal complete or blocked; pause, resume, budget-limited, and usage-limited status changes are controlled by the user or system",
       details: {

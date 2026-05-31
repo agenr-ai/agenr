@@ -264,8 +264,6 @@ async function resolveCurrentSkelnSessionScope(
         ...(tracked.gitBranch ? { gitBranch: tracked.gitBranch } : {}),
         ...(tracked.project ? { project: tracked.project } : {}),
         ...(tracked.conversationKey ? { conversationKey: tracked.conversationKey } : {}),
-        ...(tracked.runtimeThreadKey ? { runtimeThreadKey: tracked.runtimeThreadKey } : {}),
-        ...(tracked.hostThreadId ? { hostThreadId: tracked.hostThreadId } : {}),
       }
     : buildSkelnHostContext({
         sessionId,

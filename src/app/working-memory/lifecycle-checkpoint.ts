@@ -80,7 +80,7 @@ async function mergeWorkingCheckpoint(request: WorkingCheckpointRefreshRequest, 
     return {
       ok: false,
       reason: "missing_scope",
-      message: `${request.lifecycleLabel} requires working-scope or session-key facts.`,
+      message: `${request.lifecycleLabel} requires working-scope facts.`,
     };
   }
 
@@ -203,8 +203,7 @@ function resolveWorkingRefreshScope(event: CompactionCheckpointRefreshEvent | Sh
     return event.workingScope;
   }
 
-  const sessionKey = normalizeOptionalString(event.sessionKey);
-  return sessionKey ? { sessionKey } : undefined;
+  return undefined;
 }
 
 /** Maps working-memory service failures into lifecycle refresh diagnostics. */

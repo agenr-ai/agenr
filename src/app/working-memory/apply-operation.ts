@@ -3,7 +3,7 @@ import type { WorkingSetRecord } from "./records.js";
 import { createFailure, type WorkingMemoryFailure } from "./results.js";
 import type { WorkingBudgetLimitReason, WorkingSetStatus } from "./constants.js";
 import { isCloseManagedStatus } from "./constants.js";
-import type { WorkingBudgetState, WorkingNextAction, WorkingRuntimeStateUpdate, WorkingSnapshot, WorkingUsageDelta } from "./snapshot.js";
+import type { WorkingBudgetState, WorkingNextAction, WorkingSnapshot, WorkingUsageDelta } from "./snapshot.js";
 import { validateWorkingBudgetState, validateWorkingUsageDelta } from "./validation.js";
 
 /** Result of applying one typed operation to a working-set snapshot. */
@@ -18,12 +18,6 @@ export interface AppliedWorkingOperation {
   title?: string;
   /** Optional objective mirror update. */
   objective?: string;
-  /** Optional heartbeat timestamp update. */
-  heartbeatAt?: string;
-  /** Optional lease owner update. Null releases the owner. */
-  leaseOwner?: string | null;
-  /** Optional lease expiry update. Null clears the expiry. */
-  leaseExpiresAt?: string | null;
 }
 
 /**
@@ -43,9 +37,6 @@ export function applyOperation(
   let status = record.status;
   let title = record.title;
   let objective = record.snapshot.objective;
-  let heartbeatAt: string | undefined;
-  let leaseOwner: string | null | undefined;
-  let leaseExpiresAt: string | null | undefined;
 
   switch (operation.type) {
     case "set_objective":
@@ -121,18 +112,6 @@ export function applyOperation(
         ...(operation.stopReason !== undefined ? { stopReason: operation.stopReason } : {}),
       });
       break;
-    case "record_runtime_state": {
-      const runtimeState = applyRuntimeState(snapshot, operation.runtime);
-      if (!runtimeState.ok) {
-        return runtimeState;
-      }
-
-      snapshot.continuation = runtimeState.snapshot.continuation;
-      heartbeatAt = runtimeState.heartbeatAt;
-      leaseOwner = runtimeState.leaseOwner;
-      leaseExpiresAt = runtimeState.leaseExpiresAt;
-      break;
-    }
   }
 
   return {
@@ -141,9 +120,6 @@ export function applyOperation(
     status,
     title,
     objective,
-    ...(heartbeatAt !== undefined ? { heartbeatAt } : {}),
-    ...(leaseOwner !== undefined ? { leaseOwner } : {}),
-    ...(leaseExpiresAt !== undefined ? { leaseExpiresAt } : {}),
   };
 }
 
@@ -233,60 +209,6 @@ function resolveBudgetLimitReason(budget: WorkingBudgetState | undefined): Worki
   return undefined;
 }
 
-/** Applies runtime heartbeat, lease, and stale metadata to the snapshot and row mirrors. */
-function applyRuntimeState(
-  snapshot: WorkingSnapshot,
-  runtime: WorkingRuntimeStateUpdate,
-): { ok: true; snapshot: WorkingSnapshot; heartbeatAt?: string; leaseOwner?: string | null; leaseExpiresAt?: string | null } | WorkingMemoryFailure {
-  const heartbeatAt = normalizeOptionalRuntimeString(runtime.heartbeatAt, "heartbeatAt");
-  if (!heartbeatAt.ok) {
-    return heartbeatAt;
-  }
-
-  const resumeAfter = normalizeNullableRuntimeString(runtime.resumeAfter, "resumeAfter");
-  if (!resumeAfter.ok) {
-    return resumeAfter;
-  }
-
-  const staleAfter = normalizeNullableRuntimeString(runtime.staleAfter, "staleAfter");
-  if (!staleAfter.ok) {
-    return staleAfter;
-  }
-
-  const leaseOwner = normalizeNullableRuntimeString(runtime.leaseOwner, "leaseOwner");
-  if (!leaseOwner.ok) {
-    return leaseOwner;
-  }
-
-  const leaseExpiresAt = normalizeNullableRuntimeString(runtime.leaseExpiresAt, "leaseExpiresAt");
-  if (!leaseExpiresAt.ok) {
-    return leaseExpiresAt;
-  }
-
-  const stopReason = normalizeNullableRuntimeString(runtime.stopReason, "stopReason");
-  if (!stopReason.ok) {
-    return stopReason;
-  }
-
-  const continuation = pruneContinuation({
-    ...snapshot.continuation,
-    ...(resumeAfter.present ? { resumeAfter: resumeAfter.value ?? undefined } : {}),
-    ...(staleAfter.present ? { staleAfter: staleAfter.value ?? undefined } : {}),
-    ...(stopReason.present ? { stopReason: stopReason.value ?? undefined } : {}),
-  });
-
-  return {
-    ok: true,
-    snapshot: {
-      ...snapshot,
-      continuation,
-    },
-    ...(heartbeatAt.value !== undefined ? { heartbeatAt: heartbeatAt.value } : {}),
-    ...(leaseOwner.present ? { leaseOwner: leaseOwner.value } : {}),
-    ...(leaseExpiresAt.present ? { leaseExpiresAt: leaseExpiresAt.value } : {}),
-  };
-}
-
 /** Adds an optional positive delta to an optional counter. */
 function addDelta(current: number | undefined, delta: number | undefined): number | undefined {
   if (delta === undefined) {
@@ -309,31 +231,4 @@ function pruneContinuation(continuation: WorkingSnapshot["continuation"]): Worki
 
   const pruned = Object.fromEntries(Object.entries(continuation).filter(([, value]) => value !== undefined)) as NonNullable<WorkingSnapshot["continuation"]>;
   return Object.keys(pruned).length > 0 ? pruned : undefined;
-}
-
-/** Normalizes an optional non-empty runtime string. */
-function normalizeOptionalRuntimeString(value: string | undefined, key: string): { ok: true; value?: string } | WorkingMemoryFailure {
-  if (value === undefined) {
-    return { ok: true };
-  }
-
-  const trimmed = value.trim();
-  return trimmed ? { ok: true, value: trimmed } : createFailure("invalid_request", `${key} must be a non-empty string when supplied.`);
-}
-
-/** Normalizes a nullable runtime string while preserving clear intent. */
-function normalizeNullableRuntimeString(
-  value: string | null | undefined,
-  key: string,
-): { ok: true; present: boolean; value?: string | null } | WorkingMemoryFailure {
-  if (value === undefined) {
-    return { ok: true, present: false };
-  }
-
-  if (value === null) {
-    return { ok: true, present: true, value: null };
-  }
-
-  const trimmed = value.trim();
-  return trimmed ? { ok: true, present: true, value: trimmed } : createFailure("invalid_request", `${key} must be a non-empty string or null.`);
 }

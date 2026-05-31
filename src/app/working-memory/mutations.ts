@@ -16,7 +16,6 @@ import type {
   WorkingAssumptionNote,
   WorkingNextAction,
   WorkingBudgetState,
-  WorkingRuntimeStateUpdate,
   WorkingUsageDelta,
 } from "./snapshot.js";
 
@@ -36,8 +35,7 @@ export type AgenrWorkUpdateOperation =
   | { type: "add_candidate"; candidate: WorkingCandidate }
   | { type: "configure_budget"; budget: WorkingBudgetState }
   | { type: "account_usage"; usage: WorkingUsageDelta }
-  | { type: "set_continuation_policy"; policy: WorkingContinuationPolicy; resumeAfter?: string; staleAfter?: string; stopReason?: string }
-  | { type: "record_runtime_state"; runtime: WorkingRuntimeStateUpdate };
+  | { type: "set_continuation_policy"; policy: WorkingContinuationPolicy; resumeAfter?: string; staleAfter?: string; stopReason?: string };
 
 /** External goal mutation intents that require progress accounting first. */
 export type WorkingExternalGoalMutationKind = "set" | "clear" | "pause" | "resume" | "compact" | "fork" | "handoff" | "scheduled_delay" | "shutdown" | "other";

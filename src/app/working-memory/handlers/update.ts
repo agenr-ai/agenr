@@ -1,8 +1,8 @@
 import { applyOperation } from "../apply-operation.js";
-import { commitAppliedWorkingSetMutation } from "./commit-applied-mutation.js";
+import { commitAppliedWorkingSetChange, isAppliedWorkingSetCommitFailure } from "./commit-applied-change.js";
 import { createToolSuccessProjection } from "../projection.js";
 import type { AgenrWorkParams } from "../mutations.js";
-import { isWorkingSetWriteFailure, type WorkingMemoryRepository, type WorkingSetWriteResult } from "../repository.js";
+import type { WorkingMemoryRepository } from "../repository.js";
 import { createFailure, writeFailureToResult, type WorkingMemoryResult } from "../results.js";
 import { selectWorkingSet } from "../select-working-set.js";
 import { isMutableWorkingSetStatus, isTrustedHostMutationSource, isTrustedHostOnlyWorkingOperation } from "../constants.js";
@@ -46,33 +46,25 @@ export async function handleUpdate(params: AgenrWorkParams, repository: WorkingM
     return applied;
   }
 
-  const writeResult = await commitAppliedWorkingSetMutation(repository, {
+  const writeResult = await commitAppliedWorkingSetChange(repository, {
     workingSetId: selection.workingSet.id,
     expectedRevision: expectedRevision.value,
-    eventType: operation.type,
-    payload: {
-      operation,
-      updateReason: updateReason.value,
-    },
+    operation,
+    updateReason: updateReason.value,
     applied,
     actor: params.actor,
     source: params.source,
     now: timestamp,
   });
-  return toUpdateResult(selection.workingSet.id, writeResult, timestamp);
-}
-
-/** Maps repository update responses to service results. */
-function toUpdateResult(workingSetId: string, writeResult: WorkingSetWriteResult, timestamp: string): WorkingMemoryResult {
-  if (isWorkingSetWriteFailure(writeResult)) {
-    return writeFailureToResult(workingSetId, writeResult);
+  if (isAppliedWorkingSetCommitFailure(writeResult)) {
+    return writeFailureToResult(selection.workingSet.id, writeResult);
   }
 
   return {
     ok: true,
     action: "update",
     workingSet: writeResult.workingSet,
-    event: writeResult.event,
+    ...(writeResult.type === "semantic" ? { event: writeResult.event } : {}),
     projection: createToolSuccessProjection(writeResult.workingSet, "update", timestamp),
   };
 }
