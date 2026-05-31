@@ -144,7 +144,7 @@ describe("checkpoint-relevant lifecycle triggers", () => {
 });
 
 describe("logSessionMemoryTriggerResult", () => {
-  it("warns when session-memory intake rejects a trigger", () => {
+  it("stays silent when session-memory intake is disabled by feature flags", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     logSessionMemoryTriggerResult({
@@ -153,8 +153,21 @@ describe("logSessionMemoryTriggerResult", () => {
       message: "Session-memory trigger session_start is disabled by feature flags.",
     });
 
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("warns when session-memory intake rejects a trigger for actionable reasons", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    logSessionMemoryTriggerResult({
+      accepted: false,
+      reason: "misconfigured",
+      message: "Session-memory trigger session_start is enabled, but no session-memory repository was wired into the runtime.",
+    });
+
     expect(warn).toHaveBeenCalledWith(
-      "[agenr] session-memory trigger rejected: feature_disabled (Session-memory trigger session_start is disabled by feature flags.)",
+      "[agenr] session-memory trigger rejected: misconfigured (Session-memory trigger session_start is enabled, but no session-memory repository was wired into the runtime.)",
     );
     warn.mockRestore();
   });

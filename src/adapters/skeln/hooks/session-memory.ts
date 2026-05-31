@@ -222,7 +222,7 @@ export function buildSkelnSessionShutdownTriggerEvent(scope: AgenrSkelnSessionSc
  * @param result - Router result for one lifecycle trigger.
  */
 export function logSessionMemoryTriggerResult(result: SessionMemoryTriggerResult): void {
-  if (result.accepted) {
+  if (result.accepted || result.reason === "feature_disabled") {
     return;
   }
 
