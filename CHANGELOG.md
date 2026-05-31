@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-05-31
+
+Skeln host integration, session and working memory, and goal-control major release.
+
+### Added
+
+- **Skeln now has a publishable agenr plugin and runtime adapter.** Agenr ships `@agenr/skeln-plugin` with Skeln-native tool wiring, recall/store/update/work/goal surfaces, plugin packaging, setup docs, and host scope handling.
+- **Session memory and working memory now support Skeln continuity.** The release adds session-memory repositories, trigger routing, continuity records, transient working-set projection, lifecycle checkpoints, external goal preparation, and durable work-event persistence.
+
+### Changed
+
+- **OpenClaw and Skeln share more memory runtime infrastructure.** Entry tools, injection policy, memory-policy parsing, target resolution, claim support, and host-memory composition moved into shared adapters so future host integrations reuse the same behavior.
+- **Session-start and before-turn memory policy is more explicit.** Plugin configuration now supports enabled and core-memory controls, JSON string policy parsing for Skeln, and tighter session-start and before-turn formatting.
+- **Plugin dependencies now use the `@earendil-works` package namespace.** Runtime imports and lockfile metadata were updated for the current pi package names.
+
+### Fixed
+
+- **Session-memory feature gating is quiet when disabled.** Session-memory trigger logging now treats feature-disabled intake as an intentional no-op instead of noisy runtime feedback.
+- **Goal-generation documentation is clearer.** Working-memory goal seed text now documents the initial goal constant without changing behavior.
+
+### Validation
+
+Changes since last push to `origin/master`:
+
+- Add the publishable Skeln plugin package, Skeln plugin docs, and Skeln runtime adapter
+- Add shared plugin-runtime composition for OpenClaw and Skeln host integrations
+- Add session-memory schema, repositories, trigger routing, continuity, and post-compaction handling
+- Add working-memory schema, repositories, projections, operation handlers, checkpoints, and goal continuation
+- Add Skeln `agenr_work` and `agenr_goal` flows with regression coverage
+- Add session episode ingestion, shutdown and goal-close episode support, and bounded episode services
+- Update OpenClaw and Skeln memory-policy configuration, session-start injection, and before-turn formatting
+- Move pi runtime dependencies to `@earendil-works` packages
+- Fix disabled session-memory intake logging and refresh goal-generation documentation
+
 ## [2.1.0] - 2026-04-22
 
 Recall ranking overhaul, before-turn memory patching, and eval/debug tooling minor release.
