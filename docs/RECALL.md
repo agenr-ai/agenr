@@ -9,8 +9,8 @@ Recall in `agenr` is a hybrid retrieval and ranking system for three memory surf
 The system is exposed through multiple callers:
 
 - `agenr recall <query>` for entry recall at the CLI
-- `runUnifiedRecall()` and the OpenClaw `agenr_recall` tool for routed entry, episode, and procedure recall
-- automatic OpenClaw prompt-time recall paths for session start and later user turns
+- `runUnifiedRecall()` and host-plugin `agenr_recall` for routed entry, episode, and procedure recall
+- automatic host prompt-time recall paths for session start and later user turns
 
 This document explains how recall works today: the retrieval channels, ranking equations, routing concepts, tuning knobs, and the boundaries between durable memory, episodic context, and procedures.
 
@@ -55,7 +55,7 @@ Procedure recall is the procedural-memory path. It is the right surface for:
 
 ### Automatic prompt-time recall
 
-OpenClaw also uses bounded automatic recall in two places:
+Host plugins also use bounded automatic recall in two places:
 
 - session start, where continuity and durable memory are injected once per session
 - before-turn, where a narrow proactive recall pass can surface durable memory or a canonical procedure for a live user turn
@@ -601,9 +601,9 @@ Unified recall returns:
 - ranked procedure candidates separately from entries and episodes
 - procedure notices when the path had to degrade
 
-## Automatic OpenClaw recall
+## Automatic host recall
 
-OpenClaw uses two bounded automatic recall paths.
+OpenClaw and Skeln use the same bounded automatic recall app services through different host hooks.
 
 ### Session-start recall
 

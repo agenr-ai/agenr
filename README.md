@@ -18,7 +18,7 @@ agenr gives agents a persistent brain: a local SQLite database of durable knowle
 
 It exists because most agent runtimes forget everything important between sessions. Even when a tool has a built-in memory feature, it is often lossy, file-based, or tightly coupled to one surface. agenr keeps memory structured and queryable: facts, decisions, preferences, lessons, milestones, relationships, and session-level episodes live in one local store instead of getting flattened into prompt text.
 
-What makes agenr different is the combination of local-first storage, semantic embeddings, hybrid recall, episodic temporal memory, and adapter-friendly architecture. The core is hexagonal, so multiple agent systems can share the same brain over time. Today the production adapter is the OpenClaw memory plugin, published separately as `@agenr/agenr-plugin`, and the CLI provides offline ingest, recall, and maintenance against that same database.
+What makes agenr different is the combination of local-first storage, semantic embeddings, hybrid recall, episodic temporal memory, and adapter-friendly architecture. The core is hexagonal, so multiple agent systems can share the same brain over time. Today the production host adapters are the OpenClaw memory plugin (`@agenr/agenr-plugin`) and the Skeln extension (`@agenr/skeln-plugin`). The CLI provides offline ingest, recall, and maintenance against that same database.
 
 ## Features
 
@@ -28,11 +28,12 @@ What makes agenr different is the combination of local-first storage, semantic e
 - LLM-powered knowledge extraction from conversation transcripts.
 - Semantic deduplication using exact hashes, normalized hashes, embeddings, and within-run clustering.
 - Session continuity with predecessor resolution, recent transcript tails, and LLM-generated continuity summaries.
-- Surgeon maintenance passes for corpus health: run retirement cleanup for stale entries or supersession review for same-slot lineage, both with audit history.
-- Agent tools for `store`, `recall`, `retire`, `update`, and `trace` through the OpenClaw plugin.
+- Surgeon maintenance passes for corpus health: claim-key quality, proposal resolution, supersession review, and retirement cleanup, all with audit history.
+- Agent tools for durable memory through the OpenClaw plugin (`store`, `recall`, `retire`, `update`, and `trace`) and the Skeln plugin (`store`, `recall`, `update`, `work`, and goal aliases).
 - Native OpenClaw memory plugin that replaces OpenClaw's built-in memory slot.
+- Skeln extension with working-memory tools, goal aliases, and shared recall/store semantics.
 - Local-first storage with SQLite/libSQL. Memory stays on your machine; only model and embedding calls leave it.
-- Designed for multi-agent systems so future adapters can share the same database.
+- Designed for multi-agent systems so OpenClaw, Skeln, and future adapters can share the same database.
 
 ## Quick Start - The Recommended Way
 
@@ -67,7 +68,7 @@ The OpenClaw plugin id remains `agenr`, so `plugins.entries.agenr`, `plugins.slo
 After the plugin is installed, `openclaw plugins update agenr` continues to target that same plugin id.
 If `plugins.entries.agenr.config` is omitted, the plugin falls back to agenr's normal config resolution: `AGENR_CONFIG_PATH`, then `~/.agenr/config.json`, and the `dbPath` from that config or `~/.agenr/knowledge.db`.
 
-If you want to pin an exact plugin release, install a versioned package spec such as `openclaw plugins install @agenr/agenr-plugin@1.0.1`.
+If you want to pin an exact plugin release, install a versioned package spec such as `openclaw plugins install @agenr/agenr-plugin@3.0.0`.
 
 For local development or a custom build path, run `pnpm build` first and point OpenClaw at the plugin package root:
 
@@ -95,6 +96,17 @@ Migration note:
 
 - Existing users who originally installed the plugin from the `agenr` package should reinstall once with `openclaw plugins install @agenr/agenr-plugin` so OpenClaw records the new npm package source.
 - After that reinstall, `openclaw plugins update agenr` should continue to work because updates key off the plugin id `agenr`.
+
+## Quick Start - Skeln Plugin (manual)
+
+If you use Skeln instead of OpenClaw, install the Skeln extension after configuring agenr:
+
+```bash
+pnpm link --global ./packages/skeln-plugin
+skeln extension add @agenr/skeln-plugin
+```
+
+The Skeln extension id is also `agenr`, so runtime config uses `extensions.settings.agenr.*`. For packaging, config, tool surface, and local development details, see [docs/SKELN-PLUGIN.md](./docs/SKELN-PLUGIN.md).
 
 ## Configuration
 
@@ -138,22 +150,30 @@ Compatibility policy:
 
 The CLI surface is still intentionally compact, but it now covers setup, recall, ingest, and corpus maintenance.
 
-| Command                          | What it does                                                                                                                                                      |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agenr init`                     | Interactive first-run wizard: auth, model selection, OpenClaw detection, plugin install, and optional initial ingestion.                                          |
-| `agenr setup`                    | Configure auth, model defaults, embeddings, and the agenr database path.                                                                                          |
-| `agenr recall <query>`           | Run the hybrid recall pipeline with optional temporal and type/tag filters.                                                                                       |
-| `agenr ingest <path>`            | Default durable-entry ingest shorthand. Equivalent to `agenr ingest entries <path>`.                                                                              |
-| `agenr ingest entries <path>`    | Bulk-ingest one file or directory of OpenClaw transcript files into durable knowledge entries.                                                                    |
-| `agenr ingest episodes [path]`   | Backfill episodic summaries from OpenClaw session transcripts, including rotated `.reset.*` and `.deleted.*` files.                                               |
-| `agenr ingest procedures [path]` | Sync repo-authored YAML procedures into procedural-memory revisions stored in the knowledge database.                                                             |
-| `agenr surgeon run`              | Execute a surgeon maintenance pass. Defaults to retirement; use `--pass supersession` for lineage review. Dry-run by default; add `--apply` to mutate the corpus. |
-| `agenr surgeon status`           | Show corpus health, claim-key lifecycle counts, proposal backlog, and the latest surgeon run summary.                                                             |
-| `agenr surgeon history`          | Show recent surgeon runs.                                                                                                                                         |
-| `agenr surgeon actions <runId>`  | Show the audit trail for one surgeon run.                                                                                                                         |
-| `agenr db reset`                 | Delete and recreate the knowledge database.                                                                                                                       |
+| Command                             | What it does                                                                                                                                                           |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agenr init`                        | Interactive first-run wizard: auth, model selection, OpenClaw detection, plugin install, and optional initial ingestion.                                               |
+| `agenr setup`                       | Configure auth, model defaults, embeddings, and the agenr database path.                                                                                               |
+| `agenr recall <query>`              | Run the hybrid recall pipeline with optional temporal and type/tag filters.                                                                                            |
+| `agenr trace`                       | Inspect one entry's provenance and claim-family lineage by id, subject, or `--last`.                                                                                   |
+| `agenr ingest <path>`               | Default durable-entry ingest shorthand. Equivalent to `agenr ingest entries <path>`.                                                                                   |
+| `agenr ingest entries <path>`       | Bulk-ingest one file or directory of OpenClaw transcript files into durable knowledge entries.                                                                         |
+| `agenr ingest episodes [path]`      | Backfill episodic summaries from OpenClaw session transcripts, including rotated `.reset.*` and `.deleted.*` files.                                                    |
+| `agenr ingest procedures [path]`    | Sync repo-authored YAML procedures into procedural-memory revisions stored in the knowledge database.                                                                  |
+| `agenr surgeon run`                 | Execute surgeon maintenance. Defaults to the autonomous multi-pass sequence; use `--pass <type>` for one pass. Dry-run by default; add `--apply` to mutate the corpus. |
+| `agenr surgeon status`              | Show corpus health, claim-key lifecycle counts, proposal backlog, and the latest surgeon run summary.                                                                  |
+| `agenr surgeon history`             | Show recent surgeon runs.                                                                                                                                              |
+| `agenr surgeon actions <runId>`     | Show the audit trail for one surgeon run.                                                                                                                              |
+| `agenr surgeon backlog`             | List open surgeon proposals across runs.                                                                                                                               |
+| `agenr surgeon proposals <runId>`   | Show proposals recorded for one surgeon run.                                                                                                                           |
+| `agenr surgeon review <proposalId>` | Apply or reject one open proposal.                                                                                                                                     |
+| `agenr scenarios list`              | List repo-local claim-key sandbox scenarios.                                                                                                                           |
+| `agenr scenarios run`               | Run one or more claim-key sandbox scenarios.                                                                                                                           |
+| `agenr db reset`                    | Delete and recreate the knowledge database.                                                                                                                            |
 
 The OpenClaw plugin also gives the agent five tools directly inside the runtime: `agenr_store`, `agenr_recall`, `agenr_retire`, `agenr_update`, and `agenr_trace`.
+
+The Skeln plugin exposes seven tools: `agenr_store`, `agenr_recall`, `agenr_update`, `agenr_work`, `get_goal`, `create_goal`, and `update_goal`. It does not expose `agenr_retire` or `agenr_trace`.
 
 Examples:
 
@@ -170,11 +190,14 @@ agenr ingest episodes ~/.openclaw/agents/main/sessions/ --recent 30d
 # Preview procedure sync changes
 agenr ingest procedures --dry-run
 
-# Run the surgeon retirement pass (dry-run by default)
+# Run the default autonomous surgeon sequence (dry-run by default)
 agenr surgeon run --budget 2.00
 
-# Run the surgeon supersession pass
+# Run one explicit surgeon pass
 agenr surgeon run --pass supersession --budget 2.00
+
+# Inspect the latest stored entry
+agenr trace --last
 
 # Reset the database
 agenr db reset
@@ -184,7 +207,7 @@ agenr db reset
 
 - Hexagonal structure: `src/core/` contains pure logic and `src/adapters/` contains infrastructure.
 - The core never imports from adapters or CLI code.
-- OpenClaw, the CLI, and future adapters all target the same underlying memory brain.
+- OpenClaw, Skeln, the CLI, and future adapters all target the same underlying memory brain.
 
 See [AGENTS.md](./AGENTS.md) for the full architecture and repository conventions.
 
@@ -204,7 +227,7 @@ The two transcript paths parse OpenClaw transcripts first, but they optimize for
 
 ## How Procedures Work
 
-Procedures are the durable how-to layer. They are authored in `procedures/` as reviewed YAML, normalized into canonical stored procedure revisions, and synced with `agenr ingest procedures [path]`. Phase 2 ships the authoring and sync path, including source-only updates and semantic supersession, but not yet procedure recall. For the current model, storage shape, and sync semantics, see [docs/PROCEDURES.md](./docs/PROCEDURES.md).
+Procedures are the durable how-to layer. They are authored in `procedures/` as reviewed YAML, normalized into canonical stored procedure revisions, and synced with `agenr ingest procedures [path]`. Procedure recall is live through unified host-plugin `agenr_recall` and before-turn suggestion, but the standalone CLI `agenr recall` command still targets entry recall only. For the current model, storage shape, sync semantics, and read surfaces, see [docs/PROCEDURES.md](./docs/PROCEDURES.md).
 
 ## How Episodes Work
 
@@ -212,7 +235,7 @@ Episodes are session-level memory artifacts stored separately from durable entri
 
 ## How the Surgeon Works
 
-The surgeon is a maintenance system for the durable-memory corpus. Today it supports two passes: retirement, which reviews stale entries for conservative cleanup, and supersession, which links older entries to newer replacements without deleting history. `agenr surgeon run` is safe by default because it starts in dry-run mode; `--pass supersession` switches the workflow, and `--apply` is the explicit mutation switch. For runtime details, governance, and audit behavior, see [docs/SURGEON.md](./docs/SURGEON.md).
+The surgeon is a maintenance system for the durable-memory corpus. Four passes are implemented today: `claim_key_quality`, `proposal_resolution`, `supersession`, and `retirement`. `agenr surgeon run` defaults to an autonomous sequence across those passes and is safe by default because it starts in dry-run mode; `--pass <type>` runs one pass, and `--apply` is the explicit mutation switch. For runtime details, governance, and audit behavior, see [docs/SURGEON.md](./docs/SURGEON.md).
 
 ## Development
 

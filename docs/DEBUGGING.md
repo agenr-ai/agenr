@@ -125,6 +125,11 @@ Recall:
 - `src/core/recall/index.ts`
 - `src/adapters/db/recall-adapter.ts`
 
+Trace:
+
+- `src/cli/commands/trace.ts`
+- `src/app/memory/inspect.ts`
+
 Surgeon:
 
 - `src/cli/commands/surgeon.ts`
@@ -190,5 +195,6 @@ Debug store path via deterministic scenarios:
 - `docs/STORE.md`
 - `docs/RECALL.md`
 - `docs/SURGEON.md`
+- `docs/SKELN-PLUGIN.md`
 - `.vscode/launch.json`
 - `.vscode/tasks.json`

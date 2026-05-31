@@ -11,7 +11,7 @@ agenr is a local-first memory system for agent runtimes. The current codebase ce
 3. repo-authored procedural memory synced into `procedures`
 4. hybrid entry recall plus time-aware episode recall
 5. a unified recall router for agent-facing host integrations
-6. live OpenClaw integration for prompt injection, continuity, and memory tools
+6. live OpenClaw and Skeln host integrations for prompt injection, continuity or working memory, and memory tools
 7. maintenance and repair workflows through surgeon
 
 SQLite or libSQL is the system of record. LLMs and embeddings support extraction, summarization, ranking, and repair, but durable state lives in the database.
@@ -144,6 +144,7 @@ The current user-facing or host-facing entry points are:
 
 - CLI registration in `src/cli/main.ts`
 - the OpenClaw memory plugin in `src/adapters/openclaw/index.ts`
+- the Skeln memory extension in `src/adapters/skeln/index.ts`
 - the internal recall-eval dev server in `src/internal-recall-eval-server.ts`
 
 The CLI currently exposes:
@@ -159,7 +160,7 @@ The CLI currently exposes:
 - `agenr scenarios list|run`
 - `agenr db reset`
 
-There are still no standalone CLI commands for `store`, `retire`, or `update`. Those remain OpenClaw tool surfaces rather than first-class CLI commands.
+There are still no standalone CLI commands for `store`, `retire`, or `update`. Those remain host-plugin tool surfaces rather than first-class CLI commands.
 
 The OpenClaw adapter also exposes a deliberately narrow `memoryPolicy.slotPolicies.attributeHeads` config seam so claim-aware read behavior can override slot-policy classes without turning the plugin config into a broad platform API.
 
@@ -481,7 +482,34 @@ Implemented behaviors include:
 
 The transcript parser in `src/adapters/openclaw/transcript/parser.ts` is a major seam. It removes host noise, normalizes metadata, summarizes or drops noisy tool results, and produces the cleaned message stream that downstream ingest and episode workflows consume.
 
-### 7.7 Surgeon
+### 7.7 Skeln runtime
+
+The Skeln integration spans:
+
+- `src/adapters/skeln/index.ts`
+- `src/adapters/skeln/hooks/*`
+- `src/adapters/skeln/session/*`
+- `src/adapters/skeln/tools/*`
+- `src/adapters/skeln/format/*`
+- `src/app/skeln/runtime.ts`
+- shared app services in `src/app/session-start/*`, `src/app/before-turn/*`, and `src/app/plugin-runtime/*`
+
+Current Skeln registration includes:
+
+- `before_agent_start` injection for session-start and before-turn memory
+- tools `agenr_store`, `agenr_recall`, `agenr_update`, `agenr_work`, `get_goal`, `create_goal`, and `update_goal`
+- shutdown cleanup for the shared agenr database handle
+
+Implemented behaviors include:
+
+- process-lifetime shared service composition in `src/app/skeln/runtime.ts`
+- the same app-layer session-start and before-turn patch selection used by OpenClaw, without predecessor continuity or OpenClaw transcript parsing
+- transient working-context injection when `features.workingMemory` is enabled
+- trusted Skeln work commands and goal aliases for working-memory lifecycle control
+
+Skeln deliberately omits OpenClaw-only surfaces such as `agenr_retire`, `agenr_trace`, predecessor continuity summaries, background predecessor episode ingest, and mid-session store nudges. See [`docs/SKELN-PLUGIN.md`](./SKELN-PLUGIN.md) for the full adapter map.
+
+### 7.8 Surgeon
 
 The surgeon subsystem spans:
 
@@ -518,7 +546,7 @@ Runtime safeguards include:
 
 This is closer to a maintenance platform than a single cleanup script.
 
-### 7.8 Claim-key scenario harness
+### 7.9 Claim-key scenario harness
 
 The repo includes a dedicated scenario runtime under `src/app/scenarios/claim-keys/` with CLI support in `agenr scenarios`.
 
@@ -534,7 +562,7 @@ This harness:
 
 That makes scenario execution part of the architecture, not just incidental test data.
 
-### 7.9 Internal recall-eval seam
+### 7.10 Internal recall-eval seam
 
 The eval seam is intentionally narrow:
 
@@ -614,6 +642,8 @@ If you need to build context quickly, start with:
 - `src/app/episode-ingest/service.ts`
 - `src/app/openclaw/runtime.ts`
 - `src/adapters/openclaw/hooks/before-prompt-build.ts`
+- `src/app/skeln/runtime.ts`
+- `src/adapters/skeln/hooks/before-agent-start.ts`
 - `src/app/surgeon/service.ts`
 - `src/app/scenarios/claim-keys/runtime.ts`
 

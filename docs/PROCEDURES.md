@@ -9,23 +9,23 @@ Implemented behavior today:
 - the database stores canonical normalized procedure revisions plus recall text and optional embeddings
 - `src/app/procedures/recall/` provides a dedicated internal procedure recall pipeline
 - `src/app/recall/` can route generic how-to and checklist-style asks into `procedures`
-- OpenClaw `agenr_recall` can return a structured canonical procedure answer plus supporting entries and episodes
-- OpenClaw automatic before-turn prompting can proactively surface one canonical procedure suggestion when the current turn is a strong how-to match
+- host-plugin `agenr_recall` can return a structured canonical procedure answer plus supporting entries and episodes
+- automatic before-turn prompting in OpenClaw and Skeln can proactively surface one canonical procedure suggestion when the current turn is a strong how-to match
 - the app-layer recall-eval runtime can seed procedure fixtures and assert canonical unified procedure answers
 
-That means procedures now have both a dedicated read path and a live unified read path for OpenClaw and eval-driven callers. The standalone CLI `agenr recall` command still targets entry recall only.
+That means procedures now have both a dedicated read path and a live unified read path for host plugins and eval-driven callers. The standalone CLI `agenr recall` command still targets entry recall only.
 
 ## Procedures vs Other Memory
 
-| Dimension                    | Entries                                     | Episodes                       | Procedures                                      |
-| ---------------------------- | ------------------------------------------- | ------------------------------ | ----------------------------------------------- |
-| Main question                | What is true?                               | What happened?                 | How do I do this?                               |
-| Granularity                  | Atomic durable knowledge                    | One summary per session        | One authored workflow per task                  |
-| Source of truth              | Extracted or tool-supplied structured input | Generated session summaries    | Repo-authored YAML                              |
-| Runtime form                 | Stored entry rows                           | Stored episode rows            | Stored normalized procedure revisions           |
-| Current public write path    | `agenr ingest entries <path>` and tools     | `agenr ingest episodes [path]` | `agenr ingest procedures [path]`                |
-| Current public recall path   | Live                                        | Live                           | Live via unified OpenClaw recall and eval seam  |
-| Current internal recall path | Core + unified recall                       | Unified recall                 | Dedicated app-layer recall plus unified routing |
+| Dimension                    | Entries                                     | Episodes                       | Procedures                                        |
+| ---------------------------- | ------------------------------------------- | ------------------------------ | ------------------------------------------------- |
+| Main question                | What is true?                               | What happened?                 | How do I do this?                                 |
+| Granularity                  | Atomic durable knowledge                    | One summary per session        | One authored workflow per task                    |
+| Source of truth              | Extracted or tool-supplied structured input | Generated session summaries    | Repo-authored YAML                                |
+| Runtime form                 | Stored entry rows                           | Stored episode rows            | Stored normalized procedure revisions             |
+| Current public write path    | `agenr ingest entries <path>` and tools     | `agenr ingest episodes [path]` | `agenr ingest procedures [path]`                  |
+| Current public recall path   | Live                                        | Live                           | Live via unified host-plugin recall and eval seam |
+| Current internal recall path | Core + unified recall                       | Unified recall                 | Dedicated app-layer recall plus unified routing   |
 
 ## Code Map
 
@@ -74,10 +74,10 @@ This command is the canonical sync path for procedural memory.
 Procedures are now live through these read surfaces:
 
 - `src/app/procedures/recall/service.ts` exposes dedicated procedure retrieval for app-layer callers
-- OpenClaw `agenr_recall` with `mode=auto` can route generic procedural asks into `procedures`
-- OpenClaw `agenr_recall` with `mode=procedures` forces procedural recall
+- host-plugin `agenr_recall` with `mode=auto` can route generic procedural asks into `procedures`
+- host-plugin `agenr_recall` with `mode=procedures` forces procedural recall
 - unified recall can return one canonical procedure plus supporting entries and episodes for mixed asks
-- OpenClaw `before_prompt_build` can surface one proactive canonical procedure suggestion through `src/app/before-turn/service.ts`
+- OpenClaw `before_prompt_build` and Skeln `before_agent_start` can surface one proactive canonical procedure suggestion through `src/app/before-turn/service.ts`
 - the app-layer recall-eval runtime can provision `procedurePool` fixtures for unified-path tests
 
 Current routing semantics:

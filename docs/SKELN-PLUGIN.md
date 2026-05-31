@@ -80,7 +80,7 @@ A future thin operator-facing extension in the skeln repo (`@skeln/agenr`) can c
 - `src/adapters/shared/memory-tool-format.ts` - shared log formatters and sanitizers.
 - `src/adapters/skeln/hooks/before-agent-start.ts` - session-start and before-turn injection orchestration.
 - `src/adapters/skeln/hooks/message-text.ts` - prompt and branch text extraction for before-turn queries.
-- `src/adapters/skeln/format/prompt-section.ts` - static system-prompt doctrine for the three Skeln tools.
+- `src/adapters/skeln/format/prompt-section.ts` - static system-prompt doctrine for the core Skeln memory tools.
 - `src/adapters/shared/injection/session-start-format.ts` and `src/adapters/shared/injection/before-turn-format.ts` - shared injection text rendering.
 - `src/app/plugin-runtime/session-tracking.ts` - in-process session-start dedup shared by host plugins.
 
@@ -115,6 +115,8 @@ The Skeln manifest in `packages/skeln-plugin/package.json` declares extension id
 
 - `dbPath` - optional DB path override
 - `configPath` - optional agenr config path override
+- `project` - optional project label for recall and store scope
+- `wip` - optional boolean override for automatic working-context injection
 - `memoryPolicy` - optional JSON string with the same nested shape as the OpenClaw agenr plugin `memoryPolicy` block
 
 Skeln extension settings are flat `boolean | string` values, so nested `memoryPolicy` is stored as JSON text rather than a nested object.
@@ -393,7 +395,7 @@ Current behavior:
 - supports metadata updates including `importance`, `expiry`, `claimKey`, `validFrom`, and `validTo`
 - writes normalized claim-key lifecycle metadata when `claimKey` is updated
 
-There is no Skeln `agenr_retire` tool in the first deliverable. Retire flows must go through the CLI or another host surface.
+There is no Skeln `agenr_retire` tool in the first deliverable. Retire flows must go through the OpenClaw plugin, surgeon maintenance, or another host surface.
 
 ### `agenr_work` and Goal Aliases
 

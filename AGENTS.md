@@ -4,7 +4,7 @@
 
 ## What is agenr?
 
-Memory infrastructure for AI agents. The current system stores durable entries, generates episodic session summaries, syncs repo-authored procedural memory, runs hybrid entry recall plus time-aware episode recall, exposes a live OpenClaw memory plugin, maintains corpus health through surgeon, and keeps a narrow internal recall-eval HTTP seam for `agenr-evals`.
+Memory infrastructure for AI agents. The current system stores durable entries, generates episodic session summaries, syncs repo-authored procedural memory, runs hybrid entry recall plus time-aware episode recall, exposes live OpenClaw and Skeln host plugins, maintains corpus health through surgeon, and keeps a narrow internal recall-eval HTTP seam for `agenr-evals`.
 
 Claim-key lifecycle management is a first-class part of the product. Durable memory, surgeon maintenance, and the repo-local claim-key scenario harness all depend on it.
 
@@ -22,6 +22,7 @@ When you need subsystem detail, use the docs that already own it:
 - Store pipeline and direct write paths: [`docs/STORE.md`](./docs/STORE.md)
 - Surgeon runtime, passes, and safety model: [`docs/SURGEON.md`](./docs/SURGEON.md)
 - OpenClaw integration and plugin behavior: [`docs/OPENCLAW-PLUGIN.md`](./docs/OPENCLAW-PLUGIN.md)
+- Skeln integration and plugin behavior: [`docs/SKELN-PLUGIN.md`](./docs/SKELN-PLUGIN.md)
 - Internal recall-eval seam: [`docs/EVALS.md`](./docs/EVALS.md)
 
 If this file and the code disagree, the code wins. If this file and one of the docs above disagree, check the code and update the doc that owns the topic.
@@ -78,6 +79,16 @@ As a quick rule:
 2. OpenClaw hook wiring, tool schemas, session identity helpers, transcript normalization, continuity rendering, and memory-runtime integration belong in `src/adapters/openclaw/`.
 3. If another future adapter would need the behavior, it probably does not belong in the plugin.
 
+## Skeln Boundary
+
+The Skeln plugin is also a translator, not a second memory brain. Use [`docs/SKELN-PLUGIN.md`](./docs/SKELN-PLUGIN.md) for the full map.
+
+As a quick rule:
+
+1. Shared durable-memory, recall, working-memory, and claim-key logic belongs in `core/` or `app/`.
+2. Skeln hook wiring, tool schemas, session scope helpers, working-context injection, and goal aliases belong in `src/adapters/skeln/`.
+3. OpenClaw-only continuity, transcript parsing, retire/trace tools, and memory-runtime bridges stay out of the Skeln adapter unless the behavior is genuinely host-neutral.
+
 ## Recall-Eval Guardrails
 
 The internal eval seam is intentionally narrow. See [`docs/EVALS.md`](./docs/EVALS.md) for the exact code map and surface.
@@ -115,7 +126,7 @@ agenr scenarios run
 agenr db reset
 ```
 
-OpenClaw also exposes these runtime tools:
+OpenClaw exposes these runtime tools:
 
 ```text
 agenr_store
@@ -123,6 +134,18 @@ agenr_recall
 agenr_retire
 agenr_update
 agenr_trace
+```
+
+Skeln exposes these runtime tools:
+
+```text
+agenr_store
+agenr_recall
+agenr_update
+agenr_work
+get_goal
+create_goal
+update_goal
 ```
 
 ## Sandbox

@@ -17,7 +17,7 @@
   "skeln": {
     "id": "agenr",
     "displayName": "agenr",
-    "description": "Durable memory for Skeln agents via agenr_store, agenr_update, and agenr_recall.",
+    "description": "Durable memory for Skeln agents via agenr_store, agenr_recall, agenr_update, agenr_work, and goal aliases.",
     "extensions": [
       "./dist/index.js"
     ],
