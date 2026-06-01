@@ -227,8 +227,8 @@ describe("OpenClawTranscriptParser", () => {
 
     expect(transcript.metadata.messageCount).toBe(2);
     expect(transcript.messages).toHaveLength(2);
-    expect(transcript.messages[0]?.text).toContain("[fetched from brain: id:entry-1]");
-    expect(transcript.messages[1]?.text).toBe("[tool result from agenr_fetch: id:entry-1 - filtered]");
+    expect(transcript.messages[0]?.text).toContain('[fetched from brain: id:"entry-1"]');
+    expect(transcript.messages[1]?.text).toBe('[tool result from agenr_fetch: id:"entry-1" - filtered]');
     expect(transcript.messages[1]?.text).not.toContain("Full fetched memory body");
   });
 

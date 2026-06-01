@@ -384,6 +384,7 @@ Current behavior:
 - supports unified routing across exact entry recall, historical-state recall, procedural recall, and episodic recall
 - returns routing metadata, rendered text, structured entry previews (not full bodies), episode results, and notices
 - entry previews are truncated in both text and structured details; use `agenr_fetch` for the full stored body
+- appends a `Fetch Guidance` section in tool text when any entry preview was truncated
 
 See [`docs/RECALL.md`](./RECALL.md) for the full recall contract.
 
@@ -398,7 +399,8 @@ Current target selectors:
 Current behavior:
 
 - reuses the same id/subject resolution rules as `agenr_update`
-- returns full `content` in both tool text and structured details
+- returns full `content` in both tool text and structured details up to 32,768 trimmed characters
+- rejects larger bodies with an actionable error; use the CLI for oversized entries
 - intended after `agenr_recall` when `preview_truncated=true` or exact stored wording is required
 
 ### `agenr_update`

@@ -1,5 +1,5 @@
 import type { ClaimCentricRecallEntry, UnifiedRecallResult } from "../../app/recall/index.js";
-import { buildEntryRecallPreview, ENTRY_PREVIEW_MAX_CHARS, truncate } from "./memory-tool-format.js";
+import { buildEntryRecallPreview, ENTRY_PREVIEW_MAX_CHARS, recallResultHasTruncatedEntryPreviews, truncate } from "./memory-tool-format.js";
 
 /**
  * Formats unified recall results into sectioned tool-readable text.
@@ -45,6 +45,12 @@ export function formatUnifiedRecallResults(result: UnifiedRecallResult): string 
     appendEntryMatches(lines, result);
     lines.push("");
     appendClaimTransitions(lines, result);
+  }
+
+  if (recallResultHasTruncatedEntryPreviews(result)) {
+    lines.push("");
+    lines.push("Fetch Guidance");
+    lines.push("One or more entry previews were truncated. Call agenr_fetch with id when exact stored wording is required.");
   }
 
   if (result.notices.length > 0) {

@@ -20,7 +20,7 @@ import {
   parseRecallMode,
   sanitizeUpdateToolParams,
 } from "../../shared/entry-tools.js";
-import { readBooleanParam, resolveTargetEntry as resolveSharedTargetEntry } from "../../shared/resolve-target.js";
+import { buildEntryMemoryResolverPorts, readBooleanParam, resolveTargetEntry as resolveSharedTargetEntry } from "../../shared/resolve-target.js";
 import type { AgenrOpenClawServices } from "../types.js";
 
 /** Shared OpenClaw param reader wired into host-neutral memory tool parsers. */
@@ -80,15 +80,7 @@ export async function resolveTargetEntry(
     allowLast?: boolean;
   } = {},
 ): Promise<Entry> {
-  return resolveSharedTargetEntry(
-    {
-      getEntryById: async (id) => (await services.entries.getEntry(id)) ?? (await services.memory.getEntryTrace(id))?.entry ?? null,
-      findEntryBySubject: async (subject) => services.memory.findEntryBySubject(subject),
-      findMostRecentEntry: async () => services.memory.findMostRecentEntry(),
-    },
-    params,
-    options,
-  );
+  return resolveSharedTargetEntry(buildEntryMemoryResolverPorts(services), params, options);
 }
 
 /**

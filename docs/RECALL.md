@@ -10,7 +10,10 @@ The system is exposed through multiple callers:
 
 - `agenr recall <query>` for entry recall at the CLI
 - `runUnifiedRecall()` and host-plugin `agenr_recall` for routed entry, episode, and procedure recall
+- host-plugin `agenr_fetch` for full durable entry bodies after recall previews truncate them
 - automatic host prompt-time recall paths for session start and later user turns
+
+Host-plugin entry recall returns truncated previews (`contentPreview`, `contentChars`, `previewTruncated`) in both tool text and structured details. When any preview truncates, tool text also includes a `Fetch Guidance` section pointing agents to `agenr_fetch`. `agenr_fetch` returns the full stored body up to 32,768 trimmed characters and rejects larger entries with an actionable error.
 
 This document explains how recall works today: the retrieval channels, ranking equations, routing concepts, tuning knobs, and the boundaries between durable memory, episodic context, and procedures.
 

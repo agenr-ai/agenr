@@ -454,6 +454,7 @@ Current behavior:
 - supports `mode=procedures` to force dedicated procedure recall
 - returns routing metadata, rendered text, canonical procedure data, ranked procedure candidates, structured entry previews (not full bodies), claim-centric projected entry annotations, structured episode results, and notices
 - entry previews are truncated in both text and structured details; use `agenr_fetch` for the full stored body
+- appends a `Fetch Guidance` section in tool text when any entry preview was truncated
 - groups entry output by claim family when `claim_key` is present and labels rows as `current`, `historical`, or `superseded`
 - includes freshness, provenance, and `why_surfaced` cues in the human-readable text output
 - uses `procedureNotices` and `notices` to surface degraded recall paths instead of silently hiding them
@@ -469,7 +470,8 @@ Current target selectors:
 Current behavior:
 
 - reuses the same id/subject resolution rules as `agenr_update` and `agenr_trace`
-- returns full `content` in both tool text and structured details
+- returns full `content` in both tool text and structured details up to 32,768 trimmed characters
+- rejects larger bodies with an actionable error; use `agenr_trace` or the CLI for oversized entries
 - intended after `agenr_recall` when `preview_truncated=true` or exact stored wording is required
 
 ### `agenr_update`

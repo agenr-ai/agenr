@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { ENTRY_FETCH_MAX_CONTENT_CHARS } from "../../../src/adapters/shared/memory-tool-format.js";
 import { parseFetchToolParams, runFetchMemoryTool } from "../../../src/adapters/shared/memory-tools.js";
 import type { MemoryToolParamReader } from "../../../src/adapters/shared/memory-tools.js";
 import type { Entry } from "../../../src/core/types.js";
@@ -70,5 +71,29 @@ describe("agenr_fetch shared tool flow", () => {
       entryId: entry.id,
       content: entry.content,
     });
+  });
+
+  it("rejects entry bodies above the fetch size limit", async () => {
+    const oversizedEntry: Entry = {
+      ...entry,
+      content: "x".repeat(ENTRY_FETCH_MAX_CONTENT_CHARS + 1),
+    };
+
+    await expect(
+      runFetchMemoryTool(
+        { id: "entry-1", subject: undefined },
+        {
+          entries: {
+            getEntry: async () => oversizedEntry,
+          },
+          embedding: {} as never,
+          memory: {
+            findEntryBySubject: async () => oversizedEntry,
+            findMostRecentEntry: async () => oversizedEntry,
+            getEntryTrace: async () => null,
+          },
+        },
+      ),
+    ).rejects.toThrow(`exceeds the agenr_fetch limit of ${ENTRY_FETCH_MAX_CONTENT_CHARS}`);
   });
 });

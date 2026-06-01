@@ -10,7 +10,12 @@ const RESULT_SUBJECT_LOG_LIMIT = 5;
  */
 const ENTRY_PREVIEW_MAX_CHARS = 220;
 
-export { ENTRY_PREVIEW_MAX_CHARS };
+/**
+ * Maximum entry body characters returned by agenr_fetch in one tool result.
+ */
+const ENTRY_FETCH_MAX_CONTENT_CHARS = 32_768;
+
+export { ENTRY_FETCH_MAX_CONTENT_CHARS, ENTRY_PREVIEW_MAX_CHARS };
 
 /**
  * Preview metadata for one recalled entry body.
@@ -38,6 +43,35 @@ export function buildEntryRecallPreview(content: string): EntryRecallPreview {
     contentChars: trimmed.length,
     previewTruncated,
   };
+}
+
+/**
+ * Returns true when any recalled entry preview was truncated in agenr_recall output.
+ *
+ * @param result - Unified recall result payload.
+ * @returns Whether the agent should consider agenr_fetch for full bodies.
+ */
+export function recallResultHasTruncatedEntryPreviews(result: UnifiedRecallResult): boolean {
+  if (result.entries.some((entry) => buildEntryRecallPreview(entry.entry.content).previewTruncated)) {
+    return true;
+  }
+
+  return result.entryFamilies.some((family) => family.entries.some((entry) => buildEntryRecallPreview(entry.recall.entry.content).previewTruncated));
+}
+
+/**
+ * Validates that one entry body is within the agenr_fetch size limit.
+ *
+ * @param content - Raw stored entry content.
+ * @throws When content exceeds {@link ENTRY_FETCH_MAX_CONTENT_CHARS}.
+ */
+export function assertEntryFetchableContentLength(content: string): void {
+  const contentChars = content.trim().length;
+  if (contentChars > ENTRY_FETCH_MAX_CONTENT_CHARS) {
+    throw new Error(
+      `Entry content is ${contentChars} characters, which exceeds the agenr_fetch limit of ${ENTRY_FETCH_MAX_CONTENT_CHARS}. Use agenr_trace or the CLI for full inspection.`,
+    );
+  }
 }
 
 /** Truncates tool text output to avoid oversized results. */
@@ -191,17 +225,24 @@ export function buildRecallToolDetails(result: UnifiedRecallResult, extraDetails
         previewTruncated: preview.previewTruncated,
       };
     }),
-    projectedEntries: result.projectedEntries.map((entry) => ({
-      id: entry.entryId,
-      familyKey: entry.familyKey,
-      claimKey: entry.claimKey,
-      slotPolicy: entry.slotPolicy,
-      memoryState: entry.memoryState,
-      claimStatus: entry.claimStatus,
-      freshness: entry.freshness,
-      provenance: entry.provenance,
-      whySurfaced: entry.whySurfaced,
-    })),
+    projectedEntries: result.projectedEntries.map((entry) => {
+      const preview = buildEntryRecallPreview(entry.recall.entry.content);
+
+      return {
+        id: entry.entryId,
+        familyKey: entry.familyKey,
+        claimKey: entry.claimKey,
+        slotPolicy: entry.slotPolicy,
+        memoryState: entry.memoryState,
+        claimStatus: entry.claimStatus,
+        freshness: entry.freshness,
+        provenance: entry.provenance,
+        whySurfaced: entry.whySurfaced,
+        contentPreview: preview.contentPreview,
+        contentChars: preview.contentChars,
+        previewTruncated: preview.previewTruncated,
+      };
+    }),
     entryFamilies: result.entryFamilies.map((family) => ({
       familyKey: family.familyKey,
       claimKey: family.claimKey,

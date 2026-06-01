@@ -21,12 +21,10 @@ import {
   parseRecallMode,
 } from "./entry-tools.js";
 import { buildEntryMemoryResolverPorts, resolveTargetEntry } from "./resolve-target.js";
-import { buildFetchToolDetails, formatFetchedEntryText } from "./memory-tool-format.js";
+import { assertEntryFetchableContentLength, buildFetchToolDetails, formatFetchedEntryText } from "./memory-tool-format.js";
 
 export {
-  buildFetchToolDetails,
   buildRecallToolDetails,
-  formatFetchedEntryText,
   formatRecallToolSummary,
   formatUnifiedRecallLogSummary,
   sanitizeRecallToolParams,
@@ -481,6 +479,7 @@ export async function runFetchMemoryTool(
   } = {},
 ): Promise<MemoryToolOutcome> {
   const entry = await resolveTargetEntry(buildEntryMemoryResolverPorts(services), { id: params.id, subject: params.subject });
+  assertEntryFetchableContentLength(entry.content);
 
   return okOutcome(formatFetchedEntryText(entry), buildFetchToolDetails(entry, options.extraDetails));
 }

@@ -1,5 +1,7 @@
 import { ENTRY_TYPES, EXPIRY_LEVELS, type EntryType, type Expiry } from "../../core/types.js";
 import { formatErrorMessage } from "./errors.js";
+import { truncate } from "./memory-tool-format.js";
+import { readBooleanParam } from "./resolve-target.js";
 
 export { formatErrorMessage };
 
@@ -137,6 +139,49 @@ export function formatTargetSelector(id?: string, subject?: string, last?: boole
   }
 
   return "unknown";
+}
+
+/**
+ * Formats an id, subject, or last selector read from raw tool arguments.
+ *
+ * @param params - Raw tool parameter object.
+ * @param options - Optional truncation and last-selector support.
+ * @returns Log- and transcript-friendly selector description.
+ */
+export function formatTargetSelectorFromParams(
+  params: Record<string, unknown>,
+  options: {
+    maxValueChars?: number;
+    allowLast?: boolean;
+  } = {},
+): string {
+  const id = readTrimmedOptionalStringParam(params, "id");
+  const subject = readTrimmedOptionalStringParam(params, "subject");
+  const last = options.allowLast ? readBooleanParam(params, "last") : undefined;
+  const maxValueChars = options.maxValueChars;
+
+  return formatTargetSelector(
+    id && maxValueChars !== undefined ? truncate(id, maxValueChars) : id,
+    subject && maxValueChars !== undefined ? truncate(subject, maxValueChars) : subject,
+    last,
+  );
+}
+
+/**
+ * Parses an optional trimmed string selector from raw tool params.
+ */
+function readTrimmedOptionalStringParam(params: Record<string, unknown>, key: string): string | undefined {
+  const value = params[key];
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new Error(`${key} must be a string.`);
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 /**

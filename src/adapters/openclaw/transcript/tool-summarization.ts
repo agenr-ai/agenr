@@ -1,3 +1,8 @@
+import { formatTargetSelectorFromParams } from "../../shared/entry-tools.js";
+
+/** Maximum selector value length used in transcript-safe agenr_fetch summaries. */
+const AGENR_FETCH_TARGET_MAX_CHARS = 80;
+
 /**
  * Normalized representation of a tool call embedded in transcript content.
  */
@@ -150,7 +155,7 @@ function toolIdentifier(toolName: string, args: Record<string, unknown>): string
   }
 
   if (normalizedToolName === "agenr_fetch") {
-    return formatAgenrFetchTarget(args);
+    return formatTargetSelectorFromParams(args, { maxValueChars: AGENR_FETCH_TARGET_MAX_CHARS });
   }
 
   if (normalizedToolName === "message") {
@@ -293,7 +298,7 @@ export function summarizeToolCall(call: ToolCallContext, options?: ToolSummaryOp
   }
 
   if (normalizedToolName === "agenr_fetch") {
-    return `[fetched from brain: ${formatAgenrFetchTarget(args)}]`;
+    return `[fetched from brain: ${formatTargetSelectorFromParams(args, { maxValueChars: AGENR_FETCH_TARGET_MAX_CHARS })}]`;
   }
 
   if (normalizedToolName === "sessions_spawn") {
@@ -322,21 +327,6 @@ export function summarizeToolCall(call: ToolCallContext, options?: ToolSummaryOp
     ) ?? "(no args)";
 
   return `[called ${call.name}: ${relevantArgValue}]`;
-}
-
-/** Formats an agenr_fetch target without including fetched content. */
-function formatAgenrFetchTarget(args: Record<string, unknown>): string {
-  const id = getString(args.id);
-  if (id) {
-    return `id:${truncateInline(id, 80)}`;
-  }
-
-  const subject = getString(args.subject);
-  if (subject) {
-    return `subject:"${truncateInline(subject, 80)}"`;
-  }
-
-  return "(unknown target)";
 }
 
 /**
