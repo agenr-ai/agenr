@@ -2,6 +2,7 @@ import type { AgenrOpenClawMemoryPromptSectionBuilder } from "../types.js";
 
 const MEMORY_TOOL_NAMES = {
   recall: "agenr_recall",
+  fetch: "agenr_fetch",
   store: "agenr_store",
   update: "agenr_update",
   retire: "agenr_retire",
@@ -33,6 +34,7 @@ export function buildAgenrMemoryPromptSection({
     "## Memory Recall",
     "Before answering anything about prior work, decisions, preferences, people, dates, unfinished work, or past sessions, call agenr_recall first. Session-start recall is automatic, and conservative before-turn recall may also appear as injected background context; use agenr_recall mid-session when you need context you do not already have.",
     "agenr_recall supports exact fact recall plus historical and episodic recall behind one tool: use mode=entries for exact facts, decisions, thresholds, and versions; use mode=auto for prior-state questions like what was the previous approach, what did we use before, or what changed from X to Y; use mode=episodes when you explicitly want session narrative recall.",
+    "agenr_recall returns truncated entry previews with ids, scores, and preview_truncated flags.",
     "For temporal narrative questions, put the time phrase in the query itself: examples include yesterday, last week, this month, 2 weeks ago, or in March.",
     "One focused agenr_recall call with the right scope beats several broad ones.",
     "When Agenr injects memory automatically, treat it as non-user background context and use it silently when relevant rather than forcing it into the reply.",
@@ -72,6 +74,10 @@ export function buildAgenrMemoryPromptSection({
 
   if (availableTools.has(MEMORY_TOOL_NAMES.update) || availableTools.has(MEMORY_TOOL_NAMES.retire)) {
     lines.push("When memory is contradicted by live evidence, fix it with agenr_update or agenr_retire instead of silently working around it.");
+  }
+
+  if (availableTools.has(MEMORY_TOOL_NAMES.fetch)) {
+    lines.push("Call agenr_fetch with id when preview_truncated=true or exact stored wording is required.");
   }
 
   if (availableTools.has(MEMORY_TOOL_NAMES.trace)) {

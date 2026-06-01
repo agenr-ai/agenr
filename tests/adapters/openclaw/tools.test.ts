@@ -25,6 +25,7 @@ import { createOpenClawLlmClient } from "../../../src/adapters/openclaw/llm/open
 import { computeProcedureRevisionHash, computeProcedureSourceHash } from "../../../src/core/procedures/hashing.js";
 import { composeProcedureRecallText } from "../../../src/core/procedures/recall-text.js";
 import {
+  createAgenrFetchTool,
   createAgenrRecallTool,
   createAgenrRetireTool,
   createAgenrStoreTool,
@@ -103,6 +104,37 @@ describe("agenr OpenClaw tools", () => {
     expect(schema.properties?.content?.description).toContain("not the activity log, canonical record, or transient progress snapshot");
   });
 
+  it("returns the full entry body from agenr_fetch", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const services = createDatabaseBackedServices(database);
+    const storeTool = createAgenrStoreTool(createToolContext(), Promise.resolve(services), logger);
+    const fetchTool = createAgenrFetchTool(createToolContext(), Promise.resolve(services), logger);
+    const longContent = "Long durable body for fetch verification. ".repeat(12);
+
+    await storeTool.execute("tool-store-fetch", {
+      type: "fact",
+      subject: "long recall body",
+      content: longContent,
+    });
+    const stored = await createMemoryRepository(database).findEntryBySubject("long recall body");
+    expect(stored).not.toBeNull();
+
+    const result = await fetchTool.execute("tool-fetch", { id: stored?.id });
+    const storedEntry = await database.getEntry(stored?.id ?? "");
+    const expectedContent = storedEntry?.content ?? longContent.trim();
+
+    expect(result.details).toMatchObject({
+      status: "ok",
+      entryId: stored?.id,
+      content: expectedContent,
+    });
+    expect(result.content[0]?.text).toContain(expectedContent);
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([expect.stringContaining("[agenr] tool=agenr_fetch session=session-1 key=agent:main:webchat:test target=id:")]),
+    );
+  });
+
   it("stores, updates, traces, and retires entries", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
@@ -175,6 +207,7 @@ describe("agenr OpenClaw tools", () => {
       mode: expect.any(Object),
       limit: expect.any(Object),
       threshold: expect.any(Object),
+      budget: expect.any(Object),
       types: expect.any(Object),
       tags: expect.any(Object),
     });
@@ -267,6 +300,17 @@ describe("agenr OpenClaw tools", () => {
     expect(result.content[0]?.text).toContain("session recall");
     expect(result.content[0]?.text).toContain("state=current");
     expect(result.content[0]?.text).toContain("why_surfaced=");
+    expect(result.content[0]?.text).toContain("preview_truncated=");
+    expect(result.content[0]?.text).not.toContain("Structured Details");
+    expect(result.details?.entries).toEqual([
+      expect.objectContaining({
+        id: entry.id,
+        previewTruncated: expect.any(Boolean),
+        contentPreview: expect.any(String),
+        contentChars: entry.content.length,
+      }),
+    ]);
+    expect((result.details?.entries as Array<Record<string, unknown>>)[0]).not.toHaveProperty("content");
     expect(recordedRecallEvents).toBe(1);
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([

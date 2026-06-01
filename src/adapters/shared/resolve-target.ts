@@ -1,4 +1,26 @@
+import type { MemoryRepository } from "../../app/memory/ports.js";
+import type { DatabasePort } from "../../core/ports.js";
 import type { Entry } from "../../core/types.js";
+
+/** Database and memory ports used to resolve id/subject tool targets. */
+export interface EntryMemoryResolverServices {
+  entries: Pick<DatabasePort, "getEntry">;
+  memory: Pick<MemoryRepository, "findEntryBySubject" | "findMostRecentEntry" | "getEntryTrace">;
+}
+
+/**
+ * Builds entry lookup ports for shared store-side memory tools.
+ *
+ * @param services - Entry database and memory repository services.
+ * @returns Host-neutral resolver ports.
+ */
+export function buildEntryMemoryResolverPorts(services: EntryMemoryResolverServices): EntryResolverPorts {
+  return {
+    getEntryById: async (entryId) => (await services.entries.getEntry(entryId)) ?? (await services.memory.getEntryTrace(entryId))?.entry ?? null,
+    findEntryBySubject: async (subject) => services.memory.findEntryBySubject(subject),
+    findMostRecentEntry: async () => services.memory.findMostRecentEntry(),
+  };
+}
 
 /**
  * Ports needed to resolve a user-facing entry selector into a stored entry.

@@ -11,7 +11,7 @@ This document describes the current codebase, not an aspirational design.
 The OpenClaw plugin is a translator around agenr's existing core and app workflows. It currently does all of the following:
 
 - registers agenr as an OpenClaw memory plugin
-- exposes five agent tools: `agenr_store`, `agenr_recall`, `agenr_update`, `agenr_retire`, and `agenr_trace`
+- exposes six agent tools: `agenr_store`, `agenr_recall`, `agenr_fetch`, `agenr_update`, `agenr_retire`, and `agenr_trace`
 - injects session-start context into the prompt from agenr core memory plus predecessor continuity
 - tracks mid-session memory activity and can inject `[MEMORY CHECK]` nudges after long gaps without memory actions
 - generates or reuses predecessor continuity summaries from OpenClaw transcript JSONL files
@@ -83,7 +83,7 @@ The plugin manifest declares:
 
 - `id: "agenr"`
 - `kind: "memory"`
-- tool contracts for `agenr_store`, `agenr_recall`, `agenr_retire`, `agenr_update`, and `agenr_trace`
+- tool contracts for `agenr_store`, `agenr_recall`, `agenr_fetch`, `agenr_retire`, `agenr_update`, and `agenr_trace`
 
 The runtime config is currently:
 
@@ -407,7 +407,7 @@ This means the newest predecessor session can become episodic memory without a s
 
 ## Tool behavior
 
-The plugin registers five tools from `src/adapters/openclaw/tools/`.
+The plugin registers six tools from `src/adapters/openclaw/tools/`.
 
 All tool calls log info-level summaries plus sanitized params. Raw user content is not logged wholesale.
 
@@ -444,7 +444,7 @@ Current behavior:
 Current request fields:
 
 - required: `query`
-- optional: `mode`, `limit`, `threshold`, `types`, `tags`
+- optional: `mode`, `limit`, `threshold`, `budget`, `types`, `tags`
 
 Current behavior:
 
@@ -452,10 +452,25 @@ Current behavior:
 - degrades entry recall into lexical-only mode when query embeddings or vector search fail
 - supports unified routing across exact entry recall, historical-state recall, procedural recall, and episodic recall
 - supports `mode=procedures` to force dedicated procedure recall
-- returns routing metadata, rendered text, canonical procedure data, ranked procedure candidates, structured entry results, claim-centric projected entry annotations, structured episode results, and notices
+- returns routing metadata, rendered text, canonical procedure data, ranked procedure candidates, structured entry previews (not full bodies), claim-centric projected entry annotations, structured episode results, and notices
+- entry previews are truncated in both text and structured details; use `agenr_fetch` for the full stored body
 - groups entry output by claim family when `claim_key` is present and labels rows as `current`, `historical`, or `superseded`
 - includes freshness, provenance, and `why_surfaced` cues in the human-readable text output
 - uses `procedureNotices` and `notices` to surface degraded recall paths instead of silently hiding them
+
+### `agenr_fetch`
+
+`agenr_fetch` returns the full body and metadata for one durable entry.
+
+Current target selectors:
+
+- exactly one of `id` or `subject`
+
+Current behavior:
+
+- reuses the same id/subject resolution rules as `agenr_update` and `agenr_trace`
+- returns full `content` in both tool text and structured details
+- intended after `agenr_recall` when `preview_truncated=true` or exact stored wording is required
 
 ### `agenr_update`
 

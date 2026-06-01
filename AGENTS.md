@@ -131,6 +131,7 @@ OpenClaw exposes these runtime tools:
 ```text
 agenr_store
 agenr_recall
+agenr_fetch
 agenr_retire
 agenr_update
 agenr_trace
@@ -141,6 +142,7 @@ Skeln exposes these runtime tools:
 ```text
 agenr_store
 agenr_recall
+agenr_fetch
 agenr_update
 agenr_work
 get_goal

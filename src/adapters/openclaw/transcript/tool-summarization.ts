@@ -149,6 +149,10 @@ function toolIdentifier(toolName: string, args: Record<string, unknown>): string
     return `"${truncateInline(query, 80)}"`;
   }
 
+  if (normalizedToolName === "agenr_fetch") {
+    return formatAgenrFetchTarget(args);
+  }
+
   if (normalizedToolName === "message") {
     const action = getString(args.action) ?? "(unknown action)";
     const target = getString(args.target) ?? getString(args.to) ?? "(unknown target)";
@@ -288,6 +292,10 @@ export function summarizeToolCall(call: ToolCallContext, options?: ToolSummaryOp
     return `[recalled from brain: "${truncateInline(query, 100)}"]`;
   }
 
+  if (normalizedToolName === "agenr_fetch") {
+    return `[fetched from brain: ${formatAgenrFetchTarget(args)}]`;
+  }
+
   if (normalizedToolName === "sessions_spawn") {
     const label = getString(args.label);
     const mode = getString(args.mode) ?? "run";
@@ -314,6 +322,21 @@ export function summarizeToolCall(call: ToolCallContext, options?: ToolSummaryOp
     ) ?? "(no args)";
 
   return `[called ${call.name}: ${relevantArgValue}]`;
+}
+
+/** Formats an agenr_fetch target without including fetched content. */
+function formatAgenrFetchTarget(args: Record<string, unknown>): string {
+  const id = getString(args.id);
+  if (id) {
+    return `id:${truncateInline(id, 80)}`;
+  }
+
+  const subject = getString(args.subject);
+  if (subject) {
+    return `subject:"${truncateInline(subject, 80)}"`;
+  }
+
+  return "(unknown target)";
 }
 
 /**

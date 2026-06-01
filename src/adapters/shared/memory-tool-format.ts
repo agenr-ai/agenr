@@ -1,8 +1,44 @@
 import type { UnifiedRecallResult } from "../../app/recall/index.js";
+import type { Entry } from "../../core/types.js";
 import type { RecallToolParams, StoreToolParams } from "./memory-tools.js";
 
 const DEFAULT_RECALL_LIMIT = 10;
 const RESULT_SUBJECT_LOG_LIMIT = 5;
+
+/**
+ * Maximum entry body characters included in agenr_recall previews.
+ */
+const ENTRY_PREVIEW_MAX_CHARS = 220;
+
+export { ENTRY_PREVIEW_MAX_CHARS };
+
+/**
+ * Preview metadata for one recalled entry body.
+ */
+export interface EntryRecallPreview {
+  contentPreview: string;
+  contentChars: number;
+  previewTruncated: boolean;
+}
+
+/**
+ * Builds the recall preview slice for one entry body.
+ *
+ * Full bodies are returned only from agenr_fetch.
+ *
+ * @param content - Raw stored entry content.
+ * @returns Preview text and truncation metadata.
+ */
+export function buildEntryRecallPreview(content: string): EntryRecallPreview {
+  const trimmed = content.trim();
+  const previewTruncated = trimmed.length > ENTRY_PREVIEW_MAX_CHARS;
+
+  return {
+    contentPreview: previewTruncated ? truncate(trimmed, ENTRY_PREVIEW_MAX_CHARS) : trimmed,
+    contentChars: trimmed.length,
+    previewTruncated,
+  };
+}
 
 /** Truncates tool text output to avoid oversized results. */
 export function truncate(value: string, maxChars: number): string {
@@ -54,6 +90,10 @@ export function formatRecallToolSummary(params: RecallToolParams): string {
     parts.push(`as_of=${JSON.stringify(params.asOf)}`);
   }
 
+  if (params.budget !== undefined) {
+    parts.push(`budget=${params.budget}`);
+  }
+
   return parts.join(" ");
 }
 
@@ -67,6 +107,7 @@ export function sanitizeRecallToolParams(params: RecallToolParams): Record<strin
     ...(params.types.length > 0 ? { types: params.types } : {}),
     ...(params.tags.length > 0 ? { tags: params.tags } : {}),
     ...(params.asOf ? { asOf: params.asOf } : {}),
+    ...(params.budget !== undefined ? { budget: params.budget } : {}),
   };
 }
 
@@ -134,16 +175,22 @@ export function buildRecallToolDetails(result: UnifiedRecallResult, extraDetails
       summary: episode.episode.summary,
       whyMatched: describeEpisodeWhyMatched(episode.scores.semantic, episode.scores.temporal),
     })),
-    entries: result.entries.map((entry) => ({
-      id: entry.entry.id,
-      subject: entry.entry.subject,
-      type: entry.entry.type,
-      expiry: entry.entry.expiry,
-      importance: entry.entry.importance,
-      score: entry.score,
-      tags: entry.entry.tags,
-      content: entry.entry.content,
-    })),
+    entries: result.entries.map((entry) => {
+      const preview = buildEntryRecallPreview(entry.entry.content);
+
+      return {
+        id: entry.entry.id,
+        subject: entry.entry.subject,
+        type: entry.entry.type,
+        expiry: entry.entry.expiry,
+        importance: entry.entry.importance,
+        score: entry.score,
+        tags: entry.entry.tags,
+        contentPreview: preview.contentPreview,
+        contentChars: preview.contentChars,
+        previewTruncated: preview.previewTruncated,
+      };
+    }),
     projectedEntries: result.projectedEntries.map((entry) => ({
       id: entry.entryId,
       familyKey: entry.familyKey,
@@ -169,6 +216,46 @@ export function buildRecallToolDetails(result: UnifiedRecallResult, extraDetails
     })),
     claimTransitions: result.claimTransitions,
     notices: result.notices,
+  };
+}
+
+/**
+ * Formats one fetched entry for model-visible agenr_fetch output.
+ *
+ * @param entry - Stored agenr entry.
+ * @returns Full entry text with metadata header.
+ */
+export function formatFetchedEntryText(entry: Entry): string {
+  const metadata = [
+    `Entry ${entry.id}`,
+    `subject=${entry.subject}`,
+    `type=${entry.type} importance=${entry.importance} expiry=${entry.expiry} created=${entry.created_at}`,
+    entry.claim_key ? `claim_key=${entry.claim_key}` : undefined,
+    entry.tags.length > 0 ? `tags=${entry.tags.join(", ")}` : undefined,
+    entry.valid_from ? `valid_from=${entry.valid_from}` : undefined,
+    entry.valid_to ? `valid_to=${entry.valid_to}` : undefined,
+    entry.source_context ? `source_context=${entry.source_context}` : undefined,
+  ].filter((value): value is string => value !== undefined);
+
+  return [...metadata, "", entry.content.trim()].join("\n");
+}
+
+/** Builds shared structured details for a successful fetch result. */
+export function buildFetchToolDetails(entry: Entry, extraDetails: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    status: "ok",
+    entryId: entry.id,
+    subject: entry.subject,
+    type: entry.type,
+    importance: entry.importance,
+    expiry: entry.expiry,
+    tags: entry.tags,
+    ...(entry.claim_key ? { claimKey: entry.claim_key } : {}),
+    ...(entry.valid_from ? { validFrom: entry.valid_from } : {}),
+    ...(entry.valid_to ? { validTo: entry.valid_to } : {}),
+    ...(entry.source_context ? { sourceContext: entry.source_context } : {}),
+    content: entry.content,
+    ...extraDetails,
   };
 }
 

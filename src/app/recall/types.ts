@@ -23,6 +23,7 @@ export interface UnifiedRecallInput {
   mode?: UnifiedRecallMode;
   limit?: number;
   threshold?: number;
+  budget?: number;
   types?: EntryType[];
   tags?: string[];
   asOf?: string;

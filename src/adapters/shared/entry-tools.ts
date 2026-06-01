@@ -164,3 +164,11 @@ export function sanitizeUpdateToolParams(params: {
     ...(params.validTo !== undefined ? { hasValidTo: true } : {}),
   };
 }
+
+/** Sanitizes fetch parameters before debug logging. */
+export function sanitizeFetchToolParams(params: { id: string | undefined; subject: string | undefined }): Record<string, unknown> {
+  return {
+    ...(params.id ? { id: params.id } : {}),
+    ...(params.subject ? { subject: params.subject } : {}),
+  };
+}

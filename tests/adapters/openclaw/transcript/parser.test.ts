@@ -197,6 +197,41 @@ describe("OpenClawTranscriptParser", () => {
     expect(transcript.messages[1]?.text).not.toContain("Existing memory entries");
   });
 
+  it("drops agenr_fetch tool results while preserving a target placeholder", async () => {
+    const filePath = await writeSessionFile([
+      JSON.stringify({
+        type: "session",
+        id: "session-fetch",
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "output_text", content: "Fetching exact memory." },
+            { type: "tool_call", name: "agenr_fetch", arguments: { id: "entry-1" }, id: "call-fetch-1" },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "tool",
+          tool_call_id: "call-fetch-1",
+          content: "Full fetched memory body that must not leak into extraction.",
+        },
+      }),
+    ]);
+
+    const transcript = await parser.parseFile(filePath);
+
+    expect(transcript.metadata.messageCount).toBe(2);
+    expect(transcript.messages).toHaveLength(2);
+    expect(transcript.messages[0]?.text).toContain("[fetched from brain: id:entry-1]");
+    expect(transcript.messages[1]?.text).toBe("[tool result from agenr_fetch: id:entry-1 - filtered]");
+    expect(transcript.messages[1]?.text).not.toContain("Full fetched memory body");
+  });
+
   it("summarizes flat agenr_store tool calls and preserves explicit claim keys", async () => {
     const filePath = await writeSessionFile([
       JSON.stringify({

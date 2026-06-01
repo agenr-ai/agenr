@@ -297,6 +297,7 @@ function isAgenrToolName(toolName: string): boolean {
   return (
     toolName === "agenr_store" ||
     toolName === "agenr_recall" ||
+    toolName === "agenr_fetch" ||
     toolName === "agenr_update" ||
     toolName === "agenr_work" ||
     toolName === "get_goal" ||

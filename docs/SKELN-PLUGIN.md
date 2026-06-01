@@ -10,7 +10,7 @@ This document describes the current codebase, not an aspirational design.
 
 The Skeln plugin is a translator around agenr's existing core and app workflows. It currently does all of the following:
 
-- registers seven agent tools: `agenr_store`, `agenr_recall`, `agenr_update`, `agenr_work`, `get_goal`, `create_goal`, and `update_goal`
+- registers eight agent tools: `agenr_store`, `agenr_recall`, `agenr_fetch`, `agenr_update`, `agenr_work`, `get_goal`, `create_goal`, and `update_goal`
 - injects session-start durable-memory context on the first turn of each Skeln session
 - injects conservative before-turn recall on later turns when confidence warrants it
 - injects transient `<agenr_work_context>` working memory via non-persistent `transientMessages` when `features.workingMemory` is enabled
@@ -355,7 +355,7 @@ Phase 0 defines four agenr config feature flags, all defaulting to false:
 
 ## Tool behavior
 
-The plugin registers three tools from `src/adapters/skeln/tools/`.
+The plugin registers memory and goal tools from `src/adapters/skeln/tools/`.
 
 Tool cores live in `src/adapters/shared/memory-tools.ts`. Skeln adapters only wire schemas, scope resolution, logging, and result formatting.
 
@@ -382,9 +382,24 @@ Current behavior:
 - attaches `sessionKey` for recall telemetry
 - degrades entry recall into lexical-only mode when query embeddings or vector search fail
 - supports unified routing across exact entry recall, historical-state recall, procedural recall, and episodic recall
-- returns routing metadata, rendered text, structured entry and episode results, and notices
+- returns routing metadata, rendered text, structured entry previews (not full bodies), episode results, and notices
+- entry previews are truncated in both text and structured details; use `agenr_fetch` for the full stored body
 
 See [`docs/RECALL.md`](./RECALL.md) for the full recall contract.
+
+### `agenr_fetch`
+
+`agenr_fetch` returns the full body and metadata for one durable entry.
+
+Current target selectors:
+
+- exactly one of `id` or `subject`
+
+Current behavior:
+
+- reuses the same id/subject resolution rules as `agenr_update`
+- returns full `content` in both tool text and structured details
+- intended after `agenr_recall` when `preview_truncated=true` or exact stored wording is required
 
 ### `agenr_update`
 

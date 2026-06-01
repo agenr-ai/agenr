@@ -9,7 +9,7 @@ pnpm link --global ./packages/skeln-plugin
 skeln extension add @agenr/skeln-plugin
 ```
 
-The Skeln extension id is `agenr`. It registers `agenr_store`, `agenr_recall`, `agenr_update`, `agenr_work`, `get_goal`, `create_goal`, and `update_goal`. Configure `dbPath` and `configPath` in Skeln config when you need non-default agenr storage locations.
+The Skeln extension id is `agenr`. It registers `agenr_store`, `agenr_recall`, `agenr_fetch`, `agenr_update`, `agenr_work`, `get_goal`, `create_goal`, and `update_goal`. Configure `dbPath` and `configPath` in Skeln config when you need non-default agenr storage locations.
 
 Optional `memoryPolicy` accepts a JSON string with the same shape as the OpenClaw agenr plugin `memoryPolicy` block:
 

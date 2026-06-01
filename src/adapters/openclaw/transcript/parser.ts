@@ -30,7 +30,7 @@ import {
 
 const SKIPPED_RECORD_TYPES = new Set(["compaction", "custom", "thinking_level_change"]);
 const TOOL_RESULT_POLICY = {
-  dropToolNames: new Set([...DEFAULT_TOOL_RESULT_DROP_NAMES, "agenr_recall", "image"]),
+  dropToolNames: new Set([...DEFAULT_TOOL_RESULT_DROP_NAMES, "agenr_recall", "agenr_fetch", "image"]),
   keepToolNames: new Set(DEFAULT_TOOL_RESULT_KEEP_NAMES.filter((name) => name !== "image")),
 };
 const RAW_TEXT_BLOCK_TYPES = new Set(["input_text", "output_text", "text"]);

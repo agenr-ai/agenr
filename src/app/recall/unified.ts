@@ -645,6 +645,7 @@ function buildEntryRecallInput(
     text: input.text,
     ...(input.limit !== undefined ? { limit: input.limit } : {}),
     ...(input.threshold !== undefined ? { threshold: input.threshold } : {}),
+    ...(input.budget !== undefined ? { budget: input.budget } : {}),
     ...(input.types && input.types.length > 0 ? { types: input.types } : {}),
     ...(input.tags && input.tags.length > 0 ? { tags: input.tags } : {}),
     ...(input.sessionKey ? { sessionKey: input.sessionKey } : {}),

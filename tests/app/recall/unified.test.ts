@@ -6,6 +6,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
+import * as recallSearch from "../../../src/core/recall/search.js";
 import { routeRecall, runUnifiedRecall } from "../../../src/app/recall/unified.js";
 import type { EpisodeDatabasePort, RecallPorts } from "../../../src/core/ports.js";
 import type { RecallCandidateEntry } from "../../../src/core/recall/types.js";
@@ -43,6 +44,35 @@ describe("runUnifiedRecall", () => {
       queried: ["entries", "episodes"],
       reason: "The query asks about a previous state or transition, so both entries and episodes were queried.",
     });
+  });
+
+  it("passes budget through to entry recall", async () => {
+    const recallSpy = vi.spyOn(recallSearch, "recall").mockResolvedValue([]);
+
+    await runUnifiedRecall(
+      {
+        text: "skeln architecture",
+        mode: "entries",
+        budget: 500,
+      },
+      {
+        database: createEpisodeDatabase(),
+        procedures: createProcedureDatabase(),
+        recall: createRecallPorts(),
+        embeddingAvailable: true,
+      },
+    );
+
+    expect(recallSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "skeln architecture",
+        budget: 500,
+      }),
+      expect.anything(),
+      expect.anything(),
+    );
+
+    recallSpy.mockRestore();
   });
 
   it("detects broader historical workflow and plan phrasings", () => {

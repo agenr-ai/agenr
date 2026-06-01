@@ -1,4 +1,5 @@
 import type { ClaimCentricRecallEntry, UnifiedRecallResult } from "../../app/recall/index.js";
+import { buildEntryRecallPreview, ENTRY_PREVIEW_MAX_CHARS, truncate } from "./memory-tool-format.js";
 
 /**
  * Formats unified recall results into sectioned tool-readable text.
@@ -103,10 +104,12 @@ function appendEntryMatches(lines: string[], result: UnifiedRecallResult): void 
         : `Standalone ${familyIndex + 1}. ${family.primary.entryId} | subject=${family.subject}`,
     );
     for (const [entryIndex, entry] of family.entries.entries()) {
+      const preview = buildEntryRecallPreview(entry.recall.entry.content);
       lines.push(
         `   ${entryIndex + 1}. ${entry.entryId} | ${entry.recall.entry.type} | ${entry.recall.entry.subject} | score ${entry.recall.score.toFixed(2)} | state=${entry.memoryState} | claim_status=${formatClaimStatus(entry.claimStatus)}`,
       );
-      lines.push(`      ${truncate(entry.recall.entry.content, 220)}`);
+      lines.push(`      ${preview.contentPreview}`);
+      lines.push(`      content_chars=${preview.contentChars} preview_truncated=${preview.previewTruncated ? "true" : "false"}`);
       lines.push(`      freshness=${entry.freshness.label}`);
       const provenance = formatProjectedEntryProvenance(entry);
       if (provenance) {
@@ -129,7 +132,7 @@ function appendEpisodeMatches(lines: string[], result: UnifiedRecallResult): voi
     lines.push(
       `${index + 1}. ${episode.episode.id} | ${episode.episode.source} | ${episode.episode.startedAt} -> ${episode.episode.endedAt ?? episode.episode.startedAt} | score ${episode.score.toFixed(2)}`,
     );
-    lines.push(`   ${index < 3 ? episode.episode.summary.trim() : truncate(episode.episode.summary.trim(), 220)}`);
+    lines.push(`   ${index < 3 ? episode.episode.summary.trim() : truncate(episode.episode.summary.trim(), ENTRY_PREVIEW_MAX_CHARS)}`);
     lines.push(`   why_matched=${describeEpisodeMatch(episode)}`);
   }
 }
@@ -189,7 +192,7 @@ function appendClaimTransitions(lines: string[], result: UnifiedRecallResult): v
       lines.push(
         `   episode=${transition.episodeContext.episodeId} | ${transition.episodeContext.startedAt} -> ${transition.episodeContext.endedAt ?? transition.episodeContext.startedAt}`,
       );
-      lines.push(`   ${truncate(transition.episodeContext.summary.trim(), 220)}`);
+      lines.push(`   ${truncate(transition.episodeContext.summary.trim(), ENTRY_PREVIEW_MAX_CHARS)}`);
     }
   }
 }
@@ -274,19 +277,4 @@ function formatProjectedEntryProvenance(entry: ClaimCentricRecallEntry): string 
   ].filter((value): value is string => value !== undefined);
 
   return parts.join(" | ");
-}
-
-/**
- * Truncates tool text output to avoid oversized results.
- *
- * @param value - Text to truncate.
- * @param maxChars - Maximum character count.
- * @returns Truncated string when needed.
- */
-function truncate(value: string, maxChars: number): string {
-  if (value.length <= maxChars) {
-    return value;
-  }
-
-  return `${value.slice(0, maxChars - 3).trimEnd()}...`;
 }

@@ -20,10 +20,13 @@ import {
   parseExpiry,
   parseRecallMode,
 } from "./entry-tools.js";
-import { resolveTargetEntry } from "./resolve-target.js";
+import { buildEntryMemoryResolverPorts, resolveTargetEntry } from "./resolve-target.js";
+import { buildFetchToolDetails, formatFetchedEntryText } from "./memory-tool-format.js";
 
 export {
+  buildFetchToolDetails,
   buildRecallToolDetails,
+  formatFetchedEntryText,
   formatRecallToolSummary,
   formatUnifiedRecallLogSummary,
   sanitizeRecallToolParams,
@@ -59,6 +62,7 @@ export interface RecallToolParams {
   mode: UnifiedRecallMode | undefined;
   limit: number | undefined;
   threshold: number | undefined;
+  budget: number | undefined;
   types: EntryType[];
   tags: string[];
   asOf: string | undefined;
@@ -73,6 +77,12 @@ export interface UpdateToolParams {
   claimKeyInput: string | undefined;
   validFrom: string | undefined;
   validTo: string | undefined;
+}
+
+/** Parsed agenr_fetch parameters. */
+export interface FetchToolParams {
+  id: string | undefined;
+  subject: string | undefined;
 }
 
 /** Host-neutral text result returned by shared tool execution cores. */
@@ -202,6 +212,11 @@ const RECALL_TOOL_PARAMETERS = {
       maximum: 1,
       description: "Minimum final score from 0 to 1. Raise this when you want fewer, higher-confidence matches.",
     },
+    budget: {
+      type: "integer",
+      minimum: 1,
+      description: "Approximate token budget applied after entry scoring. Omit when you do not want a budget cap.",
+    },
     types: {
       type: "array",
       items: {
@@ -260,6 +275,22 @@ const UPDATE_TOOL_PARAMETERS = {
   },
 } as const;
 
+/** Shared agenr_fetch parameter schema. */
+const FETCH_TOOL_PARAMETERS = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    id: {
+      type: "string",
+      description: "Entry id to fetch. Provide exactly one of id or subject.",
+    },
+    subject: {
+      type: "string",
+      description: "Subject text to resolve when the id is unknown. The most recent exact or substring match wins. Provide exactly one of id or subject.",
+    },
+  },
+} as const;
+
 /** Parses raw agenr_store parameters through the host's reader boundary. */
 export function parseStoreToolParams(rawParams: unknown, reader: MemoryToolParamReader): StoreToolParams {
   const params = asRecord(rawParams);
@@ -282,11 +313,17 @@ export function parseStoreToolParams(rawParams: unknown, reader: MemoryToolParam
 /** Parses raw agenr_recall parameters through the host's reader boundary. */
 export function parseRecallToolParams(rawParams: unknown, reader: MemoryToolParamReader): RecallToolParams {
   const params = asRecord(rawParams);
+  const budget = reader.readNumber(params, "budget", { integer: true, strict: true });
+  if (budget !== undefined && budget <= 0) {
+    throw new Error("budget must be a positive integer.");
+  }
+
   return {
     query: reader.readString(params, "query", { required: true, label: "query" }) ?? "",
     mode: parseRecallMode(reader.readString(params, "mode")),
     limit: reader.readNumber(params, "limit", { integer: true, strict: true }),
     threshold: reader.readNumber(params, "threshold", { strict: true }),
+    budget,
     types: parseEntryTypes(reader.readStringArray(params, "types")),
     tags: normalizeStringArray(reader.readStringArray(params, "tags")),
     asOf: reader.readString(params, "asOf"),
@@ -304,6 +341,15 @@ export function parseUpdateToolParams(rawParams: unknown, reader: MemoryToolPara
     claimKeyInput: reader.readString(params, "claimKey", { trim: false }),
     validFrom: reader.readString(params, "validFrom"),
     validTo: reader.readString(params, "validTo"),
+  };
+}
+
+/** Parses raw agenr_fetch parameters through the host's reader boundary. */
+export function parseFetchToolParams(rawParams: unknown, reader: MemoryToolParamReader): FetchToolParams {
+  const params = asRecord(rawParams);
+  return {
+    id: reader.readString(params, "id"),
+    subject: reader.readString(params, "subject"),
   };
 }
 
@@ -404,6 +450,7 @@ export async function runRecallMemoryTool(
       ...(params.mode ? { mode: params.mode } : {}),
       ...(params.limit !== undefined ? { limit: params.limit } : {}),
       ...(params.threshold !== undefined ? { threshold: params.threshold } : {}),
+      ...(params.budget !== undefined ? { budget: params.budget } : {}),
       ...(params.types.length > 0 ? { types: params.types } : {}),
       ...(params.tags.length > 0 ? { tags: params.tags } : {}),
       ...(params.asOf ? { asOf: params.asOf } : {}),
@@ -423,6 +470,19 @@ export async function runRecallMemoryTool(
       },
     },
   );
+}
+
+/** Executes the host-neutral agenr_fetch business flow. */
+export async function runFetchMemoryTool(
+  params: FetchToolParams,
+  services: EntryMemoryToolServices,
+  options: {
+    extraDetails?: Record<string, unknown>;
+  } = {},
+): Promise<MemoryToolOutcome> {
+  const entry = await resolveTargetEntry(buildEntryMemoryResolverPorts(services), { id: params.id, subject: params.subject });
+
+  return okOutcome(formatFetchedEntryText(entry), buildFetchToolDetails(entry, options.extraDetails));
 }
 
 /** Executes the host-neutral agenr_update business flow. */
@@ -455,14 +515,7 @@ export async function runUpdateMemoryTool(
             throw new Error("claimKey must use canonical entity/attribute format.");
           }
         })();
-  const entry = await resolveTargetEntry(
-    {
-      getEntryById: async (entryId) => (await services.entries.getEntry(entryId)) ?? (await services.memory.getEntryTrace(entryId))?.entry ?? null,
-      findEntryBySubject: async (entrySubject) => services.memory.findEntryBySubject(entrySubject),
-      findMostRecentEntry: async () => services.memory.findMostRecentEntry(),
-    },
-    { id: params.id, subject: params.subject },
-  );
+  const entry = await resolveTargetEntry(buildEntryMemoryResolverPorts(services), { id: params.id, subject: params.subject });
 
   if (
     params.importance === undefined &&
@@ -510,7 +563,7 @@ export async function runUpdateMemoryTool(
   });
 }
 
-export { RECALL_TOOL_PARAMETERS, STORE_TOOL_PARAMETERS, UPDATE_TOOL_PARAMETERS };
+export { FETCH_TOOL_PARAMETERS, RECALL_TOOL_PARAMETERS, STORE_TOOL_PARAMETERS, UPDATE_TOOL_PARAMETERS };
 
 /**
  * Builds a successful host-neutral memory tool outcome.
