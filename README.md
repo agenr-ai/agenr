@@ -261,4 +261,4 @@ agenr scenarios run --kind store --preserve --verbose
 
 ## License
 
-AGPL-3.0
+MIT

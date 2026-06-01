@@ -59,7 +59,7 @@
   "engines": {
     "node": ">=24"
   },
-  "license": "AGPL-3.0",
+  "license": "MIT",
   "pnpm": {
     "peerDependencyRules": {
       "ignoreMissing": [
