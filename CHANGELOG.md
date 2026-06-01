@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-05-31
+
+Memory fetch tools, Skeln episode lifecycle hardening, and repository packaging cleanup release.
+
+### Added
+
+- **OpenClaw and Skeln now expose `agenr_fetch`.** The release adds fetch tool wiring, shared result formatting, prompt/tool summaries, target resolution, and regression coverage for direct memory retrieval.
+- **Recall output now carries richer details for fetch workflows.** Shared recall formatting and fixtures preserve recall details so follow-up fetches can target entries more reliably.
+
+### Changed
+
+- **Published package metadata now uses MIT licensing.** The root package and plugin packages now advertise MIT licensing and ship the shorter MIT license text.
+- **Skeln documentation and plugin setup are clearer.** The README, architecture, procedure, recall, debugging, and Skeln plugin docs were refreshed for current integration behavior.
+- **Repo-local planning artifacts and unused simulation scripts are no longer tracked.** Internal docs covered by gitignore and obsolete scripts were removed from release history noise.
+
+### Fixed
+
+- **Skeln shutdown episode handling is sequenced and isolated.** Shutdown episode writing now has a dedicated path with tests, avoiding lifecycle overlap with session-memory shutdown work.
+- **Goal generation exports are clearer without changing behavior.** `INITIAL_GOAL_GENERATION` docs and export shape were tightened.
+
+### Validation
+
+Changes since last push to `origin/master`:
+
+- Add OpenClaw and Skeln `agenr_fetch` tool surfaces with shared fetch formatting and tests
+- Improve recall/fetch detail formatting and unified recall test coverage
+- Add dedicated Skeln shutdown episode writer, update bounded and goal-close episode tests, and document lifecycle behavior
+- Refresh Skeln plugin, architecture, recall, procedures, debugging, and README docs
+- Relicense root and plugin package metadata under MIT
+- Stop tracking gitignored internal docs and remove unused simulation scripts
+
 ## [3.0.0] - 2026-05-31
 
 Skeln host integration, session and working memory, and goal-control major release.
