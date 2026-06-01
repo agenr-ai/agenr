@@ -13,8 +13,8 @@ import { skelnTranscriptParser } from "../transcript/parser.js";
 
 /** Parameters for one bounded Skeln session transcript episode write. */
 export interface WriteSkelnBoundedSessionEpisodeParams {
-  /** Active Skeln extension context. */
-  context: ExtensionContext;
+  /** Snapshot of the Skeln session transcript target captured while host context is live. */
+  target: SkelnSessionEpisodeTarget;
   /** Shared Skeln runtime services. */
   services: AgenrSkelnServices;
   /** Human-readable action label used by bounded ingest logging. */
@@ -33,16 +33,35 @@ export interface WriteSkelnBoundedSessionEpisodeParams {
   logger?: Pick<Console, "info" | "warn">;
 }
 
+/** Snapshot of one Skeln session transcript target for deferred episode writes. */
+export interface SkelnSessionEpisodeTarget {
+  sessionId: string;
+  sessionFile?: string;
+}
+
+/**
+ * Captures one Skeln session transcript target from live host context.
+ *
+ * @param context - Active Skeln extension context.
+ * @returns Session id and optional transcript path.
+ */
+export function resolveSkelnSessionEpisodeTarget(context: ExtensionContext): SkelnSessionEpisodeTarget {
+  return {
+    sessionId: String(context.sessionManager.getSessionId()),
+    sessionFile: resolveSessionFile(context),
+  };
+}
+
 /**
  * Best-effort bounded episode write for one Skeln session transcript file.
  *
- * @param params - Host context, services, and episode-write configuration.
+ * @param params - Session target snapshot, services, and episode-write configuration.
  * @returns Promise that resolves after the attempt is complete or skipped.
  */
 export async function writeSkelnBoundedSessionEpisode(params: WriteSkelnBoundedSessionEpisodeParams): Promise<void> {
   const logger = params.logger ?? console;
-  const sessionFile = resolveSessionFile(params.context);
-  const sessionId = String(params.context.sessionManager.getSessionId());
+  const sessionFile = params.target.sessionFile;
+  const sessionId = params.target.sessionId;
   const summaryDeadlineMs = Date.now() + EPISODE_SUMMARY_TIMEOUT_MS;
 
   if (!sessionFile) {

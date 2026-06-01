@@ -16,7 +16,7 @@ The Skeln plugin is a translator around agenr's existing core and app workflows.
 - injects transient `<agenr_work_context>` working memory via non-persistent `transientMessages` when `features.workingMemory` is enabled
 - appends static memory doctrine to the Skeln system prompt on the first turn (and on later turns when recall injects)
 - resolves embeddings and optional claim extraction from agenr config credentials, not Skeln host auth
-- closes the shared agenr database handle when Skeln shuts down with reason `quit`
+- on `session_shutdown` with reason `quit`, captures a synchronous transcript snapshot, runs bounded shutdown episode capture when enabled, then closes the shared agenr database handle; the lifecycle handler awaits that chain unless Skeln registers `deferWork`, in which case the host keeps the process alive until both finish
 
 The adapter is intentionally not a second memory brain. Durable memory, recall ranking, claim-key lifecycle, session-start selection, and before-turn selection still live in agenr core and app layers.
 
@@ -188,8 +188,9 @@ Current lifecycle behavior:
 - `session_start` resolves session scope, remembers it in the scope tracker, and records first-turn facts in the shared session-start tracker
 - `before_agent_start` runs session-start recall on the first turn for a tracked session identity, then before-turn recall on later turns
 - `tool_result` maps structured agenr failed tool details (`details.status === "failed"`) to Skeln `{ isError: true }` because Skeln's `AgentToolResult` type does not carry an inline error flag
-- `session_shutdown` clears remembered scope for the ending session
-- when shutdown reason is `quit`, the plugin awaits `services.close()` and ignores startup failures during shutdown
+- `session_shutdown` routes session-memory intake, clears remembered scope for the ending session (before episode scheduling), snapshots transcript target facts synchronously, then dispatches optional bounded shutdown episode capture from that snapshot
+- non-`quit` shutdown reasons start episode capture in the background without closing the shared database handle; this is best-effort and may not finish if the host exits or reloads quickly
+- `quit` shutdown without `deferWork` awaits episode capture (when enabled) and `services.close()` in the lifecycle handler; when Skeln supplies `deferWork`, the same chain runs under host deferral so stale extension context is never read after shutdown
 
 The default package export is a Skeln `ExtensionFactory` that calls `registerAgenrSkelnMemory(skeln)` with manifest-backed settings only.
 

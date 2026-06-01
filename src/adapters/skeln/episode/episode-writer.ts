@@ -1,10 +1,8 @@
-import type { ExtensionContext } from "skeln";
-
 import { resolveEpisodeActivityEligibility, type EpisodeActivityThreshold } from "../../../app/episode-ingest/activity-threshold.js";
 import { countMaterialTranscriptTurns } from "../../../core/episode/transcript-render.js";
 import type { ParsedTranscript } from "../../../core/types.js";
 import type { AgenrSkelnServices } from "../runtime.js";
-import { writeSkelnBoundedSessionEpisode } from "./bounded-session-episode.js";
+import { type SkelnSessionEpisodeTarget, writeSkelnBoundedSessionEpisode } from "./bounded-session-episode.js";
 
 const SKELN_EPISODE_GENERATOR_VERSION = "skeln-episodic-summary-v1";
 
@@ -17,26 +15,24 @@ const SKELN_PHASE4_SHUTDOWN_EPISODE_ACTIVITY_THRESHOLD: EpisodeActivityThreshold
 /**
  * Best-effort bounded Skeln episode write for a completed session.
  *
- * @param params - Host context, shared services, and optional logger.
+ * @param params - Session target snapshot, shared services, and optional logger.
  * @returns Promise that resolves after the episode attempt is complete or skipped.
  */
 export async function writeSkelnShutdownEpisode(params: {
-  context: ExtensionContext;
+  target: SkelnSessionEpisodeTarget;
   services: AgenrSkelnServices;
   logger?: Pick<Console, "info" | "warn">;
 }): Promise<void> {
-  const sessionId = String(params.context.sessionManager.getSessionId());
-
   await writeSkelnBoundedSessionEpisode({
-    context: params.context,
+    target: params.target,
     services: params.services,
     logger: params.logger,
     actionLabel: "skeln shutdown episode write",
     genVersion: SKELN_EPISODE_GENERATOR_VERSION,
     activityThreshold: SKELN_PHASE4_SHUTDOWN_EPISODE_ACTIVITY_THRESHOLD,
     buildSourceRef: (sessionFile) => sessionFile,
-    logContext: `session=${sessionId} key=skeln:${sessionId}`,
-    skipDetails: `session=${sessionId}`,
+    logContext: `session=${params.target.sessionId} key=skeln:${params.target.sessionId}`,
+    skipDetails: `session=${params.target.sessionId}`,
   });
 }
 
@@ -57,5 +53,3 @@ export function resolveSkelnShutdownEpisodeEligibility(transcript: ParsedTranscr
     SKELN_PHASE4_SHUTDOWN_EPISODE_ACTIVITY_THRESHOLD,
   );
 }
-
-export { resolveSessionFile } from "./bounded-session-episode.js";

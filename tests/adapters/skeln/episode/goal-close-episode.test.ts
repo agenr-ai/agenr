@@ -54,6 +54,48 @@ describe("scheduleSkelnGoalCloseEpisodePromotion", () => {
     expect(writeBoundedSessionEpisodeMock).not.toHaveBeenCalled();
   });
 
+  it("snapshots host facts before bounded promotion write starts", () => {
+    const calls: string[] = [];
+    writeBoundedSessionEpisodeMock.mockImplementation(async () => {
+      calls.push("write");
+    });
+
+    scheduleSkelnGoalCloseEpisodePromotion({
+      context: {
+        sessionManager: {
+          getSessionId: () => {
+            calls.push("sessionId");
+            return "session-1";
+          },
+          getSessionFile: () => {
+            calls.push("sessionFile");
+            return "/tmp/session.jsonl";
+          },
+        },
+      } as ExtensionContext,
+      services: {} as AgenrSkelnServices,
+      closeResult: buildCloseResult([
+        {
+          kind: "episodic",
+          summary: "Done.",
+          provenance: {
+            evidenceEventSequences: [1],
+            sourceRef: "working_set:ws-1#rev:1",
+          },
+          promotionStatus: "pending",
+        },
+      ]),
+    });
+
+    expect(calls).toEqual(["sessionId", "sessionFile", "write"]);
+    expect(writeBoundedSessionEpisodeMock.mock.calls[0]?.[0]).toMatchObject({
+      target: {
+        sessionId: "session-1",
+        sessionFile: "/tmp/session.jsonl",
+      },
+    });
+  });
+
   it("schedules promotion when close emitted a pending episodic candidate", async () => {
     const context = {
       sessionManager: {
@@ -82,11 +124,49 @@ describe("scheduleSkelnGoalCloseEpisodePromotion", () => {
     await Promise.resolve();
     expect(writeBoundedSessionEpisodeMock).toHaveBeenCalledOnce();
     expect(writeBoundedSessionEpisodeMock.mock.calls[0]?.[0]).toMatchObject({
-      context,
+      target: {
+        sessionId: "session-1",
+        sessionFile: "/tmp/session.jsonl",
+      },
       services,
       actionLabel: "skeln goal close episode promotion",
       skipDetails: "session=session-1 workingSet=ws-1",
     });
+  });
+
+  it("does not touch live host context during scheduled promotion", async () => {
+    let sessionFileReads = 0;
+
+    scheduleSkelnGoalCloseEpisodePromotion({
+      context: {
+        sessionManager: {
+          getSessionId: () => "session-1",
+          getSessionFile: () => {
+            sessionFileReads += 1;
+            if (sessionFileReads > 1) {
+              throw new Error("stale context access");
+            }
+            return "/tmp/session.jsonl";
+          },
+        },
+      } as ExtensionContext,
+      services: {} as AgenrSkelnServices,
+      closeResult: buildCloseResult([
+        {
+          kind: "episodic",
+          summary: "Done.",
+          provenance: {
+            evidenceEventSequences: [1],
+            sourceRef: "working_set:ws-1#rev:1",
+          },
+          promotionStatus: "pending",
+        },
+      ]),
+    });
+
+    expect(sessionFileReads).toBe(1);
+    await Promise.resolve();
+    expect(sessionFileReads).toBe(1);
   });
 
   it("logs promotion failures without throwing", async () => {

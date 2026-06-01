@@ -36,14 +36,9 @@ describe("writeSkelnBoundedSessionEpisode", () => {
     };
 
     await writeSkelnBoundedSessionEpisode({
-      context: {
-        sessionManager: {
-          getSessionId: () => "session-1",
-          getSessionFile: () => {
-            throw new Error("missing session file");
-          },
-        },
-      } as ExtensionContext,
+      target: {
+        sessionId: "session-1",
+      },
       services: {} as AgenrSkelnServices,
       actionLabel: "skeln goal close episode promotion",
       genVersion: "test-gen",

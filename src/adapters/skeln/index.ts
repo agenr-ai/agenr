@@ -22,7 +22,7 @@ import {
   type SkelnSessionTreeEvent,
 } from "./hooks/session-memory.js";
 import { recordSkelnSubagentFindings } from "./hooks/subagent-findings.js";
-import { writeSkelnShutdownEpisode } from "./episode/episode-writer.js";
+import { scheduleSkelnSessionShutdownEpisodeWrite } from "./episode/shutdown-episode-write.js";
 import { createAgenrSkelnServices } from "./runtime.js";
 import type { AgenrSkelnConfig } from "./runtime.js";
 import { buildSkelnHostContext, mergeSkelnHostContext, toSkelnSessionScope } from "./session/scope.js";
@@ -182,7 +182,7 @@ function registerAgenrSkelnSessionMemoryHooks(
   });
 }
 
-/** Routes shutdown lifecycle intake, optional episode write, scope cleanup, and service close. */
+/** Routes shutdown lifecycle intake, scope cleanup, and shutdown episode dispatch. */
 async function handleSkelnSessionShutdown(
   servicesPromise: ReturnType<typeof createAgenrSkelnServices>,
   scopeTracker: SkelnSessionScopeTracker,
@@ -191,19 +191,9 @@ async function handleSkelnSessionShutdown(
   context: ExtensionContext,
 ): Promise<void> {
   await routeScopedSessionMemoryTrigger(servicesPromise, resolveScope, context, (scope) => buildSkelnSessionShutdownTriggerEvent(scope, event));
-  await writeScopedSkelnShutdownEpisode(servicesPromise, context);
+  // Shutdown episode work uses a synchronous transcript snapshot, not the scope tracker.
   clearTrackedSkelnScope(scopeTracker, context);
-
-  if (event.reason !== "quit") {
-    return;
-  }
-
-  try {
-    const services = await servicesPromise;
-    await services.close();
-  } catch {
-    // Ignore startup failures during shutdown.
-  }
+  await scheduleSkelnSessionShutdownEpisodeWrite({ event, context, servicesPromise });
 }
 
 /** Registers bounded subagent finding capture for active working sets. */
@@ -231,20 +221,6 @@ async function routeScopedSessionMemoryTrigger(
     logSessionMemoryTriggerResult(await services.routeSessionMemoryTrigger(buildEvent(scope)));
   } catch (error) {
     console.warn(`[agenr] session-memory trigger failed: ${formatErrorMessage(error)}`);
-  }
-}
-
-/** Runs a bounded Skeln shutdown episode attempt when the feature is enabled. */
-async function writeScopedSkelnShutdownEpisode(servicesPromise: ReturnType<typeof createAgenrSkelnServices>, context: ExtensionContext): Promise<void> {
-  try {
-    const services = await servicesPromise;
-    if (!services.capabilities.shutdownEpisodes) {
-      return;
-    }
-
-    await writeSkelnShutdownEpisode({ context, services });
-  } catch (error) {
-    console.warn(`[agenr] skeln shutdown episode failed: ${formatErrorMessage(error)}`);
   }
 }
 
