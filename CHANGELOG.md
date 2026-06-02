@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-06-02
+
+Cross-platform packaging, CI smoke coverage, and path handling hardening release.
+
+### Added
+
+- **Repository checks now cover package smoke workflows across platforms.** The release adds local package smoke tooling, Windows simulation, Docker-based Linux checks, and a slimmer Windows CI workflow.
+- **Path handling now has focused cross-platform helpers and tests.** Shared filesystem path utilities and test helpers cover Windows, Linux, and local temporary-path behavior.
+
+### Changed
+
+- **Package build and smoke scripts are more portable.** Root and plugin package scripts now avoid shell-specific assumptions and handle install paths consistently across supported platforms.
+- **Skeln adapter imports now use explicit shared host types.** The Skeln adapter has a dedicated type boundary for host-facing imports, reducing package-resolution friction during plugin builds.
+
+### Fixed
+
+- **Windows package smoke tests are quoting-safe.** Smoke commands now pass arguments separately, preserve path quotes, avoid `npx`, and restore the `cmd.exe` npm shim path needed by Windows runs.
+- **SQLite and temp-path tests now clean up safely on Windows.** Database and test cleanup paths avoid platform-sensitive deletion and quoting failures.
+- **Line-ending and packaging behavior is more deterministic.** Repository checkout and packaging paths are hardened for Linux and Windows release validation.
+
+### Validation
+
+Changes since last push to `origin/master`:
+
+- Add local package smoke, Windows simulation, and Docker Linux test runners
+- Add a slim Windows CI workflow and deterministic LF checkout configuration
+- Harden package smoke command quoting, argument passing, and npm shim handling on Windows
+- Add shared filesystem path helpers and cross-platform test temp-path helpers
+- Harden SQLite, temp path, Skeln adapter, and plugin build paths for cross-platform package validation
+
 ## [3.1.0] - 2026-05-31
 
 Memory fetch tools, Skeln episode lifecycle hardening, and repository packaging cleanup release.
