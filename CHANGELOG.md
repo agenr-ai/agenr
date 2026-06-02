@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-06-02
+
+Feature flag defaults, Skeln install policy, and OpenClaw package cleanup release.
+
+### Added
+
+- **Init now records every known feature flag as enabled.** First-run `agenr init` writes the full current feature surface into `config.json`, making staged working-memory, session-tree, and goal-continuation flags explicit.
+- **Fresh Skeln installs now carry a memory-policy default.** The Skeln plugin manifest seeds a conservative `memoryPolicy` that keeps session-start and before-turn injection off while leaving working context available.
+
+### Changed
+
+- **The OpenClaw plugin package now publishes as `@agenr/openclaw-plugin`.** Install docs, build filters, smoke tests, and package metadata were aligned with the new scoped package name.
+- **OpenClaw runtime dependencies now stay with the plugin package.** The root `agenr` package no longer carries OpenClaw as a runtime dependency, while plugin builds and package smoke tests still cover the OpenClaw integration.
+- **Repository release metadata is slimmer.** GitHub Actions CI and the synced release procedure were removed in favor of the local release workflow.
+
+### Validation
+
+Changes since last push to `origin/master`:
+
+- Remove OpenClaw from root runtime dependencies and keep plugin build coverage intact
+- Rename the OpenClaw plugin package to `@agenr/openclaw-plugin` across install docs, build filters, smoke tests, and package metadata
+- Drop GitHub Actions CI and the synced release procedure from the repository
+- Add canonical feature flag keys and have first-run init write every current feature flag as enabled
+- Add a Skeln plugin `memoryPolicy` install default with setup, manifest, and regression coverage
+
 ## [3.2.0] - 2026-06-02
 
 Cross-platform packaging, CI smoke coverage, and path handling hardening release.
