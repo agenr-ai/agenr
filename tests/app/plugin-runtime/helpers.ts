@@ -1,8 +1,9 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, vi } from "vitest";
+import { removeTestPath, waitForDatabaseRelease } from "../../helpers/temp-paths.js";
 
 const tempRoots: string[] = [];
 
@@ -28,8 +29,10 @@ export function usePluginRuntimeEnv(): void {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
 
+    await waitForDatabaseRelease();
+
     while (tempRoots.length > 0) {
-      await rm(tempRoots.pop() ?? "", { force: true, recursive: true });
+      await removeTestPath(tempRoots.pop() ?? "");
     }
 
     restoreEnvVar("OPENAI_API_KEY", originalEnv.openAiApiKey);

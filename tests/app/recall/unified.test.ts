@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -13,6 +12,7 @@ import type { RecallCandidateEntry } from "../../../src/core/recall/types.js";
 import { computeProcedureRevisionHash, computeProcedureSourceHash } from "../../../src/core/procedures/hashing.js";
 import { composeProcedureRecallText } from "../../../src/core/procedures/recall-text.js";
 import type { Entry, Episode, Procedure } from "../../../src/core/types.js";
+import { closeTestDatabases, removeTestPath } from "../../helpers/temp-paths.js";
 
 const databases: SqlDatabase[] = [];
 const databasePaths: string[] = [];
@@ -20,12 +20,10 @@ const databasePaths: string[] = [];
 afterEach(async () => {
   vi.useRealTimers();
 
-  while (databases.length > 0) {
-    await databases.pop()?.close();
-  }
+  await closeTestDatabases(databases);
 
   while (databasePaths.length > 0) {
-    await rm(databasePaths.pop() ?? "", { force: true });
+    await removeTestPath(databasePaths.pop() ?? "");
   }
 });
 

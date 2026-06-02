@@ -1,4 +1,3 @@
-import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -12,6 +11,7 @@ import type { createAgenrSkelnServices } from "../../../src/adapters/skeln/runti
 import type { AgenrSkelnSessionScope } from "../../../src/adapters/skeln/types.js";
 import { executeAgenrSkelnWorkCommand, toAgenrWorkParams } from "../../../src/adapters/skeln/work-command.js";
 import { createWorkingMemoryService } from "../../../src/app/working-memory/service.js";
+import { closeTestDatabase, removeTestPath } from "../../helpers/temp-paths.js";
 
 describe("toAgenrWorkParams", () => {
   it("maps trusted update commands without scope fields or expectedRevision", () => {
@@ -109,8 +109,8 @@ describe("executeAgenrSkelnWorkCommand", () => {
     } finally {
       const services = await servicesPromise;
       await services.close();
-      await database.close();
-      await fs.rm(dbPath, { force: true });
+      await closeTestDatabase(database);
+      await removeTestPath(dbPath);
     }
   });
 });

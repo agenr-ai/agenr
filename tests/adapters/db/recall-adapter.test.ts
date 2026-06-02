@@ -1,13 +1,11 @@
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { rm } from "node:fs/promises";
-
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
 import { createRecallAdapter } from "../../../src/adapters/db/recall-adapter.js";
-import { removeTestPath, waitForDatabaseRelease } from "../../helpers/temp-paths.js";
+import { closeTestDatabases, removeTestPath } from "../../helpers/temp-paths.js";
 import type { Entry } from "../../../src/core/types.js";
 
 const databases: SqlDatabase[] = [];
@@ -15,11 +13,7 @@ const databasePaths: string[] = [];
 
 describe("createRecallAdapter historical expansion", () => {
   afterEach(async () => {
-    while (databases.length > 0) {
-      await databases.pop()?.close();
-    }
-
-    await waitForDatabaseRelease();
+    await closeTestDatabases(databases);
 
     while (databasePaths.length > 0) {
       await removeTestPath(databasePaths.pop() ?? "");

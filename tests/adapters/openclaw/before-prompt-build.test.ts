@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -29,7 +29,7 @@ import { composeProcedureRecallText } from "../../../src/core/procedures/recall-
 import type { EmbeddingPort, LlmPort, RecallPorts } from "../../../src/core/ports.js";
 import type { RecallCandidateEntry } from "../../../src/core/recall/types.js";
 import type { Entry, Procedure } from "../../../src/core/types.js";
-import { removeTestPath, waitForDatabaseRelease } from "../../helpers/temp-paths.js";
+import { closeTestDatabases, removeTestPath } from "../../helpers/temp-paths.js";
 
 const openDatabases: SqlDatabase[] = [];
 const tempPaths: string[] = [];
@@ -53,11 +53,7 @@ afterEach(async () => {
   vi.useRealTimers();
   openClawLlmClientMocks.createOpenClawLlmClient.mockReset();
 
-  while (openDatabases.length > 0) {
-    await openDatabases.pop()?.close();
-  }
-
-  await waitForDatabaseRelease();
+  await closeTestDatabases(openDatabases);
 
   while (tempPaths.length > 0) {
     await removeTestPath(tempPaths.pop() ?? "");

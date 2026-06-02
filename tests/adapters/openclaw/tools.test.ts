@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -36,6 +35,7 @@ import { createNoopAgenrDebugSink } from "../../../src/adapters/openclaw/debug/i
 import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../src/adapters/openclaw/types.js";
 import type { EmbeddingPort, RecallPorts } from "../../../src/core/ports.js";
 import type { Entry, Procedure } from "../../../src/core/types.js";
+import { closeTestDatabases, removeTestPath } from "../../helpers/temp-paths.js";
 
 const openDatabases: SqlDatabase[] = [];
 const tempDatabasePaths: string[] = [];
@@ -46,12 +46,10 @@ afterEach(async () => {
   piAiMocks.completeSimple.mockReset();
   piAiMocks.getModel.mockReset();
 
-  while (openDatabases.length > 0) {
-    await openDatabases.pop()?.close();
-  }
+  await closeTestDatabases(openDatabases);
 
   while (tempDatabasePaths.length > 0) {
-    await rm(tempDatabasePaths.pop() ?? "", { force: true });
+    await removeTestPath(tempDatabasePaths.pop() ?? "");
   }
 });
 

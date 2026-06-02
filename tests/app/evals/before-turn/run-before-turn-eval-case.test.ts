@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDatabase } from "../../../../src/adapters/db/client.js";
 import { runBeforeTurnEvalCase } from "../../../../src/app/evals/before-turn/index.js";
 import type { CrossEncoderPassage, CrossEncoderPort, CrossEncoderScore } from "../../../../src/core/ports.js";
+import { removeTestPath, waitForDatabaseRelease } from "../../../helpers/temp-paths.js";
 
 const tempPaths: string[] = [];
 
@@ -20,8 +21,10 @@ afterEach(async () => {
   delete process.env.AGENR_CONFIG_DIR;
   delete process.env.AGENR_CONFIG_PATH;
 
+  await waitForDatabaseRelease();
+
   while (tempPaths.length > 0) {
-    await rm(tempPaths.pop() ?? "", { recursive: true, force: true });
+    await removeTestPath(tempPaths.pop() ?? "");
   }
 });
 

@@ -13,6 +13,7 @@ import { createSessionStartTracker } from "../../../../src/app/plugin-runtime/se
 import { createAgenrRecallTool } from "../../../../src/adapters/openclaw/tools.js";
 import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../../src/adapters/openclaw/types.js";
 import type { EmbeddingPort, RecallPorts } from "../../../../src/core/ports.js";
+import { closeTestDatabases, removeTestPath } from "../../../helpers/temp-paths.js";
 
 const openClawSessionId = "emission-session-1";
 const openClawSessionKey = "agent:main:tui:debug-sink";
@@ -27,11 +28,8 @@ describe("agenr debug sink event emission", () => {
   });
 
   afterEach(async () => {
-    while (databases.length > 0) {
-      await databases.pop()?.close();
-    }
-    const fs = await import("node:fs/promises");
-    await fs.rm(tempRoot, { recursive: true, force: true });
+    await closeTestDatabases(databases);
+    await removeTestPath(tempRoot);
   });
 
   it("emits tool_call, tool_result, and unified_recall events for agenr_recall", async () => {

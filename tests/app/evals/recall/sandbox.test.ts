@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { access, constants, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, constants, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -8,12 +8,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createDatabase } from "../../../../src/adapters/db/client.js";
 import { setupRecallEvalSandbox } from "../../../../src/app/evals/recall/sandbox.js";
 import type { Entry } from "../../../../src/core/types.js";
+import { removeTestPath, waitForDatabaseRelease } from "../../../helpers/temp-paths.js";
 
 const tempPaths: string[] = [];
 
 afterEach(async () => {
+  await waitForDatabaseRelease();
+
   while (tempPaths.length > 0) {
-    await rm(tempPaths.pop() ?? "", { recursive: true, force: true });
+    await removeTestPath(tempPaths.pop() ?? "");
   }
 });
 

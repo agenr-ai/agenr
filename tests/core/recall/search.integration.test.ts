@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -10,6 +9,7 @@ import { createRecallAdapter } from "../../../src/adapters/db/recall-adapter.js"
 import type { EmbeddingPort } from "../../../src/core/ports.js";
 import { composeEmbeddingText } from "../../../src/core/store/embedding-text.js";
 import type { Entry } from "../../../src/core/types.js";
+import { closeTestDatabases, removeTestPath } from "../../helpers/temp-paths.js";
 import { recall } from "../../../src/core/recall/search.js";
 import { createNoopRecallTraceSink, type RecallExecutionTraceSummary } from "../../../src/core/recall/trace.js";
 
@@ -26,12 +26,10 @@ beforeEach(() => {
 afterEach(async () => {
   vi.useRealTimers();
 
-  while (openDatabases.length > 0) {
-    await openDatabases.pop()?.close();
-  }
+  await closeTestDatabases(openDatabases);
 
   while (tempDatabasePaths.length > 0) {
-    await rm(tempDatabasePaths.pop() ?? "", { force: true });
+    await removeTestPath(tempDatabasePaths.pop() ?? "");
   }
 });
 

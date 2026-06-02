@@ -1,4 +1,3 @@
-import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -6,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
 import { createWorkingMemoryRepository } from "../../../src/adapters/db/working-memory-repository.js";
 import { createWorkingMemoryService } from "../../../src/app/working-memory/service.js";
+import { closeTestDatabase, removeTestPath } from "../../helpers/temp-paths.js";
 
 /** Creates an isolated working-memory service backed by a temp database. */
 export async function createWorkingMemoryTestService(): Promise<{
@@ -30,6 +30,6 @@ export async function createWorkingMemoryTestService(): Promise<{
 
 /** Closes and removes one temp working-memory database. */
 export async function closeWorkingMemoryTestService(database: SqlDatabase, dbPath: string): Promise<void> {
-  await database.close();
-  await fs.rm(dbPath, { force: true });
+  await closeTestDatabase(database);
+  await removeTestPath(dbPath);
 }

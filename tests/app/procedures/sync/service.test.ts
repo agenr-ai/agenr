@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { rm } from "node:fs/promises";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -11,6 +10,7 @@ import { computeProcedureRevisionHash, computeProcedureSourceHash } from "../../
 import { parseAndNormalizeProcedureYaml } from "../../../../src/core/procedures/normalization.js";
 import { composeProcedureRecallText } from "../../../../src/core/procedures/recall-text.js";
 import type { Procedure } from "../../../../src/core/types.js";
+import { closeTestDatabases, removeTestPath } from "../../../helpers/temp-paths.js";
 
 describe("procedure sync service", () => {
   const databases: SqlDatabase[] = [];
@@ -19,12 +19,10 @@ describe("procedure sync service", () => {
   afterEach(async () => {
     vi.restoreAllMocks();
 
-    while (databases.length > 0) {
-      await databases.pop()?.close();
-    }
+    await closeTestDatabases(databases);
 
     while (databasePaths.length > 0) {
-      await rm(databasePaths.pop() ?? "", { force: true });
+      await removeTestPath(databasePaths.pop() ?? "");
     }
   });
 

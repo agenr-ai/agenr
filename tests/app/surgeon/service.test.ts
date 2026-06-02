@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -32,6 +32,7 @@ import {
 } from "../../../src/adapters/db/surgeon-run-log.js";
 import { runAutonomousSurgeon, runSurgeon, type SurgeonRunOptions } from "../../../src/app/surgeon/service.js";
 import type { Entry } from "../../../src/core/types.js";
+import { closeTestDatabases, removeTestPath } from "../../helpers/temp-paths.js";
 
 const TEST_NOW = new Date("2026-03-29T12:00:00.000Z");
 const TEST_MODEL = getModel("openai", "gpt-5.4-mini");
@@ -58,12 +59,10 @@ describe("runSurgeon", () => {
     vi.restoreAllMocks();
     runAgentLoopMock.mockReset();
 
-    while (databases.length > 0) {
-      await databases.pop()?.close();
-    }
+    await closeTestDatabases(databases);
 
     while (tempPaths.length > 0) {
-      await rm(tempPaths.pop() ?? "", { recursive: true, force: true });
+      await removeTestPath(tempPaths.pop() ?? "");
     }
   });
 

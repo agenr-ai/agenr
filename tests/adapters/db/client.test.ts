@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -11,7 +11,7 @@ import { createRecallAdapter } from "../../../src/adapters/db/recall-adapter.js"
 import { computeProcedureRevisionHash, computeProcedureSourceHash } from "../../../src/core/procedures/hashing.js";
 import { composeProcedureRecallText } from "../../../src/core/procedures/recall-text.js";
 import type { Entry, Procedure } from "../../../src/core/types.js";
-import { removeTestPath, waitForDatabaseRelease } from "../../helpers/temp-paths.js";
+import { closeTestDatabases, removeTestPath } from "../../helpers/temp-paths.js";
 
 describe("createDatabase", () => {
   const databases: SqlDatabase[] = [];
@@ -20,11 +20,7 @@ describe("createDatabase", () => {
   afterEach(async () => {
     vi.useRealTimers();
 
-    while (databases.length > 0) {
-      await databases.pop()?.close();
-    }
-
-    await waitForDatabaseRelease();
+    await closeTestDatabases(databases);
 
     while (databasePaths.length > 0) {
       await removeTestPath(databasePaths.pop() ?? "");

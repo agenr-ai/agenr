@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -9,6 +9,7 @@ import { createDatabase } from "../../../../src/adapters/db/client.js";
 import { createInternalRecallEvalRoute, type RecallEvalCaseRunner } from "../../../../src/adapters/api/routes/internal-recall-eval.js";
 import { composeEmbeddingText } from "../../../../src/core/store/embedding-text.js";
 import type { Entry } from "../../../../src/core/types.js";
+import { removeTestPath, waitForDatabaseRelease } from "../../../helpers/temp-paths.js";
 
 const tempPaths: string[] = [];
 
@@ -21,8 +22,10 @@ afterEach(async () => {
   delete process.env.AGENR_CONFIG_DIR;
   delete process.env.AGENR_CONFIG_PATH;
 
+  await waitForDatabaseRelease();
+
   while (tempPaths.length > 0) {
-    await rm(tempPaths.pop() ?? "", { recursive: true, force: true });
+    await removeTestPath(tempPaths.pop() ?? "");
   }
 });
 

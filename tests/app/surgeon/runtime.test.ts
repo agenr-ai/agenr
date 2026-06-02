@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -18,6 +18,7 @@ vi.mock("../../../src/app/surgeon/service.js", () => ({
 }));
 
 import { loadSurgeonBacklogRuntime, loadSurgeonStatusRuntime, reviewSurgeonProposalRuntime, runSurgeonRuntime } from "../../../src/app/surgeon/runtime.js";
+import { removeTestPath, waitForDatabaseRelease } from "../../helpers/temp-paths.js";
 
 const tempPaths: string[] = [];
 
@@ -25,8 +26,10 @@ afterEach(async () => {
   runAutonomousSurgeonMock.mockReset();
   runSurgeonMock.mockReset();
 
+  await waitForDatabaseRelease();
+
   while (tempPaths.length > 0) {
-    await rm(tempPaths.pop() ?? "", { recursive: true, force: true });
+    await removeTestPath(tempPaths.pop() ?? "");
   }
 });
 
