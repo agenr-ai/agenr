@@ -1,7 +1,7 @@
 import { rm } from "node:fs/promises";
 import path from "node:path";
 
-const IS_WIN = process.platform === "win32";
+import { isWindowsTestMode } from "./test-platform.js";
 
 /** Resolves Unix-style fixture paths the same way CLI user-path handling does on Windows. */
 export function resolveTestPath(unixStylePath: string): string {
@@ -29,8 +29,9 @@ export async function removeTestPath(targetPath: string): Promise<void> {
     return;
   }
 
-  const maxAttempts = IS_WIN ? 20 : 5;
-  const retryDelayMs = IS_WIN ? 100 : 50;
+  const windowsMode = isWindowsTestMode();
+  const maxAttempts = windowsMode ? 20 : 5;
+  const retryDelayMs = windowsMode ? 100 : 50;
   let lastError: unknown;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
@@ -59,7 +60,7 @@ export async function removeTestPath(targetPath: string): Promise<void> {
 
 /** Waits briefly on Windows so libSQL can release file handles before cleanup. */
 export async function waitForDatabaseRelease(): Promise<void> {
-  if (IS_WIN) {
+  if (isWindowsTestMode()) {
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
 }

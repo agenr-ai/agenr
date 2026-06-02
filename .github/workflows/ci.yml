@@ -5,17 +5,16 @@ on:
   push:
     branches:
       - master
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  validate:
-    name: ${{ matrix.os }} / Node 24
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
+  validate-linux:
+    name: ubuntu-latest / Node 24
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -46,6 +45,35 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: Smoke packed packages
+        run: pnpm smoke:packages
+
+      - name: Test
+        run: pnpm test
+
+  validate-windows:
+    name: windows-latest / Node 24
+    runs-on: windows-latest
+    needs: validate-linux
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Smoke packed packages
         run: pnpm smoke:packages

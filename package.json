@@ -30,6 +30,9 @@
     "format:check": "prettier --check .",
     "smoke:packages": "node scripts/package-smoke.mjs",
     "test": "vitest run",
+    "test:win-sim": "node scripts/test-win-sim.mjs",
+    "test:docker": "node scripts/test-docker.mjs",
+    "test:docker:check": "node scripts/test-docker.mjs check",
     "test:watch": "vitest"
   },
   "dependencies": {
