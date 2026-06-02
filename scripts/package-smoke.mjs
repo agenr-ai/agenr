@@ -120,21 +120,11 @@ function resolveCommandInvocation(command, args) {
 
   return {
     command: "cmd.exe",
-    args: ["/d", "/c", [command, ...args].map(quoteWindowsCommandArg).join(" ")],
+    args: ["/d", "/c", command, ...args],
   };
 }
 
 /** Returns true for package-manager commands that are exposed as `.cmd` files on Windows. */
 function requiresWindowsCommandShell(command) {
   return command === "npm" || command === "npx";
-}
-
-/** Quotes one cmd.exe argument while preserving paths with spaces. */
-function quoteWindowsCommandArg(value) {
-  const text = String(value);
-  if (!/[\s"&()<>^|]/u.test(text)) {
-    return text;
-  }
-
-  return `"${text.replace(/["&()<>^|]/gu, "^$&")}"`;
 }
