@@ -86,7 +86,7 @@ async function smokePackageImport(packageTarball, packageName, label) {
   await initApp(appDir);
   await run("npm", ["install", "--no-audit", "--no-fund", packageTarball], { cwd: appDir });
   await run(
-    "node",
+    process.execPath,
     ["--input-type=module", "-e", `const mod = await import(${JSON.stringify(packageName)}); if (!mod.default) throw new Error("missing default export");`],
     {
       cwd: appDir,
@@ -102,11 +102,39 @@ async function initApp(appDir) {
 
 /** Runs one command with Windows command-shim support. */
 async function run(command, args, options = {}) {
-  return execFileAsync(command, args, {
+  const invocation = resolveCommandInvocation(command, args);
+  return execFileAsync(invocation.command, invocation.args, {
     cwd: options.cwd,
     env: options.env ?? process.env,
     encoding: "utf8",
-    shell: process.platform === "win32",
+    shell: false,
     windowsHide: true,
   });
+}
+
+/** Resolves Windows `.cmd` shims without losing spaces in arguments. */
+function resolveCommandInvocation(command, args) {
+  if (process.platform !== "win32" || !requiresWindowsCommandShell(command)) {
+    return { command, args };
+  }
+
+  return {
+    command: "cmd.exe",
+    args: ["/d", "/s", "/c", [command, ...args].map(quoteWindowsCommandArg).join(" ")],
+  };
+}
+
+/** Returns true for package-manager commands that are exposed as `.cmd` files on Windows. */
+function requiresWindowsCommandShell(command) {
+  return command === "npm" || command === "npx";
+}
+
+/** Quotes one cmd.exe argument while preserving paths with spaces. */
+function quoteWindowsCommandArg(value) {
+  const text = String(value);
+  if (!/[\s"&()<>^|]/u.test(text)) {
+    return text;
+  }
+
+  return `"${text.replace(/["&()<>^|]/gu, "^$&")}"`;
 }
