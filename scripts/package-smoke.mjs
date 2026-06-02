@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -7,6 +7,8 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = process.cwd();
+const DEFAULT_TIMEOUT_MS = process.platform === "win32" ? 900_000 : 300_000;
+const INSTALL_TIMEOUT_MS = process.platform === "win32" ? 900_000 : 600_000;
 const tempRoot = await mkdtemp(path.join(os.tmpdir(), "agenr package smoke "));
 
 try {
@@ -23,7 +25,7 @@ try {
 
   console.log("package smoke passed");
 } finally {
-  await rm(tempRoot, { force: true, recursive: true });
+  await removeTempRoot(tempRoot);
 }
 
 /** Packs one package into a shared temporary directory. */
@@ -42,8 +44,12 @@ async function packPackage(packageDir, packDir) {
 async function smokeRootCli(packageTarball) {
   const appDir = path.join(tempRoot, "cli app with spaces");
   await initApp(appDir);
-  await run("npm", ["install", "--no-audit", "--no-fund", packageTarball], { cwd: appDir });
-  await run(process.execPath, [path.join(appDir, "node_modules", "agenr", "dist", "cli.js"), "--version"], { cwd: appDir });
+  await run("npm", ["install", "--no-audit", "--no-fund", packageTarball], {
+    cwd: appDir,
+    timeout: INSTALL_TIMEOUT_MS,
+  });
+  const cliPath = path.join(appDir, "node_modules", "agenr", "dist", "cli.js");
+  await run(process.execPath, [cliPath, "--version"], { cwd: appDir });
 
   const configDir = path.join(appDir, "config with spaces");
   const configPath = path.join(configDir, "config.json");
@@ -66,7 +72,7 @@ async function smokeRootCli(packageTarball) {
     "utf8",
   );
 
-  await run("npx", ["agenr", "db", "reset", "--yes"], {
+  await run(process.execPath, [cliPath, "db", "reset", "--yes"], {
     cwd: appDir,
     env: {
       ...process.env,
@@ -84,7 +90,10 @@ async function smokeRootCli(packageTarball) {
 async function smokePackageImport(packageTarball, packageName, label) {
   const appDir = path.join(tempRoot, `${label} app with spaces`);
   await initApp(appDir);
-  await run("npm", ["install", "--no-audit", "--no-fund", packageTarball], { cwd: appDir });
+  await run("npm", ["install", "--no-audit", "--no-fund", packageTarball], {
+    cwd: appDir,
+    timeout: INSTALL_TIMEOUT_MS,
+  });
   await run(
     process.execPath,
     ["--input-type=module", "-e", `const mod = await import(${JSON.stringify(packageName)}); if (!mod.default) throw new Error("missing default export");`],
@@ -100,6 +109,20 @@ async function initApp(appDir) {
   await run("npm", ["init", "-y"], { cwd: appDir });
 }
 
+/** Best-effort temp directory cleanup for Windows file-lock races. */
+async function removeTempRoot(dir) {
+  try {
+    await rm(dir, { force: true, recursive: true, maxRetries: 10, retryDelay: 1_000 });
+  } catch (error) {
+    if (isBusyRemoveError(error)) {
+      console.warn(`warning: could not remove temp directory ${dir}: ${error.message}`);
+      return;
+    }
+
+    throw error;
+  }
+}
+
 /** Runs one command with Windows command-shim support. */
 async function run(command, args, options = {}) {
   const invocation = resolveCommandInvocation(command, args);
@@ -108,28 +131,55 @@ async function run(command, args, options = {}) {
     cwd: options.cwd,
     env: options.env ?? process.env,
     encoding: "utf8",
-    shell: false,
-    timeout: options.timeout ?? 300_000,
+    shell: invocation.shell,
+    timeout: options.timeout ?? DEFAULT_TIMEOUT_MS,
     windowsHide: true,
   });
 }
 
 /** Resolves Windows `.cmd` shims without losing spaces in arguments. */
 function resolveCommandInvocation(command, args) {
-  if (process.platform !== "win32" || !requiresWindowsCommandShell(command)) {
-    return { command, args };
+  if (process.platform !== "win32") {
+    return { command, args, shell: false };
   }
 
+  const resolved = resolveWindowsCommand(command);
   return {
-    command: "cmd.exe",
-    args: ["/d", "/c", command, ...args],
+    command: resolved,
+    args,
+    shell: shouldUseShellForCommand(resolved),
   };
 }
 
-/** Returns true for package-manager commands that are exposed as `.cmd` files on Windows. */
-function requiresWindowsCommandShell(command) {
+/** Resolves a Windows command name to its executable shim when available. */
+function resolveWindowsCommand(command) {
+  if (path.extname(command).length > 0) {
+    return command;
+  }
+
+  return findBinaryPath(command) ?? command;
+}
+
+/** Returns true when Node must launch a Windows `.cmd` or `.bat` shim through a shell. */
+function shouldUseShellForCommand(command) {
   const extension = path.extname(command).toLowerCase();
-  return command === "npm" || command === "npx" || extension === ".cmd" || extension === ".bat";
+  return extension === ".cmd" || extension === ".bat";
+}
+
+/** Finds an executable on the current PATH. */
+function findBinaryPath(name) {
+  try {
+    const output = execFileSync("where", [name], { encoding: "utf8" }).trim();
+    const firstLine = output.split(/\r?\n/u)[0]?.trim();
+    return firstLine && firstLine.length > 0 ? firstLine : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Returns true for Windows temp cleanup races after timed-out child processes. */
+function isBusyRemoveError(error) {
+  return error && typeof error === "object" && "code" in error && (error.code === "EBUSY" || error.code === "EPERM" || error.code === "ENOTEMPTY");
 }
 
 /** Formats one command for smoke-test progress output. */
