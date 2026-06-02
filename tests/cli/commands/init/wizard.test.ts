@@ -92,6 +92,11 @@ describe("runInitWizard", () => {
     });
 
     expect(runtime.runSetupCore).toHaveBeenCalledTimes(1);
+    expect(runtime.runSetupCore).toHaveBeenCalledWith(
+      expect.objectContaining({
+        populateAllFeatures: true,
+      }),
+    );
     expect(runtime.installOpenClawPlugin).not.toHaveBeenCalled();
     expect(runtime.scanSessionFiles).not.toHaveBeenCalled();
     expect(prompts.notes.at(-1)?.message).toContain("OpenClaw: not detected");

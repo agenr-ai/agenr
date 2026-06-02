@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { resolveAgenrFeatureFlags } from "../../../src/app/features/resolve.js";
-import { DEFAULT_AGENR_FEATURE_FLAGS } from "../../../src/app/features/types.js";
+import { AGENR_FEATURE_FLAG_KEYS, DEFAULT_AGENR_FEATURE_FLAGS, createAllEnabledFeatureFlagConfig } from "../../../src/app/features/types.js";
 
 describe("resolveAgenrFeatureFlags", () => {
   it("returns all-off defaults when features are omitted", () => {
@@ -35,5 +35,15 @@ describe("resolveAgenrFeatureFlags", () => {
       sessionTreeCompaction: false,
       goalContinuation: false,
     });
+  });
+
+  it("creates a persisted config block with every flag enabled", () => {
+    expect(createAllEnabledFeatureFlagConfig()).toEqual({
+      workingMemory: true,
+      sessionTreeLineage: true,
+      sessionTreeCompaction: true,
+      goalContinuation: true,
+    });
+    expect(Object.keys(createAllEnabledFeatureFlagConfig()).sort()).toEqual([...AGENR_FEATURE_FLAG_KEYS].sort());
   });
 });

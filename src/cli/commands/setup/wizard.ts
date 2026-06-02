@@ -123,6 +123,7 @@ export async function runSetupCore(options: SetupCoreOptions = {}): Promise<Setu
     embeddingApiKey,
     stageOverrides,
     dbPath,
+    populateAllFeatures: options.populateAllFeatures,
   });
   const readiness = runtime.getSetupReadiness(nextConfig);
   const ready = readiness.ready;

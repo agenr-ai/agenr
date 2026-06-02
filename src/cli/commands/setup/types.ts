@@ -59,6 +59,8 @@ export interface SetupCoreOptions {
   prompts?: WizardPrompts;
   /** Runtime dependencies used by the interactive flow. */
   runtime?: SetupRuntime;
+  /** When true, writes every known feature flag as enabled in config.json. */
+  populateAllFeatures?: boolean;
 }
 
 /**

@@ -1,5 +1,6 @@
 import { EMBEDDING_MODEL, resolveEmbeddingApiKey } from "../../../adapters/embeddings.js";
 import { resolveLlmCredentials } from "../../../adapters/llm.js";
+import { createAllEnabledFeatureFlagConfig } from "../../../app/features/types.js";
 import { type AgenrAuthMethod, type AgenrConfigInput, type AgenrStoredCredentials } from "../../../config.js";
 import { formatLabel, formatPathForDisplay } from "../../ui.js";
 import { appendSetupStageSummaryLines, applySetupStageOverrides, collectSetupStageProviders, type SetupStageOverrides } from "./stages.js";
@@ -32,6 +33,8 @@ export interface BuildNextConfigValues {
   stageOverrides: SetupStageOverrides;
   /** Database path to persist. */
   dbPath: string;
+  /** When true, writes every known feature flag as enabled in config.json. */
+  populateAllFeatures?: boolean;
 }
 
 /**
@@ -69,6 +72,7 @@ export function buildNextConfig(existingConfig: AgenrConfigInput | undefined, va
     model: values.model,
     ...(nextCredentials ? { credentials: nextCredentials } : { credentials: undefined }),
     dbPath: values.dbPath,
+    ...(values.populateAllFeatures ? { features: createAllEnabledFeatureFlagConfig() } : {}),
   };
 
   return applySetupStageOverrides(baseConfig, values.stageOverrides);

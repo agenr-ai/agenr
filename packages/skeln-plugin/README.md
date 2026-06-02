@@ -35,7 +35,7 @@ Optional `memoryPolicy` accepts a JSON string with the same shape as the OpenCla
 }
 ```
 
-Set it under `extensions.settings.agenr.memoryPolicy` in Skeln config.
+Set it under `extensions.settings.agenr.memoryPolicy` in Skeln config. Fresh installs via `skeln extension add @agenr/skeln-plugin` seed that default automatically when the setting is unset.
 
 `skeln` is the host runtime for this extension but is not an install-time dependency because the bundled adapter does not import it at runtime. The package declares the non-Skeln runtime dependencies required by the copied agenr dist chunks.
 

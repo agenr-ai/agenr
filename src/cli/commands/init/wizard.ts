@@ -106,6 +106,7 @@ export async function runInitWizard(options: InitWizardOptions = {}): Promise<vo
       setupResult = await runtime.runSetupCore({
         existingConfig: activeConfig,
         prompts,
+        populateAllFeatures: true,
       });
       if (!setupResult) {
         prompts.cancel("Init cancelled.");
@@ -128,6 +129,7 @@ export async function runInitWizard(options: InitWizardOptions = {}): Promise<vo
         setupResult = await runtime.runSetupCore({
           existingConfig: activeConfig,
           prompts,
+          populateAllFeatures: true,
         });
         if (!setupResult) {
           prompts.cancel("Init cancelled.");
@@ -139,6 +141,7 @@ export async function runInitWizard(options: InitWizardOptions = {}): Promise<vo
     } else {
       setupResult = await runtime.runSetupCore({
         prompts,
+        populateAllFeatures: true,
       });
       if (!setupResult) {
         prompts.cancel("Init cancelled.");

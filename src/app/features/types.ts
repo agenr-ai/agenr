@@ -37,6 +37,18 @@ const DEFAULT_AGENR_FEATURE_FLAGS: AgenrFeatureFlags = {
 };
 
 /**
+ * Returns a persisted feature-flag block with every known flag enabled.
+ *
+ * Used by first-run init so `config.json` explicitly records the full feature
+ * surface instead of relying on implicit defaults.
+ *
+ * @returns Sparse persisted shape with every flag set to `true`.
+ */
+export function createAllEnabledFeatureFlagConfig(): AgenrFeatureFlagConfig {
+  return Object.fromEntries(AGENR_FEATURE_FLAG_KEYS.map((key) => [key, true])) as AgenrFeatureFlagConfig;
+}
+
+/**
  * Working-memory rollout flags for the ledger, agenr_work, and /goal surfaces.
  * Automatic per-turn injection is controlled separately by memoryPolicy.workingContext.
  */

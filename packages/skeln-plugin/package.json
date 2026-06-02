@@ -40,7 +40,8 @@
       },
       "memoryPolicy": {
         "type": "string",
-        "description": "JSON object of memory-policy overrides for slot policies, session-start injection, and before-turn recall. Same shape as the OpenClaw agenr plugin memoryPolicy block."
+        "description": "JSON object of memory-policy overrides for slot policies, session-start injection, and before-turn recall. Same shape as the OpenClaw agenr plugin memoryPolicy block.",
+        "default": "{\"sessionStart\":{\"enabled\":false,\"coreMemory\":false,\"relevantDurableMemory\":false},\"beforeTurn\":{\"enabled\":false,\"procedureSuggestion\":false},\"workingContext\":{\"enabled\":true}}"
       }
     }
   },

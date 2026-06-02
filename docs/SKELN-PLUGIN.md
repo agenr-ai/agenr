@@ -121,7 +121,21 @@ The Skeln manifest in `packages/skeln-plugin/package.json` declares extension id
 
 Skeln extension settings are flat `boolean | string` values, so nested `memoryPolicy` is stored as JSON text rather than a nested object.
 
-Example Skeln config fragment:
+Example Skeln config fragment after `skeln extension add @agenr/skeln-plugin`:
+
+```json
+{
+  "extensions": {
+    "settings": {
+      "agenr": {
+        "memoryPolicy": "{\"sessionStart\":{\"enabled\":false,\"coreMemory\":false,\"relevantDurableMemory\":false},\"beforeTurn\":{\"enabled\":false,\"procedureSuggestion\":false},\"workingContext\":{\"enabled\":true}}"
+      }
+    }
+  }
+}
+```
+
+Optional overrides such as `dbPath` and `configPath` use the same `extensions.settings.agenr.*` namespace:
 
 ```json
 {
