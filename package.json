@@ -15,10 +15,10 @@
   "scripts": {
     "build": "pnpm run build:root && pnpm run build:plugin",
     "build:root": "tsup",
-    "build:plugin": "pnpm --filter @agenr/agenr-plugin build && pnpm --filter @agenr/skeln-plugin build",
+    "build:plugin": "pnpm --filter @agenr/openclaw-plugin build && pnpm --filter @agenr/skeln-plugin build",
     "build:debug": "pnpm run build:root:debug && pnpm run build:plugin:debug",
     "build:root:debug": "tsup --sourcemap",
-    "build:plugin:debug": "pnpm --filter @agenr/agenr-plugin build:debug && pnpm --filter @agenr/skeln-plugin build:debug",
+    "build:plugin:debug": "pnpm --filter @agenr/openclaw-plugin build:debug && pnpm --filter @agenr/skeln-plugin build:debug",
     "dev": "tsup --watch",
     "internal:eval-server": "pnpm run build:root && node dist/internal-eval-server.js",
     "internal:recall-eval-server": "pnpm run internal:eval-server",

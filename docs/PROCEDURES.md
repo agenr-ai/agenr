@@ -254,7 +254,6 @@ If prune or delete semantics are needed later, they should arrive through an exp
 
 The seed procedures are:
 
-- `agenr/release`
 - `agenr/surgeon-review`
 - `agenr/sandbox-validation`
 - `agenr/claim-key-scenario-run`

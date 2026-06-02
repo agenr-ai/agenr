@@ -1,7 +1,7 @@
 # OpenClaw Plugin
 
 `src/adapters/openclaw/` is agenr's production OpenClaw integration.
-The publishable package lives in `packages/openclaw-plugin` and ships as `@agenr/agenr-plugin`.
+The publishable package lives in `packages/openclaw-plugin` and ships as `@agenr/openclaw-plugin`.
 The OpenClaw plugin id remains `agenr`, so runtime identity and config keys stay stable.
 The root `agenr` CLI package does not declare OpenClaw as a runtime dependency.
 
@@ -58,11 +58,11 @@ The adapter is intentionally not a second memory brain. Durable memory, recall r
 Install the plugin package, not the main CLI package:
 
 ```bash
-openclaw plugins install @agenr/agenr-plugin
+openclaw plugins install @agenr/openclaw-plugin
 openclaw gateway restart
 ```
 
-`@agenr/agenr-plugin` owns the OpenClaw SDK runtime dependency and bundles the plugin from `packages/openclaw-plugin/src/index.ts`.
+`@agenr/openclaw-plugin` owns the OpenClaw SDK runtime dependency and bundles the plugin from `packages/openclaw-plugin/src/index.ts`.
 The root `agenr` package builds the CLI, eval seams, host-neutral recall entry, and Skeln adapter, but it does not publish `dist/adapters/openclaw/index.js`.
 
 The runtime plugin id is still `agenr`, so existing OpenClaw references remain:

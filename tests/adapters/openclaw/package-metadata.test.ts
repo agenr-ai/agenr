@@ -39,7 +39,7 @@ describe("published OpenClaw plugin package metadata", () => {
   it("publishes the plugin from the dedicated package entry", async () => {
     const packageJson = await readJsonFile<PackageJson>(pluginPackageJsonPath);
 
-    expect(packageJson.name).toBe("@agenr/agenr-plugin");
+    expect(packageJson.name).toBe("@agenr/openclaw-plugin");
     expect(packageJson.openclaw?.extensions).toEqual(["./dist/index.js"]);
   });
 

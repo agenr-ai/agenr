@@ -20,7 +20,7 @@ try {
   const skelnPluginPackage = await packPackage(path.join(repoRoot, "packages", "skeln-plugin"), packDir);
 
   await smokeRootCli(rootPackage);
-  await smokePackageImport(openClawPluginPackage, "@agenr/agenr-plugin", "openclaw plugin");
+  await smokePackageImport(openClawPluginPackage, "@agenr/openclaw-plugin", "openclaw plugin");
   await smokePackageImport(skelnPluginPackage, "@agenr/skeln-plugin", "skeln plugin");
 
   console.log("package smoke passed");
