@@ -43,7 +43,7 @@ async function smokeRootCli(packageTarball) {
   const appDir = path.join(tempRoot, "cli app with spaces");
   await initApp(appDir);
   await run("npm", ["install", "--no-audit", "--no-fund", packageTarball], { cwd: appDir });
-  await run("npx", ["agenr", "--version"], { cwd: appDir });
+  await run(process.execPath, [path.join(appDir, "node_modules", "agenr", "dist", "cli.js"), "--version"], { cwd: appDir });
 
   const configDir = path.join(appDir, "config with spaces");
   const configPath = path.join(configDir, "config.json");
@@ -103,11 +103,13 @@ async function initApp(appDir) {
 /** Runs one command with Windows command-shim support. */
 async function run(command, args, options = {}) {
   const invocation = resolveCommandInvocation(command, args);
+  console.log(`$ ${formatCommandForLog(command, args)}`);
   return execFileAsync(invocation.command, invocation.args, {
     cwd: options.cwd,
     env: options.env ?? process.env,
     encoding: "utf8",
     shell: false,
+    timeout: options.timeout ?? 300_000,
     windowsHide: true,
   });
 }
@@ -126,5 +128,11 @@ function resolveCommandInvocation(command, args) {
 
 /** Returns true for package-manager commands that are exposed as `.cmd` files on Windows. */
 function requiresWindowsCommandShell(command) {
-  return command === "npm" || command === "npx";
+  const extension = path.extname(command).toLowerCase();
+  return command === "npm" || command === "npx" || extension === ".cmd" || extension === ".bat";
+}
+
+/** Formats one command for smoke-test progress output. */
+function formatCommandForLog(command, args) {
+  return [path.basename(command), ...args].map((arg) => (String(arg).includes(" ") ? JSON.stringify(arg) : String(arg))).join(" ");
 }
