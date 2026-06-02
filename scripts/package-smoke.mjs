@@ -1,4 +1,4 @@
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -143,38 +143,26 @@ function resolveCommandInvocation(command, args) {
     return { command, args, shell: false };
   }
 
-  const resolved = resolveWindowsCommand(command);
+  if (isWindowsCmdShimCommand(command)) {
+    return {
+      command: "cmd.exe",
+      args: ["/d", "/c", command, ...args],
+      shell: false,
+    };
+  }
+
+  const extension = path.extname(command).toLowerCase();
   return {
-    command: resolved,
+    command,
     args,
-    shell: shouldUseShellForCommand(resolved),
+    shell: extension === ".cmd" || extension === ".bat",
   };
 }
 
-/** Resolves a Windows command name to its executable shim when available. */
-function resolveWindowsCommand(command) {
-  if (path.extname(command).length > 0) {
-    return command;
-  }
-
-  return findBinaryPath(command) ?? command;
-}
-
-/** Returns true when Node must launch a Windows `.cmd` or `.bat` shim through a shell. */
-function shouldUseShellForCommand(command) {
-  const extension = path.extname(command).toLowerCase();
-  return extension === ".cmd" || extension === ".bat";
-}
-
-/** Finds an executable on the current PATH. */
-function findBinaryPath(name) {
-  try {
-    const output = execFileSync("where", [name], { encoding: "utf8" }).trim();
-    const firstLine = output.split(/\r?\n/u)[0]?.trim();
-    return firstLine && firstLine.length > 0 ? firstLine : null;
-  } catch {
-    return null;
-  }
+/** Returns true for package-manager commands exposed as Windows `.cmd` shims. */
+function isWindowsCmdShimCommand(command) {
+  const base = path.basename(command).toLowerCase();
+  return base === "npm" || base === "npx" || base === "npm.cmd" || base === "npx.cmd";
 }
 
 /** Returns true for Windows temp cleanup races after timed-out child processes. */
