@@ -63,6 +63,8 @@ openclaw plugins install @agenr/agenr-plugin
 openclaw gateway restart
 ```
 
+The main `agenr` CLI package does not depend on the OpenClaw SDK at runtime. OpenClaw installs should use the plugin package above.
+
 `agenr init` normally does this for you, updates `openclaw.json`, and offers an initial ingest pass over existing sessions.
 The OpenClaw plugin id remains `agenr`, so `plugins.entries.agenr`, `plugins.slots.memory`, and existing plugin config keys do not change.
 After the plugin is installed, `openclaw plugins update agenr` continues to target that same plugin id.

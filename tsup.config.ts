@@ -6,7 +6,6 @@ export default defineConfig({
     "internal-eval-server": "src/internal-eval-server.ts",
     "internal-recall-eval-server": "src/internal-recall-eval-server.ts",
     "core/recall/index": "src/core/recall/index.ts",
-    "adapters/openclaw/index": "src/adapters/openclaw/index.ts",
     "adapters/skeln/index": "src/adapters/skeln/index.ts",
   },
   external: ["skeln", "@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "typebox"],

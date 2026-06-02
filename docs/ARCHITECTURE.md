@@ -83,7 +83,7 @@ Important points about the current tree:
 - `src/app/` owns orchestration for durable ingest, episode ingest, procedure sync, unified recall, session-start patch selection, surgeon execution, shared host plugin memory composition (`plugin-runtime/`), OpenClaw and Skeln runtime composition, the narrow recall-eval seam, and the repo-local claim-key scenario harness.
 - `src/adapters/` implements libSQL persistence, transcript and procedure-file discovery, config parsing, external model clients, OpenClaw host translation, and the internal HTTP adapter.
 - `src/config.ts`, `src/logger.ts`, `src/ui.ts`, and `src/version.ts` are shared runtime infrastructure, not domain logic.
-- `packages/openclaw-plugin/` is a packaging wrapper that re-exports the built plugin entry from `dist/`.
+- `packages/openclaw-plugin/` owns the publishable OpenClaw plugin bundle and its OpenClaw SDK runtime dependency. The root `agenr` package does not publish the OpenClaw plugin entry.
 - `procedures/` holds the repo-authored procedural-memory corpus that is synced into the database.
 
 ## 3. Layering and dependency boundaries
