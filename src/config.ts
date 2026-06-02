@@ -5,9 +5,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { canonicalizeAgenrConfigInput, parseAgenrConfig, toAgenrConfigInput } from "./adapters/config/parse-agenr-config.js";
+import { resolveConfigFilesystemPath, resolveLocalFilesystemPath } from "./filesystem-path.js";
 import {
   authMethodToProvider,
   AGENR_FEATURE_FLAG_KEYS,
@@ -197,7 +197,7 @@ export function resolveClaimExtractionConfig(config?: AgenrConfigInput | Resolve
  * @throws Error When the file contains malformed JSON or invalid config data.
  */
 export function readConfig(options: ResolveConfigPathOptions = {}): ResolvedAgenrConfig {
-  const configPath = resolveFilesystemPath(resolveConfigPath(options));
+  const configPath = resolveConfigFilesystemPath(resolveConfigPath(options));
   const defaultDbPath = resolveReadDefaultDbPath(options);
 
   if (!fs.existsSync(configPath)) {
@@ -235,7 +235,7 @@ export function readConfig(options: ResolveConfigPathOptions = {}): ResolvedAgen
  * @returns True when the resolved config path exists.
  */
 export function configFileExists(options: ResolveConfigPathOptions = {}): boolean {
-  return fs.existsSync(resolveFilesystemPath(resolveConfigPath(options)));
+  return fs.existsSync(resolveConfigFilesystemPath(resolveConfigPath(options)));
 }
 
 /**
@@ -246,7 +246,7 @@ export function configFileExists(options: ResolveConfigPathOptions = {}): boolea
  * @throws Error When the config contains invalid values.
  */
 export function writeConfig(config: AgenrConfigInput, options: ResolveConfigPathOptions = {}): void {
-  const configPath = resolveFilesystemPath(resolveConfigPath(options));
+  const configPath = resolveConfigFilesystemPath(resolveConfigPath(options));
   const configDir = path.dirname(configPath);
   const canonical = canonicalizeAgenrConfigInput(config, {
     defaultDbPath: resolvePersistedDefaultDbPath(),
@@ -283,11 +283,8 @@ function resolveAdjacentConfigPath(dbPath?: string): string | undefined {
   }
 
   if (normalizedDbPath.startsWith("file:")) {
-    try {
-      return path.join(path.dirname(fileURLToPath(normalizedDbPath)), "config.json");
-    } catch {
-      return undefined;
-    }
+    const filePath = resolveLocalFilesystemPath(normalizedDbPath);
+    return filePath ? path.join(path.dirname(filePath), "config.json") : undefined;
   }
 
   return path.join(path.dirname(normalizedDbPath), "config.json");
@@ -297,19 +294,6 @@ function resolveAdjacentConfigPath(dbPath?: string): string | undefined {
 function normalizeOptionalString(value?: string): string | undefined {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : undefined;
-}
-
-/** Converts filesystem-style or file-URL config paths into usable disk paths. */
-function resolveFilesystemPath(targetPath: string): string {
-  if (!targetPath.startsWith("file:")) {
-    return targetPath;
-  }
-
-  try {
-    return fileURLToPath(targetPath);
-  } catch {
-    return targetPath;
-  }
 }
 
 /** Resolves the default persisted database path before env overrides apply. */

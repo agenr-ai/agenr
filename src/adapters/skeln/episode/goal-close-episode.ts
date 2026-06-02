@@ -1,4 +1,4 @@
-import type { ExtensionContext } from "skeln";
+import type { ExtensionContext } from "../skeln-types.js";
 
 import type { EpisodeActivityThreshold } from "../../../app/episode-ingest/activity-threshold.js";
 import type { WorkingMemoryResult } from "../../../app/working-memory/results.js";

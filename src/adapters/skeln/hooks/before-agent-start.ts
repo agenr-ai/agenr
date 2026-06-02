@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ExtensionContext } from "skeln";
+import type { ExtensionContext } from "../skeln-types.js";
 
 import { shouldInjectWorkingContext, toWorkingContextAuditPointer, type WorkingContextAuditPointer } from "../../../app/working-memory/projection.js";
 

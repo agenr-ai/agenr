@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ExtensionContext } from "skeln";
+import type { ExtensionContext } from "../../../../src/adapters/skeln/skeln-types.js";
 
 import type { SessionStartDeps } from "../../../../src/app/session-start/index.js";
 import { resolveRuntimeCapabilities } from "../../../../src/app/features/capabilities.js";

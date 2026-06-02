@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
-import type { ExtensionContext } from "skeln";
+import type { ExtensionContext } from "../../../src/adapters/skeln/skeln-types.js";
 import { describe, expect, it } from "vitest";
 
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";

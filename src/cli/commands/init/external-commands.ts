@@ -1,4 +1,4 @@
-import { execFile, execFileSync } from "node:child_process";
+import { execFile, execFileSync, type ExecFileOptionsWithStringEncoding } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -37,7 +37,12 @@ export function execAsync(
   options: { encoding: "utf8"; timeout: number; env: NodeJS.ProcessEnv },
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    execFile(command, args, options, (error, stdout, stderr) => {
+    const execOptions: ExecFileOptionsWithStringEncoding = {
+      ...options,
+      ...(shouldUseShellForCommand(command) ? { shell: true } : {}),
+    };
+
+    execFile(command, args, execOptions, (error, stdout, stderr) => {
       if (error) {
         const message = [String(stderr ?? "").trim(), error.message].filter((value) => value.length > 0).join("\n");
         reject(new Error(message || error.message));
@@ -53,6 +58,25 @@ export function execAsync(
 }
 
 /**
+ * Determines when a resolved executable needs a shell for Node to launch it.
+ *
+ * Windows package managers commonly expose CLI tools through `.cmd` or `.bat`
+ * shims, and Node cannot execute those directly with shell-less `execFile`.
+ *
+ * @param command - Resolved executable path or command name.
+ * @param platform - Runtime platform to evaluate.
+ * @returns True when `execFile` should delegate through the platform shell.
+ */
+export function shouldUseShellForCommand(command: string, platform: NodeJS.Platform = process.platform): boolean {
+  if (platform !== "win32") {
+    return false;
+  }
+
+  const extension = path.extname(command).toLowerCase();
+  return extension === ".cmd" || extension === ".bat";
+}
+
+/**
  * Finds an executable on the current PATH.
  *
  * @param name - Executable name to resolve.
@@ -62,7 +86,7 @@ export function findBinaryPath(name: string): string | null {
   try {
     const lookupCommand = process.platform === "win32" ? "where" : "which";
     const output = execFileSync(lookupCommand, [name], { encoding: "utf8" }).trim();
-    const firstLine = output.split("\n")[0]?.trim();
+    const firstLine = output.split(/\r?\n/u)[0]?.trim();
     return firstLine && firstLine.length > 0 ? firstLine : null;
   } catch {
     return null;

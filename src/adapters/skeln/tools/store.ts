@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from "skeln";
+import type { ExtensionAPI, ExtensionContext } from "../skeln-types.js";
 
 import { STORE_TOOL_PARAMETERS, parseStoreToolParams, runStoreMemoryTool } from "../../shared/memory-tools.js";
 import type { AgenrSkelnServices } from "../runtime.js";

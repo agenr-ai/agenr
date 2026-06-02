@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from "skeln";
+import type { ExtensionAPI, ExtensionContext } from "./skeln-types.js";
 
 import type { SessionMemoryTriggerEvent } from "../../app/session-memory/types.js";
 import { formatErrorMessage } from "../shared/errors.js";

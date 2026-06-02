@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from "skeln";
+import type { ExtensionAPI, ExtensionContext } from "../skeln-types.js";
 
 import type { AgenrSkelnServices } from "../runtime.js";
 import type { AgenrSkelnSessionScope } from "../types.js";

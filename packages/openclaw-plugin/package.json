@@ -21,8 +21,10 @@
     "build:debug": "node build.mjs"
   },
   "dependencies": {
+    "@earendil-works/pi-ai": "^0.78.0",
     "@libsql/client": "^0.17.2",
-    "openclaw": "^2026.4.9"
+    "openclaw": "^2026.4.9",
+    "yaml": "^2.8.3"
   },
   "engines": {
     "node": ">=24"

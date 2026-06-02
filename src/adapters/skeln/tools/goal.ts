@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from "skeln";
+import type { ExtensionAPI, ExtensionContext } from "../skeln-types.js";
 
 import {
   CREATE_GOAL_TOOL_PARAMETERS,

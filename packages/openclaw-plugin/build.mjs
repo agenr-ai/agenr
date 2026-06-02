@@ -1,7 +1,8 @@
 import { mkdir, copyFile, readFile, writeFile, rm, readdir } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const pkgDir = new URL(".", import.meta.url).pathname;
+const pkgDir = fileURLToPath(new URL(".", import.meta.url));
 const root = path.resolve(pkgDir, "..", "..");
 const rootDist = path.join(root, "dist");
 const pluginDist = path.join(pkgDir, "dist");

@@ -1,4 +1,4 @@
-import type { ExtensionContext } from "skeln";
+import type { ExtensionContext } from "../skeln-types.js";
 
 import { formatErrorMessage } from "../../shared/errors.js";
 import type { SkelnSessionShutdownEvent } from "../hooks/session-memory.js";

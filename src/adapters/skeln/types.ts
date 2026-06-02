@@ -1,4 +1,4 @@
-import type { ExtensionContext } from "skeln";
+import type { ExtensionContext } from "./skeln-types.js";
 
 import type { AgenrFeatureFlagConfig } from "../../app/features/types.js";
 import type { PluginInjectionMemoryPolicyConfig } from "../../app/plugin-runtime/types.js";

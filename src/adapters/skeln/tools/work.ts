@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from "skeln";
+import type { ExtensionAPI, ExtensionContext } from "../skeln-types.js";
 
 import { parseWorkToolParams, runWorkMemoryTool, WORK_TOOL_PARAMETERS } from "../../shared/work-tools.js";
 import { toWorkingScopeFromSkelnSession } from "../session/scope.js";

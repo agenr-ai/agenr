@@ -1,8 +1,9 @@
 import { Command } from "commander";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createProgram } from "../../../src/cli/main.js";
-import { registerDbCommand } from "../../../src/cli/commands/db.js";
+import { registerDbCommand, resolveResetPath } from "../../../src/cli/commands/db.js";
 
 describe("registerDbCommand", () => {
   it("registers the db reset subcommand on the program", () => {
@@ -30,5 +31,14 @@ describe("registerDbCommand", () => {
         yes: true,
       }),
     );
+  });
+});
+
+describe("resolveResetPath", () => {
+  it("resolves relative file URLs to the correct local file", () => {
+    expect(resolveResetPath("file:relative%20db/knowledge.db")).toEqual({
+      deletePath: path.resolve("relative db", "knowledge.db"),
+      displayPath: path.resolve("relative db", "knowledge.db"),
+    });
   });
 });

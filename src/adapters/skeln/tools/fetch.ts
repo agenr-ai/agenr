@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from "skeln";
+import type { ExtensionAPI, ExtensionContext } from "../skeln-types.js";
 
 import { formatTargetSelector, sanitizeFetchToolParams } from "../../shared/entry-tools.js";
 import { FETCH_TOOL_PARAMETERS, parseFetchToolParams, runFetchMemoryTool } from "../../shared/memory-tools.js";

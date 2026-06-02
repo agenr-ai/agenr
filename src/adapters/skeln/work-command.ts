@@ -1,4 +1,4 @@
-import type { ExtensionContext } from "skeln";
+import type { ExtensionContext } from "./skeln-types.js";
 
 import type { AgenrWorkMutationActor, TrustedHostMutationSource } from "../../app/working-memory/constants.js";
 import type { AgenrWorkCloseMode, AgenrWorkParams, AgenrWorkUpdateOperation, WorkingExternalGoalMutationKind } from "../../app/working-memory/mutations.js";

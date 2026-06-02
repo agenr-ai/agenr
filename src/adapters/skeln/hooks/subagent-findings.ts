@@ -1,4 +1,4 @@
-import type { ExtensionContext } from "skeln";
+import type { ExtensionContext } from "../skeln-types.js";
 
 import type { WorkingCommandNote } from "../../../app/working-memory/snapshot.js";
 import type { createAgenrSkelnServices } from "../../../app/skeln/runtime.js";

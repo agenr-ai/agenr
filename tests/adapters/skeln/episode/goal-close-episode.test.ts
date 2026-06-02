@@ -1,4 +1,4 @@
-import type { ExtensionContext } from "skeln";
+import type { ExtensionContext } from "../../../../src/adapters/skeln/skeln-types.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const writeBoundedSessionEpisodeMock = vi.hoisted(() =>

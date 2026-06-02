@@ -28,6 +28,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "smoke:packages": "node scripts/package-smoke.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -45,7 +46,6 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^25.5.0",
-    "skeln": "file:../skeln",
     "typebox": "^1.1.38",
     "eslint": "^10.1.0",
     "eslint-plugin-jsdoc": "^62.8.1",
@@ -59,12 +59,5 @@
   "engines": {
     "node": ">=24"
   },
-  "license": "MIT",
-  "pnpm": {
-    "peerDependencyRules": {
-      "ignoreMissing": [
-        "skeln"
-      ]
-    }
-  }
+  "license": "MIT"
 }

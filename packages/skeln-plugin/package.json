@@ -53,12 +53,6 @@
     "@earendil-works/pi-ai": "^0.78.0",
     "yaml": "^2.8.3"
   },
-  "devDependencies": {
-    "skeln": "file:../../../skeln"
-  },
-  "peerDependencies": {
-    "skeln": ">=0.1.0"
-  },
   "engines": {
     "node": ">=24"
   },

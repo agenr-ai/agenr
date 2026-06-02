@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "skeln";
+import type { ExtensionAPI } from "./skeln-types.js";
 
 import type { PluginInjectionMemoryPolicyConfig } from "../../app/plugin-runtime/types.js";
 import { normalizePluginInjectionMemoryPolicyConfig } from "../shared/plugin-memory-policy-config.js";

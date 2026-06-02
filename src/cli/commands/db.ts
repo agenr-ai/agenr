@@ -1,12 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import * as clack from "@clack/prompts";
 import type { Command } from "commander";
 
 import { createDatabase } from "../../adapters/db/client.js";
 import { readConfig } from "../../config.js";
+import { resolveLocalFilesystemPath } from "../../filesystem-path.js";
 import { banner, ui } from "../../ui.js";
 
 /** CLI flags accepted by the `agenr db reset` command. */
@@ -63,28 +63,13 @@ export function registerDbCommand(program: Command): void {
 }
 
 /** Resolves the on-disk path details used by the reset command. */
-function resolveResetPath(dbPath: string): { deletePath?: string; displayPath: string } {
-  if (dbPath === ":memory:") {
+export function resolveResetPath(dbPath: string): { deletePath?: string; displayPath: string } {
+  const trimmedPath = dbPath.trim();
+  if (trimmedPath === ":memory:") {
     return { displayPath: dbPath };
   }
 
-  if (dbPath.startsWith("file:")) {
-    try {
-      const filePath = fileURLToPath(dbPath);
-      return {
-        deletePath: filePath,
-        displayPath: filePath,
-      };
-    } catch {
-      const resolvedPath = path.resolve(dbPath.slice("file:".length));
-      return {
-        deletePath: resolvedPath,
-        displayPath: resolvedPath,
-      };
-    }
-  }
-
-  const resolvedPath = path.resolve(dbPath);
+  const resolvedPath = resolveLocalFilesystemPath(trimmedPath) ?? path.resolve(trimmedPath);
   return {
     deletePath: resolvedPath,
     displayPath: resolvedPath,

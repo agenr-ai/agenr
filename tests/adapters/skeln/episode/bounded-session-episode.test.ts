@@ -1,4 +1,4 @@
-import type { ExtensionContext } from "skeln";
+import type { ExtensionContext } from "../../../../src/adapters/skeln/skeln-types.js";
 import { describe, expect, it, vi } from "vitest";
 
 import { resolveSessionFile, writeSkelnBoundedSessionEpisode } from "../../../../src/adapters/skeln/episode/bounded-session-episode.js";

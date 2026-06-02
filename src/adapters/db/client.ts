@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { createClient, type Client, type InArgs, type InStatement, type ResultSet, type Transaction } from "@libsql/client";
 
+import { resolveLocalFilesystemPath, toAbsoluteFileUrl } from "../../filesystem-path.js";
 import type { DatabasePort, EpisodeDatabasePort, ProcedureDatabasePort } from "../../core/ports.js";
 import type { EpisodeInput, TemporalWindow } from "../../core/episode/types.js";
 import type { Entry, EntryUpdateInput, Episode, EpisodeSource, Procedure } from "../../core/types.js";
@@ -306,9 +307,9 @@ async function openClient(dbPath: string): Promise<Client> {
     throw new Error("Database path must not be empty.");
   }
 
-  if (trimmedPath !== ":memory:" && !trimmedPath.startsWith("file:")) {
-    const resolvedPath = path.resolve(trimmedPath);
-    await fs.mkdir(path.dirname(resolvedPath), { recursive: true });
+  const localDbPath = resolveLocalFilesystemPath(trimmedPath);
+  if (localDbPath) {
+    await fs.mkdir(path.dirname(localDbPath), { recursive: true });
   }
 
   const client = createClient({ url: resolveClientUrl(trimmedPath) });
@@ -331,7 +332,8 @@ function resolveClientUrl(dbPath: string): string {
   if (dbPath.startsWith("file:")) {
     return dbPath;
   }
-  return `file:${path.resolve(dbPath)}`;
+
+  return toAbsoluteFileUrl(dbPath);
 }
 
 /** Rolls back an open libSQL transaction when it is still active. */

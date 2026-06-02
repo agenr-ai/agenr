@@ -330,6 +330,62 @@ describe("probeLlmCredentials", () => {
     });
   });
 
+  it("detects Codex CLI credentials under USERPROFILE-style home env", async () => {
+    const profileHome = await mkdtemp(path.join(os.tmpdir(), "agenr-codex-profile-"));
+    tempDirs.push(profileHome);
+    const codexHome = path.join(profileHome, ".codex");
+    await mkdir(codexHome, { recursive: true });
+    await writeFile(
+      path.join(codexHome, "auth.json"),
+      JSON.stringify({
+        tokens: {
+          access_token: "profile-subscription-token",
+        },
+      }),
+    );
+
+    const result = probeLlmCredentials({
+      auth: "openai-subscription",
+      env: {
+        USERPROFILE: profileHome,
+      } as NodeJS.ProcessEnv,
+    });
+
+    expect(result.available).toBe(true);
+    expect(result.credentials).toMatchObject({
+      apiKey: "profile-subscription-token",
+      auth: "openai-subscription",
+    });
+  });
+
+  it("detects Claude credentials under USERPROFILE-style home env", async () => {
+    const profileHome = await mkdtemp(path.join(os.tmpdir(), "agenr-claude-profile-"));
+    tempDirs.push(profileHome);
+    const claudeHome = path.join(profileHome, ".claude");
+    await mkdir(claudeHome, { recursive: true });
+    await writeFile(
+      path.join(claudeHome, "credentials.json"),
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: "profile-claude-token",
+        },
+      }),
+    );
+
+    const result = probeLlmCredentials({
+      auth: "anthropic-oauth",
+      env: {
+        USERPROFILE: profileHome,
+      } as NodeJS.ProcessEnv,
+    });
+
+    expect(result.available).toBe(true);
+    expect(result.credentials).toMatchObject({
+      apiKey: "profile-claude-token",
+      auth: "anthropic-oauth",
+    });
+  });
+
   it("returns setup guidance when Anthropic token credentials are unavailable", () => {
     const result = probeLlmCredentials({
       auth: "anthropic-token",

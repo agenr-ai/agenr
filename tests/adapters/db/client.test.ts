@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { rm } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
+import { mkdir, rm } from "node:fs/promises";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -23,7 +24,53 @@ describe("createDatabase", () => {
     }
 
     while (databasePaths.length > 0) {
-      await rm(databasePaths.pop() ?? "", { force: true });
+      await rm(databasePaths.pop() ?? "", { force: true, recursive: true });
+    }
+  });
+
+  it("opens file URLs and creates missing parent directories", async () => {
+    const databaseRoot = path.join(os.tmpdir(), `agenr db url ${randomUUID()}`);
+    const databasePath = path.join(databaseRoot, "nested dir", "knowledge.db");
+    databasePaths.push(databaseRoot);
+
+    const database = await createDatabase(pathToFileURL(databasePath).href);
+    databases.push(database);
+    const entry = createEntry({
+      subject: "file URL database",
+      content: "File URL database paths create their parent directories.",
+    });
+
+    await database.insertEntry(entry, createEmbedding(0, 1), "file-url-hash");
+
+    expect(await database.getEntry(entry.id)).toMatchObject({
+      id: entry.id,
+      subject: "file URL database",
+    });
+  });
+
+  it("opens relative file URLs and creates missing parent directories", async () => {
+    const databaseRoot = path.join(os.tmpdir(), `agenr db relative url ${randomUUID()}`);
+    databasePaths.push(databaseRoot);
+    const previousCwd = process.cwd();
+
+    try {
+      await mkdir(databaseRoot, { recursive: true });
+      process.chdir(databaseRoot);
+      const database = await createDatabase("file:relative%20dir/knowledge.db");
+      databases.push(database);
+      const entry = createEntry({
+        subject: "relative file URL database",
+        content: "Relative file URL database paths create their parent directories.",
+      });
+
+      await database.insertEntry(entry, createEmbedding(0, 1), "relative-file-url-hash");
+
+      expect(await database.getEntry(entry.id)).toMatchObject({
+        id: entry.id,
+        subject: "relative file URL database",
+      });
+    } finally {
+      process.chdir(previousCwd);
     }
   });
 

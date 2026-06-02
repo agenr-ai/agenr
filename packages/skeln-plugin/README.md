@@ -37,6 +37,6 @@ Optional `memoryPolicy` accepts a JSON string with the same shape as the OpenCla
 
 Set it under `extensions.settings.agenr.memoryPolicy` in Skeln config.
 
-`skeln` is a peer dependency (`>=0.1.0`). The package declares the non-Skeln runtime dependencies required by the copied agenr dist chunks.
+`skeln` is the host runtime for this extension but is not an install-time dependency because the bundled adapter does not import it at runtime. The package declares the non-Skeln runtime dependencies required by the copied agenr dist chunks.
 
-For local development across the agenr and skeln repos, keep a sibling `skeln` checkout at `../skeln` (relative to the agenr repo root) so the workspace file links resolve, then link `@agenr/skeln-plugin` from this checkout and enable it through `extensions.paths` or `skeln extension add`.
+For local development, the agenr repo builds the Skeln adapter against a minimal structural Skeln API contract, so a sibling `skeln` checkout is not required just to install, typecheck, or build agenr. To exercise the extension in Skeln itself, link `@agenr/skeln-plugin` from this checkout and enable it through `extensions.paths` or `skeln extension add` in a Skeln runtime.

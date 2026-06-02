@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ExtensionAPI, ExtensionContext } from "skeln";
+import type { ExtensionAPI, ExtensionContext } from "../../../../src/adapters/skeln/skeln-types.js";
 
 import { registerAgenrSkelnGoalAliasTools } from "../../../../src/adapters/skeln/tools/goal.js";
 import type { AgenrSkelnServices } from "../../../../src/adapters/skeln/runtime.js";

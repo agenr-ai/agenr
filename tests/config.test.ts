@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -19,6 +20,7 @@ import {
   DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS,
   readConfig,
   resolveClaimExtractionConfig,
+  resolveConfigPath,
   writeConfig,
 } from "../src/config.js";
 
@@ -106,6 +108,37 @@ describe("writeConfig", () => {
       const configStat = await stat(configPath);
       expect(configStat.mode & 0o777).toBe(0o600);
     }
+  });
+
+  it("writes through file URL config paths", async () => {
+    const directory = await createTempDir();
+    const configPath = path.join(directory, "config with spaces", "config.json");
+    const configUrl = pathToFileURL(configPath).href;
+
+    writeConfig(
+      {
+        auth: "openai-api-key",
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        credentials: {
+          openaiApiKey: "sk-test",
+        },
+      },
+      { configPath: configUrl },
+    );
+
+    expect(configFileExists({ configPath: configUrl })).toBe(true);
+    expect(readConfig({ configPath: configUrl })).toMatchObject({
+      credentials: {
+        openaiApiKey: "sk-test",
+      },
+    });
+  });
+});
+
+describe("resolveConfigPath", () => {
+  it("places adjacent config next to relative file URL database paths", () => {
+    expect(resolveConfigPath({ dbPath: "file:relative%20db/knowledge.db" })).toBe(path.resolve("relative db", "config.json"));
   });
 });
 

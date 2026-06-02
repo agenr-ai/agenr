@@ -375,14 +375,14 @@ function safeReadJson(filePath: string): unknown {
 
 /** Resolves the effective home directory used by CLI credential probes. */
 function resolveHomeDir(env: NodeJS.ProcessEnv): string {
-  const home = normalizeOptionalString(env.HOME);
+  const home = normalizeOptionalString(env.HOME) ?? normalizeOptionalString(env.USERPROFILE) ?? resolveWindowsHomeFromParts(env);
   return home ? resolveUserPath(home) : os.homedir();
 }
 
 /** Resolves the effective Codex home directory for auth probing. */
 function resolveCodexHome(env: NodeJS.ProcessEnv): string {
   const configured = normalizeOptionalString(env.CODEX_HOME) ?? "~/.codex";
-  const resolved = resolveUserPath(configured);
+  const resolved = resolveUserPath(configured, resolveHomeDir(env));
   try {
     return fs.realpathSync.native(resolved);
   } catch {
@@ -391,21 +391,28 @@ function resolveCodexHome(env: NodeJS.ProcessEnv): string {
 }
 
 /** Resolves `~`-prefixed user paths without depending on CLI helpers. */
-function resolveUserPath(value: string): string {
+function resolveUserPath(value: string, homeDir = os.homedir()): string {
   const trimmed = value.trim();
   if (trimmed === "~") {
-    return os.homedir();
+    return homeDir;
   }
 
   if (trimmed.startsWith("~/")) {
-    return path.join(os.homedir(), trimmed.slice(2));
+    return path.join(homeDir, trimmed.slice(2));
   }
 
   if (trimmed.startsWith("~\\")) {
-    return path.join(os.homedir(), trimmed.slice(2));
+    return path.join(homeDir, trimmed.slice(2));
   }
 
   return path.resolve(trimmed);
+}
+
+/** Resolves Windows home-directory env parts when USERPROFILE is absent. */
+function resolveWindowsHomeFromParts(env: NodeJS.ProcessEnv): string | undefined {
+  const drive = normalizeOptionalString(env.HOMEDRIVE);
+  const homePath = normalizeOptionalString(env.HOMEPATH);
+  return drive && homePath ? `${drive}${homePath}` : undefined;
 }
 
 /** Parses Codex CLI auth from `auth.json` when available. */
