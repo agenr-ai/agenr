@@ -120,7 +120,7 @@ function resolveCommandInvocation(command, args) {
 
   return {
     command: "cmd.exe",
-    args: ["/d", "/s", "/c", [command, ...args].map(quoteWindowsCommandArg).join(" ")],
+    args: ["/d", "/c", [command, ...args].map(quoteWindowsCommandArg).join(" ")],
   };
 }
 
