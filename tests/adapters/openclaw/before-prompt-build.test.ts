@@ -29,6 +29,7 @@ import { composeProcedureRecallText } from "../../../src/core/procedures/recall-
 import type { EmbeddingPort, LlmPort, RecallPorts } from "../../../src/core/ports.js";
 import type { RecallCandidateEntry } from "../../../src/core/recall/types.js";
 import type { Entry, Procedure } from "../../../src/core/types.js";
+import { removeTestPath, waitForDatabaseRelease } from "../../helpers/temp-paths.js";
 
 const openDatabases: SqlDatabase[] = [];
 const tempPaths: string[] = [];
@@ -56,8 +57,10 @@ afterEach(async () => {
     await openDatabases.pop()?.close();
   }
 
+  await waitForDatabaseRelease();
+
   while (tempPaths.length > 0) {
-    await rm(tempPaths.pop() ?? "", { force: true, recursive: true });
+    await removeTestPath(tempPaths.pop() ?? "");
   }
 });
 
@@ -2759,7 +2762,8 @@ async function writeSessionFileToDirectory(directory: string, sessionId: string,
 }
 
 async function writeArchivedSessionFileToDirectory(directory: string, sessionId: string, suffix: string, lines: object[]): Promise<string> {
-  const filePath = path.join(directory, `${sessionId}.jsonl.${suffix}`);
+  const safeSuffix = process.platform === "win32" ? suffix.replace(/:/g, "-") : suffix;
+  const filePath = path.join(directory, `${sessionId}.jsonl.${safeSuffix}`);
   await writeFile(filePath, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`, "utf8");
   return filePath;
 }

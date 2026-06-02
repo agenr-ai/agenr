@@ -10,6 +10,7 @@ import { createWorkingMemoryRepository } from "../../../src/adapters/db/working-
 import { runGoalAliasTool, type GoalToolResponse } from "../../../src/adapters/shared/goal-tools.js";
 import type { MemoryToolParamReader } from "../../../src/adapters/shared/memory-tools.js";
 import { createWorkingMemoryService, type WorkingMemoryService } from "../../../src/app/working-memory/service.js";
+import { removeTestPath, waitForDatabaseRelease } from "../../helpers/temp-paths.js";
 
 const READER: MemoryToolParamReader = {
   readString(params, key, options) {
@@ -142,7 +143,8 @@ describe("goal alias tools", () => {
       });
     } finally {
       await database.close();
-      await fs.rm(dbPath, { force: true });
+      await waitForDatabaseRelease();
+      await removeTestPath(dbPath);
     }
   });
 

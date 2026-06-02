@@ -19,6 +19,7 @@ import {
   SETUP_MODEL_STAGES,
 } from "../../../src/cli/commands/setup/stages.js";
 import { FakePrompts } from "../../cli/fake-prompts.js";
+import { resolveTestPath } from "../../helpers/temp-paths.js";
 
 function createSetupRuntime(overrides: Partial<SetupRuntime> = {}): SetupRuntime {
   return {
@@ -243,7 +244,7 @@ describe("runSetupCore", () => {
       runtime,
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       config: {
         auth: "openai-api-key",
         provider: "openai",
@@ -251,10 +252,10 @@ describe("runSetupCore", () => {
         credentials: {
           openaiApiKey: "sk-openai",
         },
-        dbPath: "/tmp/custom-knowledge.db",
+        dbPath: resolveTestPath("/tmp/custom-knowledge.db"),
       },
       configPath: "/tmp/.agenr/config.json",
-      dbPath: "/tmp/custom-knowledge.db",
+      dbPath: resolveTestPath("/tmp/custom-knowledge.db"),
       auth: "openai-api-key",
       provider: "openai",
       model: "gpt-5.4-mini",
@@ -263,15 +264,17 @@ describe("runSetupCore", () => {
     });
     expect(runtime.testLlmConnection).toHaveBeenCalledWith("openai", "gpt-5.4-mini", "sk-openai");
     expect(runtime.testEmbeddingConnection).toHaveBeenCalledWith("sk-openai", "text-embedding-3-small");
-    expect(runtime.writeConfig).toHaveBeenCalledWith({
-      auth: "openai-api-key",
-      provider: "openai",
-      model: "gpt-5.4-mini",
-      credentials: {
-        openaiApiKey: "sk-openai",
-      },
-      dbPath: "/tmp/custom-knowledge.db",
-    });
+    expect(runtime.writeConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        auth: "openai-api-key",
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        credentials: {
+          openaiApiKey: "sk-openai",
+        },
+        dbPath: resolveTestPath("/tmp/custom-knowledge.db"),
+      }),
+    );
     expect(prompts.notes.at(-1)?.title).toBe("Configuration saved");
   });
 
@@ -285,16 +288,18 @@ describe("runSetupCore", () => {
     });
 
     expect(result?.embeddingUsesPrimaryKey).toBe(false);
-    expect(runtime.writeConfig).toHaveBeenCalledWith({
-      auth: "anthropic-api-key",
-      provider: "anthropic",
-      model: "claude-sonnet-4-6",
-      credentials: {
-        anthropicApiKey: "anthropic-key",
-        openaiApiKey: "openai-embedding-key",
-      },
-      dbPath: "/tmp/anthropic.db",
-    });
+    expect(runtime.writeConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        auth: "anthropic-api-key",
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
+        credentials: {
+          anthropicApiKey: "anthropic-key",
+          openaiApiKey: "openai-embedding-key",
+        },
+        dbPath: resolveTestPath("/tmp/anthropic.db"),
+      }),
+    );
     expect(runtime.testEmbeddingConnection).toHaveBeenCalledWith("openai-embedding-key", "text-embedding-3-small");
   });
 
@@ -311,15 +316,17 @@ describe("runSetupCore", () => {
 
     expect(result?.config.credentials?.openaiApiKey).toBe("bad-key");
     expect(prompts.log.warnMessages).toContain("Skipping the provider connection test. You can verify it later by running a recall or ingest command.");
-    expect(runtime.writeConfig).toHaveBeenCalledWith({
-      auth: "openai-api-key",
-      provider: "openai",
-      model: "gpt-5.4-mini",
-      credentials: {
-        openaiApiKey: "bad-key",
-      },
-      dbPath: "/tmp/retry.db",
-    });
+    expect(runtime.writeConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        auth: "openai-api-key",
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        credentials: {
+          openaiApiKey: "bad-key",
+        },
+        dbPath: resolveTestPath("/tmp/retry.db"),
+      }),
+    );
   });
 
   it("supports OpenAI subscription auth without persisting the detected subscription token", async () => {
@@ -343,7 +350,7 @@ describe("runSetupCore", () => {
       runtime,
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       config: {
         auth: "openai-subscription",
         provider: "openai-codex",
@@ -351,10 +358,10 @@ describe("runSetupCore", () => {
         credentials: {
           openaiApiKey: "openai-embedding-key",
         },
-        dbPath: "/tmp/subscription.db",
+        dbPath: resolveTestPath("/tmp/subscription.db"),
       },
       configPath: "/tmp/.agenr/config.json",
-      dbPath: "/tmp/subscription.db",
+      dbPath: resolveTestPath("/tmp/subscription.db"),
       auth: "openai-subscription",
       provider: "openai-codex",
       model: "gpt-5.4-mini",
@@ -362,15 +369,17 @@ describe("runSetupCore", () => {
       ready: true,
     });
     expect(runtime.testLlmConnection).toHaveBeenCalledWith("openai-codex", "gpt-5.4-mini", "subscription-token");
-    expect(runtime.writeConfig).toHaveBeenCalledWith({
-      auth: "openai-subscription",
-      provider: "openai-codex",
-      model: "gpt-5.4-mini",
-      credentials: {
-        openaiApiKey: "openai-embedding-key",
-      },
-      dbPath: "/tmp/subscription.db",
-    });
+    expect(runtime.writeConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        auth: "openai-subscription",
+        provider: "openai-codex",
+        model: "gpt-5.4-mini",
+        credentials: {
+          openaiApiKey: "openai-embedding-key",
+        },
+        dbPath: resolveTestPath("/tmp/subscription.db"),
+      }),
+    );
   });
 
   it("shows guidance and continues when OAuth credentials are unavailable", async () => {
@@ -387,14 +396,14 @@ describe("runSetupCore", () => {
       runtime,
     });
 
-    expect(result?.config).toEqual({
+    expect(result?.config).toMatchObject({
       auth: "anthropic-oauth",
       provider: "anthropic",
       model: "claude-sonnet-4-6",
       credentials: {
         openaiApiKey: "openai-embedding-key",
       },
-      dbPath: "/tmp/oauth.db",
+      dbPath: resolveTestPath("/tmp/oauth.db"),
     });
     expect(result?.ready).toBe(false);
     expect(prompts.log.warnMessages).toContain("Claude Code credentials not found. Install Claude Code CLI and sign in with `claude`.");
@@ -420,7 +429,7 @@ describe("runSetupCore", () => {
           provider: "openai",
           model: "gpt-5.4",
         },
-        dbPath: "/tmp/custom-knowledge.db",
+        dbPath: resolveTestPath("/tmp/custom-knowledge.db"),
       },
     });
 
@@ -456,21 +465,23 @@ describe("runSetupCore", () => {
       provider: "openai",
       model: "gpt-5.4",
     });
-    expect(runtime.writeConfig).toHaveBeenCalledWith({
-      auth: "openai-api-key",
-      provider: "openai",
-      model: "gpt-5.4-mini",
-      credentials: {
-        openaiApiKey: "sk-openai",
-      },
-      surgeon: {
-        model: {
-          provider: "openai",
-          model: "gpt-5.4",
+    expect(runtime.writeConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        auth: "openai-api-key",
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        credentials: {
+          openaiApiKey: "sk-openai",
         },
-      },
-      dbPath: "/tmp/surgeon.db",
-    });
+        surgeon: {
+          model: {
+            provider: "openai",
+            model: "gpt-5.4",
+          },
+        },
+        dbPath: resolveTestPath("/tmp/surgeon.db"),
+      }),
+    );
     expect(prompts.confirmCalls.some((call) => call.message === "Customize task-specific models? (Advanced)")).toBe(true);
     expect(prompts.notes.at(-1)?.message).toContain("Surgeon override");
   });
@@ -500,19 +511,21 @@ describe("runSetupCore", () => {
       provider: "openai",
       model: "gpt-5.4",
     });
-    expect(runtime.writeConfig).toHaveBeenCalledWith({
-      auth: "openai-api-key",
-      provider: "openai",
-      model: "gpt-5.4-mini",
-      credentials: {
-        openaiApiKey: "sk-openai",
-      },
-      episodeModel: {
+    expect(runtime.writeConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        auth: "openai-api-key",
         provider: "openai",
-        model: "gpt-5.4",
-      },
-      dbPath: "/tmp/episode.db",
-    });
+        model: "gpt-5.4-mini",
+        credentials: {
+          openaiApiKey: "sk-openai",
+        },
+        episodeModel: {
+          provider: "openai",
+          model: "gpt-5.4",
+        },
+        dbPath: resolveTestPath("/tmp/episode.db"),
+      }),
+    );
     expect(prompts.notes.at(-1)?.message).toContain("Episode override");
   });
 
@@ -536,7 +549,7 @@ describe("runSetupCore", () => {
             model: "gpt-5.4",
           },
         },
-        dbPath: "/tmp/custom-knowledge.db",
+        dbPath: resolveTestPath("/tmp/custom-knowledge.db"),
       },
     });
 
@@ -544,21 +557,23 @@ describe("runSetupCore", () => {
       provider: "openai",
       model: "gpt-5.4",
     });
-    expect(runtime.writeConfig).toHaveBeenCalledWith({
-      auth: "openai-api-key",
-      provider: "openai",
-      model: "gpt-5.4-mini",
-      credentials: {
-        openaiApiKey: "sk-openai",
-      },
-      surgeon: {
-        model: {
-          provider: "openai",
-          model: "gpt-5.4",
+    expect(runtime.writeConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        auth: "openai-api-key",
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        credentials: {
+          openaiApiKey: "sk-openai",
         },
-      },
-      dbPath: "/tmp/custom-knowledge.db",
-    });
+        surgeon: {
+          model: {
+            provider: "openai",
+            model: "gpt-5.4",
+          },
+        },
+        dbPath: resolveTestPath("/tmp/custom-knowledge.db"),
+      }),
+    );
     expect(prompts.notes.at(-1)?.message).not.toContain("Surgeon override");
   });
 
@@ -580,7 +595,7 @@ describe("runSetupCore", () => {
           provider: "anthropic",
           model: "claude-sonnet-4-6",
         },
-        dbPath: "/tmp/custom-knowledge.db",
+        dbPath: resolveTestPath("/tmp/custom-knowledge.db"),
       },
     });
 

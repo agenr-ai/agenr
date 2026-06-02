@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
 import { createRecallAdapter } from "../../../src/adapters/db/recall-adapter.js";
+import { removeTestPath, waitForDatabaseRelease } from "../../helpers/temp-paths.js";
 import type { Entry } from "../../../src/core/types.js";
 
 const databases: SqlDatabase[] = [];
@@ -18,8 +19,10 @@ describe("createRecallAdapter historical expansion", () => {
       await databases.pop()?.close();
     }
 
+    await waitForDatabaseRelease();
+
     while (databasePaths.length > 0) {
-      await rm(databasePaths.pop() ?? "", { force: true });
+      await removeTestPath(databasePaths.pop() ?? "");
     }
   });
 

@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { resolveTestPath } from "../../helpers/temp-paths.js";
 
 describe("registerIngestEpisodesCommand", () => {
   afterEach(() => {
@@ -232,11 +233,11 @@ describe("registerIngestEpisodesCommand", () => {
       from: "node",
     });
 
-    expect(createDatabaseMock).toHaveBeenCalledWith("/tmp/knowledge.db");
-    expect(statMock).toHaveBeenCalledWith("/tmp/sessions");
+    expect(createDatabaseMock).toHaveBeenCalledWith(resolveTestPath("/tmp/knowledge.db"));
+    expect(statMock).toHaveBeenCalledWith(resolveTestPath("/tmp/sessions"));
     expect(createLlmClientMock).toHaveBeenCalledWith("anthropic", "claude-sonnet-4-6", {});
     expect(prepareEpisodeIngestMock).toHaveBeenCalledWith(
-      "/tmp/sessions",
+      resolveTestPath("/tmp/sessions"),
       expect.anything(),
       expect.objectContaining({
         preflightConcurrency: 10,
