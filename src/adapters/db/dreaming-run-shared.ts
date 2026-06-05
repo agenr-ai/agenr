@@ -221,7 +221,7 @@ function parseJsonRecord(raw: string | undefined): Record<string, unknown> | nul
   return parsed as Record<string, unknown>;
 }
 
-function parseJsonStringArray(raw: string | undefined): string[] {
+export function parseJsonStringArray(raw: string | undefined): string[] {
   const parsed = parseJsonValue<unknown>(raw, []);
   if (!Array.isArray(parsed)) {
     return [];

@@ -1,9 +1,10 @@
 import type { ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
 import { normalizeManualClaimKeyUpdate } from "../../core/claim-key-lifecycle.js";
+import { parseDirectiveTrigger } from "../../core/directives/model.js";
 import type { DatabasePort, EmbeddingPort, EpisodeDatabasePort, ProcedureDatabasePort, RecallPorts } from "../../core/ports.js";
 import { storeDurablesDetailed } from "../../core/store/pipeline.js";
 import { validateTemporalValidityRange } from "../../core/temporal-validity.js";
-import { DURABLE_KINDS, type DurableKind, type Expiry } from "../../core/types.js";
+import { DURABLE_KINDS, type DirectiveTrigger, type DurableKind, type Expiry } from "../../core/types.js";
 import type { MemoryRepository } from "../../app/memory/ports.js";
 import type { PluginClaimExtractionRuntime, PluginEmbeddingStatus, PluginMemoryRuntimeServices } from "../../app/plugin-runtime/types.js";
 import { runUnifiedRecall, type UnifiedRecallMode, type UnifiedRecallResult } from "../../app/recall/index.js";
@@ -50,6 +51,8 @@ export interface StoreToolParams {
   sourceContext: string | undefined;
   supersedes: string | undefined;
   claimKey: string | undefined;
+  polarity: "abstain" | "proactive" | undefined;
+  trigger: DirectiveTrigger | undefined;
   validFrom: string | undefined;
   validTo: string | undefined;
 }
@@ -168,7 +171,18 @@ const STORE_TOOL_PARAMETERS = {
     claimKey: {
       type: "string",
       description:
-        'Slot key identifying the specific knowledge slot (entity/attribute format, e.g., "project_name/deploy_strategy" or "postgres/max_connections"). Entries with the same claim key are candidates for supersession.',
+        'Slot key identifying the specific knowledge slot (entity/attribute format, e.g., "project_name/deploy_strategy" or "postgres/max_connections"). Directive rows must use user/memory_directive/<name>. Entries with the same claim key are candidates for supersession.',
+    },
+    polarity: {
+      type: "string",
+      enum: ["abstain", "proactive"],
+      description:
+        "Required when type is directive. Use abstain to suppress a topic or behavior; use proactive to surface the directive when its trigger fires.",
+    },
+    trigger: {
+      type: "string",
+      description:
+        "Optional when type is directive. Use session_start, always, or topic:<term>. Defaults to session_start for proactive directives and always for abstain directives.",
     },
     validFrom: {
       type: "string",
@@ -303,6 +317,8 @@ export function parseStoreToolParams(rawParams: unknown, reader: MemoryToolParam
     sourceContext: reader.readString(params, "sourceContext"),
     supersedes: reader.readString(params, "supersedes"),
     claimKey: reader.readString(params, "claimKey", { trim: false }),
+    polarity: parseDirectivePolarityParam(reader.readString(params, "polarity")),
+    trigger: parseDirectiveTriggerParam(reader.readString(params, "trigger")),
     validFrom: reader.readString(params, "validFrom"),
     validTo: reader.readString(params, "validTo"),
   };
@@ -380,6 +396,8 @@ export async function runStoreMemoryTool(
               ...buildToolCallClaimSupport(options.session, options.sourcePrefix, "agenr_store", new Date().toISOString()),
             }
           : {}),
+        ...(params.polarity ? { directive_polarity: params.polarity } : {}),
+        ...(params.trigger ? { directive_trigger: params.trigger } : {}),
         ...(params.validFrom ? { valid_from: params.validFrom } : {}),
         ...(params.validTo ? { valid_to: params.validTo } : {}),
         source_file: buildSessionSourceFile(options.session, options.sourcePrefix),
@@ -576,4 +594,29 @@ function okOutcome(text: string, details: Record<string, unknown>): MemoryToolOu
  */
 function failedOutcome(text: string, details: Record<string, unknown>): MemoryToolOutcome {
   return { text, details, failed: true };
+}
+
+function parseDirectivePolarityParam(value: string | undefined): StoreToolParams["polarity"] {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === "abstain" || value === "proactive") {
+    return value;
+  }
+
+  throw new Error(`Unsupported directive polarity "${value}".`);
+}
+
+function parseDirectiveTriggerParam(value: string | undefined): StoreToolParams["trigger"] {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const trigger = parseDirectiveTrigger(value);
+  if (!trigger) {
+    throw new Error(`Unsupported directive trigger "${value}".`);
+  }
+
+  return trigger;
 }

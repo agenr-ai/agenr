@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import { collectAbstainDirectives, findAbstainViolation, parseAbstainDirective } from "../../../src/core/directives/abstain.js";
 import {
-  collectAbstainDirectives,
-  findAbstainViolation,
-  isMemoryDirectiveDurable,
+  isDirectiveDurable,
   MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX,
-  parseAbstainDirective,
-} from "../../../src/core/directives/abstain.js";
+  normalizeMemoryDirectiveClaimKey,
+  parseDirectiveMetadata,
+} from "../../../src/core/directives/model.js";
 import type { Durable } from "../../../src/core/types.js";
 
 function buildDurable(overrides: Partial<Durable> & Pick<Durable, "id" | "subject" | "content">): Durable {
@@ -25,15 +25,38 @@ function buildDurable(overrides: Partial<Durable> & Pick<Durable, "id" | "subjec
   };
 }
 
-describe("isMemoryDirectiveDurable", () => {
+describe("isDirectiveDurable", () => {
   it("recognizes the memory-directive claim-key family", () => {
-    expect(isMemoryDirectiveDurable({ claim_key: `${MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX}do_not_mention_stan` })).toBe(true);
+    expect(isDirectiveDurable({ claim_key: `${MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX}do_not_mention_stan` })).toBe(true);
   });
 
   it("rejects the bare prefix and unrelated keys", () => {
-    expect(isMemoryDirectiveDurable({ claim_key: MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX })).toBe(false);
-    expect(isMemoryDirectiveDurable({ claim_key: "user/location/home" })).toBe(false);
-    expect(isMemoryDirectiveDurable({ claim_key: undefined })).toBe(false);
+    expect(isDirectiveDurable({ claim_key: MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX })).toBe(false);
+    expect(isDirectiveDurable({ claim_key: "user/location/home" })).toBe(false);
+    expect(isDirectiveDurable({ claim_key: undefined })).toBe(false);
+  });
+});
+
+describe("directive metadata", () => {
+  it("normalizes the three-segment memory-directive claim-key family", () => {
+    expect(normalizeMemoryDirectiveClaimKey(" User / Memory Directive / Weekly Goals ")).toBe("user/memory_directive/weekly_goals");
+    expect(normalizeMemoryDirectiveClaimKey("user/location/home")).toBeUndefined();
+  });
+
+  it("parses proactive directive polarity and trigger", () => {
+    const metadata = parseDirectiveMetadata(
+      buildDurable({
+        id: "dir-goals",
+        type: "directive",
+        claim_key: `${MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX}weekly_goals`,
+        directive_polarity: "proactive",
+        directive_trigger: "session_start",
+        subject: "weekly goals directive",
+        content: "Ask about weekly goals at session start.",
+      }),
+    );
+
+    expect(metadata).toEqual({ polarity: "proactive", trigger: "session_start" });
   });
 });
 

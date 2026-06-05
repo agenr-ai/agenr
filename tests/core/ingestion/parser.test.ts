@@ -217,6 +217,34 @@ describe("parseExtractionResponse", () => {
     expect(result.warnings).toContain('Entry 1: expiry "core" is reserved and was changed to "temporary".');
   });
 
+  it("accepts directive entries with core expiry and directive metadata", () => {
+    const result = parseExtractionResponse({
+      durables: [
+        {
+          type: "directive",
+          subject: "weekly goals directive",
+          content: "Ask about weekly goals at session start.",
+          importance: "high",
+          expiry: "core",
+          claim_key: "User / Memory Directive / Weekly Goals",
+          directive_polarity: "proactive",
+          directive_trigger: "session_start",
+        },
+      ],
+    });
+
+    expect(result.entries).toMatchObject([
+      {
+        type: "directive",
+        expiry: "core",
+        claim_key: "user/memory_directive/weekly_goals",
+        directive_polarity: "proactive",
+        directive_trigger: "session_start",
+      },
+    ]);
+    expect(result.warnings).toEqual([]);
+  });
+
   it("rejects blocked subjects with a warning", () => {
     const result = parseExtractionResponse({
       durables: [

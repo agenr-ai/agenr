@@ -301,6 +301,8 @@ function buildEntry(preparedEntry: PreparedEntry, embedding: number[]): Durable 
     recall_count: 0,
     valid_from: preparedEntry.input.valid_from,
     valid_to: preparedEntry.input.valid_to,
+    directive_polarity: preparedEntry.input.directive_polarity,
+    directive_trigger: preparedEntry.input.directive_trigger,
     claim_key: acceptedClaimKey?.claim_key ?? preparedEntry.input.claim_key,
     claim_key_raw: acceptedClaimKey?.claim_key_raw,
     claim_key_status: acceptedClaimKey?.claim_key_status,

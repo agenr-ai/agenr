@@ -8,7 +8,7 @@ import { WORKING_MEMORY_SCHEMA_STATEMENTS } from "./schema/working-memory.js";
 /**
  * Logical schema version stored in the metadata table.
  */
-const SCHEMA_VERSION = "1";
+const SCHEMA_VERSION = "2";
 
 /**
  * libSQL vector index name for durable embeddings.
@@ -57,6 +57,8 @@ const CREATE_DURABLES_TABLE_SQL = `
     superseded_by TEXT REFERENCES durables(id),
     valid_from TEXT,
     valid_to TEXT,
+    directive_polarity TEXT,
+    directive_trigger TEXT,
     claim_key TEXT,
     claim_key_raw TEXT,
     claim_key_status TEXT,

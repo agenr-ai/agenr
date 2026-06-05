@@ -4,11 +4,12 @@ import path from "node:path";
 import { DEFAULT_DREAMING_DAILY_COST_CAP, DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS, type AgenrConfig } from "../../config.js";
 import type { EmbeddingPort } from "../../core/ports.js";
 import type { Logger } from "../../logger.js";
-import type { DreamCompletionSummary, DreamRunStatus, DreamTier } from "../../core/dreaming/types.js";
+import type { DreamCompletionSummary, DreamProjectSummary, DreamRunStatus, DreamTier } from "../../core/dreaming/types.js";
 import { resolveLocalFilesystemPath } from "../../filesystem-path.js";
 import { throwIfAborted, USER_ABORT_ERROR } from "./abort.js";
 import { applyExtractedDurables, runExtractStage } from "./extract.js";
 import { emitDreamProgress, type DreamProgressReporter } from "./progress.js";
+import { runProjectStage } from "./project.js";
 import type { CostMeteredLlm, DreamPort } from "./ports.js";
 import { runReconcilePass } from "./reconcile/index.js";
 import { runDreamScan } from "./scan.js";
@@ -126,6 +127,7 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
   let extractSummary: DreamCompletionSummary["extract"];
   let reconcileSummary: DreamCompletionSummary["reconcile"];
   let temporalizeSummary: DreamCompletionSummary["temporalize"];
+  let projectSummary: DreamProjectSummary | undefined;
   let durablesSkipped: DreamCompletionSummary["durables_skipped"] = [];
   let observations: string[] = [];
   let recommendations: string[] = [];
@@ -217,6 +219,24 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
 
     actionsTaken += temporalize.summary.revisionsApplied;
 
+    const projectStage = await runProjectStage(
+      {
+        runId,
+        now,
+        ...(options.project ? { project: options.project } : {}),
+        maxProfileDurables: resolveProjectStageConfig(deps.config).maxProfileDurables,
+      },
+      { port: deps.port },
+    );
+
+    const status: DreamRunStatus = extract.status === "cost_capped" && reconcile.status === "completed" ? "cost_capped" : reconcile.status;
+    const activeProfileSnapshot = status === "completed" && options.apply && !options.project ? projectStage.snapshot : null;
+    projectSummary = {
+      ...projectStage.summary,
+      snapshotId: activeProfileSnapshot?.id ?? null,
+      applied: activeProfileSnapshot !== null,
+    };
+
     const completionSummary: DreamCompletionSummary = {
       actions_taken: actionsTaken,
       durables_skipped: durablesSkipped,
@@ -226,10 +246,10 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
       extract: extractSummary,
       reconcile: reconcileSummary,
       temporalize: temporalizeSummary,
+      project: projectSummary,
     };
 
-    const status: DreamRunStatus = extract.status === "cost_capped" && reconcile.status === "completed" ? "cost_capped" : reconcile.status;
-    await deps.port.completeRun(runId, {
+    const runCompletion = {
       status,
       inputTokens,
       outputTokens,
@@ -239,13 +259,23 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
       durablesRetired,
       summaryJson: completionSummary,
       error: reconcile.error,
-    });
-
-    await deps.port.updateDreamState({
-      lastSuccessfulRunAt: status === "completed" ? now().toISOString() : undefined,
+    };
+    const dreamStateUpdate = {
       unsynthesizedImportanceSum: scan.unsynthesizedImportanceSum,
+      ...(status === "completed" ? { lastSuccessfulRunAt: now().toISOString() } : {}),
+      ...(activeProfileSnapshot ? { activeProfileSnapshotId: activeProfileSnapshot.id } : {}),
       updatedAt: now().toISOString(),
-    });
+    };
+    if (activeProfileSnapshot) {
+      await deps.port.withTransaction(async (tx) => {
+        await tx.createProfileSnapshot(activeProfileSnapshot);
+        await tx.completeRun(runId, runCompletion);
+        await tx.updateDreamState(dreamStateUpdate);
+      });
+    } else {
+      await deps.port.completeRun(runId, runCompletion);
+      await deps.port.updateDreamState(dreamStateUpdate);
+    }
 
     return {
       runId,
@@ -275,6 +305,7 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
       ...(extractSummary ? { extract: extractSummary } : {}),
       ...(reconcileSummary ? { reconcile: reconcileSummary } : {}),
       ...(temporalizeSummary ? { temporalize: temporalizeSummary } : {}),
+      ...(projectSummary ? { project: projectSummary } : {}),
     };
     await deps.port.completeRun(runId, {
       status,
@@ -289,6 +320,18 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
     });
     throw error;
   }
+}
+
+/**
+ * Resolves project-stage profile limits from config.
+ *
+ * @param config - Resolved or partial agenr config, or null.
+ * @returns Effective profile durable ceiling.
+ */
+function resolveProjectStageConfig(config: AgenrConfig | null): { maxProfileDurables: number | undefined } {
+  return {
+    maxProfileDurables: config?.dreaming?.stages?.project?.maxProfileDurables,
+  };
 }
 
 /**

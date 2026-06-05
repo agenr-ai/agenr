@@ -6,7 +6,7 @@ import {
   applyAbstainDirectives,
   applyAbstainDirectivesForInjection,
 } from "../../../src/app/directives/abstain-filter.js";
-import { MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX } from "../../../src/core/directives/abstain.js";
+import { MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX } from "../../../src/core/directives/model.js";
 import type { Durable } from "../../../src/core/types.js";
 
 function buildDurable(overrides: Partial<Durable> & Pick<Durable, "id" | "subject" | "content">): Durable {

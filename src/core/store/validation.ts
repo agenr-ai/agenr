@@ -1,4 +1,12 @@
 import {
+  defaultDirectiveTrigger,
+  MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX,
+  normalizeMemoryDirectiveClaimKey,
+  parseDirectivePolarity,
+  parseDirectiveTrigger,
+  type ParsedDirectiveMetadata,
+} from "../directives/model.js";
+import {
   buildPrecomputedClaimKeyLifecycle,
   hasPrecomputedClaimKeyLifecycleFields,
   parseClaimKeyConfidence,
@@ -127,6 +135,11 @@ export function validateEntriesWithIndexes(inputs: StoreDurableInput[]): Indexed
     if (input.claim_key !== undefined) {
       if (typeof input.claim_key !== "string") {
         warnings.push(`Entry ${index} provided a non-string claim key and it was dropped.`);
+      } else if (input.type === "directive") {
+        normalizedClaimKey = normalizeMemoryDirectiveClaimKey(input.claim_key);
+        if (!normalizedClaimKey) {
+          warnings.push(`Entry ${index} provided invalid directive claim key ${JSON.stringify(input.claim_key)} and it was dropped.`);
+        }
       } else {
         const claimKey = normalizeClaimKey(input.claim_key);
         if (claimKey.ok) {
@@ -137,6 +150,11 @@ export function validateEntriesWithIndexes(inputs: StoreDurableInput[]): Indexed
           );
         }
       }
+    }
+
+    const directiveMetadata = validateDirectiveMetadata(input, normalizedClaimKey, index, errors, rejectedInputIndexes);
+    if (!directiveMetadata.ok) {
+      continue;
     }
 
     const claimKeyRaw = normalizedClaimKey ? normalizeOptionalString(input.claim_key_raw) : undefined;
@@ -192,7 +210,7 @@ export function validateEntriesWithIndexes(inputs: StoreDurableInput[]): Indexed
         subject,
         content,
         importance: clampImportance(input.importance),
-        expiry: (input.expiry ?? "temporary") as Expiry,
+        expiry: (input.expiry ?? (input.type === "directive" ? "core" : "temporary")) as Expiry,
         tags: normalizeTags(input.tags),
         source_file: normalizeOptionalString(input.source_file),
         source_context: normalizeOptionalString(input.source_context),
@@ -212,6 +230,9 @@ export function validateEntriesWithIndexes(inputs: StoreDurableInput[]): Indexed
         claim_support_mode: resolvedPrecomputedLifecycle?.claim_support_mode ?? claimSupportMode,
         valid_from: temporalValidity.value.validFrom,
         valid_to: temporalValidity.value.validTo,
+        ...(directiveMetadata.metadata
+          ? { directive_polarity: directiveMetadata.metadata.polarity, directive_trigger: directiveMetadata.metadata.trigger }
+          : {}),
       },
     });
   }
@@ -223,6 +244,48 @@ export function validateEntriesWithIndexes(inputs: StoreDurableInput[]): Indexed
     errors,
     warnings,
   };
+}
+
+/** Validates directive-specific fields and applies trigger defaults. */
+function validateDirectiveMetadata(
+  input: StoreDurableInput,
+  normalizedClaimKey: string | undefined,
+  index: number,
+  errors: string[],
+  rejectedInputIndexes: number[],
+): { ok: true; metadata?: ParsedDirectiveMetadata } | { ok: false } {
+  const hasDirectiveMetadata = input.directive_polarity !== undefined || input.directive_trigger !== undefined;
+  if (input.type !== "directive") {
+    if (hasDirectiveMetadata) {
+      errors.push(`Entry ${index} provided directive metadata on a non-directive durable.`);
+      rejectedInputIndexes.push(index);
+      return { ok: false };
+    }
+
+    return { ok: true };
+  }
+
+  if (!normalizedClaimKey?.startsWith(MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX)) {
+    errors.push(`Entry ${index} directive claim_key must use the ${MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX} prefix.`);
+    rejectedInputIndexes.push(index);
+    return { ok: false };
+  }
+
+  const polarity = parseDirectivePolarity(input.directive_polarity);
+  if (!polarity) {
+    errors.push(`Entry ${index} directive_polarity must be abstain or proactive.`);
+    rejectedInputIndexes.push(index);
+    return { ok: false };
+  }
+
+  const trigger = input.directive_trigger === undefined ? defaultDirectiveTrigger(polarity) : parseDirectiveTrigger(input.directive_trigger);
+  if (!trigger) {
+    errors.push(`Entry ${index} directive_trigger must be session_start, always, or topic:<term>.`);
+    rejectedInputIndexes.push(index);
+    return { ok: false };
+  }
+
+  return { ok: true, metadata: { polarity, trigger } };
 }
 
 /** Clamps optional importance values into the supported 1-10 range. */

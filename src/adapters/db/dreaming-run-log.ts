@@ -17,8 +17,9 @@ import {
 } from "./dreaming-run-shared.js";
 
 export type { DreamProposalBacklogRow, DreamRun, PersistedDreamProposalInput };
-export { createDreamRun, completeDreamRun, getDailyDreamCost, reviewDreamProposal, updateDreamState } from "./dreaming-run-lifecycle.js";
+export { createDreamRun, completeDreamRun, createProfileSnapshot, getDailyDreamCost, reviewDreamProposal, updateDreamState } from "./dreaming-run-lifecycle.js";
 export {
+  getActiveProfileSnapshot,
   getDreamProposal,
   getDreamRunActions,
   getDreamRunHistory,

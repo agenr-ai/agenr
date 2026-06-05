@@ -70,6 +70,8 @@ export async function insertDurable(executor: SqlExecutor, entry: Durable, embed
         superseded_by,
         valid_from,
         valid_to,
+        directive_polarity,
+        directive_trigger,
         claim_key,
         claim_key_raw,
         claim_key_status,
@@ -94,7 +96,7 @@ export async function insertDurable(executor: SqlExecutor, entry: Durable, embed
       VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?,
         CASE WHEN ? IS NULL THEN NULL ELSE vector32(?) END,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
     `,
     args: [
@@ -118,6 +120,8 @@ export async function insertDurable(executor: SqlExecutor, entry: Durable, embed
       normalizeOptionalString(entry.superseded_by),
       normalizeOptionalString(entry.valid_from),
       normalizeOptionalString(entry.valid_to),
+      normalizeOptionalString(entry.directive_polarity),
+      normalizeOptionalString(entry.directive_trigger),
       normalizeOptionalString(entry.claim_key),
       normalizeOptionalString(entry.claim_key_raw),
       normalizeOptionalString(entry.claim_key_status),

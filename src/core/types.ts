@@ -6,11 +6,17 @@
 // ── Durable memory types ─────────────────────────────────────────────
 
 /** Ordered list of supported durable memory kinds. */
-const DURABLE_KINDS = ["fact", "decision", "preference", "lesson", "relationship", "milestone"] as const;
+const DURABLE_KINDS = ["fact", "decision", "preference", "lesson", "relationship", "milestone", "directive"] as const;
 /**
  * Union of all supported durable memory kinds.
  */
 export type DurableKind = (typeof DURABLE_KINDS)[number];
+
+/** Ordered list of supported behavioral directive polarities. */
+const DIRECTIVE_POLARITIES = ["abstain", "proactive"] as const;
+
+/** Ordered list of non-topic behavioral directive triggers. */
+const DIRECTIVE_BASE_TRIGGERS = ["session_start", "always"] as const;
 
 /** Ordered list of supported explicit supersession relationships. */
 const SUPERSESSION_KINDS = ["update", "correction", "duplicate", "merge", "refinement"] as const;
@@ -36,7 +42,16 @@ const CLAIM_KEY_SOURCES = [
 /** Ordered list of supported claim-support provenance modes. */
 const CLAIM_SUPPORT_MODES = ["explicit", "normalized", "inferred"] as const;
 
-export { CLAIM_KEY_SOURCES, CLAIM_KEY_STATUSES, CLAIM_SUPPORT_MODES, DURABLE_KINDS, EXPIRY_LEVELS, SUPERSESSION_KINDS };
+export {
+  CLAIM_KEY_SOURCES,
+  CLAIM_KEY_STATUSES,
+  CLAIM_SUPPORT_MODES,
+  DIRECTIVE_BASE_TRIGGERS,
+  DIRECTIVE_POLARITIES,
+  DURABLE_KINDS,
+  EXPIRY_LEVELS,
+  SUPERSESSION_KINDS,
+};
 
 /**
  * Union of all supported recall durability levels.
@@ -62,6 +77,16 @@ export type ClaimKeySource = (typeof CLAIM_KEY_SOURCES)[number];
  * Union of all supported claim-support provenance modes.
  */
 export type ClaimSupportMode = (typeof CLAIM_SUPPORT_MODES)[number];
+
+/**
+ * Union of supported directive polarity values.
+ */
+export type DirectivePolarity = (typeof DIRECTIVE_POLARITIES)[number];
+
+/**
+ * Supported directive trigger shape.
+ */
+export type DirectiveTrigger = (typeof DIRECTIVE_BASE_TRIGGERS)[number] | `topic:${string}`;
 
 /** Ordered list of supported episode sources. */
 const EPISODE_SOURCES = ["openclaw", "skeln", "codex", "cli", "synthesis"] as const;
@@ -143,6 +168,8 @@ export interface Durable extends ClaimKeyLifecycleMetadata {
   superseded_by?: string;
   valid_from?: string;
   valid_to?: string;
+  directive_polarity?: DirectivePolarity;
+  directive_trigger?: DirectiveTrigger;
   claim_key?: string;
   supersession_kind?: string;
   supersession_reason?: string;
@@ -454,6 +481,8 @@ export interface StoreDurableInput {
   claim_support_mode?: ClaimSupportMode;
   valid_from?: string;
   valid_to?: string;
+  directive_polarity?: DirectivePolarity;
+  directive_trigger?: DirectiveTrigger;
 }
 
 /**

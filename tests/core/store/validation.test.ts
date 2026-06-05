@@ -174,6 +174,72 @@ describe("validateEntries", () => {
     expect(result.warnings).toEqual([]);
   });
 
+  it("defaults directive expiry and trigger while preserving validated directive metadata", () => {
+    const result = validateEntries([
+      {
+        type: "directive",
+        subject: "weekly goal check-in",
+        content: "Ask about weekly goals at session start.",
+        claim_key: " User / Memory Directive / Weekly Goals ",
+        directive_polarity: "proactive",
+      },
+    ]);
+
+    expect(result.rejected).toBe(0);
+    expect(result.valid[0]).toMatchObject({
+      type: "directive",
+      expiry: "core",
+      claim_key: "user/memory_directive/weekly_goals",
+      directive_polarity: "proactive",
+      directive_trigger: "session_start",
+    });
+  });
+
+  it("rejects directives without the memory-directive claim-key prefix", () => {
+    const result = validateEntries([
+      {
+        type: "directive",
+        subject: "weekly goal check-in",
+        content: "Ask about weekly goals at session start.",
+        claim_key: "user/weekly_goals",
+        directive_polarity: "proactive",
+      },
+    ]);
+
+    expect(result.rejected).toBe(1);
+    expect(result.errors).toEqual(["Entry 0 directive claim_key must use the user/memory_directive/ prefix."]);
+  });
+
+  it("rejects malformed directive polarity and trigger values", () => {
+    const result = validateEntries([
+      {
+        type: "directive",
+        subject: "bad directive",
+        content: "Ask about weekly goals at session start.",
+        claim_key: "user/memory_directive/weekly_goals",
+        directive_polarity: "positive" as StoreDurableInput["directive_polarity"],
+        directive_trigger: "later" as StoreDurableInput["directive_trigger"],
+      },
+    ]);
+
+    expect(result.rejected).toBe(1);
+    expect(result.errors).toEqual(["Entry 0 directive_polarity must be abstain or proactive."]);
+  });
+
+  it("rejects directive metadata on non-directive rows", () => {
+    const result = validateEntries([
+      {
+        type: "preference",
+        subject: "quiet dinners",
+        content: "Prefers quiet dinner recommendations.",
+        directive_polarity: "abstain",
+      },
+    ]);
+
+    expect(result.rejected).toBe(1);
+    expect(result.errors).toEqual(["Entry 0 provided directive metadata on a non-directive durable."]);
+  });
+
   it("defaults importance to 7", () => {
     const result = validateEntries([
       {

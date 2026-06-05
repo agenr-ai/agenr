@@ -80,12 +80,15 @@ function createDreamPortDouble(overrides: Partial<DreamPort> = {}): DreamPort {
     insertDurable: vi.fn(async () => "durable-1"),
     supersedeDurable: vi.fn(async () => true),
     getDurable: vi.fn(async () => null),
+    getDurables: vi.fn(async () => []),
     updateDurable: vi.fn(async () => false),
     logRunProposal: vi.fn(async () => undefined),
     countEpisodesSince: vi.fn(async () => 0),
     countIngestFilesSince: vi.fn(async () => 0),
     countDurablesCreatedSince: vi.fn(async () => 0),
     updateDreamState: vi.fn(async () => undefined),
+    createProfileSnapshot: vi.fn(async () => undefined),
+    getActiveProfileSnapshot: vi.fn(async () => null),
     withTransaction: vi.fn(async (fn) => fn(port)),
     ...overrides,
   };
@@ -153,6 +156,14 @@ describe("runDream pipeline integration", () => {
     const successor = await getDurable(client, predecessor.rows[0]?.superseded_by as string);
     expect(successor?.content).toBe("Home base is now San Francisco for the foreseeable future.");
     expect(successor?.claim_key_source).toBe("dreaming_temporalize");
+
+    const activeProfile = await port.getActiveProfileSnapshot();
+    expect(activeProfile?.id).toBe(result.completionSummary?.project?.snapshotId);
+    expect(activeProfile?.durableIds.length).toBeGreaterThan(0);
+    expect(result.completionSummary?.project).toMatchObject({
+      applied: true,
+      profileDurableCount: expect.any(Number),
+    });
   });
 });
 
@@ -267,6 +278,97 @@ describe("runDream", () => {
     const lastRun = await port.getLastRun();
     expect(lastRun?.status).toBe("cost_capped");
     expect(lastRun?.estimatedCostUsd).toBe(1);
+  });
+
+  it("does not apply a profile snapshot when an apply run is cost-capped", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+
+    await insertDurable(client, {
+      id: "profile-seed",
+      subject: "Profile seed",
+      content: "Prefers quiet desks for focus work.",
+      type: "preference",
+      claim_key: "user/office_preference",
+      claim_key_status: "trusted",
+    });
+    await insertEpisode(client, "ep-1", "Session about the user's coffee preferences.");
+
+    const llm = new PipelineExtractLlm(
+      [{ type: "preference", subject: "Coffee", content: "Prefers oat milk in coffee.", claim_key: "user/coffee_preference" }],
+      1,
+    );
+
+    const result = await runDream(
+      {
+        tier: "standard",
+        apply: true,
+        verbose: false,
+        json: false,
+        skipBackup: true,
+      },
+      {
+        port,
+        config: { dreaming: { dailyCostCap: 1 } },
+        now: () => new Date("2026-04-04T15:00:00.000Z"),
+        createExtractLlm: () => llm,
+        embedding: createDeterministicEmbedding(),
+      },
+    );
+
+    expect(result.status).toBe("cost_capped");
+    expect(result.completionSummary?.project).toMatchObject({
+      applied: false,
+      snapshotId: null,
+    });
+    expect(await port.getActiveProfileSnapshot()).toBeNull();
+
+    const persisted = await client.execute("SELECT COUNT(*) AS count FROM profile_snapshots");
+    expect(Number(persisted.rows[0]?.count)).toBe(0);
+  });
+
+  it("does not activate project-scoped profile snapshots globally", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+
+    await insertDurable(client, {
+      id: "agenr-policy",
+      subject: "Agenr workflow",
+      content: "Agenr work uses pnpm check before committing.",
+      type: "decision",
+      expiry: "core",
+      importance: 9,
+      project: "agenr",
+      claim_key: "agenr/workflow",
+      claim_key_status: "trusted",
+    });
+
+    const result = await runDream(
+      {
+        tier: "standard",
+        project: "agenr",
+        apply: true,
+        verbose: false,
+        json: false,
+        skipBackup: true,
+      },
+      {
+        port,
+        config: null,
+        now: () => new Date("2026-04-04T15:00:00.000Z"),
+      },
+    );
+
+    expect(result.status).toBe("completed");
+    expect(result.completionSummary?.project).toMatchObject({
+      profileDurableCount: 1,
+      applied: false,
+      snapshotId: null,
+    });
+    expect(await port.getActiveProfileSnapshot()).toBeNull();
+
+    const persisted = await client.execute("SELECT COUNT(*) AS count FROM profile_snapshots");
+    expect(Number(persisted.rows[0]?.count)).toBe(0);
   });
 
   it("records partial apply results when a later stage fails", async () => {

@@ -111,6 +111,61 @@ describe("runSessionStart", () => {
     expect(deps.recall.recordRecallEvents).toHaveBeenCalledOnce();
   });
 
+  it("uses active profile snapshot entries before core memory and artifact recall", async () => {
+    const profileEntry = createEntry({
+      id: "profile-runtime",
+      subject: "runtime boundary",
+      content: "Keep runtime orchestration in app services.",
+      expiry: "permanent",
+      importance: 9,
+    });
+    const coreEntry = createEntry({
+      id: "core-policy",
+      subject: "branching workflow",
+      content: "Branch from local master before editing shared code.",
+      expiry: "core",
+      importance: 10,
+    });
+    const recalledEntry = createEntry({
+      id: "artifact-memory",
+      subject: "adapter boundary",
+      content: "Adapters translate host details into app calls.",
+      expiry: "permanent",
+      importance: 8,
+    });
+    const deps = createDeps({
+      profileSnapshot: {
+        id: "profile-1",
+        durableIds: ["profile-runtime"],
+        directiveIds: [],
+        asOf: "2026-04-14T10:00:00.000Z",
+        runId: "run-1",
+        createdAt: "2026-04-14T10:00:00.000Z",
+      },
+      entriesById: [profileEntry],
+      coreEntries: [coreEntry],
+      ftsCandidates: [toRecallCandidateDurable(recalledEntry)],
+      hydratedEntries: [recalledEntry],
+    });
+
+    const result = await runSessionStart(
+      {
+        continuitySummaryText: "Continue the adapter boundary work.",
+        policy: {
+          maxDurableEntries: 3,
+        },
+      },
+      deps,
+    );
+
+    expect(result.diagnostics.activeProfileSnapshotId).toBe("profile-1");
+    expect(result.durableMemory.map((item) => [item.sourceKind, item.entry.id])).toEqual([
+      ["profile", "profile-runtime"],
+      ["core", "core-policy"],
+      ["artifact_recall", "artifact-memory"],
+    ]);
+  });
+
   it("captures degraded recall diagnostics when semantic search is unavailable", async () => {
     const recalledEntry = createEntry({
       id: "permanent-slice",
@@ -289,6 +344,69 @@ describe("runSessionStart", () => {
     expect(result.diagnostics.directiveAbstentions).toEqual([{ entryId: "dir-core", reason: "directive_self" }]);
   });
 
+  it("surfaces proactive directives at session start", async () => {
+    const proactiveDirective = createEntry({
+      id: "dir-weekly-goals",
+      type: "directive",
+      subject: "weekly goals directive",
+      content: "Ask about weekly goals at session start.",
+      claim_key: "user/memory_directive/weekly_goals",
+      directive_polarity: "proactive",
+      directive_trigger: "session_start",
+      expiry: "core",
+      importance: 9,
+    });
+    const deps = createDeps({
+      listActiveProactiveDirectives: vi.fn(async () => [proactiveDirective]),
+    });
+
+    const result = await runSessionStart({ policy: { enableArtifactRecall: false } }, deps);
+
+    expect(result.durableMemory).toMatchObject([
+      {
+        sourceKind: "directive",
+        entry: { id: "dir-weekly-goals" },
+      },
+    ]);
+    expect(result.diagnostics.proactiveDirectiveCandidateCount).toBe(1);
+  });
+
+  it("applies abstain directives after proactive directive assembly", async () => {
+    const proactiveDirective = createEntry({
+      id: "dir-ask-stan",
+      type: "directive",
+      subject: "stan check-in directive",
+      content: "Ask about Stan at session start.",
+      claim_key: "user/memory_directive/ask_stan",
+      directive_polarity: "proactive",
+      directive_trigger: "session_start",
+      expiry: "core",
+      importance: 9,
+    });
+    const abstainDirective = createEntry({
+      id: "dir-no-stan",
+      type: "directive",
+      subject: "stan abstain directive",
+      content: "Do not mention Stan.",
+      claim_key: "user/memory_directive/do_not_mention_stan",
+      directive_polarity: "abstain",
+      directive_trigger: "always",
+      expiry: "core",
+      importance: 10,
+    });
+    const deps = createDeps({
+      listActiveProactiveDirectives: vi.fn(async () => [proactiveDirective]),
+      listActiveAbstainDirectives: vi.fn(async () => [abstainDirective]),
+    });
+
+    const result = await runSessionStart({ policy: { enableArtifactRecall: false } }, deps);
+
+    expect(result.durableMemory).toEqual([]);
+    expect(result.diagnostics.directiveAbstentions).toEqual([
+      { entryId: "dir-ask-stan", reason: "directive_topic", directiveId: "dir-no-stan", blockedTerm: "stan" },
+    ]);
+  });
+
   it("labels a core entry current when its valid_to is still in the future", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-15T00:00:00.000Z"));
@@ -327,9 +445,13 @@ function createDeps(
     hydratedEntries?: Durable[];
     ftsSearchImplementation?: RecallPorts["ftsSearch"];
     listActiveAbstainDirectives?: SessionStartDeps["listActiveAbstainDirectives"];
+    listActiveProactiveDirectives?: SessionStartDeps["listActiveProactiveDirectives"];
+    profileSnapshot?: Awaited<ReturnType<SessionStartDeps["repository"]["getActiveProfileSnapshot"]>>;
+    entriesById?: Durable[];
   } = {},
 ): SessionStartDeps {
   const recallEntries = new Map((options.hydratedEntries ?? []).map((entry) => [entry.id, entry]));
+  const entriesById = new Map((options.entriesById ?? []).map((entry) => [entry.id, entry]));
   const recall: RecallPorts = {
     embed: vi.fn(async () => {
       throw new Error("embeddings unavailable");
@@ -344,16 +466,19 @@ function createDeps(
           tier: "all_tokens" as const,
         })),
       ),
-    hydrateEntries: vi.fn(async (ids) => ids.flatMap((id) => recallEntries.get(id) ?? [])),
+    hydrateEntries: vi.fn(async (ids: string[]) => ids.flatMap((id) => recallEntries.get(id) ?? [])),
     recordRecallEvents: vi.fn(async () => undefined),
   };
 
   return {
     repository: {
       listCoreEntries: vi.fn(async (limit) => (options.coreEntries ?? []).slice(0, limit)),
+      getActiveProfileSnapshot: vi.fn(async () => options.profileSnapshot ?? null),
+      listEntriesByIds: vi.fn(async (ids: string[]) => ids.flatMap((id) => entriesById.get(id) ?? [])),
     },
     recall,
     ...(options.listActiveAbstainDirectives ? { listActiveAbstainDirectives: options.listActiveAbstainDirectives } : {}),
+    ...(options.listActiveProactiveDirectives ? { listActiveProactiveDirectives: options.listActiveProactiveDirectives } : {}),
   };
 }
 
@@ -378,6 +503,8 @@ function createEntry(overrides: Partial<Durable> = {}): Durable {
     superseded_by: overrides.superseded_by,
     valid_from: overrides.valid_from,
     valid_to: overrides.valid_to,
+    directive_polarity: overrides.directive_polarity,
+    directive_trigger: overrides.directive_trigger,
     claim_key: overrides.claim_key,
     claim_key_raw: overrides.claim_key_raw,
     claim_key_status: overrides.claim_key_status,

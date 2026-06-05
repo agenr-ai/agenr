@@ -3,33 +3,22 @@
  *
  * A memory directive is a durable the user authored to constrain what memory
  * may be surfaced, for example "do not bring up the San Francisco move again".
- * Until the dedicated `directive` durable kind ships, directives are recognized
- * structurally by their claim-key family (`user/memory_directive/*`) and their
- * blocked topics are extracted from the directive content. Injection paths use
- * the helpers here to keep directive rows out of automatic memory and to
- * suppress any candidate that mentions a blocked topic.
+ * Directives are first-class durable rows. Legacy rows are also recognized
+ * structurally by their claim-key family (`user/memory_directive/*`) so old
+ * tests and operator data keep the same abstention semantics inside the
+ * greenfield schema.
  *
  * This module is pure domain logic: it never performs IO and never decides
  * where the directive rows come from. Callers supply the candidate durables and
  * the directive durables; the helpers only parse and match.
  *
- * Interim status: the natural-language verb and phrase patterns below are a
- * stopgap until the dedicated `directive` durable kind ships with structured
- * blocked-topic fields. Do not extend the regex surface to chase more phrasings.
- * When the directive kind lands, this module should become a thin adapter over
- * the stored structured shape rather than a growing NLP parser.
+ * The natural-language verb and phrase patterns below are a fallback for
+ * extracting abstain topics from directive content. Structured polarity and
+ * trigger fields decide whether a row is abstain or proactive.
  */
 
+import { MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX, parseDirectiveMetadata } from "./model.js";
 import type { Durable } from "../types.js";
-
-/**
- * Claim-key family prefix that marks a durable as a user memory directive.
- *
- * Directives live under a dedicated claim-key family so they can be recognized
- * without a separate durable kind. The trailing slash is significant: only keys
- * that are strictly inside the family qualify.
- */
-export const MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX = "user/memory_directive/";
 
 /**
  * Verbs that introduce a blocked topic inside abstain-directive content.
@@ -92,17 +81,6 @@ export interface AbstainViolation {
 }
 
 /**
- * Returns whether a durable is a user memory directive.
- *
- * @param entry - Candidate durable, possibly carrying a directive claim key.
- * @returns True when the durable's claim key is inside the directive family.
- */
-export function isMemoryDirectiveDurable(entry: Pick<Durable, "claim_key">): boolean {
-  const claimKey = entry.claim_key?.trim();
-  return claimKey !== undefined && claimKey.startsWith(MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX) && claimKey.length > MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX.length;
-}
-
-/**
  * Parses one durable into an abstain directive when it qualifies.
  *
  * Blocked topics are extracted from the directive content using the abstain
@@ -113,12 +91,15 @@ export function isMemoryDirectiveDurable(entry: Pick<Durable, "claim_key">): boo
  * @param entry - Candidate durable that may be a memory directive.
  * @returns Parsed directive, or null when the row is not a usable directive.
  */
-export function parseAbstainDirective(entry: Pick<Durable, "id" | "claim_key" | "subject" | "content">): AbstainDirective | null {
-  if (!isMemoryDirectiveDurable(entry)) {
+export function parseAbstainDirective(
+  entry: Pick<Durable, "id" | "claim_key" | "subject" | "content"> & Partial<Pick<Durable, "type" | "directive_polarity" | "directive_trigger">>,
+): AbstainDirective | null {
+  const metadata = parseDirectiveMetadata(entry);
+  if (!metadata || metadata.polarity !== "abstain") {
     return null;
   }
 
-  const claimKey = entry.claim_key!.trim();
+  const claimKey = entry.claim_key?.trim() ?? `${MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX}${entry.id}`;
   const blockedTerms = extractBlockedTerms(entry, claimKey);
   if (blockedTerms.length === 0) {
     return null;
@@ -137,7 +118,9 @@ export function parseAbstainDirective(entry: Pick<Durable, "id" | "claim_key" | 
  * @param entries - Candidate directive durables to parse.
  * @returns Parsed abstain directives in input order.
  */
-export function collectAbstainDirectives(entries: readonly Pick<Durable, "id" | "claim_key" | "subject" | "content">[]): AbstainDirective[] {
+export function collectAbstainDirectives(
+  entries: readonly (Pick<Durable, "id" | "claim_key" | "subject" | "content"> & Partial<Pick<Durable, "type" | "directive_polarity" | "directive_trigger">>)[],
+): AbstainDirective[] {
   const directives: AbstainDirective[] = [];
   for (const entry of entries) {
     const directive = parseAbstainDirective(entry);

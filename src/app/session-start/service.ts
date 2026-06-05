@@ -2,6 +2,7 @@ import { recall, type RecallExecutionTraceSummary, type RecallOutput } from "../
 import { isWithinValidityWindow } from "../../core/temporal-validity.js";
 import type { Durable } from "../../core/types.js";
 
+import { parseDirectiveMetadata } from "../../core/directives/model.js";
 import { applyAbstainDirectivesForInjection } from "../directives/abstain-filter.js";
 import { projectClaimCentricRecallEntry } from "../recall/claim-centric.js";
 import { buildSessionStartContextSections } from "./context-sections.js";
@@ -20,6 +21,7 @@ const DEFAULT_MAX_CORE_ENTRIES = 4;
 const DEFAULT_MAX_ARTIFACT_RECALL_ENTRIES = 3;
 const DEFAULT_MAX_DURABLE_ENTRIES = 5;
 const DEFAULT_MAX_ARTIFACT_CHARS = 1_200;
+const DEFAULT_MAX_PROFILE_SNAPSHOT_AGE_HOURS = 48;
 
 /**
  * Builds one structured bounded session-start patch from host-supplied artifacts
@@ -33,10 +35,18 @@ export async function runSessionStart(input: SessionStartInput, deps: SessionSta
   const policy = normalizePolicy(input.policy);
   const nowMs = Date.now();
   const contextSections = buildSessionStartContextSections(input.continuitySummaryText, input.recentSessionText);
+  const profileSnapshot = await deps.repository.getActiveProfileSnapshot(policy.maxProfileSnapshotAgeHours * 60 * 60 * 1000);
+  const profileEntries = profileSnapshot ? filterCurrentEntries(await deps.repository.listEntriesByIds(profileSnapshot.durableIds), nowMs) : [];
+  const profileItems = profileEntries.map((entry) => buildProfilePatchItem(entry, profileSnapshot?.id ?? "unknown", nowMs));
+  const proactiveDirectiveEntries = filterCurrentEntries((await deps.listActiveProactiveDirectives?.()) ?? [], nowMs);
+  const proactiveDirectiveItems = proactiveDirectiveEntries.map((entry) => buildDirectivePatchItem(entry, nowMs));
   const coreEntries = await deps.repository.listCoreEntries(policy.maxCoreEntries);
   const coreItems = coreEntries.map((entry) => buildCorePatchItem(entry, nowMs));
   const diagnostics: SessionStartPatchDiagnostics = {
     coreCandidateCount: coreEntries.length,
+    profileCandidateCount: profileEntries.length,
+    ...(profileSnapshot ? { activeProfileSnapshotId: profileSnapshot.id } : {}),
+    proactiveDirectiveCandidateCount: proactiveDirectiveEntries.length,
     artifactRecallCandidateCount: 0,
     artifactRecallUsed: false,
     notices: [],
@@ -50,7 +60,7 @@ export async function runSessionStart(input: SessionStartInput, deps: SessionSta
     ? await runArtifactRecallSelection(artifactRecallQuery, input.sessionKey, policy, deps, diagnostics)
     : [];
 
-  const mergedDurableMemory = mergeDurableMemory(coreItems, artifactRecallItems, policy.maxDurableEntries);
+  const mergedDurableMemory = mergeDurableMemory(profileItems, proactiveDirectiveItems, coreItems, artifactRecallItems, policy.maxDurableEntries);
   const visibleDurableMemory = await applyAbstainDirectivesForInjection(mergedDurableMemory, deps.listActiveAbstainDirectives, diagnostics);
   const durableMemory = assignRanks(visibleDurableMemory);
 
@@ -58,6 +68,45 @@ export async function runSessionStart(input: SessionStartInput, deps: SessionSta
     contextSections,
     durableMemory,
     diagnostics,
+  };
+}
+
+/**
+ * Converts one profile snapshot durable into a session-start patch item.
+ */
+function buildProfilePatchItem(entry: Durable, snapshotId: string, nowMs: number): SessionStartPatchItem {
+  return {
+    rank: 0,
+    entry,
+    sourceKind: "profile",
+    whySurfaced: {
+      summary: `active profile snapshot ${snapshotId}`,
+      reasons: ["active profile snapshot", `snapshot ${snapshotId}`, `importance ${entry.importance}`],
+    },
+    memoryState: resolveMemoryState(entry, nowMs),
+    claimStatus: resolveClaimStatus(entry),
+    freshnessLabel: buildFreshnessLabel(entry),
+    ...(buildProvenanceSummary(entry) ? { provenanceSummary: buildProvenanceSummary(entry) } : {}),
+  };
+}
+
+/**
+ * Converts one proactive directive into a session-start patch item.
+ */
+function buildDirectivePatchItem(entry: Durable, nowMs: number): SessionStartPatchItem {
+  const metadata = parseDirectiveMetadata(entry);
+  return {
+    rank: 0,
+    entry,
+    sourceKind: "directive",
+    whySurfaced: {
+      summary: `proactive memory directive; trigger ${metadata?.trigger ?? "session_start"}`,
+      reasons: ["proactive memory directive", `trigger ${metadata?.trigger ?? "session_start"}`, `importance ${entry.importance}`],
+    },
+    memoryState: resolveMemoryState(entry, nowMs),
+    claimStatus: resolveClaimStatus(entry),
+    freshnessLabel: buildFreshnessLabel(entry),
+    ...(buildProvenanceSummary(entry) ? { provenanceSummary: buildProvenanceSummary(entry) } : {}),
   };
 }
 
@@ -200,24 +249,28 @@ function buildArtifactRecallQuery(sections: SessionStartContextSection[], maxCha
 }
 
 /**
- * Merges always-on core memory with artifact-grounded recall candidates.
+ * Merges profile, directive, core, and artifact-grounded recall candidates.
  *
- * Core items stay first to preserve the current authority ordering, while later
- * recalled duplicates are dropped by entry ID.
+ * Profile snapshot entries lead, proactive directives rank above generic
+ * memory, and later duplicates are dropped by entry ID.
  *
+ * @param profileItems - Profile snapshot memory items.
+ * @param directiveItems - Proactive directive items.
  * @param coreItems - Always-on core memory items.
  * @param artifactRecallItems - Artifact-grounded recall items.
  * @param maxDurableEntries - Final bounded durable-memory limit.
  * @returns Deduplicated bounded durable-memory items.
  */
 function mergeDurableMemory(
+  profileItems: SessionStartPatchItem[],
+  directiveItems: SessionStartPatchItem[],
   coreItems: SessionStartPatchItem[],
   artifactRecallItems: SessionStartPatchItem[],
   maxDurableEntries: number,
 ): SessionStartPatchItem[] {
   const merged: SessionStartPatchItem[] = [];
   const seenEntryIds = new Set<string>();
-  for (const item of [...coreItems, ...artifactRecallItems]) {
+  for (const item of [...profileItems, ...directiveItems, ...coreItems, ...artifactRecallItems]) {
     if (seenEntryIds.has(item.entry.id)) {
       continue;
     }
@@ -262,7 +315,12 @@ function normalizePolicy(policy: SessionStartPolicy | undefined): Required<Sessi
     maxDurableEntries,
     maxArtifactChars: normalizeCount(policy?.maxArtifactChars, DEFAULT_MAX_ARTIFACT_CHARS),
     recallThreshold: normalizeThreshold(policy?.recallThreshold),
+    maxProfileSnapshotAgeHours: normalizeCount(policy?.maxProfileSnapshotAgeHours, DEFAULT_MAX_PROFILE_SNAPSHOT_AGE_HOURS),
   };
+}
+
+function filterCurrentEntries(entries: Durable[], nowMs: number): Durable[] {
+  return entries.filter((entry) => isWithinValidityWindow(entry.valid_from, entry.valid_to, nowMs));
 }
 
 /**

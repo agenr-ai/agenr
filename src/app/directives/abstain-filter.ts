@@ -17,8 +17,18 @@
  * directive-store error.
  */
 
-import { collectAbstainDirectives, findAbstainViolation, isMemoryDirectiveDurable } from "../../core/directives/abstain.js";
+import { collectAbstainDirectives, findAbstainViolation } from "../../core/directives/abstain.js";
+import { isDirectiveDurable, isProactiveDirectiveDurable } from "../../core/directives/model.js";
 import type { Durable } from "../../core/types.js";
+
+/** Source kinds that can pass through automatic injection abstention. */
+type InjectionSourceKind = "profile" | "directive" | "core" | "artifact_recall" | "turn_recall";
+
+/** Minimal injection item shape accepted by the abstain filter. */
+interface AbstainFilterItem {
+  entry: Durable;
+  sourceKind?: InjectionSourceKind;
+}
 
 /**
  * Reason a candidate was suppressed by the abstain filter.
@@ -69,7 +79,7 @@ export interface AbstainFilterResult<T> {
  * @param listActiveAbstainDirectives - Optional lookup for active directive durables.
  * @returns Kept candidates plus a record of every suppression.
  */
-export async function applyAbstainDirectives<T extends { entry: Durable }>(
+export async function applyAbstainDirectives<T extends AbstainFilterItem>(
   items: readonly T[],
   listActiveAbstainDirectives: (() => Promise<Durable[]>) | undefined,
 ): Promise<AbstainFilterResult<T>> {
@@ -80,7 +90,7 @@ export async function applyAbstainDirectives<T extends { entry: Durable }>(
   const suppressed: AbstainSuppression[] = [];
   const nonDirectiveItems: T[] = [];
   for (const item of items) {
-    if (isMemoryDirectiveDurable(item.entry)) {
+    if (isDirectiveDurable(item.entry) && !isAllowedDirectiveInjectionItem(item)) {
       suppressed.push({ entryId: item.entry.id, reason: "directive_self" });
       continue;
     }
@@ -160,7 +170,7 @@ export function buildAbstentionNotice(suppression: AbstainSuppression): string {
  * @param diagnostics - Mutable diagnostics sink updated when suppressions occur.
  * @returns Candidates that survived the abstain filter.
  */
-export async function applyAbstainDirectivesForInjection<T extends { entry: Durable }>(
+export async function applyAbstainDirectivesForInjection<T extends AbstainFilterItem>(
   items: readonly T[],
   listActiveAbstainDirectives: (() => Promise<Durable[]>) | undefined,
   diagnostics: AbstainInjectionDiagnostics,
@@ -178,4 +188,8 @@ export async function applyAbstainDirectivesForInjection<T extends { entry: Dura
   }
 
   return result.kept;
+}
+
+function isAllowedDirectiveInjectionItem(item: AbstainFilterItem): boolean {
+  return item.sourceKind === "directive" && isProactiveDirectiveDurable(item.entry);
 }

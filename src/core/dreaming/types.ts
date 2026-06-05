@@ -2,7 +2,7 @@
  * Core dreaming domain types.
  */
 
-import type { DurableKind, Expiry } from "../types.js";
+import type { DirectivePolarity, DirectiveTrigger, DurableKind, Expiry } from "../types.js";
 
 /** Ordered list of supported dreaming run tiers. */
 export const DREAM_TIERS = ["light", "standard", "deep"] as const;
@@ -174,6 +174,8 @@ export interface DreamCandidate {
   importance: number;
   expiry: Expiry;
   tags: string[];
+  directivePolarity?: DirectivePolarity;
+  directiveTrigger?: DirectiveTrigger;
   claimKey: string | null;
   trust: DreamCandidateTrust;
   disposition: DreamCandidateDisposition;
@@ -199,6 +201,14 @@ export interface DreamTemporalizeSummary {
   revisionsSkipped: number;
 }
 
+/** Structured summary of one profile projection stage execution. */
+export interface DreamProjectSummary {
+  profileDurableCount: number;
+  directiveCount: number;
+  snapshotId: string | null;
+  applied: boolean;
+}
+
 /** Scan delta describing unsynthesized evidence since the last successful run. */
 export interface DreamScanSummary {
   episodesSinceLastRun: number;
@@ -221,4 +231,5 @@ export interface DreamCompletionSummary {
   extract?: DreamExtractSummary;
   reconcile?: ReconcilePassSummary;
   temporalize?: DreamTemporalizeSummary;
+  project?: DreamProjectSummary;
 }

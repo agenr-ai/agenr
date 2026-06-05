@@ -1,4 +1,4 @@
-import { MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX } from "../../core/directives/abstain.js";
+import { MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX } from "../../core/directives/model.js";
 import type { Durable } from "../../core/types.js";
 
 import { buildActiveDurableClause, buildValidAsOfClause, DURABLE_SELECT_COLUMNS, mapDurableRow } from "./row-mapping.js";
@@ -11,7 +11,7 @@ import type { SqlExecutor } from "./queries.js";
  * misconfigured corpus from loading an unbounded directive set into every
  * session-start and before-turn pass.
  */
-const MAX_ABSTAIN_DIRECTIVES = 50;
+const MAX_DIRECTIVES = 50;
 
 /**
  * Lists active, currently valid user memory directives.
@@ -32,12 +32,42 @@ export async function listActiveAbstainDirectives(executor: SqlExecutor): Promis
         ${DURABLE_SELECT_COLUMNS}
       FROM durables
       WHERE ${buildActiveDurableClause()}
-        AND claim_key LIKE ?
+        AND (
+          (type = 'directive' AND directive_polarity = 'abstain')
+          OR (claim_key LIKE ? AND (directive_polarity IS NULL OR directive_polarity = 'abstain'))
+        )
         AND ${buildValidAsOfClause()}
       ORDER BY created_at DESC
       LIMIT ?
     `,
-    args: [`${MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX}%`, nowIso, nowIso, MAX_ABSTAIN_DIRECTIVES],
+    args: [`${MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX}%`, nowIso, nowIso, MAX_DIRECTIVES],
+  });
+
+  return result.rows.map((row) => mapDurableRow(row));
+}
+
+/**
+ * Lists active proactive directives that should surface at session start.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @returns Active proactive directive durables, highest priority first.
+ */
+export async function listActiveSessionStartProactiveDirectives(executor: SqlExecutor): Promise<Durable[]> {
+  const nowIso = new Date().toISOString();
+  const result = await executor.execute({
+    sql: `
+      SELECT
+        ${DURABLE_SELECT_COLUMNS}
+      FROM durables
+      WHERE ${buildActiveDurableClause()}
+        AND type = 'directive'
+        AND directive_polarity = 'proactive'
+        AND directive_trigger IN ('session_start', 'always')
+        AND ${buildValidAsOfClause()}
+      ORDER BY importance DESC, created_at DESC
+      LIMIT ?
+    `,
+    args: [nowIso, nowIso, MAX_DIRECTIVES],
   });
 
   return result.rows.map((row) => mapDurableRow(row));

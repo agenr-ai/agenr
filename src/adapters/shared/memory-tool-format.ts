@@ -95,6 +95,8 @@ export function sanitizeStoreToolParams(params: StoreToolParams): Record<string,
     ...(params.sourceContext !== undefined ? { sourceContextLength: params.sourceContext.length } : {}),
     ...(params.supersedes !== undefined ? { hasSupersedes: true } : {}),
     ...(params.claimKey !== undefined ? { hasClaimKey: true } : {}),
+    ...(params.polarity !== undefined ? { polarity: params.polarity } : {}),
+    ...(params.trigger !== undefined ? { hasTrigger: true } : {}),
     ...(params.validFrom !== undefined ? { hasValidFrom: true } : {}),
     ...(params.validTo !== undefined ? { hasValidTo: true } : {}),
   };

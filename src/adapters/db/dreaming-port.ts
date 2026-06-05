@@ -1,8 +1,10 @@
 import type { DreamPort } from "../../app/dreaming/ports.js";
-import { findActiveDurablesByClaimKey, findExistingNormHashes, getDurable, insertDurable, supersedeDurable, updateDurable } from "./queries.js";
+import { findActiveDurablesByClaimKey, findExistingNormHashes, getDurable, getDurables, insertDurable, supersedeDurable, updateDurable } from "./queries.js";
 import {
   completeDreamRun,
+  createProfileSnapshot,
   createDreamRun,
+  getActiveProfileSnapshot,
   getDailyDreamCost,
   getDreamProposal,
   getLastDreamRun,
@@ -46,6 +48,7 @@ export function createDreamPort(executor: SqlExecutor): DreamPort {
     reviewProposal: async (input) => reviewDreamProposal(executor, input),
     listProposalBacklog: async (query) => listDreamProposalBacklog(executor, query),
     getHealthStats: async (now) => getDreamHealthStats(executor, now),
+    getActiveProfileSnapshot: async () => getActiveProfileSnapshot(executor),
     listReconcileDurables: async (query) => listReconcileDurables(executor, query),
     listEpisodeEvidenceSince: async (since, options) => listEpisodeEvidenceSince(executor, since, options),
     findActiveDurablesByClaimKey: async (claimKey) => findActiveDurablesByClaimKey(executor, claimKey),
@@ -53,11 +56,13 @@ export function createDreamPort(executor: SqlExecutor): DreamPort {
     insertDurable: async (durable, embedding, contentHash) => insertDurable(executor, durable, embedding, contentHash),
     supersedeDurable: async (oldDurableId, newDurableId, kind, reason) => supersedeDurable(executor, oldDurableId, newDurableId, kind, reason),
     getDurable: async (durableId) => getDurable(executor, durableId),
+    getDurables: async (durableIds) => getDurables(executor, durableIds),
     updateDurable: async (durableId, fields, options) => updateDurable(executor, durableId, fields, options),
     countEpisodesSince: async (since, project) => countEpisodesSince(executor, since, project),
     countIngestFilesSince: async (since) => countIngestFilesSince(executor, since),
     countDurablesCreatedSince: async (since, project) => countDurablesCreatedSince(executor, since, project),
     updateDreamState: async (input) => updateDreamState(executor, input),
+    createProfileSnapshot: async (snapshot) => createProfileSnapshot(executor, snapshot),
     withTransaction: async (fn) => runInDreamTransaction(executor, fn),
   };
 }

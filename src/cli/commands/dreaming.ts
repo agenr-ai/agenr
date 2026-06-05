@@ -4,13 +4,16 @@ import {
   loadDreamActionsRuntime,
   loadDreamBacklogRuntime,
   loadDreamHistoryRuntime,
+  loadDreamProfileRuntime,
   loadDreamProposalsRuntime,
+  loadDreamSummaryRuntime,
   loadDreamStatusRuntime,
   reviewDreamProposalRuntime,
   runDreamRuntime,
   type DreamRuntimeOptions,
 } from "../../app/dreaming/runtime.js";
 import { DREAM_TIERS, type DreamProposalReviewStatus, type DreamTier } from "../../core/dreaming/types.js";
+import type { Durable } from "../../core/types.js";
 import { normalizeOptionalString, parseNonNegativeInteger, parsePositiveInteger } from "../shared/parse.js";
 
 /** Parsed commander options for `agenr dream run`. */
@@ -106,6 +109,34 @@ export function registerDreamingCommand(program: Command): void {
       } catch (error) {
         process.exitCode = 1;
         process.stderr.write(`Dream history failed: ${formatUnknownError(error)}\n`);
+      }
+    });
+
+  dreamCommand
+    .command("profile")
+    .description("Show the active dreaming profile snapshot")
+    .option("--json", "Emit machine-readable JSON output")
+    .action(async (options: { json?: boolean }) => {
+      try {
+        const profile = await loadDreamProfileRuntime({ env: process.env });
+        process.stdout.write(options.json ? `${JSON.stringify(profile, null, 2)}\n` : renderProfile(profile));
+      } catch (error) {
+        process.exitCode = 1;
+        process.stderr.write(`Dream profile failed: ${formatUnknownError(error)}\n`);
+      }
+    });
+
+  dreamCommand
+    .command("summary")
+    .description("Show a human-readable summary of current dreamed memory")
+    .option("--json", "Emit machine-readable JSON output")
+    .action(async (options: { json?: boolean }) => {
+      try {
+        const summary = await loadDreamSummaryRuntime({ env: process.env });
+        process.stdout.write(options.json ? `${JSON.stringify(summary, null, 2)}\n` : renderSummary(summary));
+      } catch (error) {
+        process.exitCode = 1;
+        process.stderr.write(`Dream summary failed: ${formatUnknownError(error)}\n`);
       }
     });
 
@@ -247,6 +278,121 @@ function renderHistory(history: Awaited<ReturnType<typeof loadDreamHistoryRuntim
     .map((run) => `${run.startedAt}  ${run.id}  tier=${run.tier}  status=${run.status}  dryRun=${run.dryRun}`)
     .join("\n")
     .concat("\n");
+}
+
+function renderProfile(profile: Awaited<ReturnType<typeof loadDreamProfileRuntime>>): string {
+  if (!profile.snapshot) {
+    return "No active dream profile snapshot.\n";
+  }
+
+  const lines = [
+    "Dream profile",
+    `  snapshot: ${profile.snapshot.id}`,
+    `  as of: ${profile.snapshot.asOf}`,
+    `  created: ${profile.snapshot.createdAt}`,
+    `  run: ${profile.snapshot.runId ?? "none"}`,
+    `  content hash: ${profile.snapshot.contentHash}`,
+    "  profile durables:",
+    ...renderDurableList(profile.profileDurables, "    "),
+    "  directives:",
+    ...renderDirectiveList(profile.directiveDurables, "    "),
+  ];
+
+  return `${lines.join("\n")}\n`;
+}
+
+function renderSummary(summary: Awaited<ReturnType<typeof loadDreamSummaryRuntime>>): string {
+  if (!summary.snapshot) {
+    return ["Dream summary", "  active profile: none", `  active durables: ${summary.health.total}`, `  open proposals: ${summary.openProposalCount}`]
+      .join("\n")
+      .concat("\n");
+  }
+
+  const grouped = groupDurablesByClaimFamily(summary.profileDurables);
+  const lines = [
+    "Dream summary",
+    `  snapshot: ${summary.snapshot.id}`,
+    `  snapshot age: ${formatSnapshotAge(summary.snapshot.createdAt)}`,
+    `  run: ${summary.snapshot.runId ?? "none"}`,
+    `  open proposals: ${summary.openProposalCount}`,
+    "  profile by claim-key family:",
+  ];
+
+  for (const [family, durables] of grouped) {
+    lines.push(`    ${family}`);
+    lines.push(...renderDurableList(durables, "      "));
+  }
+
+  const standing = summary.profileDurables.filter((durable) => durable.type === "preference" || durable.type === "decision");
+  lines.push("  standing preferences and constraints:");
+  lines.push(...renderDurableList(standing, "    "));
+
+  const temporal = summary.profileDurables.filter((durable) => durable.valid_from || durable.valid_to);
+  lines.push("  active temporal facts:");
+  lines.push(...renderDurableList(temporal, "    "));
+
+  lines.push("  directive durables:");
+  lines.push(...renderDirectiveList(summary.directiveDurables, "    "));
+
+  return `${lines.join("\n")}\n`;
+}
+
+function renderDurableList(durables: Durable[], prefix: string): string[] {
+  if (durables.length === 0) {
+    return [`${prefix}(none)`];
+  }
+
+  return durables.map((durable) => {
+    const validity = durable.valid_from || durable.valid_to ? ` valid=${durable.valid_from ?? "?"}->${durable.valid_to ?? "ongoing"}` : "";
+    return `${prefix}- ${durable.subject} [${durable.id}] type=${durable.type} importance=${durable.importance} expiry=${durable.expiry}${validity}`;
+  });
+}
+
+function renderDirectiveList(durables: Durable[], prefix: string): string[] {
+  if (durables.length === 0) {
+    return [`${prefix}(none)`];
+  }
+
+  return durables.map(
+    (durable) =>
+      `${prefix}- ${durable.subject} [${durable.id}] polarity=${durable.directive_polarity ?? "abstain"} trigger=${durable.directive_trigger ?? "always"}`,
+  );
+}
+
+function groupDurablesByClaimFamily(durables: Durable[]): Map<string, Durable[]> {
+  const grouped = new Map<string, Durable[]>();
+  for (const durable of durables) {
+    const family = claimFamily(durable);
+    grouped.set(family, [...(grouped.get(family) ?? []), durable]);
+  }
+
+  return grouped;
+}
+
+function claimFamily(durable: Durable): string {
+  const claimKey = durable.claim_key?.trim();
+  if (!claimKey) {
+    return `unkeyed/${durable.type}`;
+  }
+
+  const parts = claimKey.split("/");
+  return parts.length > 1 ? parts.slice(0, -1).join("/") : claimKey;
+}
+
+function formatSnapshotAge(createdAt: string): string {
+  const createdMs = Date.parse(createdAt);
+  if (!Number.isFinite(createdMs)) {
+    return "unknown";
+  }
+
+  const ageMinutes = Math.max(0, Math.round((Date.now() - createdMs) / 60_000));
+  if (ageMinutes < 60) {
+    return `${ageMinutes}m`;
+  }
+
+  const ageHours = Math.floor(ageMinutes / 60);
+  const remainingMinutes = ageMinutes % 60;
+  return remainingMinutes === 0 ? `${ageHours}h` : `${ageHours}h ${remainingMinutes}m`;
 }
 
 function renderActions(runId: string, actions: Awaited<ReturnType<typeof loadDreamActionsRuntime>>): string {

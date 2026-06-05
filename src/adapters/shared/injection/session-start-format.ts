@@ -56,6 +56,16 @@ export function formatAgenrSessionStartRecall(patch: SessionStartPatch): string 
 export function buildSections(patch: SessionStartPatch): Array<{ title: string; entries: SessionStartPatchItem[] }> {
   const sections: Array<{ title: string; entries: SessionStartPatchItem[] }> = [];
 
+  const profileEntries = patch.durableMemory.filter((item) => item.sourceKind === "profile");
+  if (profileEntries.length > 0) {
+    sections.push({ title: "Profile Memory", entries: profileEntries });
+  }
+
+  const directiveEntries = patch.durableMemory.filter((item) => item.sourceKind === "directive");
+  if (directiveEntries.length > 0) {
+    sections.push({ title: "Memory Directives", entries: directiveEntries });
+  }
+
   const coreEntries = patch.durableMemory.filter((item) => item.sourceKind === "core");
   if (coreEntries.length > 0) {
     sections.push({ title: "Core Memory", entries: coreEntries });

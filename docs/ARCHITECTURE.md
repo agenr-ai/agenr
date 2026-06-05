@@ -169,7 +169,7 @@ Durable knowledge rows are modeled by `Durable` in `src/core/types.ts`.
 
 Current durable characteristics:
 
-- supported durable types: `fact`, `decision`, `preference`, `lesson`, `relationship`, `milestone`
+- supported durable types: `fact`, `decision`, `preference`, `lesson`, `relationship`, `milestone`, `directive`
 - supported expiry levels: `core`, `permanent`, `temporary`
 - lifecycle fields for retirement and explicit supersession
 - temporal validity via `valid_from` and `valid_to`
@@ -256,7 +256,7 @@ The adapter is responsible for:
 
 ### 6.2 Schema
 
-The current logical schema version is `1`.
+The current logical schema version is `2`.
 
 Key tables:
 
@@ -298,7 +298,7 @@ Episodes do not currently use FTS. Episode retrieval is time-window and vector b
 
 `src/adapters/db/schema.ts` owns more than table creation. It also manages:
 
-- greenfield schema initialization at version `1` with no legacy migration path
+- greenfield schema initialization at version `2` with no legacy migration path
 - FTS trigger creation and rebuilds
 - vector index creation and feature probing
 - interrupted bulk-write recovery via `_meta`
@@ -525,7 +525,7 @@ Milestone 1 implements a pipeline-first skeleton:
 - `reconcile` runs deterministic claim-key quality maintenance
 - `apply` persists accepted mutations when `--apply` is set
 
-Later milestones add extract, temporalize, projection, directives, prune, and host triggers.
+Later milestones add prune and host triggers.
 
 Runtime safeguards include:
 

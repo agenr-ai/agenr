@@ -362,6 +362,8 @@ describe("handleAgenrSkelnBeforeAgentStart", () => {
           listCoreEntries: vi.fn(async () => {
             throw new Error("session start failed");
           }),
+          getActiveProfileSnapshot: vi.fn(async () => null),
+          listEntriesByIds: vi.fn(async () => []),
         },
         recall: {
           embed: vi.fn(),
@@ -533,6 +535,8 @@ function createSessionStartDeps(coreEntries: Durable[]): SessionStartDeps {
   return {
     repository: {
       listCoreEntries: vi.fn(async () => coreEntries),
+      getActiveProfileSnapshot: vi.fn(async () => null),
+      listEntriesByIds: vi.fn(async () => []),
     },
     recall: {
       embed: vi.fn(),

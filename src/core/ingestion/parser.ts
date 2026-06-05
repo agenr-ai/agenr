@@ -1,5 +1,6 @@
 import type { Expiry, StoreDurableInput } from "../types.js";
 import { describeClaimKeyNormalizationFailure, normalizeClaimKey } from "../claim-key.js";
+import { defaultDirectiveTrigger, MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX, normalizeMemoryDirectiveClaimKey } from "../directives/model.js";
 
 const IMPORTANCE_TIER_MAP: Record<string, number> = {
   high: 8,
@@ -22,6 +23,8 @@ const TYPE_ALIAS_MAP: Record<string, StoreDurableInput["type"]> = {
   milestones: "milestone",
   relationship: "relationship",
   relationships: "relationship",
+  directive: "directive",
+  directives: "directive",
 };
 
 const EXPIRY_ALIAS_MAP: Record<string, Expiry> = {
@@ -153,12 +156,25 @@ function parseEntry(value: unknown, index: number, warnings: string[]): StoreDur
     return null;
   }
 
-  const expiry = coerceExpiry(record.expiry, index, warnings);
+  const expiry = coerceExpiry(record.expiry, type, index, warnings);
   const sourceContext = coerceOptionalString(record.source_context);
-  const claimKey = coerceClaimKey(record.claim_key ?? record.claimKey, index, warnings);
+  const claimKey = coerceClaimKey(record.claim_key ?? record.claimKey, type, index, warnings);
+  const directivePolarity = coerceDirectivePolarity(record.directive_polarity ?? record.polarity, type, index, warnings);
+  const directiveTrigger = coerceDirectiveTrigger(record.directive_trigger ?? record.trigger, type, directivePolarity, index, warnings);
   const sourceFile = coerceOptionalString(record.source_file ?? record.sourceFile);
   const userId = coerceOptionalString(record.user_id ?? record.userId);
   const project = coerceOptionalString(record.project);
+
+  if (type === "directive") {
+    if (!directivePolarity) {
+      warnings.push(`Dropped entry ${index + 1}: directive entries require directive_polarity.`);
+      return null;
+    }
+    if (!claimKey?.claimKey.startsWith(MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX)) {
+      warnings.push(`Dropped entry ${index + 1}: directive entries require claim_key prefix ${MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX}.`);
+      return null;
+    }
+  }
 
   return {
     type,
@@ -170,6 +186,8 @@ function parseEntry(value: unknown, index: number, warnings: string[]): StoreDur
     source_file: sourceFile,
     claim_key: claimKey?.claimKey,
     claim_key_raw: claimKey?.rawClaimKey,
+    directive_polarity: directivePolarity,
+    directive_trigger: directiveTrigger,
     source_context: sourceContext,
     user_id: userId,
     project,
@@ -208,9 +226,9 @@ function coerceImportance(value: unknown): number {
 }
 
 /** Coerces raw expiry values while reserving `core` for system-managed entries. */
-function coerceExpiry(value: unknown, index: number, warnings: string[]): Exclude<Expiry, "core"> {
+function coerceExpiry(value: unknown, type: StoreDurableInput["type"], index: number, warnings: string[]): Expiry {
   if (typeof value !== "string") {
-    return "temporary";
+    return type === "directive" ? "core" : "temporary";
   }
 
   const normalized = EXPIRY_ALIAS_MAP[normalizeToken(value)];
@@ -218,12 +236,61 @@ function coerceExpiry(value: unknown, index: number, warnings: string[]): Exclud
     return "temporary";
   }
 
-  if (normalized === "core") {
+  if (normalized === "core" && type !== "directive") {
     warnings.push(`Entry ${index + 1}: expiry "core" is reserved and was changed to "temporary".`);
     return "temporary";
   }
 
   return normalized;
+}
+
+/** Coerces directive polarity for first-class directive candidates. */
+function coerceDirectivePolarity(value: unknown, type: StoreDurableInput["type"], index: number, warnings: string[]): StoreDurableInput["directive_polarity"] {
+  if (type !== "directive") {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    warnings.push(`Entry ${index + 1}: directive_polarity is required for directive entries.`);
+    return undefined;
+  }
+
+  const normalized = normalizeToken(value);
+  if (normalized === "abstain" || normalized === "proactive") {
+    return normalized;
+  }
+
+  warnings.push(`Entry ${index + 1}: dropped invalid directive_polarity ${JSON.stringify(value)}.`);
+  return undefined;
+}
+
+/** Coerces directive trigger for first-class directive candidates. */
+function coerceDirectiveTrigger(
+  value: unknown,
+  type: StoreDurableInput["type"],
+  polarity: StoreDurableInput["directive_polarity"],
+  index: number,
+  warnings: string[],
+): StoreDurableInput["directive_trigger"] {
+  if (type !== "directive") {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    return polarity ? defaultDirectiveTrigger(polarity) : undefined;
+  }
+
+  const normalized = normalizeToken(value);
+  if (normalized === "session_start" || normalized === "always") {
+    return normalized;
+  }
+
+  if (normalized.startsWith("topic:") && normalized.slice("topic:".length).trim().length > 0) {
+    return `topic:${normalizeWhitespace(normalized.slice("topic:".length))}`;
+  }
+
+  warnings.push(`Entry ${index + 1}: dropped invalid directive_trigger ${JSON.stringify(value)}.`);
+  return undefined;
 }
 
 /** Normalizes and caps extracted tags. */
@@ -263,13 +330,26 @@ function coerceOptionalString(value: unknown): string | undefined {
 }
 
 /** Coerces one optional extracted claim key into canonical form while preserving raw text. */
-function coerceClaimKey(value: unknown, index: number, warnings: string[]): ParsedClaimKey | undefined {
+function coerceClaimKey(value: unknown, type: StoreDurableInput["type"], index: number, warnings: string[]): ParsedClaimKey | undefined {
   if (typeof value !== "string") {
     return undefined;
   }
 
   const rawClaimKey = coerceOptionalString(value);
   if (!rawClaimKey) {
+    return undefined;
+  }
+
+  if (type === "directive") {
+    const directiveClaimKey = normalizeMemoryDirectiveClaimKey(rawClaimKey);
+    if (directiveClaimKey) {
+      return {
+        claimKey: directiveClaimKey,
+        rawClaimKey: rawClaimKey !== directiveClaimKey ? rawClaimKey : undefined,
+      };
+    }
+
+    warnings.push(`Entry ${index + 1}: dropped directive claim_key ${JSON.stringify(value)} because it must use ${MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX}<name>.`);
     return undefined;
   }
 

@@ -102,6 +102,8 @@ describe("initSchema", () => {
       "superseded_by",
       "valid_from",
       "valid_to",
+      "directive_polarity",
+      "directive_trigger",
       "claim_key",
       "claim_key_raw",
       "claim_key_status",
@@ -349,7 +351,7 @@ describe("initSchema", () => {
     await expect(initSchema(client)).resolves.toBeUndefined();
 
     const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("1");
+    expect(version.rows[0]?.value).toBe("2");
     expect(await indexExists(client, "idx_episodes_started_at")).toBe(true);
   });
 
@@ -374,7 +376,7 @@ describe("initSchema", () => {
     await expect(insertTestWorkingSet(client, "working-c", "scope:one", "closed")).resolves.toBeUndefined();
   });
 
-  for (const version of ["2", "3", "4", "5", "7", "9", "11", "12"] as const) {
+  for (const version of ["1", "3", "4", "5", "7", "9", "11", "12"] as const) {
     it(`rejects unsupported schema version ${version}`, async () => {
       const client = createClient({ url: ":memory:" });
       clients.push(client);

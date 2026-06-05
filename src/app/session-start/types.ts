@@ -19,6 +19,8 @@ export interface SessionStartPolicy {
   maxArtifactChars?: number;
   /** Optional score threshold for artifact-grounded durable recall. */
   recallThreshold?: number;
+  /** Maximum active profile snapshot age in hours before session-start ignores it. */
+  maxProfileSnapshotAgeHours?: number;
 }
 
 /**
@@ -55,8 +57,8 @@ export interface SessionStartPatchItem {
   rank: number;
   /** Hydrated durable entry selected for session start. */
   entry: Durable;
-  /** Whether the item came from always-on core memory or artifact-grounded recall. */
-  sourceKind: "core" | "artifact_recall";
+  /** Whether the item came from profile, directive, core memory, or artifact-grounded recall. */
+  sourceKind: "profile" | "directive" | "core" | "artifact_recall";
   /** Optional final ranking score when the item came from recall. */
   score?: number;
   /** Concise explanation of why the item surfaced. */
@@ -82,6 +84,12 @@ export type SessionStartDirectiveAbstention = AbstainSuppression;
 export interface SessionStartPatchDiagnostics {
   /** Count of core candidates considered before merging. */
   coreCandidateCount: number;
+  /** Count of profile snapshot candidates considered before merging. */
+  profileCandidateCount?: number;
+  /** Active profile snapshot identifier used during selection, when any. */
+  activeProfileSnapshotId?: string;
+  /** Count of proactive directive candidates considered before merging. */
+  proactiveDirectiveCandidateCount?: number;
   /** Count of artifact-grounded recall candidates considered before dedupe. */
   artifactRecallCandidateCount: number;
   /** Whether artifact-grounded recall was attempted. */

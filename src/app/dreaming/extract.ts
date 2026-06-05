@@ -209,6 +209,8 @@ interface MinedCandidate {
   importance: number;
   expiry: Durable["expiry"];
   tags: string[];
+  directivePolarity?: Durable["directive_polarity"];
+  directiveTrigger?: Durable["directive_trigger"];
   claimKey: string | null;
   evidenceRefs: DreamEvidenceRef[];
 }
@@ -267,6 +269,8 @@ export async function classifyCandidates(mined: MinedCandidate[], deps: { port: 
       importance: candidate.importance,
       expiry: candidate.expiry,
       tags: candidate.tags,
+      ...(candidate.directivePolarity ? { directivePolarity: candidate.directivePolarity } : {}),
+      ...(candidate.directiveTrigger ? { directiveTrigger: candidate.directiveTrigger } : {}),
       claimKey: candidate.claimKey,
       trust: "tentative",
       disposition,
@@ -311,6 +315,8 @@ export function buildDurableFromCandidate(
     importance: candidate.importance,
     expiry: candidate.expiry,
     tags: candidate.tags,
+    directive_polarity: candidate.directivePolarity,
+    directive_trigger: candidate.directiveTrigger,
     quality_score: 0.5,
     recall_count: 0,
     content_hash: contentHash,
@@ -383,6 +389,8 @@ function toMinedCandidate(entry: StoreDurableInput, episode: DreamEpisodeEvidenc
     importance: typeof entry.importance === "number" ? entry.importance : DEFAULT_CANDIDATE_IMPORTANCE,
     expiry: entry.expiry ?? "permanent",
     tags: entry.tags ?? [],
+    directivePolarity: entry.directive_polarity,
+    directiveTrigger: entry.directive_trigger,
     claimKey: normalizeCandidateClaimKey(entry.claim_key),
     evidenceRefs: [
       {

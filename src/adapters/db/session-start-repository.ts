@@ -1,8 +1,16 @@
 import type { SessionStartRepository } from "../../app/session-start/index.js";
 import type { Durable } from "../../core/types.js";
 
-import { buildActiveDurableClause, buildValidAsOfClause, DURABLE_SELECT_COLUMNS, mapDurableRow } from "./row-mapping.js";
-import type { SqlExecutor } from "./queries.js";
+import { parseJsonStringArray } from "./dreaming-run-shared.js";
+import {
+  buildActiveDurableClause,
+  buildValidAsOfClause,
+  DURABLE_SELECT_COLUMNS,
+  mapDurableRow,
+  readOptionalString,
+  readRequiredString,
+} from "./row-mapping.js";
+import { getDurables, type SqlExecutor } from "./queries.js";
 
 /**
  * Creates the DB-backed repository used by the app-layer session-start service.
@@ -13,6 +21,57 @@ import type { SqlExecutor } from "./queries.js";
 export function createSessionStartRepository(executor: SqlExecutor): SessionStartRepository {
   return {
     listCoreEntries: async (limit) => listCoreEntries(executor, limit),
+    getActiveProfileSnapshot: async (maxAgeMs) => getActiveProfileSnapshot(executor, maxAgeMs),
+    listEntriesByIds: async (ids) => getDurables(executor, ids),
+  };
+}
+
+/**
+ * Loads the active profile snapshot when it is younger than the supplied age.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param maxAgeMs - Maximum allowed snapshot age.
+ * @returns Active profile snapshot metadata, or null.
+ */
+async function getActiveProfileSnapshot(
+  executor: SqlExecutor,
+  maxAgeMs: number,
+): Promise<Awaited<ReturnType<SessionStartRepository["getActiveProfileSnapshot"]>>> {
+  if (!Number.isFinite(maxAgeMs) || maxAgeMs <= 0) {
+    return null;
+  }
+
+  const minCreatedAt = new Date(Date.now() - maxAgeMs).toISOString();
+  const result = await executor.execute({
+    sql: `
+      SELECT
+        p.id,
+        p.durable_ids,
+        p.directive_ids,
+        p.as_of,
+        p.run_id,
+        p.created_at
+      FROM dream_state AS s
+      JOIN profile_snapshots AS p ON p.id = s.active_profile_snapshot_id
+      WHERE s.id = 'default'
+        AND datetime(p.created_at) >= datetime(?)
+      LIMIT 1
+    `,
+    args: [minCreatedAt],
+  });
+
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: readRequiredString(row, "id"),
+    durableIds: parseJsonStringArray(readOptionalString(row, "durable_ids")),
+    directiveIds: parseJsonStringArray(readOptionalString(row, "directive_ids")),
+    asOf: readRequiredString(row, "as_of"),
+    runId: readOptionalString(row, "run_id") ?? null,
+    createdAt: readRequiredString(row, "created_at"),
   };
 }
 

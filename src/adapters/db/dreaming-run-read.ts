@@ -1,3 +1,4 @@
+import type { DreamProfileSnapshot } from "../../app/dreaming/ports.js";
 import type { DreamProposalReviewStatus, DreamRunProposal } from "../../core/dreaming/types.js";
 import type { DreamRunAction } from "../../core/dreaming/domain/action-types.js";
 import { readBoolean, readOptionalString, readRequiredString } from "./row-mapping.js";
@@ -8,9 +9,50 @@ import {
   mapActionRow,
   mapProposalRow,
   mapRunRow,
+  parseJsonStringArray,
   parseStoredDreamRunStatus,
   parseStoredDreamTier,
 } from "./dreaming-run-shared.js";
+
+/**
+ * Loads the active dreaming profile snapshot referenced by dream_state.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @returns Active profile snapshot, or null when none is configured.
+ */
+export async function getActiveProfileSnapshot(executor: SqlExecutor): Promise<DreamProfileSnapshot | null> {
+  const result = await executor.execute({
+    sql: `
+      SELECT
+        p.id,
+        p.durable_ids,
+        p.directive_ids,
+        p.as_of,
+        p.content_hash,
+        p.run_id,
+        p.created_at
+      FROM dream_state AS s
+      JOIN profile_snapshots AS p ON p.id = s.active_profile_snapshot_id
+      WHERE s.id = 'default'
+      LIMIT 1
+    `,
+  });
+
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: readRequiredString(row, "id"),
+    durableIds: parseJsonStringArray(readOptionalString(row, "durable_ids")),
+    directiveIds: parseJsonStringArray(readOptionalString(row, "directive_ids")),
+    asOf: readRequiredString(row, "as_of"),
+    contentHash: readRequiredString(row, "content_hash"),
+    runId: readOptionalString(row, "run_id") ?? null,
+    createdAt: readRequiredString(row, "created_at"),
+  };
+}
 
 /**
  * Loads recent dreaming runs ordered from newest to oldest.

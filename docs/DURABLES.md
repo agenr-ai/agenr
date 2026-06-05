@@ -65,7 +65,15 @@ interface StoreDurableInput {
   claim_key?: string;
   claim_key_raw?: string;
   claim_key_status?: "trusted" | "tentative" | "unresolved";
-  claim_key_source?: "manual" | "model" | "json_retry" | "deterministic_repair" | "dreaming_reconcile";
+  claim_key_source?:
+    | "manual"
+    | "model"
+    | "json_retry"
+    | "deterministic_repair"
+    | "dreaming_extract"
+    | "dreaming_reconcile"
+    | "dreaming_temporalize"
+    | "dreaming_project";
   claim_key_confidence?: number;
   claim_key_rationale?: string;
   claim_support_source_kind?: string;
@@ -74,6 +82,8 @@ interface StoreDurableInput {
   claim_support_mode?: "explicit" | "normalized" | "inferred";
   valid_from?: string;
   valid_to?: string;
+  directive_polarity?: "abstain" | "proactive";
+  directive_trigger?: "session_start" | "always" | `topic:${string}`;
 }
 ```
 
@@ -90,6 +100,9 @@ Notable properties:
 - `supersedes` lets a caller explicitly mark one active entry as replaced by the new stored row
 - `claim_key` and its lifecycle/support fields may be supplied directly, inferred earlier by ingest, or extracted inside the store pipeline
 - `valid_from` and `valid_to` are stored as temporal world-state bounds, must parse as ISO timestamps when present, and must be strictly ordered when both are supplied
+- `directive_polarity` and `directive_trigger` are valid only for `type: "directive"` rows
+- directive rows must use claim keys under `user/memory_directive/<name>`
+- directive expiry defaults to `core`; proactive trigger defaults to `session_start`; abstain trigger defaults to `always`
 
 Read-side Phase 3 semantics now use these clocks differently:
 
@@ -105,6 +118,7 @@ Callers should apply a durable-memory filter before writing. The store pipeline 
 
 - personal facts such as allergies, relationships, communication preferences, biographical details, and standing constraints
 - standing decisions and constraints about how someone wants things handled
+- memory behavior directives such as topics to suppress or reminders to proactively surface
 - verified system, environment, or world facts that will still matter later
 - lessons grounded in a specific experience, failure, or discovery
 - rare milestones and notable one-time events with durable future significance

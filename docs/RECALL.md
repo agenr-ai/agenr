@@ -678,7 +678,9 @@ Session-start recall:
 - merges continuity context with durable memory
 - keeps continuity and durable memory visibly separate
 - caps the durable-memory patch to a small bounded set
-- prefers artifact-grounded durable memory for non-core context
+- prefers fresh profile snapshot ids before generic core or artifact-grounded durable memory
+- surfaces active proactive directives with `session_start` or `always` triggers
+- prefers artifact-grounded durable memory for non-core context after profile and core selections
 - filters expired and not-yet-valid core durables in SQL (`valid_to < now`, `valid_from > now`) so stale rows never auto-inject
 - labels a surviving entry `historical` only when `valid_to` has actually passed, not merely because a `valid_to` is set
 - applies [memory-directive abstention](#memory-directive-abstention) over the assembled durable set
@@ -701,8 +703,9 @@ This path is intentionally stricter than the explicit recall tool. It is meant t
 
 Both automatic injection paths consult active user memory directives before
 surfacing durable memory. A memory directive is a durable in the claim-key
-family `user/memory_directive/*` whose content asks agenr to stop surfacing a
-topic, for example "do not bring up the San Francisco move again".
+family `user/memory_directive/*`. First-class directive rows have
+`type = "directive"`, `directive_polarity` of `abstain` or `proactive`, and
+`directive_trigger` of `session_start`, `always`, or `topic:<term>`.
 
 Abstention does two things:
 
@@ -710,6 +713,8 @@ Abstention does two things:
   instruction about memory, not a fact to surface
 - **candidates that mention a blocked topic are suppressed** - the directive's
   blocked phrases are matched against each candidate's subject and content
+- **proactive directives surface only as directives** - session-start can inject
+  active proactive directives, then abstain directives filter the final bundle
 
 The active directives are fetched through an optional lookup wired by the host
 runtime. Hosts that omit it (and narrow eval seams) skip topic suppression. The
@@ -717,9 +722,9 @@ lookup is best-effort: a directive-store failure fails open and keeps the
 non-directive candidates rather than blanking memory. Suppressions are recorded
 on the patch diagnostics under `directiveAbstentions`.
 
-This is the minimal abstention behavior. The full first-class `directive`
-durable kind, polarity, and trigger model is a later milestone; today abstain
-directives are recognized structurally by claim-key family and content.
+Legacy abstain rows that only carry the `user/memory_directive/*` claim-key
+family are still recognized as abstain directives. New store inputs should use
+the first-class directive kind and metadata fields.
 
 ## Notices, degradation, and fallbacks
 

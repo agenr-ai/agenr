@@ -2,6 +2,16 @@ import type { ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
 import type { RecallPorts } from "../../core/ports.js";
 import type { Durable } from "../../core/types.js";
 
+/** Active profile snapshot metadata used by session-start selection. */
+export interface SessionStartProfileSnapshot {
+  id: string;
+  durableIds: string[];
+  directiveIds: string[];
+  asOf: string;
+  runId: string | null;
+  createdAt: string;
+}
+
 /**
  * Feature-scoped durable-memory lookup contract used by session-start selection.
  */
@@ -13,6 +23,20 @@ export interface SessionStartRepository {
    * @returns Ordered active core entries.
    */
   listCoreEntries(limit: number): Promise<Durable[]>;
+  /**
+   * Loads the active profile snapshot when it is fresh enough.
+   *
+   * @param maxAgeMs - Maximum snapshot age in milliseconds.
+   * @returns Fresh active snapshot, or null.
+   */
+  getActiveProfileSnapshot(maxAgeMs: number): Promise<SessionStartProfileSnapshot | null>;
+  /**
+   * Hydrates active durables by id while preserving the caller's id order.
+   *
+   * @param ids - Ordered durable ids to hydrate.
+   * @returns Hydrated active durables in requested order.
+   */
+  listEntriesByIds(ids: string[]): Promise<Durable[]>;
 }
 
 /**
@@ -33,4 +57,6 @@ export interface SessionStartDeps {
    * omit it skip directive abstention entirely.
    */
   listActiveAbstainDirectives?: () => Promise<Durable[]>;
+  /** Optional lookup for proactive session-start directives. */
+  listActiveProactiveDirectives?: () => Promise<Durable[]>;
 }

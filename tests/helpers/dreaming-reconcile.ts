@@ -104,6 +104,8 @@ export async function insertDurable(client: Client, overrides: Partial<Durable> 
         superseded_by,
         valid_from,
         valid_to,
+        directive_polarity,
+        directive_trigger,
         claim_key,
         claim_key_raw,
         claim_key_status,
@@ -125,7 +127,7 @@ export async function insertDurable(client: Client, overrides: Partial<Durable> 
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     args: [
       durable.id,
@@ -147,6 +149,8 @@ export async function insertDurable(client: Client, overrides: Partial<Durable> 
       durable.superseded_by ?? null,
       durable.valid_from ?? null,
       durable.valid_to ?? null,
+      durable.directive_polarity ?? null,
+      durable.directive_trigger ?? null,
       durable.claim_key ?? null,
       durable.claim_key_raw ?? null,
       durable.claim_key_status ?? null,
@@ -191,6 +195,8 @@ export function buildDurable(overrides: Partial<Durable> & Pick<Durable, "id" | 
     superseded_by: overrides.superseded_by,
     valid_from: overrides.valid_from,
     valid_to: overrides.valid_to,
+    directive_polarity: overrides.directive_polarity,
+    directive_trigger: overrides.directive_trigger,
     claim_key: overrides.claim_key,
     supersession_kind: overrides.supersession_kind,
     supersession_reason: overrides.supersession_reason,

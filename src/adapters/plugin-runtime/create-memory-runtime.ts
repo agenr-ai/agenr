@@ -2,7 +2,7 @@ import type { CrossEncoderPort, EmbeddingPort } from "../../core/ports.js";
 import type { AgenrConfig } from "../../config.js";
 import { createOpenAICrossEncoder, resolveCrossEncoderApiKey } from "../cross-encoder/openai-cross-encoder.js";
 import { createDatabase } from "../db/client.js";
-import { listActiveAbstainDirectives } from "../db/directives-repository.js";
+import { listActiveAbstainDirectives, listActiveSessionStartProactiveDirectives } from "../db/directives-repository.js";
 import { createMemoryRepository } from "../db/memory-repository.js";
 import { createSessionMemoryRepository } from "../db/session-memory-repository.js";
 import { createSessionStartRepository } from "../db/session-start-repository.js";
@@ -47,6 +47,8 @@ export async function createPluginMemoryRuntime(input: CreatePluginMemoryRuntime
   const recall = attachCrossEncoderPort(baseRecall, resolveCrossEncoder(input.agenrConfig));
   const slotPolicies = input.slotPolicies;
   const fetchActiveAbstainDirectives = (): Promise<Awaited<ReturnType<typeof listActiveAbstainDirectives>>> => listActiveAbstainDirectives(database);
+  const fetchSessionStartProactiveDirectives = (): Promise<Awaited<ReturnType<typeof listActiveSessionStartProactiveDirectives>>> =>
+    listActiveSessionStartProactiveDirectives(database);
   let closed = false;
 
   return {
@@ -63,6 +65,7 @@ export async function createPluginMemoryRuntime(input: CreatePluginMemoryRuntime
       recall,
       slotPolicyConfig: slotPolicies,
       listActiveAbstainDirectives: fetchActiveAbstainDirectives,
+      listActiveProactiveDirectives: fetchSessionStartProactiveDirectives,
     },
     beforeTurn: {
       recall,

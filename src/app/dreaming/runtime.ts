@@ -7,8 +7,9 @@ import type { DreamRunAction } from "../../core/dreaming/domain/action-types.js"
 import type { DreamRunProposal } from "../../core/dreaming/types.js";
 import type { Logger } from "../../logger.js";
 import { applyProposalToDurables, loadActiveProposalDurables } from "./proposal-review.js";
-import type { DreamHealthStats, DreamProposalBacklogItem, DreamProposalBacklogQuery, DreamRunRecord } from "./ports.js";
+import type { DreamHealthStats, DreamProfileSnapshot, DreamProposalBacklogItem, DreamProposalBacklogQuery, DreamRunRecord } from "./ports.js";
 import type { DreamPort } from "./ports.js";
+import type { Durable } from "../../core/types.js";
 import type { DreamProgressReporter } from "./progress.js";
 import { backupDatabaseFile, runDream, type DreamRunOptions, type DreamRunResult } from "./service.js";
 
@@ -64,6 +65,48 @@ export async function loadDreamStatusRuntime(input: {
     const [health, lastRun] = await Promise.all([port.getHealthStats(), port.getLastRun()]);
 
     return { health, lastRun };
+  });
+}
+
+/** Active profile bundle returned by `agenr dream profile`. */
+export interface DreamProfileRuntimeView {
+  snapshot: DreamProfileSnapshot | null;
+  profileDurables: Durable[];
+  directiveDurables: Durable[];
+}
+
+/** Human-readable memory summary data returned by `agenr dream summary`. */
+export interface DreamSummaryRuntimeView extends DreamProfileRuntimeView {
+  health: DreamHealthStats;
+  openProposalCount: number;
+}
+
+/**
+ * Loads the active profile snapshot and its hydrated durable bundle.
+ *
+ * @param input - Runtime input with optional db-path and env overrides.
+ * @returns Active profile bundle, or an empty view when none exists.
+ */
+export async function loadDreamProfileRuntime(input: { dbPath?: string; env?: NodeJS.ProcessEnv }): Promise<DreamProfileRuntimeView> {
+  const runtime = loadRuntimeConfig(input);
+  return withDreamPort(runtime.dbPath, async (port) => loadDreamProfileView(port));
+}
+
+/**
+ * Loads the operator-facing current-memory summary.
+ *
+ * @param input - Runtime input with optional db-path and env overrides.
+ * @returns Summary view over the active profile and corpus health.
+ */
+export async function loadDreamSummaryRuntime(input: { dbPath?: string; env?: NodeJS.ProcessEnv }): Promise<DreamSummaryRuntimeView> {
+  const runtime = loadRuntimeConfig(input);
+  return withDreamPort(runtime.dbPath, async (port) => {
+    const [profile, health] = await Promise.all([loadDreamProfileView(port), port.getHealthStats()]);
+    return {
+      ...profile,
+      health,
+      openProposalCount: health.proposalBacklogCount,
+    };
   });
 }
 
@@ -229,6 +272,24 @@ async function withDreamPort<T>(dbPath: string, fn: (port: DreamPort) => Promise
   } finally {
     await database.close();
   }
+}
+
+async function loadDreamProfileView(port: DreamPort): Promise<DreamProfileRuntimeView> {
+  const snapshot = await port.getActiveProfileSnapshot();
+  if (!snapshot) {
+    return {
+      snapshot: null,
+      profileDurables: [],
+      directiveDurables: [],
+    };
+  }
+
+  const [profileDurables, directiveDurables] = await Promise.all([port.getDurables(snapshot.durableIds), port.getDurables(snapshot.directiveIds)]);
+  return {
+    snapshot,
+    profileDurables,
+    directiveDurables,
+  };
 }
 
 function loadRuntimeConfig(input: { dbPath?: string; env?: NodeJS.ProcessEnv }): { dbPath: string; config: ResolvedAgenrConfig } {

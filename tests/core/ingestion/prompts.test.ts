@@ -47,14 +47,16 @@ describe("buildExtractionSystemPrompt", () => {
   it("classifies personal priorities as preferences before decisions", () => {
     const prompt = buildExtractionSystemPrompt();
     const preferenceCheck = "2. Does it state what someone WANTS or PREFERS? → preference";
-    const decisionCheck = "3. Does it prescribe what to DO going forward because a person, household, team, project, or system has adopted it? → decision";
+    const directiveCheck = "3. Does it instruct memory to suppress or proactively surface a topic? → directive";
+    const decisionCheck = "4. Does it prescribe what to DO going forward because a person, household, team, project, or system has adopted it? → decision";
 
     expect(prompt).toContain(
       "If the statement is mainly about a named person's desired style, values, priorities, or opinions, classify it as preference even if it implies future behavior.",
     );
     expect(prompt).toContain("Never emit both a preference and a decision for the same underlying policy.");
     expect(prompt.indexOf(preferenceCheck)).toBeGreaterThan(-1);
-    expect(prompt.indexOf(decisionCheck)).toBeGreaterThan(prompt.indexOf(preferenceCheck));
+    expect(prompt.indexOf(directiveCheck)).toBeGreaterThan(prompt.indexOf(preferenceCheck));
+    expect(prompt.indexOf(decisionCheck)).toBeGreaterThan(prompt.indexOf(directiveCheck));
   });
 
   it("treats standard as the default importance tier with target distribution", () => {

@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 
+import type { DreamProfileSnapshot } from "../../app/dreaming/ports.js";
 import type { DreamCompletionSummary, DreamProposalReviewStatus, DreamRunStatus } from "../../core/dreaming/types.js";
 import type { DreamTier } from "../../core/dreaming/domain/pass-types.js";
 import { readNumber } from "./row-mapping.js";
 import type { SqlExecutor } from "./queries.js";
-import { normalizeInteger, normalizeNumber, normalizeOptionalString, normalizeTimestamp } from "./dreaming-run-shared.js";
+import { normalizeInteger, normalizeNumber, normalizeOptionalString, normalizeStringArray, normalizeTimestamp } from "./dreaming-run-shared.js";
 
 /**
  * Inserts a new dreaming run row and returns the generated run ID.
@@ -120,6 +121,7 @@ export async function updateDreamState(
   input: {
     lastSuccessfulRunAt?: string;
     unsynthesizedImportanceSum?: number;
+    activeProfileSnapshotId?: string;
     updatedAt: string;
   },
 ): Promise<void> {
@@ -134,6 +136,10 @@ export async function updateDreamState(
     fields.push("unsynthesized_importance_sum = ?");
     args.push(input.unsynthesizedImportanceSum);
   }
+  if (input.activeProfileSnapshotId !== undefined) {
+    fields.push("active_profile_snapshot_id = ?");
+    args.push(input.activeProfileSnapshotId);
+  }
 
   await executor.execute({
     sql: `
@@ -142,6 +148,38 @@ export async function updateDreamState(
       WHERE id = 'default'
     `,
     args,
+  });
+}
+
+/**
+ * Inserts one generated profile snapshot bundle.
+ *
+ * @param executor - SQL executor used for the insert.
+ * @param snapshot - Snapshot payload to persist.
+ */
+export async function createProfileSnapshot(executor: SqlExecutor, snapshot: DreamProfileSnapshot): Promise<void> {
+  await executor.execute({
+    sql: `
+      INSERT INTO profile_snapshots (
+        id,
+        durable_ids,
+        directive_ids,
+        as_of,
+        content_hash,
+        run_id,
+        created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `,
+    args: [
+      snapshot.id.trim().length > 0 ? snapshot.id.trim() : randomUUID(),
+      JSON.stringify(normalizeStringArray(snapshot.durableIds)),
+      JSON.stringify(normalizeStringArray(snapshot.directiveIds)),
+      normalizeTimestamp(snapshot.asOf) ?? new Date().toISOString(),
+      snapshot.contentHash,
+      normalizeOptionalString(snapshot.runId ?? undefined),
+      normalizeTimestamp(snapshot.createdAt) ?? new Date().toISOString(),
+    ],
   });
 }
 

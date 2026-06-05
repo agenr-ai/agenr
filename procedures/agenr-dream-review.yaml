@@ -1,0 +1,66 @@
+procedure_key: agenr/dream-review
+title: Review agenr dreaming output
+goal: Inspect dreaming profile, summary, actions, and proposals before accepting memory maintenance changes.
+when_to_use:
+  - You ran `agenr dream run` and need to inspect what it projected, inserted, revised, or proposed.
+  - You need to decide whether an open dreaming proposal should be applied or rejected.
+  - You are validating profile snapshot or directive behavior after a dreaming change.
+when_not_to_use:
+  - You only need to run the full repo validation gate.
+  - You are validating sandbox wrapper behavior rather than dreaming output.
+prerequisites:
+  - The repository has been built if you are inspecting freshly changed code.
+  - You know the run id or proposal id when inspecting a specific run artifact.
+steps:
+  - id: read-dreaming-doc
+    kind: read_reference
+    instruction: Read the current dreaming architecture and operator surface before making review decisions.
+    ref:
+      kind: doc
+      path: docs/DREAMING.md
+  - id: inspect-status
+    kind: run_command
+    instruction: Inspect the latest run status and corpus health counters.
+    command: agenr dream status
+  - id: inspect-profile
+    kind: run_command
+    instruction: Inspect the active profile snapshot bundle and directive ids.
+    command: agenr dream profile
+  - id: inspect-summary
+    kind: run_command
+    instruction: Inspect the human-readable current-memory summary.
+    command: agenr dream summary
+  - id: inspect-run-actions
+    kind: run_command
+    instruction: Inspect one run's action audit trail when a run id is under review.
+    command: agenr dream actions <runId>
+  - id: inspect-run-proposals
+    kind: run_command
+    instruction: Inspect one run's proposals when a run id is under review.
+    command: agenr dream proposals <runId>
+  - id: inspect-backlog
+    kind: run_command
+    instruction: Inspect open cross-run proposals before applying any proposal.
+    command: agenr dream backlog --state open
+  - id: review-proposal
+    kind: run_command
+    instruction: Apply or reject one proposal only after its affected durable ids and rationale have been inspected.
+    command: agenr dream review <proposalId> --decision <apply|reject> --reason "<reason>"
+  - id: verify-review
+    kind: verify
+    instruction: Confirm the review decision and profile state are visible in the CLI surfaces.
+    checks:
+      - "`agenr dream profile` shows the expected active snapshot after an applied run."
+      - "`agenr dream summary` reports the expected directive and proposal state."
+      - Applied or rejected proposals have a review reason recorded.
+verification:
+  - Dreaming status, profile, and summary were inspected before any proposal decision.
+  - The proposal decision included a concrete review reason.
+  - The final CLI output matches the intended memory state.
+failure_modes:
+  - Applying a proposal without checking its durable ids changes the wrong claim-key family.
+  - Reviewing a stale proposal after newer dreaming output superseded its assumptions.
+  - Treating the profile snapshot as the only source of truth instead of a projection over durable rows.
+sources:
+  - kind: doc
+    path: docs/DREAMING.md

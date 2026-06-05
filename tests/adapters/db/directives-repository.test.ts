@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
-import { listActiveAbstainDirectives } from "../../../src/adapters/db/directives-repository.js";
+import { listActiveAbstainDirectives, listActiveSessionStartProactiveDirectives } from "../../../src/adapters/db/directives-repository.js";
 import { closeTestDatabases, removeTestPath } from "../../helpers/temp-paths.js";
 import type { Durable } from "../../../src/core/types.js";
 
@@ -61,6 +61,57 @@ describe("listActiveAbstainDirectives", () => {
 
     expect(directives.map((entry) => entry.id)).toEqual(["dir-active"]);
   });
+
+  it("returns only active proactive directives that fire at session start", async () => {
+    const database = await createTestDatabase();
+
+    await database.insertDurable(
+      createEntry({
+        id: "dir-session-start",
+        type: "directive",
+        subject: "weekly goals directive",
+        content: "Ask about weekly goals at session start.",
+        claim_key: "user/memory_directive/weekly_goals",
+        directive_polarity: "proactive",
+        directive_trigger: "session_start",
+        importance: 9,
+      }),
+      [],
+      "dir-session-start-hash",
+    );
+    await database.insertDurable(
+      createEntry({
+        id: "dir-topic",
+        type: "directive",
+        subject: "dining directive",
+        content: "Prefer quiet dinner recommendations.",
+        claim_key: "user/memory_directive/quiet_dining",
+        directive_polarity: "proactive",
+        directive_trigger: "topic:dining",
+        importance: 10,
+      }),
+      [],
+      "dir-topic-hash",
+    );
+    await database.insertDurable(
+      createEntry({
+        id: "dir-abstain",
+        type: "directive",
+        subject: "stan directive",
+        content: "Do not mention Stan.",
+        claim_key: "user/memory_directive/do_not_mention_stan",
+        directive_polarity: "abstain",
+        directive_trigger: "always",
+        importance: 10,
+      }),
+      [],
+      "dir-abstain-hash",
+    );
+
+    const directives = await listActiveSessionStartProactiveDirectives(database);
+
+    expect(directives.map((entry) => entry.id)).toEqual(["dir-session-start"]);
+  });
 });
 
 async function createTestDatabase(): Promise<SqlDatabase> {
@@ -93,6 +144,8 @@ function createEntry(overrides: Partial<Durable> = {}): Durable {
     superseded_by: overrides.superseded_by,
     valid_from: overrides.valid_from,
     valid_to: overrides.valid_to,
+    directive_polarity: overrides.directive_polarity,
+    directive_trigger: overrides.directive_trigger,
     claim_key: overrides.claim_key,
     claim_key_status: overrides.claim_key_status,
     supersession_kind: overrides.supersession_kind,
