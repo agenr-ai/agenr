@@ -54,6 +54,7 @@ function triggerOpenClawImportanceLightDream(services: AgenrOpenClawServices, lo
     { trigger: "importance" },
     {
       port: services.dreaming,
+      dbPath: services.config.dbPath,
       config: services.agenrConfig,
       embedding: services.embedding,
       ...(services.claimExtraction ? { createClaimExtractionLlm: () => services.claimExtraction!.llm } : {}),
@@ -62,6 +63,8 @@ function triggerOpenClawImportanceLightDream(services: AgenrOpenClawServices, lo
     .then((result) => {
       if (result.status === "ran") {
         logger.info(`[agenr] importance light dream completed run=${result.result.runId}`);
+      } else if (result.reason === "run_in_progress" || result.reason === "episode_write_in_progress") {
+        logger.info(`[agenr] importance light dream skipped reason=${result.reason}`);
       } else {
         logger.debug?.(`[agenr] importance light dream skipped reason=${result.reason}`);
       }

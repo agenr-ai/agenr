@@ -8,7 +8,7 @@ import { WORKING_MEMORY_SCHEMA_STATEMENTS } from "./schema/working-memory.js";
 /**
  * Logical schema version stored in the metadata table.
  */
-const SCHEMA_VERSION = "2";
+const SCHEMA_VERSION = "3";
 
 /**
  * libSQL vector index name for durable embeddings.

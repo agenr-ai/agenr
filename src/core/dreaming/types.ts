@@ -255,6 +255,8 @@ export interface DreamScanSummary {
 /** Minimal persisted completion summary for a dreaming run. */
 export interface DreamCompletionSummary {
   actions_taken: number;
+  /** True when an apply run intentionally skipped the pre-apply database backup. */
+  backupSkipped?: boolean;
   /** Pipeline stages intentionally skipped by tier policy. */
   stages_skipped?: DreamStageSkipSummary[];
   durables_skipped: Array<{

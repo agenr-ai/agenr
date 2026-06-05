@@ -1,6 +1,7 @@
 import type { ExtensionContext } from "../skeln-types.js";
 
 import { maybeRunLightDream } from "../../../app/dreaming/background-triggers.js";
+import { withEpisodeWriteGuard } from "../../../app/dreaming/concurrency.js";
 import { formatErrorMessage } from "../../shared/errors.js";
 import type { SkelnSessionShutdownEvent } from "../hooks/session-memory.js";
 import type { createAgenrSkelnServices } from "../runtime.js";
@@ -88,7 +89,7 @@ async function writeScopedSkelnShutdownEpisode(
     return;
   }
 
-  await writeSkelnShutdownEpisode({ target, services, logger });
+  await withEpisodeWriteGuard(services.config.dbPath, async () => writeSkelnShutdownEpisode({ target, services, logger }));
   await runSkelnPostSessionLightDream(services, logger);
 }
 
@@ -103,6 +104,7 @@ async function runSkelnPostSessionLightDream(
       { trigger: "post_session" },
       {
         port: services.dreaming,
+        dbPath: services.config.dbPath,
         config: services.agenrConfig,
         embedding: services.embedding,
         ...(services.claimExtraction ? { createClaimExtractionLlm: () => services.claimExtraction!.llm } : {}),
@@ -110,6 +112,8 @@ async function runSkelnPostSessionLightDream(
     );
     if (result.status === "ran") {
       log.info(`[agenr] skeln shutdown light dream completed run=${result.result.runId}`);
+    } else if (result.reason === "run_in_progress" || result.reason === "episode_write_in_progress") {
+      log.info(`[agenr] skeln shutdown light dream skipped reason=${result.reason}`);
     }
   } catch (error) {
     log.warn(`[agenr] skeln shutdown light dream failed: ${formatErrorMessage(error)}`);

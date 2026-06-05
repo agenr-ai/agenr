@@ -94,6 +94,50 @@ export async function getDreamRunHistory(executor: SqlExecutor, limit = 10): Pro
 }
 
 /**
+ * Loads the most recent applied (non-dry-run) `light` dreaming runs.
+ *
+ * Filtering and limiting happen in SQL so the caller always sees the true N
+ * most recent applied light runs regardless of how many other runs interleave
+ * the history.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param limit - Maximum number of runs to return.
+ * @returns Recent applied light runs ordered from newest to oldest.
+ */
+export async function getRecentAppliedLightRuns(executor: SqlExecutor, limit: number): Promise<DreamRun[]> {
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 5;
+  const result = await executor.execute({
+    sql: `
+      SELECT
+        id,
+        tier,
+        project,
+        started_at,
+        completed_at,
+        status,
+        input_tokens,
+        output_tokens,
+        estimated_cost_usd,
+        model,
+        actions_taken,
+        actions_skipped,
+        durables_retired,
+        summary_json,
+        error,
+        dry_run,
+        config_json
+      FROM dream_runs
+      WHERE tier = 'light' AND dry_run = 0
+      ORDER BY started_at DESC
+      LIMIT ?
+    `,
+    args: [safeLimit],
+  });
+
+  return result.rows.map((row) => mapRunRow(row));
+}
+
+/**
  * Loads the most recent dreaming run when one exists.
  *
  * @param executor - SQL executor used for the lookup.

@@ -28,7 +28,7 @@ afterEach(async () => {
 
 function createInitRuntime(overrides: Partial<InitWizardRuntime> = {}): InitWizardRuntime {
   return {
-    runSetupCore: vi.fn(async () => ({
+    runSetupCore: vi.fn<InitWizardRuntime["runSetupCore"]>(async () => ({
       config: {
         auth: "openai-api-key",
         provider: "openai",
@@ -149,7 +149,7 @@ describe("runInitWizard", () => {
   it("skips bulk ingest when setup still needs external credentials", async () => {
     const prompts = new FakePrompts([true]);
     const runtime = createInitRuntime({
-      runSetupCore: vi.fn(async () => ({
+      runSetupCore: vi.fn<InitWizardRuntime["runSetupCore"]>(async () => ({
         config: {
           auth: "openai-subscription",
           provider: "openai-codex",
@@ -197,7 +197,7 @@ describe("runInitWizard", () => {
   it("hides dollar-cost messaging for subscription-backed auth", async () => {
     const prompts = new FakePrompts([true, "skip"]);
     const runtime = createInitRuntime({
-      runSetupCore: vi.fn(async () => ({
+      runSetupCore: vi.fn<InitWizardRuntime["runSetupCore"]>(async () => ({
         config: {
           auth: "openai-subscription",
           provider: "openai-codex",

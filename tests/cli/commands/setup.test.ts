@@ -332,7 +332,7 @@ describe("runSetupCore", () => {
   it("supports OpenAI subscription auth without persisting the detected subscription token", async () => {
     const prompts = new FakePrompts(["advanced-options", "openai-subscription", "gpt-5.4-mini", "openai-embedding-key", false, "/tmp/subscription.db"]);
     const runtime = createSetupRuntime({
-      probeCredentials: vi.fn(() => ({
+      probeCredentials: vi.fn<SetupRuntime["probeCredentials"]>(() => ({
         available: true,
         source: "file:/tmp/.codex/auth.json",
         guidance: "Credentials available.",

@@ -269,6 +269,9 @@ function renderStatus(status: Awaited<ReturnType<typeof loadDreamStatusRuntime>>
   } else {
     lines.push("  last run: none");
   }
+  if (status.recentLightApplyRunsWithoutBackup > 0) {
+    lines.push(`  warning: ${status.recentLightApplyRunsWithoutBackup} recent applied light runs skipped pre-apply backup (background trigger policy)`);
+  }
   return `${lines.join("\n")}\n`;
 }
 

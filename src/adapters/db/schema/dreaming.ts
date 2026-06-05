@@ -117,6 +117,7 @@ const CREATE_DREAM_STATE_TABLE_SQL = `
     last_scan_cursor_json TEXT,
     active_profile_snapshot_id TEXT,
     unsynthesized_importance_sum REAL NOT NULL DEFAULT 0,
+    run_lock_holder TEXT,
     updated_at TEXT NOT NULL
   )
 `;

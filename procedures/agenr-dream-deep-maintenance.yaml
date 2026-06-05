@@ -1,0 +1,57 @@
+procedure_key: agenr/dream-deep-maintenance
+title: Run agenr deep dreaming maintenance
+goal: Execute a weekly full-backlog deep dreaming pass and verify the corpus after apply.
+when_to_use:
+  - You want scheduled weekly maintenance across the full episode and durable backlog.
+  - A large import or migration left incremental light/standard runs behind.
+  - You need reconcile and prune on the complete corpus, not just evidence since the last successful run.
+when_not_to_use:
+  - You only need a quick post-session light pass.
+  - You are mid-session and have not finished episode capture for the current session.
+  - You have not reviewed open dreaming proposals from prior runs.
+prerequisites:
+  - dreaming.tiers.deep.enabled is true in config.
+  - No other dreaming run is currently in progress for the target database.
+  - You have a recent database backup or accept creating one during apply.
+steps:
+  - id: read-dreaming-doc
+    kind: read_reference
+    instruction: Read the deep tier semantics and backup policy before running maintenance.
+    ref:
+      kind: doc
+      path: docs/DREAMING.md
+  - id: inspect-status
+    kind: run_command
+    instruction: Confirm corpus health, the latest run, and any background backup warnings.
+    command: agenr dream status
+  - id: inspect-backlog
+    kind: run_command
+    instruction: Review open proposals before a full-backlog apply run mutates additional durables.
+    command: agenr dream backlog --state open
+  - id: dry-run-deep
+    kind: run_command
+    instruction: Dry-run the deep tier to inspect projected actions and cost before apply.
+    command: agenr dream run --tier deep
+  - id: apply-deep
+    kind: run_command
+    instruction: Apply the deep maintenance pass when the dry-run output looks safe.
+    command: agenr dream run --tier deep --apply
+  - id: inspect-summary
+    kind: run_command
+    instruction: Verify the active profile snapshot and directive bundle after apply.
+    command: agenr dream summary
+  - id: inspect-history
+    kind: run_command
+    instruction: Confirm the deep run completed and review its status in recent history.
+    command: agenr dream history --limit 5
+verification:
+  - agenr dream history shows a completed deep apply run.
+  - agenr dream summary reflects the expected profile and proposal state.
+  - Open proposals were reviewed or intentionally left for follow-up.
+failure_modes:
+  - Running deep maintenance while another dreaming run is active causes `run_in_progress` skips or CLI failure. A lock orphaned by a crashed process is reclaimed automatically once its row is older than one hour; otherwise recreate the database with `agenr db reset`.
+  - Applying without reviewing the proposal backlog can auto-resolve issues you intended to reject.
+  - Skipping dry-run on a large corpus can produce unexpected reconcile or prune mutations.
+sources:
+  - kind: doc
+    path: docs/DREAMING.md

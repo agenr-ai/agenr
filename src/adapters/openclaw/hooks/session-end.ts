@@ -1,6 +1,7 @@
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
 import { maybeRunLightDream } from "../../../app/dreaming/background-triggers.js";
+import { withEpisodeWriteGuard } from "../../../app/dreaming/concurrency.js";
 import { writeOpenClawCurrentSessionEpisode } from "../episode/episode-writer.js";
 import { formatErrorMessage, formatSessionContext } from "../logging.js";
 import { resolveOpenClawCurrentSessionTarget } from "../session/continuity/current-session-resolver.js";
@@ -50,7 +51,9 @@ export async function handleAgenrSessionEnd(
       return;
     }
 
-    await writeOpenClawCurrentSessionEpisode({ ctx, current: target, services, logger: params.logger });
+    await withEpisodeWriteGuard(services.config.dbPath, async () =>
+      writeOpenClawCurrentSessionEpisode({ ctx, current: target, services, logger: params.logger }),
+    );
     await runOpenClawPostSessionLightDream(services, params.logger, sessionContext);
   } catch (error) {
     params.logger.warn(`[agenr] session-end episode write failed for ${sessionContext}: ${formatErrorMessage(error)}`);
@@ -64,6 +67,7 @@ async function runOpenClawPostSessionLightDream(services: AgenrOpenClawServices,
       { trigger: "post_session" },
       {
         port: services.dreaming,
+        dbPath: services.config.dbPath,
         config: services.agenrConfig,
         embedding: services.embedding,
         ...(services.claimExtraction ? { createClaimExtractionLlm: () => services.claimExtraction!.llm } : {}),
@@ -71,6 +75,8 @@ async function runOpenClawPostSessionLightDream(services: AgenrOpenClawServices,
     );
     if (result.status === "ran") {
       logger.info(`[agenr] session-end light dream completed for ${sessionContext} run=${result.result.runId}`);
+    } else if (result.reason === "run_in_progress" || result.reason === "episode_write_in_progress") {
+      logger.info(`[agenr] session-end light dream skipped for ${sessionContext} reason=${result.reason}`);
     } else {
       logger.debug?.(`[agenr] session-end light dream skipped for ${sessionContext} reason=${result.reason}`);
     }

@@ -28,6 +28,7 @@ import { runPruneStage } from "./prune.js";
 import { runProjectStage } from "./project.js";
 import type { CostMeteredLlm, DreamPort } from "./ports.js";
 import { runReconcilePass } from "./reconcile/index.js";
+import { releaseDreamingRunLock, tryAcquireDreamingRunLock } from "./concurrency.js";
 import { runDreamScan } from "./scan.js";
 import { runTemporalizeStage } from "./temporalize.js";
 
@@ -83,6 +84,8 @@ export interface DreamWorkflowDeps {
   backupDb?: (dbPath: string) => Promise<string>;
   reportProgress?: DreamProgressReporter;
   logger?: Logger;
+  /** When true, the caller already holds the process-wide dreaming run lock. */
+  dreamingRunLockHeld?: boolean;
 }
 
 /**
@@ -93,9 +96,35 @@ export interface DreamWorkflowDeps {
  * @returns Final dreaming run summary.
  */
 export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps): Promise<DreamRunResult> {
-  const now = deps.now ?? (() => new Date());
   throwIfAborted(options.signal);
 
+  // The run lock serializes dreaming runs across processes and background
+  // triggers. Callers that already hold it (e.g. background triggers that need
+  // to do gating work first) pass `dreamingRunLockHeld` and own release.
+  if (deps.dreamingRunLockHeld) {
+    return executeDreamRun(options, deps);
+  }
+
+  const lock = await tryAcquireDreamingRunLock(deps.port, deps.dbPath);
+  if (!lock.acquired || !lock.token) {
+    throw new Error("Dreaming run already in progress.");
+  }
+  try {
+    return await executeDreamRun(options, deps);
+  } finally {
+    await releaseDreamingRunLock(deps.port, deps.dbPath, lock.token);
+  }
+}
+
+/**
+ * Executes the dreaming pipeline assuming the run lock is already held.
+ *
+ * @param options - Dreaming run options from the CLI or host trigger.
+ * @param deps - Resolved database, config, and progress dependencies.
+ * @returns Final dreaming run summary.
+ */
+async function executeDreamRun(options: DreamRunOptions, deps: DreamWorkflowDeps): Promise<DreamRunResult> {
+  const now = deps.now ?? (() => new Date());
   const dailyCost = await deps.port.getDailyCost(now());
   const dailyCap = deps.config?.dreaming?.dailyCostCap ?? DEFAULT_DREAMING_DAILY_COST_CAP;
   if (dailyCost >= dailyCap) {
@@ -302,6 +331,7 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
 
     const completionSummary: DreamCompletionSummary = {
       actions_taken: actionsTaken,
+      ...(resolveBackupSkipped(options) ? { backupSkipped: true } : {}),
       ...(stagesSkipped.length > 0 ? { stages_skipped: stagesSkipped } : {}),
       durables_skipped: durablesSkipped,
       observations,
@@ -364,6 +394,7 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
     const failureObservations = [...observations, `Dreaming run stopped before completion: ${message}`];
     const failureSummary: DreamCompletionSummary = {
       actions_taken: actionsTaken,
+      ...(resolveBackupSkipped(options) ? { backupSkipped: true } : {}),
       ...(stagesSkipped.length > 0 ? { stages_skipped: stagesSkipped } : {}),
       durables_skipped: durablesSkipped,
       observations: failureObservations,
@@ -389,6 +420,11 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
     });
     throw error;
   }
+}
+
+/** Returns whether this apply run intentionally skipped the pre-apply backup step. */
+function resolveBackupSkipped(options: DreamRunOptions): boolean {
+  return options.apply === true && options.skipBackup === true;
 }
 
 /**

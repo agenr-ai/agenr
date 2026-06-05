@@ -157,6 +157,8 @@ export interface DreamPort {
   logRunAction(action: DreamRunAction): Promise<void>;
   getLastRun(): Promise<DreamRunRecord | null>;
   getRunHistory(limit?: number): Promise<DreamRunRecord[]>;
+  /** Returns the most recent applied (non-dry-run) `light` runs, newest first. */
+  getRecentAppliedLightRuns(limit: number): Promise<DreamRunRecord[]>;
   getRunActions(runId: string): Promise<DreamRunAction[]>;
   getRunProposals(runId: string): Promise<DreamRunProposal[]>;
   getProposal(proposalId: string): Promise<DreamRunProposal | null>;
@@ -209,6 +211,10 @@ export interface DreamPort {
     activeProfileSnapshotId?: string;
     updatedAt: string;
   }): Promise<void>;
+  /** Attempts to acquire the singleton dreaming run lock row. */
+  tryAcquireRunLock(holderToken: string): Promise<boolean>;
+  /** Releases the dreaming run lock when the holder token still matches. */
+  releaseRunLock(holderToken: string): Promise<void>;
   /**
    * Runs a callback inside a single write transaction so a group of related
    * dreaming writes either all commit or all roll back. The callback receives a

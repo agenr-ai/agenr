@@ -57,6 +57,7 @@ function createDreamPortDouble(overrides: Partial<DreamPort> = {}): DreamPort {
     logRunAction: vi.fn(async () => undefined),
     getLastRun: vi.fn(async () => null),
     getRunHistory: vi.fn(async () => []),
+    getRecentAppliedLightRuns: vi.fn(async () => []),
     getRunActions: vi.fn(async () => []),
     getRunProposals: vi.fn(async () => []),
     getProposal: vi.fn(async () => null),
@@ -91,6 +92,8 @@ function createDreamPortDouble(overrides: Partial<DreamPort> = {}): DreamPort {
     updateDreamState: vi.fn(async () => undefined),
     createProfileSnapshot: vi.fn(async () => undefined),
     getActiveProfileSnapshot: vi.fn(async () => null),
+    tryAcquireRunLock: vi.fn(async () => true),
+    releaseRunLock: vi.fn(async () => undefined),
     withTransaction: vi.fn(async (fn) => fn(port)),
     ...overrides,
   };

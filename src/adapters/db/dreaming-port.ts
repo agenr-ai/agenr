@@ -20,12 +20,14 @@ import {
   getDreamRunActions,
   getDreamRunProposals,
   getDreamRunHistory,
+  getRecentAppliedLightRuns,
   listDreamProposalBacklog,
   logDreamAction,
   logDreamProposal,
   reviewDreamProposal,
   updateDreamState,
 } from "./dreaming-run-log.js";
+import { releaseDreamStateRunLock, tryAcquireDreamStateRunLock } from "./dreaming-run-lock.js";
 import {
   countDurablesCreatedSince,
   countEpisodesSince,
@@ -52,6 +54,7 @@ export function createDreamPort(executor: SqlExecutor): DreamPort {
     logRunProposal: async (proposal) => logDreamProposal(executor, proposal),
     getLastRun: async () => getLastDreamRun(executor),
     getRunHistory: async (limit) => getDreamRunHistory(executor, limit),
+    getRecentAppliedLightRuns: async (limit) => getRecentAppliedLightRuns(executor, limit),
     getRunActions: async (runId) => getDreamRunActions(executor, runId),
     getRunProposals: async (runId) => getDreamRunProposals(executor, runId),
     getProposal: async (proposalId) => getDreamProposal(executor, proposalId),
@@ -75,6 +78,8 @@ export function createDreamPort(executor: SqlExecutor): DreamPort {
     sumDurableImportanceCreatedSince: async (since, project) => sumDurableImportanceCreatedSince(executor, since, project),
     updateDreamState: async (input) => updateDreamState(executor, input),
     createProfileSnapshot: async (snapshot) => createProfileSnapshot(executor, snapshot),
+    tryAcquireRunLock: async (holderToken) => tryAcquireDreamStateRunLock(executor, holderToken, new Date()),
+    releaseRunLock: async (holderToken) => releaseDreamStateRunLock(executor, holderToken, new Date()),
     withTransaction: async (fn) => runInDreamTransaction(executor, fn),
   };
 }

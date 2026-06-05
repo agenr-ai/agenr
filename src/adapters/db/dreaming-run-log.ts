@@ -25,6 +25,7 @@ export {
   getDreamRunHistory,
   getDreamRunProposals,
   getLastDreamRun,
+  getRecentAppliedLightRuns,
   listDreamProposalBacklog,
 } from "./dreaming-run-read.js";
 

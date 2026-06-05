@@ -55,6 +55,7 @@ function triggerSkelnImportanceLightDream(services: AgenrSkelnServices, status: 
     { trigger: "importance" },
     {
       port: services.dreaming,
+      dbPath: services.config.dbPath,
       config: services.agenrConfig,
       embedding: services.embedding,
       ...(services.claimExtraction ? { createClaimExtractionLlm: () => services.claimExtraction!.llm } : {}),
@@ -63,6 +64,8 @@ function triggerSkelnImportanceLightDream(services: AgenrSkelnServices, status: 
     .then((result) => {
       if (result.status === "ran") {
         console.info(`[agenr] skeln importance light dream completed run=${result.result.runId}`);
+      } else if (result.reason === "run_in_progress" || result.reason === "episode_write_in_progress") {
+        console.info(`[agenr] skeln importance light dream skipped reason=${result.reason}`);
       }
     })
     .catch((error: unknown) => {

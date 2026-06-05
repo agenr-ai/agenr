@@ -56,16 +56,24 @@ export async function runDreamRuntime(input: DreamRuntimeOptions): Promise<Dream
  * @param input - Runtime input with optional db-path and env overrides.
  * @returns Current health summary and the latest persisted dreaming run.
  */
-export async function loadDreamStatusRuntime(input: {
-  dbPath?: string;
-  env?: NodeJS.ProcessEnv;
-}): Promise<{ health: DreamHealthStats; lastRun: DreamRunRecord | null }> {
+export async function loadDreamStatusRuntime(input: { dbPath?: string; env?: NodeJS.ProcessEnv }): Promise<DreamStatusRuntimeView> {
   const runtime = loadRuntimeConfig(input);
   return withDreamPort(runtime.dbPath, async (port) => {
-    const [health, lastRun] = await Promise.all([port.getHealthStats(), port.getLastRun()]);
+    const [health, lastRun, recentLightApplyRunsWithoutBackup] = await Promise.all([
+      port.getHealthStats(),
+      port.getLastRun(),
+      countRecentLightApplyRunsWithoutBackup(port),
+    ]);
 
-    return { health, lastRun };
+    return { health, lastRun, recentLightApplyRunsWithoutBackup };
   });
+}
+
+/** Dreaming health summary returned by `agenr dream status`. */
+export interface DreamStatusRuntimeView {
+  health: DreamHealthStats;
+  lastRun: DreamRunRecord | null;
+  recentLightApplyRunsWithoutBackup: number;
 }
 
 /** Active profile bundle returned by `agenr dream profile`. */
@@ -323,4 +331,13 @@ function createConfiguredLlmFactory(
 function normalizeOptionalString(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+/** Number of most-recent applied light runs inspected for the backup warning. */
+const RECENT_LIGHT_APPLY_SAMPLE_SIZE = 5;
+
+/** Counts, within the most recent applied light runs, how many skipped the pre-apply backup. */
+async function countRecentLightApplyRunsWithoutBackup(port: DreamPort): Promise<number> {
+  const runs = await port.getRecentAppliedLightRuns(RECENT_LIGHT_APPLY_SAMPLE_SIZE);
+  return runs.filter((run) => run.summaryJson?.backupSkipped === true).length;
 }

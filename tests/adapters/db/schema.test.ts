@@ -243,6 +243,7 @@ describe("initSchema", () => {
       "last_scan_cursor_json",
       "active_profile_snapshot_id",
       "unsynthesized_importance_sum",
+      "run_lock_holder",
       "updated_at",
     ]);
     expect(await tableColumns(client, "profile_snapshots")).toEqual(["id", "durable_ids", "directive_ids", "as_of", "content_hash", "run_id", "created_at"]);
@@ -351,7 +352,7 @@ describe("initSchema", () => {
     await expect(initSchema(client)).resolves.toBeUndefined();
 
     const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("2");
+    expect(version.rows[0]?.value).toBe("3");
     expect(await indexExists(client, "idx_episodes_started_at")).toBe(true);
   });
 
@@ -376,7 +377,7 @@ describe("initSchema", () => {
     await expect(insertTestWorkingSet(client, "working-c", "scope:one", "closed")).resolves.toBeUndefined();
   });
 
-  for (const version of ["1", "3", "4", "5", "7", "9", "11", "12"] as const) {
+  for (const version of ["1", "2", "4", "5", "7", "9", "11", "12"] as const) {
     it(`rejects unsupported schema version ${version}`, async () => {
       const client = createClient({ url: ":memory:" });
       clients.push(client);

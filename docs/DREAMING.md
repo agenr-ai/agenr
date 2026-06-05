@@ -13,6 +13,7 @@ Dreaming is agenr's background corpus maintenance pipeline. It replaces the reti
 - `src/app/dreaming/project.ts` - deterministic profile snapshot projection
 - `src/app/dreaming/prune.ts` - deterministic, conservative durable retirement
 - `src/app/dreaming/background-triggers.ts` - post-session and accumulated-importance light-run gates
+- `src/app/dreaming/concurrency.ts` - process-wide dreaming run lock and episode-write serialization guards
 - `src/app/dreaming/proposal-review.ts` - apply or reject one open proposal
 - `src/app/dreaming/service.ts` - `runDream` workflow: scan, extract, reconcile, temporalize, project, prune, apply
 - `src/app/dreaming/runtime.ts` - CLI/runtime wiring
@@ -62,6 +63,36 @@ Supported tiers:
 - `light` - bounded background tier used by session-end and accumulated-importance triggers. It runs scan, extract, temporalize, and project, but skips reconcile and prune. Extract reads at most two episode sessions per run by default, and skipped stages are recorded in `stages_skipped`.
 - `standard` - default operator tier. It runs the incremental pipeline since the last successful run, including prune.
 - `deep` - operator full-backlog tier. It rereads all episode and durable evidence and still relies on content hashes, claim-key context lookup, and supersession to avoid duplicate writes. Use it for weekly maintenance or after large corpus imports.
+
+### Deep tier scheduling
+
+`deep` runs are operator-driven. Schedule weekly maintenance outside host session hooks, for example:
+
+```bash
+# cron example (Sunday 03:15 local time)
+15 3 * * 0 cd /path/to/workspace && agenr dream run --tier deep --apply
+```
+
+```xml
+<!-- launchd example: ~/Library/LaunchAgents/com.example.agenr-dream-deep.plist -->
+<key>StartCalendarInterval</key>
+<dict>
+  <key>Weekday</key><integer>0</integer>
+  <key>Hour</key><integer>3</integer>
+  <key>Minute</key><integer>15</integer>
+</dict>
+<key>ProgramArguments</key>
+<array>
+  <string>/usr/local/bin/agenr</string>
+  <string>dream</string>
+  <string>run</string>
+  <string>--tier</string>
+  <string>deep</string>
+  <string>--apply</string>
+</array>
+```
+
+Use `procedures/agenr-dream-deep-maintenance.yaml` for the operator checklist.
 
 ## Configuration
 
@@ -128,7 +159,31 @@ Host adapters do not expose dreaming tools. They launch bounded `light` runs in 
 - Skeln writes the current session episode from `session_shutdown`, then evaluates `triggers.postSessionLightDream`.
 - OpenClaw and Skeln both evaluate the accumulated-importance trigger after a successful `agenr_store` call.
 
-The trigger gate skips when the light tier is disabled, a run is already marked `running`, the interval guard has not elapsed, no unsynthesized evidence exists, or the accumulated durable importance is below `triggers.importanceThreshold`.
+The trigger gate skips when the light tier is disabled, another dreaming run holds the process-wide lock (`run_in_progress`), an episode write is still in progress for store-triggered importance dreams (`episode_write_in_progress`), the interval guard has not elapsed, no unsynthesized evidence exists, or the accumulated durable importance is below `triggers.importanceThreshold`.
+
+### Concurrency and serialization
+
+Only one dreaming run may execute against a database at a time. `runDream()` acquires a process-wide lock at start and releases it in `finally`. Background triggers call `maybeRunLightDream()`, which tries the same lock before launching a run and returns `run_in_progress` when another caller already holds it.
+
+Episode writes serialize ahead of dreaming:
+
+1. Host hooks finish the current session episode write first.
+2. Post-session light dreaming runs only after that write completes.
+3. Store-triggered importance dreams skip while an in-process episode write guard is active for the same database.
+
+`dream_state.run_lock_holder` backs the SQLite lock row; an in-process map keyed by database path prevents overlapping runs inside one plugin process.
+
+The lock is not heartbeated. To recover from a crashed or killed process that never released its lock, a new run may take over a lock row whose `updated_at` is older than `DREAMING_RUN_LOCK_STALE_MS` (one hour). This threshold is deliberately well above any realistic run duration, so takeover only reclaims orphaned locks and never steals one from a run that is still executing. Acquire and release surface unexpected SQLite errors instead of swallowing them, so a missing column or transaction failure is reported rather than silently masquerading as contention.
+
+### Background apply backup policy
+
+Background `light` runs keep `skipBackup: true` for latency. Applied runs record `backupSkipped: true` in `summary_json`. `agenr dream status` warns when any of the five most recent applied `light` runs skipped backup so operators know background maintenance is running without a pre-apply snapshot. Because background `light` applies always skip backup by design, this warning is expected during normal background maintenance; it exists so the absence of pre-apply snapshots is never silent.
+
+CLI `agenr dream run --apply` and proposal review still create timestamped backups before their first mutating write.
+
+### Deferred: assistant-confirmed trust
+
+Assistant-mined extract candidates still follow the current prompt-priority approach; user-turn corroboration before promotion remains deferred (WS6.4).
 
 ## Directives and profile projection
 
