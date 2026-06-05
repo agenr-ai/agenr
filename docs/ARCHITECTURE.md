@@ -257,7 +257,7 @@ The adapter is responsible for:
 
 ### 6.2 Schema
 
-The current logical schema version is `2`.
+The current logical schema version is `4`.
 
 Key tables:
 

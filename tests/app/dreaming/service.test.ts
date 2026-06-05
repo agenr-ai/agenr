@@ -93,6 +93,7 @@ function createDreamPortDouble(overrides: Partial<DreamPort> = {}): DreamPort {
     createProfileSnapshot: vi.fn(async () => undefined),
     getActiveProfileSnapshot: vi.fn(async () => null),
     tryAcquireRunLock: vi.fn(async () => true),
+    heartbeatRunLock: vi.fn(async () => true),
     releaseRunLock: vi.fn(async () => undefined),
     withTransaction: vi.fn(async (fn) => fn(port)),
     ...overrides,

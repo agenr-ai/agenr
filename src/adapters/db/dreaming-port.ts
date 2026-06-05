@@ -27,7 +27,7 @@ import {
   reviewDreamProposal,
   updateDreamState,
 } from "./dreaming-run-log.js";
-import { releaseDreamStateRunLock, tryAcquireDreamStateRunLock } from "./dreaming-run-lock.js";
+import { heartbeatDreamStateRunLock, releaseDreamStateRunLock, tryAcquireDreamStateRunLock } from "./dreaming-run-lock.js";
 import {
   countDurablesCreatedSince,
   countEpisodesSince,
@@ -79,6 +79,7 @@ export function createDreamPort(executor: SqlExecutor): DreamPort {
     updateDreamState: async (input) => updateDreamState(executor, input),
     createProfileSnapshot: async (snapshot) => createProfileSnapshot(executor, snapshot),
     tryAcquireRunLock: async (holderToken) => tryAcquireDreamStateRunLock(executor, holderToken, new Date()),
+    heartbeatRunLock: async (holderToken) => heartbeatDreamStateRunLock(executor, holderToken, new Date()),
     releaseRunLock: async (holderToken) => releaseDreamStateRunLock(executor, holderToken, new Date()),
     withTransaction: async (fn) => runInDreamTransaction(executor, fn),
   };

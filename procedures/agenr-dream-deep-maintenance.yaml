@@ -49,7 +49,7 @@ verification:
   - agenr dream summary reflects the expected profile and proposal state.
   - Open proposals were reviewed or intentionally left for follow-up.
 failure_modes:
-  - Running deep maintenance while another dreaming run is active causes `run_in_progress` skips or CLI failure. A lock orphaned by a crashed process is reclaimed automatically once its row is older than one hour; otherwise recreate the database with `agenr db reset`.
+  - Running deep maintenance while another dreaming run or host episode write is active causes `run_in_progress` skips or CLI failure. Active runs heartbeat the lock, and a lock orphaned by a crashed process is reclaimed automatically once its heartbeat is older than one hour.
   - Applying without reviewing the proposal backlog can auto-resolve issues you intended to reject.
   - Skipping dry-run on a large corpus can produce unexpected reconcile or prune mutations.
 sources:

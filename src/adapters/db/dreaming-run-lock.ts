@@ -4,10 +4,8 @@ import type { SqlExecutor } from "./queries.js";
  * Age after which a held dreaming run lock is treated as stale and may be taken
  * over by a new run.
  *
- * The lock is not heartbeated: `updated_at` records the acquire time and is not
- * refreshed mid-run. This threshold is therefore deliberately set well above any
- * realistic run duration so that takeover only recovers locks orphaned by a
- * crashed or killed process, never a run that is still legitimately executing.
+ * The lock is heartbeated during active runs. This threshold only recovers locks
+ * orphaned by a crashed or killed process whose heartbeat stopped.
  */
 const DREAMING_RUN_LOCK_STALE_MS = 60 * 60 * 1000;
 
@@ -16,10 +14,10 @@ export { DREAMING_RUN_LOCK_STALE_MS };
 /**
  * Attempts to acquire the singleton dreaming run lock row in dream_state.
  *
- * Acquisition succeeds when the lock is unheld or when the current holder's row
- * is older than {@link DREAMING_RUN_LOCK_STALE_MS} (crash recovery). Unexpected
- * SQL errors propagate so callers can distinguish contention (no rows affected)
- * from a real failure such as a missing column.
+ * Acquisition succeeds when the lock is unheld or when the current holder's
+ * heartbeat is older than {@link DREAMING_RUN_LOCK_STALE_MS} (crash recovery).
+ * Unexpected SQL errors propagate so callers can distinguish contention (no
+ * rows affected) from a real failure such as a missing column.
  *
  * @param executor - SQL executor backing the target database.
  * @param holderToken - Unique token written when acquisition succeeds.
@@ -34,11 +32,15 @@ export async function tryAcquireDreamStateRunLock(executor: SqlExecutor, holderT
     const result = await executor.execute({
       sql: `
         UPDATE dream_state
-        SET run_lock_holder = ?, updated_at = ?
+        SET run_lock_holder = ?, run_lock_heartbeat_at = ?, updated_at = ?
         WHERE id = 'default'
-          AND (run_lock_holder IS NULL OR run_lock_holder = '' OR updated_at < ?)
+          AND (
+            run_lock_holder IS NULL
+            OR run_lock_holder = ''
+            OR COALESCE(run_lock_heartbeat_at, updated_at) < ?
+          )
       `,
-      args: [holderToken, nowIso, staleBefore],
+      args: [holderToken, nowIso, nowIso, staleBefore],
     });
     await executor.execute("COMMIT");
     return result.rowsAffected > 0;
@@ -46,6 +48,27 @@ export async function tryAcquireDreamStateRunLock(executor: SqlExecutor, holderT
     await executor.execute("ROLLBACK").catch(() => undefined);
     throw error;
   }
+}
+
+/**
+ * Refreshes the heartbeat timestamp for a held dreaming run lock.
+ *
+ * @param executor - SQL executor backing the target database.
+ * @param holderToken - Token previously returned by a successful acquire call.
+ * @param now - Current time persisted as the heartbeat.
+ * @returns True when the holder token still owns the lock.
+ */
+export async function heartbeatDreamStateRunLock(executor: SqlExecutor, holderToken: string, now: Date): Promise<boolean> {
+  const nowIso = now.toISOString();
+  const result = await executor.execute({
+    sql: `
+      UPDATE dream_state
+      SET run_lock_heartbeat_at = ?, updated_at = ?
+      WHERE id = 'default' AND run_lock_holder = ?
+    `,
+    args: [nowIso, nowIso, holderToken],
+  });
+  return result.rowsAffected > 0;
 }
 
 /**
@@ -64,7 +87,7 @@ export async function releaseDreamStateRunLock(executor: SqlExecutor, holderToke
     await executor.execute({
       sql: `
         UPDATE dream_state
-        SET run_lock_holder = NULL, updated_at = ?
+        SET run_lock_holder = NULL, run_lock_heartbeat_at = NULL, updated_at = ?
         WHERE id = 'default' AND run_lock_holder = ?
       `,
       args: [now.toISOString(), holderToken],

@@ -213,6 +213,8 @@ export interface DreamPort {
   }): Promise<void>;
   /** Attempts to acquire the singleton dreaming run lock row. */
   tryAcquireRunLock(holderToken: string): Promise<boolean>;
+  /** Refreshes the dreaming run lock heartbeat when the holder token still matches. */
+  heartbeatRunLock(holderToken: string): Promise<boolean>;
   /** Releases the dreaming run lock when the holder token still matches. */
   releaseRunLock(holderToken: string): Promise<void>;
   /**

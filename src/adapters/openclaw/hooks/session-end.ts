@@ -51,7 +51,7 @@ export async function handleAgenrSessionEnd(
       return;
     }
 
-    await withEpisodeWriteGuard(services.config.dbPath, async () =>
+    await withEpisodeWriteGuard({ port: services.dreaming, dbPath: services.config.dbPath }, async () =>
       writeOpenClawCurrentSessionEpisode({ ctx, current: target, services, logger: params.logger }),
     );
     await runOpenClawPostSessionLightDream(services, params.logger, sessionContext);

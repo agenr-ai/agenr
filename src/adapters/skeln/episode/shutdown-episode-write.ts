@@ -89,7 +89,7 @@ async function writeScopedSkelnShutdownEpisode(
     return;
   }
 
-  await withEpisodeWriteGuard(services.config.dbPath, async () => writeSkelnShutdownEpisode({ target, services, logger }));
+  await withEpisodeWriteGuard({ port: services.dreaming, dbPath: services.config.dbPath }, async () => writeSkelnShutdownEpisode({ target, services, logger }));
   await runSkelnPostSessionLightDream(services, logger);
 }
 

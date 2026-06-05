@@ -3,12 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createDreamPort } from "../../../src/adapters/db/dreaming-port.js";
 import { maybeRunLightDream } from "../../../src/app/dreaming/background-triggers.js";
-import {
-  beginEpisodeWrite,
-  releaseDreamingRunLock,
-  resetDreamingConcurrencyStateForTests,
-  tryAcquireDreamingRunLock,
-} from "../../../src/app/dreaming/concurrency.js";
+import { beginEpisodeWrite, resetDreamingConcurrencyStateForTests, tryAcquireDreamingRunLock } from "../../../src/app/dreaming/concurrency.js";
 import { createTestClient, insertDurable } from "../../helpers/dreaming-reconcile.js";
 
 const clients: Client[] = [];
@@ -100,7 +95,7 @@ describe("maybeRunLightDream", () => {
     });
 
     const lock = await tryAcquireDreamingRunLock(port, ":memory:");
-    expect(lock.acquired).toBe(true);
+    expect(lock).toBeTruthy();
 
     const result = await maybeRunLightDream(
       { trigger: "importance", now: () => new Date("2026-06-05T12:05:00.000Z") },
@@ -112,7 +107,7 @@ describe("maybeRunLightDream", () => {
     );
 
     expect(result).toEqual({ status: "skipped", reason: "run_in_progress" });
-    await releaseDreamingRunLock(port, ":memory:", lock.token!);
+    await lock!.release();
   });
 
   it("skips the importance trigger while an episode write is in progress", async () => {

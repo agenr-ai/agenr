@@ -4,7 +4,7 @@
 
 ### Breaking
 
-- **Greenfield schema with `durables` and dreaming tables.** The `entries` table and all `surgeon_*` tables are gone. This build only supports schema version `3` on a fresh database. Delete existing knowledge databases and re-run `agenr init` or `agenr db reset` before upgrading.
+- **Greenfield schema with `durables` and dreaming tables.** The `entries` table and all `surgeon_*` tables are gone. This build only supports schema version `4` on a fresh database. Delete existing knowledge databases and re-run `agenr init` or `agenr db reset` before upgrading.
 - **`entries` renamed to `durables` across types, SQL, ingest, recall, and scenarios.** There are no compatibility aliases. Extraction JSON now uses a top-level `durables` array.
 - **Surgeon removed; dreaming replaces it.** `agenr surgeon ...` commands, `surgeon` config, and surgeon docs are deleted. Use `agenr dream run|status|history` and the `dreaming` config section instead.
 
@@ -17,7 +17,7 @@
 - **Session-end episode boundaries.** OpenClaw now writes the current session's episode from its `session_end` hook so dreaming has fresh evidence before the next session starts; the write is best-effort and idempotent by session id. Skeln's shutdown chain writes through the same bounded episode contract.
 - **Dreaming pipeline scenario fixtures.** New fixtures under `tests/scenarios/dreaming/pipeline/` cover implicit-preference capture, trip-lifecycle revision, point-in-time recall, and the no-overconsolidation guard.
 - **Dreaming Milestone 5 release path.** The `prune` stage now retires protected low-signal durables on `standard` and `deep` runs, background `light` runs fire after host session-end episode writes, successful `agenr_store` calls can trigger `light` runs when accumulated durable importance crosses the configured threshold, and completion summaries include compute-efficiency counters for the eval scoreboard.
-- **Dreaming ops hardening (WS6).** A process-wide dreaming run lock prevents overlapping CLI, background, and store-triggered runs; the lock reclaims rows orphaned by a crashed process after a stale timeout and surfaces SQLite errors instead of masking them as contention; episode writes serialize ahead of post-session light dreaming; background apply runs record `backupSkipped` in completion summaries; `agenr dream status` warns when recent applied `light` runs skipped backup; and `procedures/agenr-dream-deep-maintenance.yaml` documents weekly deep maintenance.
+- **Dreaming ops hardening (WS6).** A process-wide dreaming lease prevents overlapping CLI, background, store-triggered runs, and host episode writes; the lock heartbeat reclaims rows orphaned by a crashed process after a stale timeout without stealing active long-running runs; episode writes serialize through the same lock before post-session light dreaming; background apply runs record `backupSkipped` in completion summaries; `agenr dream status` warns when recent applied `light` runs skipped backup; and `procedures/agenr-dream-deep-maintenance.yaml` documents weekly deep maintenance.
 - **Docs:** `docs/DURABLES.md`, `docs/DREAMING.md`. `docs/STORE.md` and `docs/SURGEON.md` removed.
 
 ### Changed

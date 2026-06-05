@@ -124,7 +124,7 @@ Dreaming state is stored in:
 - `dream_state` - lightweight cross-run bookkeeping
 - `profile_snapshots` - ordered profile durable ids, directive ids, as-of time, content hash, run id, and creation time
 
-These tables ship in the greenfield schema version `2` alongside `durables`. There is no migration path from pre-dreaming databases.
+These tables ship in the greenfield schema version `4` alongside `durables`. There is no migration path from pre-dreaming databases.
 
 ## Pipeline
 
@@ -163,17 +163,17 @@ The trigger gate skips when the light tier is disabled, another dreaming run hol
 
 ### Concurrency and serialization
 
-Only one dreaming run may execute against a database at a time. `runDream()` acquires a process-wide lock at start and releases it in `finally`. Background triggers call `maybeRunLightDream()`, which tries the same lock before launching a run and returns `run_in_progress` when another caller already holds it.
+Only one dreaming run may execute against a database at a time. `runDream()` acquires a process-wide lock lease at start, heartbeats it while the run is active, and releases it in `finally`. Background triggers call `maybeRunLightDream()`, which tries the same lock before launching a run and returns `run_in_progress` when another caller already holds it.
 
 Episode writes serialize ahead of dreaming:
 
-1. Host hooks finish the current session episode write first.
-2. Post-session light dreaming runs only after that write completes.
+1. Host hooks acquire the same lock lease before writing the current session episode.
+2. Post-session light dreaming runs only after that episode write releases the lock.
 3. Store-triggered importance dreams skip while an in-process episode write guard is active for the same database.
 
-`dream_state.run_lock_holder` backs the SQLite lock row; an in-process map keyed by database path prevents overlapping runs inside one plugin process.
+`dream_state.run_lock_holder` and `dream_state.run_lock_heartbeat_at` back the SQLite lock row; an in-process map keyed by database path prevents overlapping work inside one plugin process.
 
-The lock is not heartbeated. To recover from a crashed or killed process that never released its lock, a new run may take over a lock row whose `updated_at` is older than `DREAMING_RUN_LOCK_STALE_MS` (one hour). This threshold is deliberately well above any realistic run duration, so takeover only reclaims orphaned locks and never steals one from a run that is still executing. Acquire and release surface unexpected SQLite errors instead of swallowing them, so a missing column or transaction failure is reported rather than silently masquerading as contention.
+To recover from a crashed or killed process that never released its lock, a new run may take over a lock row whose heartbeat is older than `DREAMING_RUN_LOCK_STALE_MS` (one hour). Active runs refresh `run_lock_heartbeat_at`, so long-running `deep` runs keep their lease instead of being stolen. Acquire, heartbeat, and release surface unexpected SQLite errors instead of swallowing them, so a missing column or transaction failure is reported rather than silently masquerading as contention.
 
 ### Background apply backup policy
 

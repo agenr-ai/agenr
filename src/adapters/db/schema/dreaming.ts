@@ -118,6 +118,7 @@ const CREATE_DREAM_STATE_TABLE_SQL = `
     active_profile_snapshot_id TEXT,
     unsynthesized_importance_sum REAL NOT NULL DEFAULT 0,
     run_lock_holder TEXT,
+    run_lock_heartbeat_at TEXT,
     updated_at TEXT NOT NULL
   )
 `;

@@ -3,9 +3,9 @@ import type { EmbeddingPort } from "../../core/ports.js";
 import type { DreamRunRecord } from "./ports.js";
 import type { CostMeteredLlm, DreamPort } from "./ports.js";
 import type { DreamRunResult } from "./service.js";
-import { runDream } from "./service.js";
+import { runDreamWithHeldLock } from "./service.js";
 import { runDreamScan } from "./scan.js";
-import { isEpisodeWriteInProgress, releaseDreamingRunLock, tryAcquireDreamingRunLock } from "./concurrency.js";
+import { isEpisodeWriteInProgress, tryAcquireDreamingRunLock, withHeldDreamingRunLock } from "./concurrency.js";
 
 const MINUTE_MS = 60 * 1000;
 
@@ -74,11 +74,11 @@ export async function maybeRunLightDream(
   }
 
   const lock = await tryAcquireDreamingRunLock(deps.port, deps.dbPath);
-  if (!lock.acquired || !lock.token) {
+  if (!lock) {
     return { status: "skipped", reason: "run_in_progress" };
   }
 
-  try {
+  return withHeldDreamingRunLock(lock, async (lease) => {
     const lastRun = await deps.port.getLastRun();
     if (isWithinMinInterval(lastRun, now(), config.minIntervalMinutes)) {
       return { status: "skipped", reason: "interval_guard" };
@@ -97,7 +97,7 @@ export async function maybeRunLightDream(
       };
     }
 
-    const result = await runDream(
+    const result = await runDreamWithHeldLock(
       {
         tier: "light",
         apply: true,
@@ -110,11 +110,11 @@ export async function maybeRunLightDream(
         dbPath: deps.dbPath,
         config: deps.config,
         now,
-        dreamingRunLockHeld: true,
         ...(deps.embedding ? { embedding: deps.embedding } : {}),
         ...(deps.createExtractLlm ? { createExtractLlm: deps.createExtractLlm } : {}),
         ...(deps.createClaimExtractionLlm ? { createClaimExtractionLlm: deps.createClaimExtractionLlm } : {}),
       },
+      lease,
     );
 
     return {
@@ -122,9 +122,7 @@ export async function maybeRunLightDream(
       result,
       unsynthesizedImportanceSum: scan.unsynthesizedImportanceSum,
     };
-  } finally {
-    await releaseDreamingRunLock(deps.port, deps.dbPath, lock.token);
-  }
+  });
 }
 
 /** Resolves light-dream trigger settings from optional configuration. */

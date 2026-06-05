@@ -28,7 +28,7 @@ import { runPruneStage } from "./prune.js";
 import { runProjectStage } from "./project.js";
 import type { CostMeteredLlm, DreamPort } from "./ports.js";
 import { runReconcilePass } from "./reconcile/index.js";
-import { releaseDreamingRunLock, tryAcquireDreamingRunLock } from "./concurrency.js";
+import { type DreamingRunLease, withDreamingRunLock } from "./concurrency.js";
 import { runDreamScan } from "./scan.js";
 import { runTemporalizeStage } from "./temporalize.js";
 
@@ -84,8 +84,6 @@ export interface DreamWorkflowDeps {
   backupDb?: (dbPath: string) => Promise<string>;
   reportProgress?: DreamProgressReporter;
   logger?: Logger;
-  /** When true, the caller already holds the process-wide dreaming run lock. */
-  dreamingRunLockHeld?: boolean;
 }
 
 /**
@@ -97,23 +95,21 @@ export interface DreamWorkflowDeps {
  */
 export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps): Promise<DreamRunResult> {
   throwIfAborted(options.signal);
+  return withDreamingRunLock(deps.port, deps.dbPath, (lease) => runDreamWithHeldLock(options, deps, lease));
+}
 
-  // The run lock serializes dreaming runs across processes and background
-  // triggers. Callers that already hold it (e.g. background triggers that need
-  // to do gating work first) pass `dreamingRunLockHeld` and own release.
-  if (deps.dreamingRunLockHeld) {
-    return executeDreamRun(options, deps);
-  }
-
-  const lock = await tryAcquireDreamingRunLock(deps.port, deps.dbPath);
-  if (!lock.acquired || !lock.token) {
-    throw new Error("Dreaming run already in progress.");
-  }
-  try {
-    return await executeDreamRun(options, deps);
-  } finally {
-    await releaseDreamingRunLock(deps.port, deps.dbPath, lock.token);
-  }
+/**
+ * Runs the dreaming pipeline using a lock lease already held by the caller.
+ *
+ * @param options - Dreaming run options from the CLI or host trigger.
+ * @param deps - Resolved database, config, and progress dependencies.
+ * @param lease - Active dreaming run lease returned by the concurrency helper.
+ * @returns Final dreaming run summary.
+ */
+export async function runDreamWithHeldLock(options: DreamRunOptions, deps: DreamWorkflowDeps, lease: DreamingRunLease): Promise<DreamRunResult> {
+  throwIfAborted(options.signal);
+  await lease.heartbeat();
+  return executeDreamRun(options, deps);
 }
 
 /**
