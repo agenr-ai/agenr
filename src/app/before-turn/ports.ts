@@ -1,5 +1,6 @@
 import type { ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
 import type { ProcedureDatabasePort, RecallPorts } from "../../core/ports.js";
+import type { Durable } from "../../core/types.js";
 
 /**
  * Dependencies needed by the app-layer before-turn service.
@@ -13,4 +14,12 @@ export interface BeforeTurnDeps {
   embedQuery?: (text: string) => Promise<number[]>;
   /** Optional runtime claim-slot-policy overrides used during claim-aware shaping. */
   slotPolicyConfig?: ClaimSlotPolicyConfig;
+  /**
+   * Optional lookup for active user memory directives.
+   *
+   * When wired, the service drops directive rows from injection and suppresses
+   * any surfaced durable that mentions a directive's blocked topic. Callers that
+   * omit it skip directive abstention entirely.
+   */
+  listActiveAbstainDirectives?: () => Promise<Durable[]>;
 }

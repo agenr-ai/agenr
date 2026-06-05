@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { buildLexicalPlan, type LexicalSearchTier } from "../../core/recall/lexical.js";
+import { compileLexicalTier } from "./fts-compile.js";
 import { normalizeProcedureDefinition } from "../../core/procedures/normalization.js";
 import type { Procedure, ProcedureDefinition } from "../../core/types.js";
 import {
@@ -604,20 +605,6 @@ function compareProcedureFtsMatches(
  */
 function ftsTierPriority(tier: LexicalSearchTier["tier"]): number {
   return FTS_TIERS.indexOf(tier as (typeof FTS_TIERS)[number]);
-}
-
-/**
- * Compiles one lexical search tier into a SQLite FTS5 MATCH expression.
- *
- * @param tier - Planned lexical tier.
- * @returns SQLite FTS5 MATCH query text.
- */
-function compileLexicalTier(tier: LexicalSearchTier): string {
-  if (tier.tier === "exact") {
-    return `"${tier.text.replaceAll('"', '""')}"`;
-  }
-
-  return tier.tier === "all_tokens" ? tier.tokens.join(" ") : tier.tokens.join(" OR ");
 }
 
 /**

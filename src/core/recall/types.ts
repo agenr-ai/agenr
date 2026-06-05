@@ -125,6 +125,27 @@ export interface FtsCandidate {
 }
 
 /**
+ * Candidate shape after the vector and FTS admission paths are merged into one
+ * entry-id keyed pool. Vector similarity is preserved when a candidate appeared
+ * in the vector channel.
+ */
+export interface RecallMergedCandidate {
+  entry: RecallCandidateDurable;
+  vectorSim?: number;
+}
+
+/**
+ * Merged recall candidate pool plus the per-channel ordered rank lists that
+ * reciprocal rank fusion consumes. This is the single shape produced by the
+ * merge stage and consumed by valid-time filtering and scoring.
+ */
+export interface RecallMergeOutcome {
+  merged: Map<string, RecallMergedCandidate>;
+  vectorRanks: string[];
+  ftsRanks: string[];
+}
+
+/**
  * Filters that the core recall pipeline can push down into adapter queries.
  */
 export interface DurableFilters {
@@ -132,4 +153,10 @@ export interface DurableFilters {
   tags?: string[];
   since?: Date;
   until?: Date;
+  /**
+   * When set, adapter queries exclude durables whose valid-time window does not
+   * contain this instant. Core recall still applies the same filter after merge
+   * as defense in depth for non-SQL retrieval paths.
+   */
+  validAsOf?: Date;
 }

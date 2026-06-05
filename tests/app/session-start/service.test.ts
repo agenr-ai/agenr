@@ -228,6 +228,96 @@ describe("runSessionStart", () => {
     expect(deps.recall.ftsSearch).not.toHaveBeenCalled();
     expect(deps.recall.recordRecallEvents).not.toHaveBeenCalled();
   });
+
+  it("suppresses core memory that violates an active abstain directive", async () => {
+    const stanEntry = createEntry({
+      id: "core-stan",
+      subject: "colleague preferences",
+      content: "Stan prefers async standups.",
+      expiry: "core",
+      importance: 9,
+    });
+    const allowedEntry = createEntry({
+      id: "core-workflow",
+      subject: "branching workflow",
+      content: "Branch from local master before editing shared code.",
+      expiry: "core",
+      importance: 8,
+    });
+    const directiveRow = createEntry({
+      id: "dir-stan",
+      subject: "memory directive",
+      content: "Do not mention Stan.",
+      claim_key: "user/memory_directive/do_not_mention_stan",
+    });
+    const deps = createDeps({
+      coreEntries: [stanEntry, allowedEntry],
+      listActiveAbstainDirectives: vi.fn(async () => [directiveRow]),
+    });
+
+    const result = await runSessionStart({ policy: { enableArtifactRecall: false } }, deps);
+
+    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["core-workflow"]);
+    expect(result.diagnostics.directiveAbstentions).toEqual([
+      { entryId: "core-stan", reason: "directive_topic", directiveId: "dir-stan", blockedTerm: "stan" },
+    ]);
+  });
+
+  it("never injects a directive durable as core memory", async () => {
+    const directiveCore = createEntry({
+      id: "dir-core",
+      subject: "memory directive",
+      content: "Do not mention the acquisition.",
+      claim_key: "user/memory_directive/do_not_mention_acquisition",
+      expiry: "core",
+      importance: 9,
+    });
+    const allowedEntry = createEntry({
+      id: "core-workflow",
+      subject: "branching workflow",
+      content: "Branch from local master before editing shared code.",
+      expiry: "core",
+      importance: 8,
+    });
+    const deps = createDeps({
+      coreEntries: [directiveCore, allowedEntry],
+    });
+
+    const result = await runSessionStart({ policy: { enableArtifactRecall: false } }, deps);
+
+    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["core-workflow"]);
+    expect(result.diagnostics.directiveAbstentions).toEqual([{ entryId: "dir-core", reason: "directive_self" }]);
+  });
+
+  it("labels a core entry current when its valid_to is still in the future", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-15T00:00:00.000Z"));
+    try {
+      const stillValid = createEntry({
+        id: "core-lease",
+        subject: "current lease",
+        content: "Lease runs through the summer.",
+        expiry: "core",
+        valid_to: "2026-09-01T00:00:00.000Z",
+      });
+      const alreadyExpired = createEntry({
+        id: "core-stale",
+        subject: "old assignment",
+        content: "Temporary assignment that has ended.",
+        expiry: "core",
+        valid_to: "2026-02-01T00:00:00.000Z",
+      });
+      const deps = createDeps({ coreEntries: [stillValid, alreadyExpired] });
+
+      const result = await runSessionStart({ policy: { enableArtifactRecall: false } }, deps);
+
+      const states = new Map(result.durableMemory.map((item) => [item.entry.id, item.memoryState]));
+      expect(states.get("core-lease")).toBe("current");
+      expect(states.get("core-stale")).toBe("historical");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 function createDeps(
@@ -236,6 +326,7 @@ function createDeps(
     ftsCandidates?: RecallCandidateDurable[];
     hydratedEntries?: Durable[];
     ftsSearchImplementation?: RecallPorts["ftsSearch"];
+    listActiveAbstainDirectives?: SessionStartDeps["listActiveAbstainDirectives"];
   } = {},
 ): SessionStartDeps {
   const recallEntries = new Map((options.hydratedEntries ?? []).map((entry) => [entry.id, entry]));
@@ -262,6 +353,7 @@ function createDeps(
       listCoreEntries: vi.fn(async (limit) => (options.coreEntries ?? []).slice(0, limit)),
     },
     recall,
+    ...(options.listActiveAbstainDirectives ? { listActiveAbstainDirectives: options.listActiveAbstainDirectives } : {}),
   };
 }
 

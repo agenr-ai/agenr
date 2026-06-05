@@ -44,6 +44,24 @@ export interface RecallFilterTrace {
     /** As-of anchor supplied by the caller in ISO format. */
     anchor: string;
   };
+  /**
+   * Bi-temporal valid-time filter facts for one recall execution.
+   *
+   * Present whenever the as-of validity filter ran (every ranking profile
+   * except `historical_state`). Records the instant the candidate pool was
+   * filtered against, where that instant came from, and how many candidates
+   * were dropped for falling outside their valid-time window.
+   */
+  asOfValidity?: {
+    /** Whether the valid-time window filter ran for this execution. */
+    applied: boolean;
+    /** Effective valid-time instant the pool was filtered against, in ISO format. */
+    anchor: string;
+    /** Whether the instant came from an explicit caller as-of or the current clock. */
+    source: "now" | "explicit_as_of";
+    /** Candidates dropped because their valid-time window did not contain the instant. */
+    excludedCount: number;
+  };
 }
 
 /**

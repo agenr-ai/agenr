@@ -1,3 +1,4 @@
+import type { AbstainSuppression } from "../directives/abstain-filter.js";
 import type { ClaimCentricClaimStatus, ClaimCentricMemoryState, ClaimCentricRecallExplanation } from "../recall/claim-centric.js";
 import type { RecallExecutionTraceSummary } from "../../core/recall/index.js";
 import type { Durable } from "../../core/types.js";
@@ -71,6 +72,11 @@ export interface SessionStartPatchItem {
 }
 
 /**
+ * One durable suppressed from session-start injection by a memory directive.
+ */
+export type SessionStartDirectiveAbstention = AbstainSuppression;
+
+/**
  * Compact diagnostics emitted alongside one session-start patch.
  */
 export interface SessionStartPatchDiagnostics {
@@ -84,6 +90,8 @@ export interface SessionStartPatchDiagnostics {
   artifactRecallQuery?: string;
   /** Typed recall trace emitted by the shared core recall pipeline. */
   artifactRecallTrace?: RecallExecutionTraceSummary;
+  /** Durables suppressed from injection by active memory directives. */
+  directiveAbstentions?: SessionStartDirectiveAbstention[];
   /** Stable degraded-mode or failure notices relevant to the selection pass. */
   notices: string[];
 }

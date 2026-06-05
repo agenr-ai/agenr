@@ -1,14 +1,16 @@
 import type { ResultSet, Row } from "@libsql/client";
 
 import { parseClaimKeyStatus } from "../../core/claim-key-lifecycle.js";
-import { buildLexicalPlan, type LexicalSearchTier } from "../../core/recall/lexical.js";
+import { buildLexicalPlan } from "../../core/recall/lexical.js";
 import type { DurableNeighborhoodRequest, NeighborhoodFamily } from "../../core/recall/neighborhood.js";
 import type { DurableFilters, FtsCandidate, RecallCandidateDurable } from "../../core/recall/types.js";
 import type { EmbeddingPort, RecallPorts } from "../../core/ports.js";
 import type { Durable } from "../../core/types.js";
+import { compileLexicalTier } from "./fts-compile.js";
 import { recordRecallEvent, type SqlExecutor } from "./queries.js";
 import {
   buildActiveDurableClause,
+  buildValidAsOfClause,
   cosineSimilarity,
   DURABLE_SELECT_COLUMNS,
   mapDurableRow,
@@ -326,6 +328,12 @@ function buildEntryFilterClause(filters: DurableFilters | undefined, alias: stri
     args.push(filters.until.toISOString());
   }
 
+  if (filters.validAsOf) {
+    clauses.push(buildValidAsOfClause(alias));
+    const asOfIso = filters.validAsOf.toISOString();
+    args.push(asOfIso, asOfIso);
+  }
+
   if (clauses.length === 0) {
     return { sql: "", args };
   }
@@ -358,20 +366,6 @@ function compareFtsCandidates(left: FtsCandidate, right: FtsCandidate): number {
 /** Resolves a stable numeric sort priority for one FTS cascade tier. */
 function ftsTierPriority(tier: FtsCandidate["tier"]): number {
   return FTS_TIERS.indexOf(tier);
-}
-
-/**
- * Compile one backend-agnostic lexical tier into a SQLite FTS5 MATCH expression.
- *
- * @param tier - Planned lexical tier from the core recall module.
- * @returns SQLite FTS5 MATCH text for that tier.
- */
-function compileLexicalTier(tier: LexicalSearchTier): string {
-  if (tier.tier === "exact") {
-    return `"${tier.text.replaceAll('"', '""')}"`;
-  }
-
-  return tier.tier === "all_tokens" ? tier.tokens.join(" ") : tier.tokens.join(" OR ");
 }
 
 /**

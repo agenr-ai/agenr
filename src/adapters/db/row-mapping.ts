@@ -65,6 +65,29 @@ export function buildActiveDurableClause(alias?: string): string {
 }
 
 /**
+ * Builds the SQL predicate that keeps only durables whose valid-time window
+ * contains a given as-of instant.
+ *
+ * This is the SQL half of the bi-temporal as-of contract used by automatic
+ * injection. A row qualifies when its `valid_from` is null or at/ before the
+ * instant and its `valid_to` is null or at/after the instant. Bounds are
+ * compared through SQLite `datetime()` so the predicate stays correct across
+ * the ISO-8601 timestamp variants the store may persist (trailing `Z` versus
+ * an explicit UTC offset) rather than relying on lexical string ordering.
+ *
+ * The caller must bind the same as-of timestamp to both placeholders this
+ * fragment emits, in left-to-right order.
+ *
+ * @param alias - Optional table alias to prefix column references.
+ * @returns Valid-time predicate with two ordered bound-parameter placeholders.
+ */
+export function buildValidAsOfClause(alias?: string): string {
+  const validFrom = alias ? `${alias}.valid_from` : "valid_from";
+  const validTo = alias ? `${alias}.valid_to` : "valid_to";
+  return `(${validFrom} IS NULL OR datetime(${validFrom}) <= datetime(?)) AND (${validTo} IS NULL OR datetime(${validTo}) >= datetime(?))`;
+}
+
+/**
  * Builds the SQL predicate that filters out retired and superseded episodes.
  *
  * @param alias - Optional table alias to prefix column references.

@@ -1087,7 +1087,122 @@ describe("recall raw evidence gating", () => {
     expect(results[1]?.scores.claimKeyRedundancyPenalty).toBe(0);
   });
 
-  it("uses validity windows first when resolving an explicit as-of reference", async () => {
+  it("excludes a not-yet-valid successor when resolving an explicit as-of reference", async () => {
+    const traceSummaries: RecallExecutionTraceSummary[] = [];
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "approach-old",
+          subject: "deployment approach",
+          content: "Webpack was the deployment approach before the migration.",
+          claim_key: "deployment/approach",
+          claim_key_status: "trusted",
+          valid_from: "2026-02-01T00:00:00.000Z",
+          valid_to: "2026-03-20T00:00:00.000Z",
+          superseded_by: "approach-new",
+          created_at: "2026-02-01T00:00:00.000Z",
+        }),
+        buildEntry({
+          id: "approach-new",
+          subject: "deployment approach",
+          content: "Vite is the deployment approach after the migration.",
+          claim_key: "deployment/approach",
+          claim_key_status: "trusted",
+          valid_from: "2026-03-20T00:00:00.000Z",
+          created_at: "2026-03-20T00:00:00.000Z",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "approach-old", vectorSim: 0.71 },
+        { id: "approach-new", vectorSim: 0.71 },
+      ],
+    });
+
+    // Point-in-time question: as of 2026-03-01 the migration had not happened,
+    // so the bi-temporal as-of contract returns only the belief held then.
+    const results = await recall(
+      {
+        text: "deployment approach",
+        asOf: "2026-03-01T00:00:00.000Z",
+        limit: 5,
+      },
+      fixture.ports,
+      {
+        trace: {
+          reportSummary(summary): void {
+            traceSummaries.push(summary);
+          },
+        },
+      },
+    );
+
+    expect(results.map((result) => result.entry.id)).toEqual(["approach-old"]);
+    expect(traceSummaries[0]?.filtering.asOfValidity).toEqual({
+      applied: true,
+      anchor: "2026-03-01T00:00:00.000Z",
+      source: "explicit_as_of",
+      excludedCount: 1,
+    });
+  });
+
+  it("excludes expired rows from default recall at the current clock", async () => {
+    const traceSummaries: RecallExecutionTraceSummary[] = [];
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "location-current",
+          subject: "home base",
+          content: "Currently living in Lisbon.",
+          claim_key: "user/location/home",
+          claim_key_status: "trusted",
+          valid_from: "2026-03-21T00:00:00.000Z",
+          created_at: "2026-03-21T00:00:00.000Z",
+        }),
+        buildEntry({
+          id: "location-expired",
+          subject: "home base",
+          content: "Living in Singapore for the contract.",
+          claim_key: "user/location/home",
+          claim_key_status: "trusted",
+          valid_from: "2026-01-01T00:00:00.000Z",
+          valid_to: "2026-03-20T00:00:00.000Z",
+          created_at: "2026-01-01T00:00:00.000Z",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "location-current", vectorSim: 0.72 },
+        { id: "location-expired", vectorSim: 0.72 },
+      ],
+    });
+
+    // No explicit asOf: the live path filters against NOW (2026-03-26), so the
+    // expired Singapore row must never ride into the result set.
+    const results = await recall(
+      {
+        text: "home base",
+        limit: 5,
+      },
+      fixture.ports,
+      {
+        trace: {
+          reportSummary(summary): void {
+            traceSummaries.push(summary);
+          },
+        },
+      },
+    );
+
+    expect(results.map((result) => result.entry.id)).toEqual(["location-current"]);
+    expect(traceSummaries[0]?.filtering.asOfValidity).toEqual({
+      applied: true,
+      anchor: NOW.toISOString(),
+      source: "now",
+      excludedCount: 1,
+    });
+  });
+
+  it("keeps expired lineage for the historical-state profile", async () => {
+    const traceSummaries: RecallExecutionTraceSummary[] = [];
     const fixture = createRecallPortsFixture({
       entries: [
         buildEntry({
@@ -1120,14 +1235,23 @@ describe("recall raw evidence gating", () => {
     const results = await recall(
       {
         text: "deployment approach",
-        asOf: "2026-03-01T00:00:00.000Z",
+        rankingProfile: "historical_state",
         limit: 5,
       },
       fixture.ports,
+      {
+        trace: {
+          reportSummary(summary): void {
+            traceSummaries.push(summary);
+          },
+        },
+      },
     );
 
-    expect(results.map((result) => result.entry.id)).toEqual(["approach-old", "approach-new"]);
-    expect(results[0]?.scores.recency).toBeGreaterThan(results[1]?.scores.recency ?? 0);
+    // The historical-state profile intentionally bypasses the valid-time filter
+    // so superseded and expired lineage stays answerable.
+    expect(results.map((result) => result.entry.id).sort()).toEqual(["approach-new", "approach-old"]);
+    expect(traceSummaries[0]?.filtering.asOfValidity).toBeUndefined();
   });
 
   it("records a default mmr trace branch when no embeddings are available on candidates", async () => {

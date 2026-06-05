@@ -1,0 +1,40 @@
+{
+  "id": "before-turn-not-yet-valid",
+  "description": "A durable whose valid_from is in the future must never auto-inject at before-turn until it becomes valid.",
+  "kind": "before_turn",
+  "now": "2026-03-26T12:00:00.000Z",
+  "durables": [
+    {
+      "id": "hours-current",
+      "subject": "office hours schedule",
+      "content": "Office hours schedule is Monday afternoons.",
+      "claim_key": "team/office_hours",
+      "claim_key_status": "trusted",
+      "valid_from": "2026-03-01T00:00:00.000Z",
+      "created_at": "2026-03-01T00:00:00.000Z"
+    },
+    {
+      "id": "hours-future",
+      "subject": "office hours schedule",
+      "content": "Office hours schedule moves to Friday mornings.",
+      "claim_key": "team/office_hours",
+      "claim_key_status": "trusted",
+      "valid_from": "2026-06-01T00:00:00.000Z",
+      "created_at": "2026-03-10T00:00:00.000Z"
+    }
+  ],
+  "beforeTurn": {
+    "currentTurnText": "Tell me the office hours schedule."
+  },
+  "policy": {
+    "enableProcedureSuggestion": false,
+    "recallThreshold": 0,
+    "maxDurableEntries": 5,
+    "maxHighConfidenceDurableEntries": 5,
+    "highConfidenceRecallThreshold": 0
+  },
+  "expect": {
+    "includesEntryIds": ["hours-current"],
+    "excludesEntryIds": ["hours-future"]
+  }
+}

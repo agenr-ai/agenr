@@ -1,5 +1,6 @@
 import { recall, type RecallExecutionTraceSummary, type RecallOutput } from "../../core/recall/index.js";
 
+import { applyAbstainDirectivesForInjection } from "../directives/abstain-filter.js";
 import { runProcedureRecall } from "../procedures/recall/service.js";
 import { projectClaimCentricRecallEntry } from "../recall/claim-centric.js";
 
@@ -192,12 +193,14 @@ export async function runBeforeTurn(input: BeforeTurnInput, deps: BeforeTurnDeps
     };
   }
 
-  const [durableMemory, procedure] = await Promise.all([
+  const [recalledDurableMemory, procedure] = await Promise.all([
     policy.enableDurableRecall
       ? runDurableRecallSelection(currentTurnText, durableQueryPlan, input.sessionKey, policy, deps, diagnostics)
       : Promise.resolve([]),
     policy.enableProcedureSuggestion && procedureQuery ? runProcedureSelection(procedureQuery, policy, deps, diagnostics) : Promise.resolve(undefined),
   ]);
+
+  const durableMemory = await applyAbstainDirectivesForInjection(recalledDurableMemory, deps.listActiveAbstainDirectives, diagnostics);
 
   if (!policy.enableDurableRecall) {
     diagnostics.abstentionReasons.push("Durable recall disabled by before-turn policy.");

@@ -100,6 +100,13 @@ export { STOP_WORDS };
 
 const FTS_OPERATOR_TOKENS = new Set(["or", "not", "near"]);
 const LEXICAL_TOKEN_PATTERN = /[\p{L}\p{N}][\p{L}\p{N}._-]*/gu;
+/**
+ * Matches separator punctuation (`.`, `_`, `-`) left on the edge of a token by
+ * the broad token pattern, such as the sentence-final period in "schedule.".
+ * Internal separators (for example "valid_from" or "gamma.delta") are
+ * intentionally preserved so identifiers and dotted paths survive tokenization.
+ */
+const TOKEN_EDGE_PUNCTUATION_PATTERN = /^[._-]+|[._-]+$/gu;
 
 /**
  * Backend-agnostic lexical search tier used to plan adapter queries.
@@ -122,7 +129,7 @@ export type LexicalSearchTier =
  */
 export function tokenize(text: string): string[] {
   const matches = normalizeLexicalText(text).match(LEXICAL_TOKEN_PATTERN) ?? [];
-  return matches.filter((token) => token.length >= 2 && !STOP_WORDS.has(token));
+  return matches.map((token) => token.replace(TOKEN_EDGE_PUNCTUATION_PATTERN, "")).filter((token) => token.length >= 2 && !STOP_WORDS.has(token));
 }
 
 /**

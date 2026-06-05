@@ -1,0 +1,40 @@
+{
+  "id": "before-turn-directive-abstention",
+  "description": "An active abstain directive suppresses durable memory that mentions the blocked topic, and the directive row itself never injects.",
+  "kind": "before_turn",
+  "now": "2026-03-26T12:00:00.000Z",
+  "durables": [
+    {
+      "id": "fact-stan",
+      "subject": "colleague preferences",
+      "content": "Stan prefers async standups and quiet afternoons.",
+      "claim_key": "user/colleague/stan",
+      "claim_key_status": "trusted",
+      "created_at": "2026-02-01T00:00:00.000Z"
+    }
+  ],
+  "directives": [
+    {
+      "id": "dir-stan",
+      "subject": "memory directive",
+      "content": "Do not mention Stan.",
+      "claim_key": "user/memory_directive/do_not_mention_stan",
+      "expiry": "core",
+      "created_at": "2026-02-10T00:00:00.000Z"
+    }
+  ],
+  "beforeTurn": {
+    "currentTurnText": "What does Stan prefer for standups?"
+  },
+  "policy": {
+    "enableProcedureSuggestion": false,
+    "recallThreshold": 0,
+    "maxDurableEntries": 5,
+    "maxHighConfidenceDurableEntries": 5,
+    "highConfidenceRecallThreshold": 0
+  },
+  "expect": {
+    "excludesEntryIds": ["fact-stan", "dir-stan"],
+    "directiveAbstentions": [{ "entryId": "fact-stan", "reason": "directive_topic", "directiveId": "dir-stan", "blockedTerm": "stan" }]
+  }
+}

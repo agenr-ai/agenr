@@ -1,0 +1,41 @@
+{
+  "id": "before-turn-expired-valid-to",
+  "description": "An expired durable (valid_to in the past) must never auto-inject at before-turn, even though it still lexically matches the turn.",
+  "kind": "before_turn",
+  "now": "2026-03-26T12:00:00.000Z",
+  "durables": [
+    {
+      "id": "home-current",
+      "subject": "home base",
+      "content": "Home base is currently Lisbon.",
+      "claim_key": "user/location/home",
+      "claim_key_status": "trusted",
+      "valid_from": "2026-03-21T00:00:00.000Z",
+      "created_at": "2026-03-21T00:00:00.000Z"
+    },
+    {
+      "id": "home-singapore",
+      "subject": "home base",
+      "content": "Home base was Singapore during the contract.",
+      "claim_key": "user/location/home",
+      "claim_key_status": "trusted",
+      "valid_from": "2026-01-01T00:00:00.000Z",
+      "valid_to": "2026-03-20T00:00:00.000Z",
+      "created_at": "2026-01-01T00:00:00.000Z"
+    }
+  ],
+  "beforeTurn": {
+    "currentTurnText": "Where is my home base located right now?"
+  },
+  "policy": {
+    "enableProcedureSuggestion": false,
+    "recallThreshold": 0,
+    "maxDurableEntries": 5,
+    "maxHighConfidenceDurableEntries": 5,
+    "highConfidenceRecallThreshold": 0
+  },
+  "expect": {
+    "includesEntryIds": ["home-current"],
+    "excludesEntryIds": ["home-singapore"]
+  }
+}

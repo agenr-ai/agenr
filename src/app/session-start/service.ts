@@ -1,6 +1,8 @@
 import { recall, type RecallExecutionTraceSummary, type RecallOutput } from "../../core/recall/index.js";
+import { isWithinValidityWindow } from "../../core/temporal-validity.js";
 import type { Durable } from "../../core/types.js";
 
+import { applyAbstainDirectivesForInjection } from "../directives/abstain-filter.js";
 import { projectClaimCentricRecallEntry } from "../recall/claim-centric.js";
 import { buildSessionStartContextSections } from "./context-sections.js";
 
@@ -29,9 +31,10 @@ const DEFAULT_MAX_ARTIFACT_CHARS = 1_200;
  */
 export async function runSessionStart(input: SessionStartInput, deps: SessionStartDeps): Promise<SessionStartPatch> {
   const policy = normalizePolicy(input.policy);
+  const nowMs = Date.now();
   const contextSections = buildSessionStartContextSections(input.continuitySummaryText, input.recentSessionText);
   const coreEntries = await deps.repository.listCoreEntries(policy.maxCoreEntries);
-  const coreItems = coreEntries.map((entry) => buildCorePatchItem(entry));
+  const coreItems = coreEntries.map((entry) => buildCorePatchItem(entry, nowMs));
   const diagnostics: SessionStartPatchDiagnostics = {
     coreCandidateCount: coreEntries.length,
     artifactRecallCandidateCount: 0,
@@ -47,7 +50,9 @@ export async function runSessionStart(input: SessionStartInput, deps: SessionSta
     ? await runArtifactRecallSelection(artifactRecallQuery, input.sessionKey, policy, deps, diagnostics)
     : [];
 
-  const durableMemory = assignRanks(mergeDurableMemory(coreItems, artifactRecallItems, policy.maxDurableEntries));
+  const mergedDurableMemory = mergeDurableMemory(coreItems, artifactRecallItems, policy.maxDurableEntries);
+  const visibleDurableMemory = await applyAbstainDirectivesForInjection(mergedDurableMemory, deps.listActiveAbstainDirectives, diagnostics);
+  const durableMemory = assignRanks(visibleDurableMemory);
 
   return {
     contextSections,
@@ -113,9 +118,10 @@ async function runArtifactRecallSelection(
  * Converts one always-on core entry into a session-start patch item.
  *
  * @param entry - Active core entry selected for session-start use.
+ * @param nowMs - Reference instant used to resolve valid-time freshness.
  * @returns Structured patch item with stable explanation metadata.
  */
-function buildCorePatchItem(entry: Durable): SessionStartPatchItem {
+function buildCorePatchItem(entry: Durable, nowMs: number): SessionStartPatchItem {
   return {
     rank: 0,
     entry,
@@ -124,7 +130,7 @@ function buildCorePatchItem(entry: Durable): SessionStartPatchItem {
       summary: `always-on core memory; importance ${entry.importance}`,
       reasons: ["always-on core memory", `importance ${entry.importance}`, `expiry ${entry.expiry}`],
     },
-    memoryState: resolveMemoryState(entry),
+    memoryState: resolveMemoryState(entry, nowMs),
     claimStatus: resolveClaimStatus(entry),
     freshnessLabel: buildFreshnessLabel(entry),
     ...(buildProvenanceSummary(entry) ? { provenanceSummary: buildProvenanceSummary(entry) } : {}),
@@ -291,15 +297,28 @@ function normalizeThreshold(value: number | undefined): number {
 /**
  * Resolves the high-level memory-state label for one entry.
  *
+ * A bounded `valid_to` alone does not make an entry historical: a row stays
+ * current until its valid-time window actually closes. Only a `valid_to` that
+ * has already passed relative to `nowMs` (or an explicit retirement) demotes
+ * the entry to historical. Automatic injection filters expired rows out before
+ * they reach this label, so a surviving core item with a future `valid_to`
+ * correctly reads as current.
+ *
  * @param entry - Durable entry being surfaced at session start.
+ * @param nowMs - Reference instant used to resolve valid-time freshness.
  * @returns Memory-state label suitable for inspection surfaces.
  */
-function resolveMemoryState(entry: Durable): SessionStartPatchItem["memoryState"] {
+function resolveMemoryState(entry: Durable, nowMs: number): SessionStartPatchItem["memoryState"] {
   if (entry.superseded_by) {
     return "superseded";
   }
 
-  if (entry.retired || entry.valid_to) {
+  if (entry.retired) {
+    return "historical";
+  }
+
+  const validTo = normalizeOptionalString(entry.valid_to);
+  if (validTo && !isWithinValidityWindow(undefined, validTo, nowMs)) {
     return "historical";
   }
 

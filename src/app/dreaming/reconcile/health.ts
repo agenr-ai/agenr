@@ -17,11 +17,7 @@ import { findMixedKeyGroups } from "./helpers/mixed-groups.js";
  * @param tally - Inspection counts accumulated in one pass.
  * @returns Aggregate claim-key quality snapshot.
  */
-export function buildClaimKeyHealthSnapshot(
-  durables: Durable[],
-  eligibleTypes: readonly string[],
-  tally: ClaimKeyInspectionTally,
-): ClaimKeyHealthSnapshot {
+export function buildClaimKeyHealthSnapshot(durables: Durable[], eligibleTypes: readonly string[], tally: ClaimKeyInspectionTally): ClaimKeyHealthSnapshot {
   const activeDurables = durables.filter((durable) => isDurableActive(durable));
   const withClaimKeys = durables.filter((durable) => typeof durable.claim_key === "string" && durable.claim_key.trim().length > 0);
   const entityFamilyCandidates = detectClaimKeyEntityFamilyCandidates(durables);

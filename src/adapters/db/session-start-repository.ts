@@ -1,7 +1,7 @@
 import type { SessionStartRepository } from "../../app/session-start/index.js";
 import type { Durable } from "../../core/types.js";
 
-import { buildActiveDurableClause, DURABLE_SELECT_COLUMNS, mapDurableRow } from "./row-mapping.js";
+import { buildActiveDurableClause, buildValidAsOfClause, DURABLE_SELECT_COLUMNS, mapDurableRow } from "./row-mapping.js";
 import type { SqlExecutor } from "./queries.js";
 
 /**
@@ -28,6 +28,11 @@ async function listCoreEntries(executor: SqlExecutor, limit: number): Promise<Du
     return [];
   }
 
+  // Filter expired and not-yet-valid core durables in SQL so the LIMIT applies
+  // to rows that are actually valid right now. Without this guard a core row
+  // whose valid_to has already passed could auto-inject at session start, which
+  // is exactly the stale-memory failure the dreaming program closes.
+  const nowIso = new Date().toISOString();
   const result = await executor.execute({
     sql: `
       SELECT
@@ -35,10 +40,11 @@ async function listCoreEntries(executor: SqlExecutor, limit: number): Promise<Du
       FROM durables
       WHERE ${buildActiveDurableClause()}
         AND expiry = 'core'
+        AND ${buildValidAsOfClause()}
       ORDER BY importance DESC, created_at DESC
       LIMIT ?
     `,
-    args: [limit],
+    args: [nowIso, nowIso, limit],
   });
 
   return result.rows.map((row) => mapDurableRow(row));

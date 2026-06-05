@@ -285,6 +285,34 @@ Important properties:
 - vector similarity and lexical evidence are preserved separately
 - lexical overlap remains visible as evidence even though it is no longer the composite relevance signal
 
+### 6. As-of validity filtering
+
+Immediately after the merge, and before any scoring, recall drops candidates
+whose valid-time window does not contain the effective as-of instant. This is
+the valid-time half of the [bi-temporal as-of contract](#bi-temporal-as-of-contract)
+and is the freshness guard that keeps expired or not-yet-valid rows out of
+default recall and automatic injection.
+
+The effective instant is resolved once per call:
+
+- when the caller passes an explicit `asOf`, that instant is used (point-in-time question)
+- otherwise the current clock (`now`) is used (live recall)
+
+A candidate is excluded when:
+
+- `valid_from` is present and the instant is before it (not yet valid)
+- `valid_to` is present and the instant is after it (already expired)
+
+Boundaries are inclusive, and rows with no usable validity bounds always pass.
+The per-channel rank lists handed to reciprocal rank fusion are pruned in lock
+step so a filtered candidate never influences fusion scores.
+
+The `historical_state` ranking profile deliberately skips this filter so it can
+still surface superseded and expired lineage for "what did we believe back
+then" questions. The filter facts (effective instant, instant source, and the
+number of excluded candidates) are reported on the recall trace under
+`filtering.asOfValidity`.
+
 ## Entry scoring model
 
 Entry ranking is built from distinct signals.
@@ -430,6 +458,40 @@ The score breakdown can include:
 - `claimKeyRedundancyPenalty`
 
 These signals are additive or subtractive shaping terms on top of the base composite.
+
+## Bi-temporal as-of contract
+
+agenr durable memory is bi-temporal. Two independent time axes describe every
+durable, and recall, injection, and the temporal-correctness evals all resolve
+`asOf` against the same contract.
+
+| Axis                            | Meaning                                   | Fields                                                  |
+| ------------------------------- | ----------------------------------------- | ------------------------------------------------------- |
+| **Valid time**                  | When the fact is or was true in the world | `valid_from`, `valid_to`                                |
+| **Transaction (known-at) time** | When agenr learned or recorded the belief | `created_at`, `updated_at`, `claim_support_observed_at` |
+
+The contract:
+
+- **`asOf` resolves on the valid-time axis.** "What is true now" excludes rows
+  whose validity window does not contain `now`; "what was true on date X"
+  excludes rows whose window does not contain X. This is the
+  [as-of validity filter](#6-as-of-validity-filtering).
+- **Live paths use `asOf = now`.** Default `recall()`, session-start, and
+  before-turn resolve the instant to the current clock when no explicit `asOf`
+  is supplied, so expired and not-yet-valid rows never auto-inject.
+- **Point-in-time questions pass an explicit `asOf`.** The same filter then runs
+  against the supplied instant. Eval fixtures advance a simulated clock through
+  `asOf` to make temporal correctness reproducible.
+- **The transaction-time axis answers "what did we believe as of X".** It is
+  carried by `created_at` and `claim_support_observed_at` today; a dedicated
+  known-at column is not required for the current contract.
+- **History is preserved; current state is a view over it.** Supersession is the
+  bridge between axes: a successor row opens a new valid window while the
+  predecessor keeps its old window and stays queryable through `agenr_trace`,
+  the `historical_state` profile, and explicit `asOf` recall.
+
+Only the `historical_state` ranking profile bypasses valid-time filtering, by
+design, so lineage and superseded belief remain answerable.
 
 ## MMR diversification
 
@@ -617,6 +679,9 @@ Session-start recall:
 - keeps continuity and durable memory visibly separate
 - caps the durable-memory patch to a small bounded set
 - prefers artifact-grounded durable memory for non-core context
+- filters expired and not-yet-valid core durables in SQL (`valid_to < now`, `valid_from > now`) so stale rows never auto-inject
+- labels a surviving entry `historical` only when `valid_to` has actually passed, not merely because a `valid_to` is set
+- applies [memory-directive abstention](#memory-directive-abstention) over the assembled durable set
 
 ### Before-turn recall
 
@@ -627,8 +692,34 @@ Before-turn recall:
 - derives a bounded query from the current prompt plus recent turns
 - can surface one or a few high-confidence durable items
 - can also surface a canonical procedure suggestion
+- inherits the [as-of validity filter](#6-as-of-validity-filtering) from the shared recall core, so expired and not-yet-valid rows are excluded at `asOf = now`
+- applies [memory-directive abstention](#memory-directive-abstention) before ranking
 
 This path is intentionally stricter than the explicit recall tool. It is meant to assist live prompting, not dump broad memory into the prompt by default.
+
+### Memory-directive abstention
+
+Both automatic injection paths consult active user memory directives before
+surfacing durable memory. A memory directive is a durable in the claim-key
+family `user/memory_directive/*` whose content asks agenr to stop surfacing a
+topic, for example "do not bring up the San Francisco move again".
+
+Abstention does two things:
+
+- **directive rows never inject as generic memory** - a stored directive is an
+  instruction about memory, not a fact to surface
+- **candidates that mention a blocked topic are suppressed** - the directive's
+  blocked phrases are matched against each candidate's subject and content
+
+The active directives are fetched through an optional lookup wired by the host
+runtime. Hosts that omit it (and narrow eval seams) skip topic suppression. The
+lookup is best-effort: a directive-store failure fails open and keeps the
+non-directive candidates rather than blanking memory. Suppressions are recorded
+on the patch diagnostics under `directiveAbstentions`.
+
+This is the minimal abstention behavior. The full first-class `directive`
+durable kind, polarity, and trigger model is a later milestone; today abstain
+directives are recognized structurally by claim-key family and content.
 
 ## Notices, degradation, and fallbacks
 

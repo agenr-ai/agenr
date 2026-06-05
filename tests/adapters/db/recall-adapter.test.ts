@@ -62,6 +62,86 @@ describe("createRecallAdapter historical expansion", () => {
     expect(lexicalWithoutClaim[0]?.entry.claim_key_status).toBeUndefined();
   });
 
+  it("matches a sentence-final period query whose last token carries trailing punctuation", async () => {
+    const database = await createTestDatabase();
+    const adapter = createRecallAdapter(database, createEmbeddingPort());
+    const entry = createEntry({
+      id: "office-hours",
+      subject: "office hours schedule",
+      content: "Office hours schedule is Monday afternoons.",
+    });
+
+    await database.insertDurable(entry, createEmbedding(0, 1), "office-hours");
+
+    // The trailing period would otherwise leave a "schedule." token whose bare
+    // FTS5 word form throws "syntax error near ." and silently empties the tier.
+    const candidates = await adapter.ftsSearch({ text: "Tell me the office hours schedule.", limit: 5 });
+
+    expect(candidates.map((candidate) => candidate.entry.id)).toContain("office-hours");
+  });
+
+  it("excludes expired and not-yet-valid durables when validAsOf is set on filters", async () => {
+    const database = await createTestDatabase();
+    const adapter = createRecallAdapter(database, createEmbeddingPort());
+    const asOf = new Date("2026-03-15T12:00:00.000Z");
+    const current = createEntry({
+      id: "location-current",
+      subject: "home base",
+      content: "Currently living in Lisbon.",
+      valid_from: "2026-03-01T00:00:00.000Z",
+      valid_to: "2026-03-31T00:00:00.000Z",
+    });
+    const expired = createEntry({
+      id: "location-expired",
+      subject: "home base",
+      content: "Living in Singapore for the contract.",
+      valid_from: "2026-01-01T00:00:00.000Z",
+      valid_to: "2026-03-10T00:00:00.000Z",
+    });
+    const future = createEntry({
+      id: "location-future",
+      subject: "home base",
+      content: "Moving to Berlin next month.",
+      valid_from: "2026-03-20T00:00:00.000Z",
+    });
+
+    await database.insertDurable(current, createEmbedding(0, 1), "location-current");
+    await database.insertDurable(expired, createEmbedding(1, 1), "location-expired");
+    await database.insertDurable(future, createEmbedding(2, 1), "location-future");
+
+    const vectorCandidates = await adapter.vectorSearch({
+      embedding: createEmbedding(0, 1),
+      limit: 5,
+      filters: { validAsOf: asOf },
+    });
+    const lexicalCandidates = await adapter.ftsSearch({
+      text: "home base",
+      limit: 5,
+      filters: { validAsOf: asOf },
+    });
+
+    expect(vectorCandidates.map((candidate) => candidate.entry.id)).toEqual(["location-current"]);
+    expect(lexicalCandidates.map((candidate) => candidate.entry.id)).toEqual(["location-current"]);
+  });
+
+  it("matches queries containing dotted or hyphenated tokens without dropping the tier", async () => {
+    const database = await createTestDatabase();
+    const adapter = createRecallAdapter(database, createEmbeddingPort());
+    const entry = createEntry({
+      id: "embedding-model",
+      subject: "embedding model choice",
+      content: "We embed durables with the text embedding 3 small model.",
+    });
+
+    await database.insertDurable(entry, createEmbedding(0, 1), "embedding-model");
+
+    // "text-embedding-3-small" tokenizes to a hyphen-bearing token whose bare
+    // FTS5 word form throws and would otherwise return nothing for the tier.
+    const candidates = await adapter.ftsSearch({ text: "which text-embedding-3-small model do we use", limit: 5 });
+
+    expect(candidates.map((candidate) => candidate.entry.id)).toContain("embedding-model");
+  });
+
   it("fetches direct predecessors, same-claim-key lineage siblings, and retired same-subject fallbacks", async () => {
     const database = await createTestDatabase();
     const adapter = createRecallAdapter(database, createEmbeddingPort());

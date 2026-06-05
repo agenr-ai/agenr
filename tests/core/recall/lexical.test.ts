@@ -26,6 +26,14 @@ describe("tokenize", () => {
     expect(tokenize('subject:"alpha!" / beta* + gamma?')).toEqual(["subject", "alpha", "beta", "gamma"]);
   });
 
+  it("strips edge separator punctuation left by sentence-final words", () => {
+    expect(tokenize("Tell me the office hours schedule.")).toEqual(["tell", "office", "hours", "schedule"]);
+  });
+
+  it("preserves internal separators while trimming edge punctuation", () => {
+    expect(tokenize("use valid_from. and gamma.delta-")).toEqual(["use", "valid_from", "gamma.delta"]);
+  });
+
   it("keeps accented and non-ASCII word tokens", () => {
     expect(tokenize("Café naïve résumé")).toEqual(["café", "naïve", "résumé"]);
     expect(tokenize("東京 サービス")).toEqual(["東京", "サービス"]);

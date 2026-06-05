@@ -367,7 +367,15 @@ describe("recall integration", () => {
     );
 
     const scores = results.map((result) => result.score);
-    expect(scores).toEqual([...scores].sort((left, right) => right - left));
+    // The final shortlist is ordered by descending score, except that the
+    // grounding-aware tie-break in sortAcceptedCandidates may promote a more
+    // directly grounded answer ahead of neighbors whose scores are within
+    // GROUNDING_SORT_MAX_SCORE_GAP (0.03) of it. Assert descending order up to
+    // that documented tolerance so a genuine sort regression still fails.
+    const GROUNDING_TIE_TOLERANCE = 0.03;
+    for (let index = 1; index < scores.length; index += 1) {
+      expect(scores[index]!).toBeLessThanOrEqual(scores[index - 1]! + GROUNDING_TIE_TOLERANCE);
+    }
   });
 });
 

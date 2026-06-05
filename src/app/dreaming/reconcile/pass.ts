@@ -84,11 +84,7 @@ export async function runReconcilePass(options: ReconcileRunOptions, deps: Recon
     ctx.telemetry.terminalError = error instanceof Error ? error.message : String(error);
   }
 
-  const actualAfter = buildClaimKeyHealthSnapshot(
-    actualDurables,
-    ctx.extraction.claimExtractionConfig.eligibleTypes,
-    ctx.workingSet.actualInspectionTally,
-  );
+  const actualAfter = buildClaimKeyHealthSnapshot(actualDurables, ctx.extraction.claimExtractionConfig.eligibleTypes, ctx.workingSet.actualInspectionTally);
   const projectedAfter = buildClaimKeyHealthSnapshot(
     projectedDurables,
     ctx.extraction.claimExtractionConfig.eligibleTypes,

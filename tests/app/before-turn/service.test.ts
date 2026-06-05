@@ -1148,6 +1148,68 @@ describe("runBeforeTurn", () => {
     expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["entry-1", "entry-2"]);
     expect(result.diagnostics.notices).toContain("Before-turn durable recall expanded to 2 high-confidence items.");
   });
+
+  it("suppresses durable memory that violates an active abstain directive", async () => {
+    const stanEntry = createEntry({
+      id: "fact-stan",
+      subject: "colleague preferences",
+      content: "Stan prefers async standups and quiet afternoons.",
+    });
+    const directiveRow = createEntry({
+      id: "dir-stan",
+      subject: "memory directive",
+      content: "Do not mention Stan.",
+      claim_key: "user/memory_directive/do_not_mention_stan",
+    });
+    const deps = createDeps({
+      ftsCandidates: [toRecallCandidateDurable(stanEntry)],
+      hydratedEntries: [stanEntry],
+      listActiveAbstainDirectives: vi.fn(async () => [directiveRow]),
+    });
+
+    const result = await runBeforeTurn(
+      {
+        currentTurnText: "What does Stan prefer for standups?",
+        policy: {
+          enableProcedureSuggestion: false,
+          recallThreshold: 0,
+        },
+      },
+      deps,
+    );
+
+    expect(result.durableMemory).toEqual([]);
+    expect(result.diagnostics.directiveAbstentions).toEqual([
+      { entryId: "fact-stan", reason: "directive_topic", directiveId: "dir-stan", blockedTerm: "stan" },
+    ]);
+    expect(result.diagnostics.abstained).toBe(true);
+  });
+
+  it("leaves durable memory untouched when no directive lookup is wired", async () => {
+    const stanEntry = createEntry({
+      id: "fact-stan",
+      subject: "colleague preferences",
+      content: "Stan prefers async standups and quiet afternoons.",
+    });
+    const deps = createDeps({
+      ftsCandidates: [toRecallCandidateDurable(stanEntry)],
+      hydratedEntries: [stanEntry],
+    });
+
+    const result = await runBeforeTurn(
+      {
+        currentTurnText: "What does Stan prefer for standups?",
+        policy: {
+          enableProcedureSuggestion: false,
+          recallThreshold: 0,
+        },
+      },
+      deps,
+    );
+
+    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["fact-stan"]);
+    expect(result.diagnostics.directiveAbstentions).toBeUndefined();
+  });
 });
 
 function createDeps(
@@ -1158,6 +1220,7 @@ function createDeps(
     procedureFtsMatches?: Array<{ procedure: Procedure; rank: number }>;
     procedureVectorMatches?: Array<{ procedure: Procedure; vectorSim: number }>;
     embedQuery?: BeforeTurnDeps["embedQuery"];
+    listActiveAbstainDirectives?: BeforeTurnDeps["listActiveAbstainDirectives"];
   } = {},
 ): BeforeTurnDeps & {
   procedures: ProcedureDatabasePort & {
@@ -1192,6 +1255,7 @@ function createDeps(
     recall,
     procedures,
     ...(options.embedQuery ? { embedQuery: options.embedQuery } : {}),
+    ...(options.listActiveAbstainDirectives ? { listActiveAbstainDirectives: options.listActiveAbstainDirectives } : {}),
   };
 }
 

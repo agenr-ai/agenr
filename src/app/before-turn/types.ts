@@ -1,3 +1,4 @@
+import type { AbstainSuppression } from "../directives/abstain-filter.js";
 import type { RecallExecutionTraceSummary } from "../../core/recall/index.js";
 import type { ClaimCentricClaimStatus, ClaimCentricMemoryState } from "../recall/claim-centric.js";
 import type { Durable, Procedure } from "../../core/types.js";
@@ -209,6 +210,11 @@ export interface BeforeTurnProcedureSuggestion {
 }
 
 /**
+ * One durable suppressed from before-turn injection by a memory directive.
+ */
+export type BeforeTurnDirectiveAbstention = AbstainSuppression;
+
+/**
  * Compact diagnostics emitted alongside one before-turn patch.
  */
 export interface BeforeTurnPatchDiagnostics {
@@ -240,6 +246,8 @@ export interface BeforeTurnPatchDiagnostics {
   abstained: boolean;
   /** Stable reasons explaining why the service abstained. */
   abstentionReasons: string[];
+  /** Durables suppressed from injection by active memory directives. */
+  directiveAbstentions?: BeforeTurnDirectiveAbstention[];
   /** Stable degraded-mode or failure notices relevant to the selection pass. */
   notices: string[];
 }

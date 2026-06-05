@@ -1,0 +1,32 @@
+{
+  "id": "session-start-expired-core",
+  "description": "Expired always-on core durables must not auto-inject at session start; only currently valid core memory survives.",
+  "kind": "session_start",
+  "now": "2026-03-26T12:00:00.000Z",
+  "durables": [
+    {
+      "id": "core-open",
+      "subject": "branching workflow",
+      "content": "Branch from local master before editing shared runtime code.",
+      "expiry": "core",
+      "importance": 9,
+      "created_at": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "core-expired",
+      "subject": "sprint focus",
+      "content": "Temporary sprint focus that has already ended.",
+      "expiry": "core",
+      "importance": 8,
+      "valid_to": "2026-02-01T00:00:00.000Z",
+      "created_at": "2026-01-01T00:00:00.000Z"
+    }
+  ],
+  "sessionStart": {
+    "policy": { "enableArtifactRecall": false }
+  },
+  "expect": {
+    "injectedEntryIds": ["core-open"],
+    "excludesEntryIds": ["core-expired"]
+  }
+}

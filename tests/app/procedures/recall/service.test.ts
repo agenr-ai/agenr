@@ -44,6 +44,10 @@ describe("runProcedureRecall", () => {
       procedure_key: "agenr/sandbox-validation",
       title: "Validate the sandbox plugin locally",
       goal: "Run the local sandbox plugin validation workflow.",
+      // Keep the query terms ("publish") out of the sandbox recall text so its
+      // lexical evidence stays clearly below release's; otherwise both tie at a
+      // full lexical match and the canonical margin can no longer resolve.
+      failure_modes: ["The sandbox validation step did not finish."],
     });
     const db = createProcedureDatabase({
       procedureFtsSearch: vi.fn(async () => [

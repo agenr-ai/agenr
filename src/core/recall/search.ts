@@ -17,6 +17,7 @@ import {
 } from "./neighborhood.js";
 import { cosineSimilarity, gaussianRecency, importanceScore, recencyScore, scoreCandidate } from "./scoring.js";
 import { inferAroundDate, parseRelativeDate } from "./temporal.js";
+import { applyAsOfValidityFilter, resolveRecallValidAsOf } from "./as-of-validity.js";
 import {
   createNoopRecallTraceSink,
   type RecallCrossEncoderTrace,
@@ -29,7 +30,17 @@ import {
   type RecallRankingPolicy,
   type RecallRrfTrace,
 } from "./trace.js";
-import type { DurableFilters, FtsCandidate, RecallCandidateDurable, RecallInput, RecallOutput, RecallRankingProfile, VectorCandidate } from "./types.js";
+import type {
+  DurableFilters,
+  FtsCandidate,
+  RecallCandidateDurable,
+  RecallInput,
+  RecallMergeOutcome,
+  RecallMergedCandidate,
+  RecallOutput,
+  RecallRankingProfile,
+  VectorCandidate,
+} from "./types.js";
 
 const HISTORICAL_NEIGHBORHOOD_FAMILIES: readonly NeighborhoodFamily[] = ["supersession_chain", "claim_key_sibling", "topic_family"];
 
@@ -93,6 +104,7 @@ const GROUNDING_SORT_MAX_SCORE_GAP = 0.03;
  */
 export async function recall(query: RecallInput, ports: RecallPorts, options: RecallExecutionOptions = {}): Promise<RecallOutput[]> {
   const text = query.text.trim();
+  const nowMs = Date.now();
   const limit = normalizeLimit(query.limit);
   const threshold = normalizeThreshold(query.threshold);
   const budget = normalizeBudget(query.budget);
@@ -100,7 +112,11 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
   const aroundDate = query.around !== undefined ? parseAroundDate(query.around) : inferAroundDate(text);
   const since = query.since ? parseRelativeDate(query.since) : null;
   const until = query.until ? parseRelativeDate(query.until) : null;
-  const filters = buildDurableFilters(query.types, query.tags, since, until);
+  const filters = buildDurableFilters(query.types, query.tags, since, until, {
+    asOfDate,
+    nowMs,
+    rankingProfile: query.rankingProfile,
+  });
   const trace = options.trace ?? createNoopRecallTraceSink();
   const slotPolicyConfig = options.slotPolicyConfig;
   const summary = buildRecallTraceSummary({
@@ -174,6 +190,17 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
 
     const mergeStartedAt = Date.now();
     const mergeOutcome = mergeCandidates(vectorCandidates, ftsCandidates);
+    // Drop candidates whose bi-temporal valid-time window does not contain the
+    // effective as-of instant before any scoring runs. This is the injection
+    // and live-recall freshness guard: expired or not-yet-valid rows must never
+    // ride into automatic injection or default recall. The historical-state
+    // profile intentionally bypasses this so it can still surface superseded
+    // lineage for "what did we believe back then" questions.
+    applyAsOfValidityFilter(mergeOutcome, summary, {
+      rankingProfile: query.rankingProfile,
+      asOfDate,
+      nowMs,
+    });
     const neighborhoodEnabled = options.rankingPolicy?.neighborhood !== "disabled";
     const expansionRanks = neighborhoodEnabled
       ? await expandEntryNeighborhood(mergeOutcome.merged, queryEmbedding, ports, {
@@ -459,7 +486,7 @@ function resolveNoResultReason(summary: RecallExecutionTraceSummary, reason: Rec
  * @returns Ranked candidate with score breakdown metadata.
  */
 function scoreMergedCandidate(
-  candidate: MergedCandidate,
+  candidate: RecallMergedCandidate,
   queryText: string,
   queryEmbedding: number[],
   rrfScore: number,
@@ -640,7 +667,7 @@ function resolveRrfRankConstant(policy: RecallRankingPolicy | undefined, fusedPo
  * @returns Rank-ordered expansion IDs for RRF, or an empty list when disabled.
  */
 async function expandEntryNeighborhood(
-  mergedCandidates: Map<string, MergedCandidate>,
+  mergedCandidates: Map<string, RecallMergedCandidate>,
   queryEmbedding: number[],
   ports: RecallPorts,
   params: {
@@ -1608,15 +1635,8 @@ function normalizeEntityAttributeText(text: string): string {
  * @param ftsCandidates - Candidates admitted by lexical FTS search.
  * @returns Merged candidate map plus per-channel ordered rank lists.
  */
-function mergeCandidates(
-  vectorCandidates: VectorCandidate[],
-  ftsCandidates: FtsCandidate[],
-): {
-  merged: Map<string, MergedCandidate>;
-  vectorRanks: string[];
-  ftsRanks: string[];
-} {
-  const merged = new Map<string, MergedCandidate>();
+function mergeCandidates(vectorCandidates: VectorCandidate[], ftsCandidates: FtsCandidate[]): RecallMergeOutcome {
+  const merged = new Map<string, RecallMergedCandidate>();
   const vectorRanks: string[] = [];
   const ftsRanks: string[] = [];
 
@@ -1657,9 +1677,20 @@ function mergeCandidates(
  * @param tags - Optional tag filter list.
  * @param since - Optional lower created-at bound.
  * @param until - Optional upper created-at bound.
+ * @param options - Optional valid-time and ranking-profile hints for adapter pushdown.
  * @returns Adapter filter payload, or undefined when no filters are active.
  */
-function buildDurableFilters(types: RecallInput["types"], tags: RecallInput["tags"], since: Date | null, until: Date | null): DurableFilters | undefined {
+function buildDurableFilters(
+  types: RecallInput["types"],
+  tags: RecallInput["tags"],
+  since: Date | null,
+  until: Date | null,
+  options?: {
+    asOfDate: Date | null;
+    nowMs: number;
+    rankingProfile?: RecallRankingProfile;
+  },
+): DurableFilters | undefined {
   const filters: DurableFilters = {};
 
   if (types && types.length > 0) {
@@ -1676,6 +1707,17 @@ function buildDurableFilters(types: RecallInput["types"], tags: RecallInput["tag
 
   if (until) {
     filters.until = until;
+  }
+
+  if (options) {
+    const validAsOf = resolveRecallValidAsOf({
+      rankingProfile: options.rankingProfile,
+      asOfDate: options.asOfDate,
+      nowMs: options.nowMs,
+    });
+    if (validAsOf) {
+      filters.validAsOf = validAsOf;
+    }
   }
 
   return Object.keys(filters).length > 0 ? filters : undefined;
@@ -2033,14 +2075,6 @@ function normalizeAroundRadius(value?: number): number {
 /** Returns a non-negative elapsed millisecond count for one stage. */
 function elapsedMs(startedAt: number): number {
   return Math.max(0, Date.now() - startedAt);
-}
-
-/**
- * Candidate shape after vector and FTS admission paths are merged.
- */
-interface MergedCandidate {
-  entry: RecallCandidateDurable;
-  vectorSim?: number;
 }
 
 /**
