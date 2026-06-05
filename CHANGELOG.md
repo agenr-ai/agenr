@@ -24,6 +24,7 @@
 - **Claim-key scenario harness** now supports `dreaming` scenarios instead of `surgeon` scenarios.
 - **Dreaming `deep` tier** now reads the full evidence backlog instead of only the incremental cursor.
 - **Dreaming config parsing** now accepts and persists non-default `tiers`, `stages.extract`, `stages.project`, and `triggers` settings.
+- **Dreaming `light` tier semantics.** Background `light` runs now skip reconcile and prune while keeping temporalize and project, and run summaries record those skips in `stages_skipped`. Light extract defaults to at most two episode sessions per run (`stages.extract.lightMaxSessionsPerRun`).
 - **AGENTS.md, ARCHITECTURE.md, README.md, DEBUGGING.md, and VS Code launch configs** updated for the durable/dreaming nomenclature.
 
 ## [3.3.0] - 2026-06-02

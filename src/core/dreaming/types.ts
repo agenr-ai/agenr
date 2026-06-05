@@ -116,6 +116,17 @@ export interface ReconcilePassSummary {
   } | null;
 }
 
+/** Machine-readable reason one dreaming pipeline stage was skipped. */
+export type DreamStageSkipReason = "light_tier";
+
+/** Structured record for a pipeline stage skipped by tier policy. */
+export interface DreamStageSkipSummary {
+  /** Pipeline stage skipped during the run. */
+  stage: DreamStage;
+  /** Stable reason the stage did not run. */
+  reason: DreamStageSkipReason;
+}
+
 /** Structured unresolved claim-key proposal persisted for later adjudication. */
 export type DreamProposalReviewStatus = "open" | "applied" | "rejected";
 
@@ -244,6 +255,8 @@ export interface DreamScanSummary {
 /** Minimal persisted completion summary for a dreaming run. */
 export interface DreamCompletionSummary {
   actions_taken: number;
+  /** Pipeline stages intentionally skipped by tier policy. */
+  stages_skipped?: DreamStageSkipSummary[];
   durables_skipped: Array<{
     durable_id?: string;
     reason: string;

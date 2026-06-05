@@ -14,6 +14,7 @@ import {
   DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES,
   DEFAULT_DREAMING_CONTEXT_LIMIT_TOKENS,
   DEFAULT_DREAMING_DAILY_COST_CAP,
+  DEFAULT_DREAMING_LIGHT_MAX_SESSIONS,
   DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE,
   DEFAULT_DREAMING_PRUNE_PROTECT_RECALLED_DAYS,
   readConfig,
@@ -73,6 +74,7 @@ describe("writeConfig", () => {
         stages: {
           extract: {
             maxSessionsPerRun: 8,
+            lightMaxSessionsPerRun: DEFAULT_DREAMING_LIGHT_MAX_SESSIONS,
             maxChunksPerSession: 12,
             contextLookup: { enabled: true, maxNeighborsPerCandidate: 5 },
           },

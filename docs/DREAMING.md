@@ -59,7 +59,7 @@ agenr dream review <proposalId> --decision apply --reason "verified safe"
 
 Supported tiers:
 
-- `light` - bounded background tier used by session-end and accumulated-importance triggers. It runs scan, extract, reconcile, temporalize, and project, but skips prune.
+- `light` - bounded background tier used by session-end and accumulated-importance triggers. It runs scan, extract, temporalize, and project, but skips reconcile and prune. Extract reads at most two episode sessions per run by default, and skipped stages are recorded in `stages_skipped`.
 - `standard` - default operator tier. It runs the incremental pipeline since the last successful run, including prune.
 - `deep` - operator full-backlog tier. It rereads all episode and durable evidence and still relies on content hashes, claim-key context lookup, and supersession to avoid duplicate writes. Use it for weekly maintenance or after large corpus imports.
 
@@ -74,6 +74,7 @@ Typical fields:
 - `customInstructions` - optional operator guidance appended to later LLM stages
 - `tiers.light.enabled`, `tiers.standard.enabled`, `tiers.deep.enabled`, `tiers.deep.intervalHours` - tier availability and operator cadence hints
 - `stages.extract.maxSessionsPerRun` - maximum episode summaries mined per run
+- `stages.extract.lightMaxSessionsPerRun` - optional lower episode-session cap for `light` runs (defaults to 2)
 - `stages.extract.contextLookup.enabled` - whether extract checks existing claim-key families before emitting a new durable
 - `stages.project.maxProfileDurables` - bounded profile durable count for session-start injection
 - `stages.prune.protectRecalledDays` and `stages.prune.protectMinImportance` - prune protection thresholds

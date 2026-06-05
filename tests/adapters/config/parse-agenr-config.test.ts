@@ -13,6 +13,7 @@ import {
   DEFAULT_DREAMING_DEEP_INTERVAL_HOURS,
   DEFAULT_DREAMING_EXTRACT_MAX_CHUNKS,
   DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS,
+  DEFAULT_DREAMING_LIGHT_MAX_SESSIONS,
   DEFAULT_DREAMING_IMPORTANCE_THRESHOLD,
   DEFAULT_DREAMING_MAX_PROFILE_DURABLES,
   DEFAULT_DREAMING_MIN_INTERVAL_MINUTES,
@@ -62,6 +63,7 @@ describe("parseAgenrConfig", () => {
           stages: {
             extract: {
               maxSessionsPerRun: DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS,
+              lightMaxSessionsPerRun: DEFAULT_DREAMING_LIGHT_MAX_SESSIONS,
               maxChunksPerSession: DEFAULT_DREAMING_EXTRACT_MAX_CHUNKS,
               contextLookup: {
                 enabled: true,
@@ -138,6 +140,7 @@ describe("parseAgenrConfig", () => {
           stages: {
             extract: {
               maxSessionsPerRun: 3,
+              lightMaxSessionsPerRun: 1,
               maxChunksPerSession: 5,
               contextLookup: {
                 enabled: false,
@@ -169,6 +172,7 @@ describe("parseAgenrConfig", () => {
           stages: {
             extract: {
               maxSessionsPerRun: 3,
+              lightMaxSessionsPerRun: 1,
               maxChunksPerSession: 5,
               contextLookup: { enabled: false, maxNeighborsPerCandidate: 2 },
             },
@@ -195,6 +199,7 @@ describe("parseAgenrConfig", () => {
       stages: {
         extract: {
           maxSessionsPerRun: 3,
+          lightMaxSessionsPerRun: 1,
           maxChunksPerSession: 5,
           contextLookup: {
             enabled: false,

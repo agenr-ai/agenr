@@ -81,6 +81,7 @@ export interface DreamingConfig {
   stages?: {
     extract?: {
       maxSessionsPerRun?: number;
+      lightMaxSessionsPerRun?: number;
       maxChunksPerSession?: number;
       contextLookup?: { enabled?: boolean; maxNeighborsPerCandidate?: number };
     };
@@ -204,6 +205,7 @@ export interface ResolvedDreamingConfig {
   stages: {
     extract: {
       maxSessionsPerRun: number;
+      lightMaxSessionsPerRun: number;
       maxChunksPerSession: number;
       contextLookup: { enabled: boolean; maxNeighborsPerCandidate: number };
     };
@@ -256,6 +258,7 @@ const DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE = 9;
 const DEFAULT_DREAMING_IMPORTANCE_THRESHOLD = 25;
 const DEFAULT_DREAMING_MIN_INTERVAL_MINUTES = 30;
 const DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS = 8;
+const DEFAULT_DREAMING_LIGHT_MAX_SESSIONS = 2;
 const DEFAULT_DREAMING_EXTRACT_MAX_CHUNKS = 12;
 const DEFAULT_DREAMING_CONTEXT_LOOKUP_MAX_NEIGHBORS = 5;
 const DEFAULT_DREAMING_MAX_PROFILE_DURABLES = 8;
@@ -341,6 +344,7 @@ export {
   DEFAULT_DREAMING_DEEP_INTERVAL_HOURS,
   DEFAULT_DREAMING_EXTRACT_MAX_CHUNKS,
   DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS,
+  DEFAULT_DREAMING_LIGHT_MAX_SESSIONS,
   DEFAULT_DREAMING_IMPORTANCE_THRESHOLD,
   DEFAULT_DREAMING_MAX_PROFILE_DURABLES,
   DEFAULT_DREAMING_MIN_INTERVAL_MINUTES,

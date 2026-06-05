@@ -4,10 +4,12 @@ import path from "node:path";
 import {
   DEFAULT_DREAMING_DAILY_COST_CAP,
   DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS,
+  DEFAULT_DREAMING_LIGHT_MAX_SESSIONS,
   DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE,
   DEFAULT_DREAMING_PRUNE_PROTECT_RECALLED_DAYS,
   type AgenrConfig,
 } from "../../config.js";
+import { resolveTierStages } from "../../core/dreaming/domain/tier-plan.js";
 import type { EmbeddingPort } from "../../core/ports.js";
 import type { Logger } from "../../logger.js";
 import type {
@@ -134,7 +136,8 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
     });
   }
 
-  const extractStages = resolveExtractStageConfig(deps.config);
+  const extractStages = resolveExtractStageConfig(deps.config, options.tier);
+  const stagePlan = resolveTierStages(options.tier);
   const createExtractLlm = deps.createExtractLlm ?? deps.createClaimExtractionLlm;
   const embedding = resolveDreamEmbedding(deps.embedding);
   let scanSummary: DreamCompletionSummary["scan"];
@@ -144,6 +147,7 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
   let projectSummary: DreamProjectSummary | undefined;
   let pruneSummary: DreamPruneSummary | undefined;
   let efficiencySummary: DreamEfficiencySummary | undefined;
+  const stagesSkipped: NonNullable<DreamCompletionSummary["stages_skipped"]> = [];
   let durablesSkipped: DreamCompletionSummary["durables_skipped"] = [];
   let observations: string[] = [];
   let recommendations: string[] = [];
@@ -153,6 +157,8 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
   let actionsTaken = 0;
   let actionsSkipped = 0;
   let durablesRetired = 0;
+  let reconcileStatus: DreamRunStatus;
+  let reconcileError: string | undefined;
 
   try {
     const fullBacklog = options.tier === "deep";
@@ -185,43 +191,52 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
     outputTokens = extract.usage.outputTokens;
     estimatedCostUsd = extract.usage.estimatedCostUsd;
 
-    const reconcile = await runReconcilePass(
-      {
-        runId,
-        tier: options.tier,
-        apply: options.apply,
-        project: options.project,
-        type: options.type,
-        claimKeyPrefix: options.claimKeyPrefix,
-        durableIds: options.durableIds,
-        includeInactive: options.includeInactive,
-        signal: options.signal,
-        now,
-        costCapUsd: Math.max(0, remainingDailyBudgetUsd - extract.usage.estimatedCostUsd),
-        verbose: options.verbose,
-        includeShadowTelemetry: options.includeShadowTelemetry === true,
-        reportProgress: deps.reportProgress,
-      },
-      {
-        port: deps.port,
-        config: deps.config,
-        ...(deps.createClaimExtractionLlm ? { createClaimExtractionLlm: deps.createClaimExtractionLlm } : {}),
-      },
-    );
-    observations = [...reconcile.completion.observations];
+    if (stagePlan.runReconcile) {
+      const reconcile = await runReconcilePass(
+        {
+          runId,
+          tier: options.tier,
+          apply: options.apply,
+          project: options.project,
+          type: options.type,
+          claimKeyPrefix: options.claimKeyPrefix,
+          durableIds: options.durableIds,
+          includeInactive: options.includeInactive,
+          signal: options.signal,
+          now,
+          costCapUsd: Math.max(0, remainingDailyBudgetUsd - extract.usage.estimatedCostUsd),
+          verbose: options.verbose,
+          includeShadowTelemetry: options.includeShadowTelemetry === true,
+          reportProgress: deps.reportProgress,
+        },
+        {
+          port: deps.port,
+          config: deps.config,
+          ...(deps.createClaimExtractionLlm ? { createClaimExtractionLlm: deps.createClaimExtractionLlm } : {}),
+        },
+      );
+      observations = [...reconcile.completion.observations];
+      actionsTaken = reconcile.completion.actions_taken + durablesInserted;
+      actionsSkipped = reconcile.completion.durables_skipped.length;
+      durablesSkipped = reconcile.completion.durables_skipped;
+      recommendations = reconcile.completion.recommendations;
+      reconcileSummary = reconcile.completion.reconcile;
+      durablesRetired = reconcile.durablesRetired;
+      inputTokens = reconcile.usage.inputTokens + extract.usage.inputTokens;
+      outputTokens = reconcile.usage.outputTokens + extract.usage.outputTokens;
+      estimatedCostUsd = reconcile.usage.estimatedCostUsd + extract.usage.estimatedCostUsd;
+      reconcileStatus = reconcile.status;
+      reconcileError = reconcile.error ?? undefined;
+    } else {
+      stagesSkipped.push({ stage: "reconcile", reason: "light_tier" });
+      observations.push("Reconcile stage skipped for light tier.");
+      actionsTaken = durablesInserted;
+      reconcileStatus = "completed";
+    }
+
     if (extract.status === "cost_capped") {
       observations.push("Extract stage stopped early after reaching the daily dreaming cost cap.");
     }
-
-    actionsTaken = reconcile.completion.actions_taken + durablesInserted;
-    actionsSkipped = reconcile.completion.durables_skipped.length;
-    durablesSkipped = reconcile.completion.durables_skipped;
-    recommendations = reconcile.completion.recommendations;
-    reconcileSummary = reconcile.completion.reconcile;
-    durablesRetired = reconcile.durablesRetired;
-    inputTokens = reconcile.usage.inputTokens + extract.usage.inputTokens;
-    outputTokens = reconcile.usage.outputTokens + extract.usage.outputTokens;
-    estimatedCostUsd = reconcile.usage.estimatedCostUsd + extract.usage.estimatedCostUsd;
 
     const temporalize = await runTemporalizeStage(
       {
@@ -247,7 +262,7 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
       { port: deps.port },
     );
 
-    const status: DreamRunStatus = extract.status === "cost_capped" && reconcile.status === "completed" ? "cost_capped" : reconcile.status;
+    const status: DreamRunStatus = extract.status === "cost_capped" && reconcileStatus === "completed" ? "cost_capped" : reconcileStatus;
     const activeProfileSnapshot = status === "completed" && options.apply && !options.project ? projectStage.snapshot : null;
     projectSummary = {
       ...projectStage.summary,
@@ -255,7 +270,7 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
       applied: activeProfileSnapshot !== null,
     };
 
-    if (shouldRunPruneStage(options.tier)) {
+    if (stagePlan.runPrune) {
       const pruneConfig = resolvePruneStageConfig(deps.config);
       pruneSummary = await runPruneStage(
         {
@@ -272,6 +287,8 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
       actionsTaken += pruneSummary.durablesRetired;
       actionsSkipped += pruneSummary.candidatesProtected + (options.apply ? 0 : pruneSummary.candidatesRetirable);
       durablesRetired += pruneSummary.durablesRetired;
+    } else {
+      stagesSkipped.push({ stage: "prune", reason: "light_tier" });
     }
 
     efficiencySummary = buildEfficiencySummary({
@@ -285,12 +302,13 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
 
     const completionSummary: DreamCompletionSummary = {
       actions_taken: actionsTaken,
+      ...(stagesSkipped.length > 0 ? { stages_skipped: stagesSkipped } : {}),
       durables_skipped: durablesSkipped,
       observations,
       recommendations,
       scan,
       extract: extractSummary,
-      reconcile: reconcileSummary,
+      ...(reconcileSummary ? { reconcile: reconcileSummary } : {}),
       temporalize: temporalizeSummary,
       project: projectSummary,
       ...(pruneSummary ? { prune: pruneSummary } : {}),
@@ -306,7 +324,7 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
       actionsSkipped,
       durablesRetired,
       summaryJson: completionSummary,
-      error: reconcile.error,
+      error: reconcileError,
     };
     const dreamStateUpdate = {
       unsynthesizedImportanceSum: status === "completed" ? 0 : scan.unsynthesizedImportanceSum,
@@ -335,7 +353,7 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
       inputTokens,
       outputTokens,
       estimatedCostUsd,
-      summary: reconcile.error ?? (status === "completed" ? "Dreaming run completed." : null),
+      summary: reconcileError ?? (status === "completed" ? "Dreaming run completed." : null),
       completionSummary,
     };
   } catch (error) {
@@ -346,6 +364,7 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
     const failureObservations = [...observations, `Dreaming run stopped before completion: ${message}`];
     const failureSummary: DreamCompletionSummary = {
       actions_taken: actionsTaken,
+      ...(stagesSkipped.length > 0 ? { stages_skipped: stagesSkipped } : {}),
       durables_skipped: durablesSkipped,
       observations: failureObservations,
       recommendations,
@@ -402,11 +421,6 @@ function resolvePruneStageConfig(config: AgenrConfig | null): { protectRecalledD
         ? prune.protectMinImportance
         : DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE,
   };
-}
-
-/** Returns whether a dreaming tier includes the prune stage. */
-function shouldRunPruneStage(tier: DreamTier): boolean {
-  return tier === "standard" || tier === "deep";
 }
 
 /** Builds efficiency telemetry for one completed dreaming run. */
@@ -470,10 +484,11 @@ export async function backupDatabaseFile(dbPath: string): Promise<string> {
  * @param config - Resolved or partial agenr config, or null.
  * @returns Effective max-episodes ceiling and context-lookup toggle.
  */
-function resolveExtractStageConfig(config: AgenrConfig | null): { maxEpisodes: number; contextLookupEnabled: boolean } {
+function resolveExtractStageConfig(config: AgenrConfig | null, tier: DreamTier): { maxEpisodes: number; contextLookupEnabled: boolean } {
   const extract = config?.dreaming?.stages?.extract;
-  const maxEpisodes =
-    typeof extract?.maxSessionsPerRun === "number" && extract.maxSessionsPerRun > 0 ? extract.maxSessionsPerRun : DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS;
+  const defaultMaxSessions = tier === "light" ? DEFAULT_DREAMING_LIGHT_MAX_SESSIONS : DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS;
+  const configuredMaxSessions = tier === "light" ? extract?.lightMaxSessionsPerRun : extract?.maxSessionsPerRun;
+  const maxEpisodes = typeof configuredMaxSessions === "number" && configuredMaxSessions > 0 ? configuredMaxSessions : defaultMaxSessions;
   const contextLookupEnabled = extract?.contextLookup?.enabled ?? true;
   return { maxEpisodes, contextLookupEnabled };
 }

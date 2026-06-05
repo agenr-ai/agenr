@@ -21,6 +21,7 @@ import {
   DEFAULT_DREAMING_DEEP_INTERVAL_HOURS,
   DEFAULT_DREAMING_EXTRACT_MAX_CHUNKS,
   DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS,
+  DEFAULT_DREAMING_LIGHT_MAX_SESSIONS,
   DEFAULT_DREAMING_IMPORTANCE_THRESHOLD,
   DEFAULT_DREAMING_MAX_PROFILE_DURABLES,
   DEFAULT_DREAMING_MIN_INTERVAL_MINUTES,
@@ -705,8 +706,9 @@ function parseDreamingExtractConfig(
   }
 
   const startIndex = issues.length;
-  pushUnexpectedFields(value, new Set(["maxSessionsPerRun", "maxChunksPerSession", "contextLookup"]), path, issues);
+  pushUnexpectedFields(value, new Set(["maxSessionsPerRun", "lightMaxSessionsPerRun", "maxChunksPerSession", "contextLookup"]), path, issues);
   const maxSessionsPerRun = parseOptionalIntegerInRange(value.maxSessionsPerRun, `${path}.maxSessionsPerRun`, issues, { min: 1 });
+  const lightMaxSessionsPerRun = parseOptionalIntegerInRange(value.lightMaxSessionsPerRun, `${path}.lightMaxSessionsPerRun`, issues, { min: 1 });
   const maxChunksPerSession = parseOptionalIntegerInRange(value.maxChunksPerSession, `${path}.maxChunksPerSession`, issues, { min: 1 });
   const contextLookup = parseDreamingContextLookupConfig(value.contextLookup, `${path}.contextLookup`, issues);
 
@@ -716,6 +718,7 @@ function parseDreamingExtractConfig(
 
   const input: NonNullable<NonNullable<DreamingConfig["stages"]>["extract"]> = {
     ...(maxSessionsPerRun !== undefined ? { maxSessionsPerRun } : {}),
+    ...(lightMaxSessionsPerRun !== undefined ? { lightMaxSessionsPerRun } : {}),
     ...(maxChunksPerSession !== undefined ? { maxChunksPerSession } : {}),
     ...(contextLookup.input ? { contextLookup: contextLookup.input } : {}),
   };
@@ -724,6 +727,7 @@ function parseDreamingExtractConfig(
     ...(Object.keys(input).length > 0 ? { input } : {}),
     resolved: {
       maxSessionsPerRun: maxSessionsPerRun ?? defaults.maxSessionsPerRun,
+      lightMaxSessionsPerRun: lightMaxSessionsPerRun ?? defaults.lightMaxSessionsPerRun,
       maxChunksPerSession: maxChunksPerSession ?? defaults.maxChunksPerSession,
       contextLookup: contextLookup.resolved,
     },
@@ -1005,6 +1009,7 @@ function createDefaultDreamingConfig(): ResolvedDreamingConfig {
     stages: {
       extract: {
         maxSessionsPerRun: DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS,
+        lightMaxSessionsPerRun: DEFAULT_DREAMING_LIGHT_MAX_SESSIONS,
         maxChunksPerSession: DEFAULT_DREAMING_EXTRACT_MAX_CHUNKS,
         contextLookup: {
           enabled: true,
@@ -1139,6 +1144,7 @@ function toDreamingInput(value: ResolvedDreamingConfig): DreamingConfig | undefi
   };
   const extractInput: NonNullable<NonNullable<DreamingConfig["stages"]>["extract"]> = {
     ...(extract.maxSessionsPerRun !== DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS ? { maxSessionsPerRun: extract.maxSessionsPerRun } : {}),
+    ...(extract.lightMaxSessionsPerRun !== DEFAULT_DREAMING_LIGHT_MAX_SESSIONS ? { lightMaxSessionsPerRun: extract.lightMaxSessionsPerRun } : {}),
     ...(extract.maxChunksPerSession !== DEFAULT_DREAMING_EXTRACT_MAX_CHUNKS ? { maxChunksPerSession: extract.maxChunksPerSession } : {}),
     ...(Object.keys(contextLookupInput).length > 0 ? { contextLookup: contextLookupInput } : {}),
   };

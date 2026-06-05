@@ -198,7 +198,7 @@ describe("runDream", () => {
     ).rejects.toThrow("Daily dreaming cost cap reached");
   });
 
-  it("records an empty reconcile summary when the working set is empty", async () => {
+  it("records skipped reconcile and prune stages for light runs", async () => {
     const completeRun = vi.fn(async () => undefined);
     const port = createDreamPortDouble({
       completeRun,
@@ -228,13 +228,148 @@ describe("runDream", () => {
       expect.objectContaining({
         status: "completed",
         summaryJson: expect.objectContaining({
+          stages_skipped: [
+            { stage: "reconcile", reason: "light_tier" },
+            { stage: "prune", reason: "light_tier" },
+          ],
           durables_skipped: [],
-          reconcile: expect.objectContaining({
-            before: expect.objectContaining({ totalDurables: 0, activeDurables: 0 }),
-          }),
         }),
       }),
     );
+    expect(result.completionSummary?.reconcile).toBeUndefined();
+  });
+
+  it("skips reconcile and prune on light tier without calling the reconcile LLM factory", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+
+    await insertDurable(client, {
+      id: "missing-claim",
+      subject: "Office preference",
+      content: "Prefers quiet desks for focus work.",
+      type: "preference",
+    });
+    await insertEpisode(client, "ep-1", "Session about the user's coffee preferences.");
+
+    const createExtractLlm = vi.fn(() => new PipelineExtractLlm([]));
+    const createClaimExtractionLlm = vi.fn(() => new PipelineExtractLlm([]));
+    const result = await runDream(
+      {
+        tier: "light",
+        apply: false,
+        verbose: false,
+        json: false,
+      },
+      {
+        port,
+        config: null,
+        now: () => new Date("2026-06-05T12:00:00.000Z"),
+        createExtractLlm,
+        createClaimExtractionLlm,
+      },
+    );
+
+    expect(result.status).toBe("completed");
+    expect(result.completionSummary?.stages_skipped).toEqual([
+      { stage: "reconcile", reason: "light_tier" },
+      { stage: "prune", reason: "light_tier" },
+    ]);
+    expect(result.completionSummary?.reconcile).toBeUndefined();
+    expect(result.completionSummary?.prune).toBeUndefined();
+    expect(createClaimExtractionLlm).not.toHaveBeenCalled();
+  });
+
+  it("caps light-tier extract at two episode sessions by default", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+
+    for (let index = 1; index <= 3; index += 1) {
+      await insertEpisode(client, `ep-${index}`, `Session ${index} about coffee preferences.`);
+    }
+
+    const llm = new PipelineExtractLlm(
+      [{ type: "preference", subject: "Coffee", content: "Prefers oat milk in coffee.", claim_key: "user/coffee_preference" }],
+      0,
+    );
+
+    const result = await runDream(
+      {
+        tier: "light",
+        apply: false,
+        verbose: false,
+        json: false,
+      },
+      {
+        port,
+        config: null,
+        now: () => new Date("2026-06-05T12:00:00.000Z"),
+        createExtractLlm: () => llm,
+      },
+    );
+
+    expect(result.completionSummary?.extract?.episodesScanned).toBe(2);
+  });
+
+  it("does not let light-tier extract inherit the standard extract session cap", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+
+    for (let index = 1; index <= 4; index += 1) {
+      await insertEpisode(client, `ep-${index}`, `Session ${index} about coffee preferences.`);
+    }
+
+    const llm = new PipelineExtractLlm(
+      [{ type: "preference", subject: "Coffee", content: "Prefers oat milk in coffee.", claim_key: "user/coffee_preference" }],
+      0,
+    );
+
+    const result = await runDream(
+      {
+        tier: "light",
+        apply: false,
+        verbose: false,
+        json: false,
+      },
+      {
+        port,
+        config: { dreaming: { stages: { extract: { maxSessionsPerRun: 4 } } } },
+        now: () => new Date("2026-06-05T12:00:00.000Z"),
+        createExtractLlm: () => llm,
+      },
+    );
+
+    expect(result.completionSummary?.extract?.episodesScanned).toBe(2);
+  });
+
+  it("uses the configured light-tier extract session cap", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+
+    for (let index = 1; index <= 4; index += 1) {
+      await insertEpisode(client, `ep-${index}`, `Session ${index} about coffee preferences.`);
+    }
+
+    const llm = new PipelineExtractLlm(
+      [{ type: "preference", subject: "Coffee", content: "Prefers oat milk in coffee.", claim_key: "user/coffee_preference" }],
+      0,
+    );
+
+    const result = await runDream(
+      {
+        tier: "light",
+        apply: false,
+        verbose: false,
+        json: false,
+      },
+      {
+        port,
+        config: { dreaming: { stages: { extract: { lightMaxSessionsPerRun: 3, maxSessionsPerRun: 4 } } } },
+        now: () => new Date("2026-06-05T12:00:00.000Z"),
+        createExtractLlm: () => llm,
+      },
+    );
+
+    expect(result.completionSummary?.extract?.episodesScanned).toBe(3);
   });
 
   it("preserves cost-capped status when extract exhausts the remaining run budget", async () => {

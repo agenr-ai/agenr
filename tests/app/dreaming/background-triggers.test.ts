@@ -39,6 +39,12 @@ describe("maybeRunLightDream", () => {
     }
     expect(result.unsynthesizedImportanceSum).toBe(30);
     expect(result.result.tier).toBe("light");
+    expect(result.result.completionSummary?.stages_skipped).toEqual([
+      { stage: "reconcile", reason: "light_tier" },
+      { stage: "prune", reason: "light_tier" },
+    ]);
+    expect(result.result.completionSummary?.reconcile).toBeUndefined();
+    expect(result.result.completionSummary?.prune).toBeUndefined();
 
     const lastRun = await port.getLastRun();
     expect(lastRun?.tier).toBe("light");
