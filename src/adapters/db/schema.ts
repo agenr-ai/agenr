@@ -1,24 +1,19 @@
 import type { Client } from "@libsql/client";
 
 import type { SqlExecutor } from "./queries.js";
+import { DREAMING_SCHEMA_STATEMENTS } from "./schema/dreaming.js";
 import { SESSION_MEMORY_SCHEMA_STATEMENTS } from "./schema/session-memory.js";
-import {
-  CREATE_SURGEON_RUN_PROPOSALS_REVIEW_STATUS_INDEX_SQL,
-  SURGEON_CORE_SCHEMA_STATEMENTS,
-  SURGEON_PROPOSAL_INITIAL_SCHEMA_STATEMENTS,
-  SURGEON_PROPOSAL_SCHEMA_STATEMENTS,
-} from "./schema/surgeon.js";
 import { WORKING_MEMORY_SCHEMA_STATEMENTS } from "./schema/working-memory.js";
 
 /**
  * Logical schema version stored in the metadata table.
  */
-const SCHEMA_VERSION = "12";
+const SCHEMA_VERSION = "1";
 
 /**
- * libSQL vector index name for entry embeddings.
+ * libSQL vector index name for durable embeddings.
  */
-const VECTOR_INDEX_NAME = "idx_entries_embedding";
+const DURABLE_VECTOR_INDEX_NAME = "idx_durables_embedding";
 
 /**
  * libSQL vector index name for episode embeddings.
@@ -40,9 +35,9 @@ const BULK_WRITE_STATE_META_KEY = "bulk_write_state";
  */
 const LAST_BULK_INGEST_META_KEY = "last_bulk_ingest_at";
 
-/** SQL statement that creates the canonical entries table. */
-const CREATE_ENTRIES_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS entries (
+/** SQL statement that creates the canonical durables table. */
+const CREATE_DURABLES_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS durables (
     id TEXT PRIMARY KEY,
     type TEXT NOT NULL,
     subject TEXT NOT NULL,
@@ -59,7 +54,7 @@ const CREATE_ENTRIES_TABLE_SQL = `
     quality_score REAL NOT NULL DEFAULT 0.5,
     recall_count INTEGER DEFAULT 0,
     last_recalled_at TEXT,
-    superseded_by TEXT REFERENCES entries(id),
+    superseded_by TEXT REFERENCES durables(id),
     valid_from TEXT,
     valid_to TEXT,
     claim_key TEXT,
@@ -85,48 +80,42 @@ const CREATE_ENTRIES_TABLE_SQL = `
   )
 `;
 
-/** SQL statement that creates the FTS shadow table for active entries. */
-const CREATE_ENTRIES_FTS_TABLE_SQL = `
-  CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
+/** SQL statement that creates the FTS shadow table for active durables. */
+const CREATE_DURABLES_FTS_TABLE_SQL = `
+  CREATE VIRTUAL TABLE IF NOT EXISTS durables_fts USING fts5(
     content,
     subject,
-    content=entries,
+    content=durables,
     content_rowid=rowid
   )
 `;
 
-/**
- * SQL statement that recreates the FTS insert trigger for active entries.
- */
-const CREATE_ENTRIES_FTS_INSERT_TRIGGER_SQL = `
-  CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries
+/** SQL statement that recreates the FTS insert trigger for active durables. */
+const CREATE_DURABLES_FTS_INSERT_TRIGGER_SQL = `
+  CREATE TRIGGER IF NOT EXISTS durables_ai AFTER INSERT ON durables
   WHEN new.retired = 0 AND new.superseded_by IS NULL BEGIN
-    INSERT INTO entries_fts(rowid, content, subject)
+    INSERT INTO durables_fts(rowid, content, subject)
     VALUES (new.rowid, new.content, new.subject);
   END
 `;
 
-/**
- * SQL statement that recreates the FTS delete trigger for active entries.
- */
-const CREATE_ENTRIES_FTS_DELETE_TRIGGER_SQL = `
-  CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries
+/** SQL statement that recreates the FTS delete trigger for active durables. */
+const CREATE_DURABLES_FTS_DELETE_TRIGGER_SQL = `
+  CREATE TRIGGER IF NOT EXISTS durables_ad AFTER DELETE ON durables
   WHEN old.retired = 0 AND old.superseded_by IS NULL BEGIN
-    INSERT INTO entries_fts(entries_fts, rowid, content, subject)
+    INSERT INTO durables_fts(durables_fts, rowid, content, subject)
     VALUES ('delete', old.rowid, old.content, old.subject);
   END
 `;
 
-/**
- * SQL statement that recreates the FTS update trigger for active entries.
- */
-const CREATE_ENTRIES_FTS_UPDATE_TRIGGER_SQL = `
-  CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE ON entries BEGIN
-    INSERT INTO entries_fts(entries_fts, rowid, content, subject)
+/** SQL statement that recreates the FTS update trigger for active durables. */
+const CREATE_DURABLES_FTS_UPDATE_TRIGGER_SQL = `
+  CREATE TRIGGER IF NOT EXISTS durables_au AFTER UPDATE ON durables BEGIN
+    INSERT INTO durables_fts(durables_fts, rowid, content, subject)
     SELECT 'delete', old.rowid, old.content, old.subject
     WHERE old.retired = 0 AND old.superseded_by IS NULL;
 
-    INSERT INTO entries_fts(rowid, content, subject)
+    INSERT INTO durables_fts(rowid, content, subject)
     SELECT new.rowid, new.content, new.subject
     WHERE new.retired = 0 AND new.superseded_by IS NULL;
   END
@@ -138,7 +127,7 @@ const CREATE_INGEST_LOG_TABLE_SQL = `
     file_path TEXT PRIMARY KEY,
     file_hash TEXT NOT NULL,
     ingested_at TEXT NOT NULL,
-    entry_count INTEGER DEFAULT 0
+    durable_count INTEGER DEFAULT 0
   )
 `;
 
@@ -240,7 +229,7 @@ const CREATE_PROCEDURES_FTS_UPDATE_TRIGGER_SQL = `
 const CREATE_RECALL_EVENTS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS recall_events (
     id TEXT PRIMARY KEY,
-    entry_id TEXT NOT NULL REFERENCES entries(id),
+    durable_id TEXT NOT NULL REFERENCES durables(id),
     query TEXT,
     session_key TEXT,
     recalled_at TEXT NOT NULL
@@ -255,52 +244,51 @@ const CREATE_META_TABLE_SQL = `
   )
 `;
 
-/** SQL statement that indexes exact content hashes. */
-const CREATE_ENTRIES_CONTENT_HASH_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_entries_content_hash
-  ON entries(content_hash)
+const CREATE_DURABLES_CONTENT_HASH_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_durables_content_hash
+  ON durables(content_hash)
 `;
 
-const CREATE_ENTRIES_NORM_CONTENT_HASH_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_entries_norm_content_hash
-  ON entries(norm_content_hash)
+const CREATE_DURABLES_NORM_CONTENT_HASH_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_durables_norm_content_hash
+  ON durables(norm_content_hash)
 `;
 
-const CREATE_ENTRIES_TYPE_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_entries_type
-  ON entries(type)
+const CREATE_DURABLES_TYPE_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_durables_type
+  ON durables(type)
 `;
 
-const CREATE_ENTRIES_EXPIRY_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_entries_expiry
-  ON entries(expiry)
+const CREATE_DURABLES_EXPIRY_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_durables_expiry
+  ON durables(expiry)
 `;
 
-const CREATE_ENTRIES_RETIRED_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_entries_retired
-  ON entries(retired)
+const CREATE_DURABLES_RETIRED_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_durables_retired
+  ON durables(retired)
 `;
 
-const CREATE_ENTRIES_CREATED_AT_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_entries_created_at
-  ON entries(created_at)
+const CREATE_DURABLES_CREATED_AT_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_durables_created_at
+  ON durables(created_at)
 `;
 
-const CREATE_ENTRIES_CLAIM_KEY_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_entries_claim_key
-  ON entries(claim_key)
+const CREATE_DURABLES_CLAIM_KEY_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_durables_claim_key
+  ON durables(claim_key)
   WHERE claim_key IS NOT NULL
 `;
 
-const CREATE_ENTRIES_VALID_FROM_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_entries_valid_from
-  ON entries(valid_from)
+const CREATE_DURABLES_VALID_FROM_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_durables_valid_from
+  ON durables(valid_from)
   WHERE valid_from IS NOT NULL
 `;
 
-const CREATE_ENTRIES_VALID_TO_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_entries_valid_to
-  ON entries(valid_to)
+const CREATE_DURABLES_VALID_TO_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_durables_valid_to
+  ON durables(valid_to)
   WHERE valid_to IS NOT NULL
 `;
 
@@ -367,9 +355,9 @@ const CREATE_PROCEDURES_ACTIVE_KEY_UNIQUE_INDEX_SQL = `
     AND superseded_by IS NULL
 `;
 
-const CREATE_RECALL_EVENTS_ENTRY_ID_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_recall_events_entry_id
-  ON recall_events(entry_id)
+const CREATE_RECALL_EVENTS_DURABLE_ID_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_recall_events_durable_id
+  ON recall_events(durable_id)
 `;
 
 const CREATE_RECALL_EVENTS_RECALLED_AT_INDEX_SQL = `
@@ -377,11 +365,9 @@ const CREATE_RECALL_EVENTS_RECALLED_AT_INDEX_SQL = `
   ON recall_events(recalled_at)
 `;
 
-/**
- * SQL statement that recreates the libSQL vector index for entry embeddings.
- */
-const CREATE_ENTRIES_EMBEDDING_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_entries_embedding ON entries (
+/** SQL statement that recreates the libSQL vector index for durable embeddings. */
+const CREATE_DURABLES_EMBEDDING_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_durables_embedding ON durables (
     libsql_vector_idx(
       embedding,
       'metric=cosine',
@@ -394,9 +380,7 @@ const CREATE_ENTRIES_EMBEDDING_INDEX_SQL = `
     AND superseded_by IS NULL
 `;
 
-/**
- * SQL statement that recreates the libSQL vector index for episode embeddings.
- */
+/** SQL statement that recreates the libSQL vector index for episode embeddings. */
 const CREATE_EPISODES_EMBEDDING_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_episodes_embedding ON episodes (
     libsql_vector_idx(
@@ -411,9 +395,7 @@ const CREATE_EPISODES_EMBEDDING_INDEX_SQL = `
     AND superseded_by IS NULL
 `;
 
-/**
- * SQL statement that recreates the libSQL vector index for procedure embeddings.
- */
+/** SQL statement that recreates the libSQL vector index for procedure embeddings. */
 const CREATE_PROCEDURES_EMBEDDING_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_procedures_embedding ON procedures (
     libsql_vector_idx(
@@ -429,11 +411,11 @@ const CREATE_PROCEDURES_EMBEDDING_INDEX_SQL = `
 `;
 
 const SCHEMA_STATEMENTS = [
-  CREATE_ENTRIES_TABLE_SQL,
-  CREATE_ENTRIES_FTS_TABLE_SQL,
-  CREATE_ENTRIES_FTS_INSERT_TRIGGER_SQL,
-  CREATE_ENTRIES_FTS_DELETE_TRIGGER_SQL,
-  CREATE_ENTRIES_FTS_UPDATE_TRIGGER_SQL,
+  CREATE_DURABLES_TABLE_SQL,
+  CREATE_DURABLES_FTS_TABLE_SQL,
+  CREATE_DURABLES_FTS_INSERT_TRIGGER_SQL,
+  CREATE_DURABLES_FTS_DELETE_TRIGGER_SQL,
+  CREATE_DURABLES_FTS_UPDATE_TRIGGER_SQL,
   CREATE_INGEST_LOG_TABLE_SQL,
   CREATE_EPISODES_TABLE_SQL,
   CREATE_PROCEDURES_TABLE_SQL,
@@ -442,20 +424,19 @@ const SCHEMA_STATEMENTS = [
   CREATE_PROCEDURES_FTS_DELETE_TRIGGER_SQL,
   CREATE_PROCEDURES_FTS_UPDATE_TRIGGER_SQL,
   CREATE_RECALL_EVENTS_TABLE_SQL,
-  ...SURGEON_CORE_SCHEMA_STATEMENTS,
+  ...DREAMING_SCHEMA_STATEMENTS,
   ...WORKING_MEMORY_SCHEMA_STATEMENTS,
   ...SESSION_MEMORY_SCHEMA_STATEMENTS,
-  ...SURGEON_PROPOSAL_SCHEMA_STATEMENTS,
   CREATE_META_TABLE_SQL,
-  CREATE_ENTRIES_CONTENT_HASH_INDEX_SQL,
-  CREATE_ENTRIES_NORM_CONTENT_HASH_INDEX_SQL,
-  CREATE_ENTRIES_TYPE_INDEX_SQL,
-  CREATE_ENTRIES_EXPIRY_INDEX_SQL,
-  CREATE_ENTRIES_RETIRED_INDEX_SQL,
-  CREATE_ENTRIES_CREATED_AT_INDEX_SQL,
-  CREATE_ENTRIES_CLAIM_KEY_INDEX_SQL,
-  CREATE_ENTRIES_VALID_FROM_INDEX_SQL,
-  CREATE_ENTRIES_VALID_TO_INDEX_SQL,
+  CREATE_DURABLES_CONTENT_HASH_INDEX_SQL,
+  CREATE_DURABLES_NORM_CONTENT_HASH_INDEX_SQL,
+  CREATE_DURABLES_TYPE_INDEX_SQL,
+  CREATE_DURABLES_EXPIRY_INDEX_SQL,
+  CREATE_DURABLES_RETIRED_INDEX_SQL,
+  CREATE_DURABLES_CREATED_AT_INDEX_SQL,
+  CREATE_DURABLES_CLAIM_KEY_INDEX_SQL,
+  CREATE_DURABLES_VALID_FROM_INDEX_SQL,
+  CREATE_DURABLES_VALID_TO_INDEX_SQL,
   CREATE_EPISODES_STARTED_AT_INDEX_SQL,
   CREATE_EPISODES_ENDED_AT_INDEX_SQL,
   CREATE_EPISODES_SOURCE_INDEX_SQL,
@@ -468,26 +449,25 @@ const SCHEMA_STATEMENTS = [
   CREATE_PROCEDURES_RETIRED_INDEX_SQL,
   CREATE_PROCEDURES_CREATED_AT_INDEX_SQL,
   CREATE_PROCEDURES_ACTIVE_KEY_UNIQUE_INDEX_SQL,
-  CREATE_RECALL_EVENTS_ENTRY_ID_INDEX_SQL,
+  CREATE_RECALL_EVENTS_DURABLE_ID_INDEX_SQL,
   CREATE_RECALL_EVENTS_RECALLED_AT_INDEX_SQL,
 ] as const;
 
 export {
   BULK_WRITE_STATE_META_KEY,
-  CREATE_ENTRIES_EMBEDDING_INDEX_SQL,
-  CREATE_ENTRIES_FTS_DELETE_TRIGGER_SQL,
-  CREATE_ENTRIES_FTS_INSERT_TRIGGER_SQL,
-  CREATE_ENTRIES_FTS_UPDATE_TRIGGER_SQL,
+  CREATE_DURABLES_EMBEDDING_INDEX_SQL,
+  CREATE_DURABLES_FTS_DELETE_TRIGGER_SQL,
+  CREATE_DURABLES_FTS_INSERT_TRIGGER_SQL,
+  CREATE_DURABLES_FTS_UPDATE_TRIGGER_SQL,
   CREATE_EPISODES_EMBEDDING_INDEX_SQL,
+  DURABLE_VECTOR_INDEX_NAME,
   EPISODE_VECTOR_INDEX_NAME,
   PROCEDURE_VECTOR_INDEX_NAME,
   SCHEMA_VERSION,
-  VECTOR_INDEX_NAME,
 };
 
 /**
- * Creates the agenr database schema and supporting indexes for fresh or
- * already-current databases.
+ * Creates the agenr database schema for fresh databases.
  *
  * @param db - libSQL client connected to the target database.
  * @returns Promise that resolves once schema initialization is complete.
@@ -495,37 +475,10 @@ export {
  */
 export async function initSchema(db: Client): Promise<void> {
   await db.execute("PRAGMA foreign_keys = ON");
-  let currentVersion = await getSchemaVersion(db);
+  const currentVersion = await getSchemaVersion(db);
   await assertSupportedSchemaState(db, currentVersion);
-  if (currentVersion === "5") {
-    await migrateV5ToV6(db);
-    currentVersion = "6";
-  }
-  if (currentVersion === "6") {
-    await migrateV6ToV7(db);
-    currentVersion = "7";
-  }
-  if (currentVersion === "7") {
-    await migrateV7ToV8(db);
-    currentVersion = "8";
-  }
-  if (currentVersion === "8") {
-    await migrateV8ToV9(db);
-    currentVersion = "9";
-  }
-  if (currentVersion === "9") {
-    await migrateV9ToV10(db);
-    currentVersion = "10";
-  }
-  if (currentVersion === "10") {
-    await migrateV10ToV11(db);
-    currentVersion = "11";
-  }
-  if (currentVersion === "11") {
-    await migrateV11ToV12(db);
-    currentVersion = "12";
-  }
-  const hadEntriesFts = await tableExists(db, "entries_fts");
+
+  const hadDurablesFts = await tableExists(db, "durables_fts");
   const hadProceduresFts = await tableExists(db, "procedures_fts");
 
   for (const statement of SCHEMA_STATEMENTS) {
@@ -541,12 +494,14 @@ export async function initSchema(db: Client): Promise<void> {
     args: [SCHEMA_VERSION],
   });
 
+  await ensureDreamStateRow(db);
+
   if (await hasActiveBulkWriteState(db)) {
     await finalizeBulkWrites(db);
     return;
   }
 
-  if (currentVersion !== SCHEMA_VERSION || !hadEntriesFts || !hadProceduresFts) {
+  if (currentVersion !== SCHEMA_VERSION || !hadDurablesFts || !hadProceduresFts) {
     await rebuildFts(db);
   }
 
@@ -560,17 +515,7 @@ export async function initSchema(db: Client): Promise<void> {
  * @param currentVersion - Stored schema version, when present.
  */
 async function assertSupportedSchemaState(db: Client, currentVersion: string | null): Promise<void> {
-  if (
-    currentVersion &&
-    currentVersion !== "5" &&
-    currentVersion !== "6" &&
-    currentVersion !== "7" &&
-    currentVersion !== "8" &&
-    currentVersion !== "9" &&
-    currentVersion !== "10" &&
-    currentVersion !== "11" &&
-    currentVersion !== SCHEMA_VERSION
-  ) {
+  if (currentVersion && currentVersion !== SCHEMA_VERSION) {
     throw new Error(
       `Unsupported agenr database schema version "${currentVersion}". ` +
         `This build only supports schema version ${SCHEMA_VERSION}. ` +
@@ -595,159 +540,30 @@ async function assertSupportedSchemaState(db: Client, currentVersion: string | n
 }
 
 /**
- * Migrates an initialized v5 entries table to the v6 temporal-validity schema.
+ * Ensures the singleton dream_state row exists.
  *
  * @param db - libSQL client connected to the target database.
- * @returns Promise that resolves once the migration completes.
  */
-async function migrateV5ToV6(db: Client): Promise<void> {
-  const columns = ["valid_from TEXT", "valid_to TEXT", "claim_key TEXT", "supersession_kind TEXT", "supersession_reason TEXT"];
-
-  for (const column of columns) {
-    try {
-      await db.execute(`ALTER TABLE entries ADD COLUMN ${column}`);
-    } catch (error) {
-      if (!(error instanceof Error && /duplicate column/i.test(error.message))) {
-        throw error;
-      }
-    }
-  }
+async function ensureDreamStateRow(db: Client): Promise<void> {
+  const now = new Date().toISOString();
+  await db.execute({
+    sql: `
+      INSERT INTO dream_state (id, unsynthesized_importance_sum, updated_at)
+      VALUES ('default', 0, ?)
+      ON CONFLICT(id) DO NOTHING
+    `,
+    args: [now],
+  });
 }
 
 /**
- * Migrates a v6 surgeon schema to v7 proposal and action-detail support.
- *
- * @param db - libSQL client connected to the target database.
- * @returns Promise that resolves once the migration completes.
- */
-async function migrateV6ToV7(db: Client): Promise<void> {
-  if (await tableExists(db, "surgeon_run_actions")) {
-    try {
-      await db.execute("ALTER TABLE surgeon_run_actions ADD COLUMN details_json TEXT");
-    } catch (error) {
-      if (!(error instanceof Error && /duplicate column/i.test(error.message))) {
-        throw error;
-      }
-    }
-  }
-
-  for (const statement of SURGEON_PROPOSAL_INITIAL_SCHEMA_STATEMENTS) {
-    await db.execute(statement);
-  }
-}
-
-/**
- * Migrates a v7 entries schema to v8 claim-key lifecycle storage.
- *
- * @param db - libSQL client connected to the target database.
- * @returns Promise that resolves once the migration completes.
- */
-async function migrateV7ToV8(db: Client): Promise<void> {
-  const columns = [
-    "claim_key_raw TEXT",
-    "claim_key_status TEXT",
-    "claim_key_source TEXT",
-    "claim_key_confidence REAL",
-    "claim_key_rationale TEXT",
-    "claim_support_source_kind TEXT",
-    "claim_support_locator TEXT",
-    "claim_support_observed_at TEXT",
-    "claim_support_mode TEXT",
-  ];
-
-  for (const column of columns) {
-    try {
-      await db.execute(`ALTER TABLE entries ADD COLUMN ${column}`);
-    } catch (error) {
-      if (!(error instanceof Error && /duplicate column/i.test(error.message))) {
-        throw error;
-      }
-    }
-  }
-}
-
-/**
- * Migrates a v8 surgeon proposal schema to v9 explicit review-state storage.
- *
- * @param db - libSQL client connected to the target database.
- * @returns Promise that resolves once the migration completes.
- */
-async function migrateV8ToV9(db: Client): Promise<void> {
-  if (!(await tableExists(db, "surgeon_run_proposals"))) {
-    for (const statement of SURGEON_PROPOSAL_INITIAL_SCHEMA_STATEMENTS) {
-      await db.execute(statement);
-    }
-    await db.execute(CREATE_SURGEON_RUN_PROPOSALS_REVIEW_STATUS_INDEX_SQL);
-    return;
-  }
-
-  const columns = ["review_status TEXT NOT NULL DEFAULT 'open'", "reviewed_at TEXT", "review_reason TEXT", "applied_action_count INTEGER NOT NULL DEFAULT 0"];
-
-  for (const column of columns) {
-    try {
-      await db.execute(`ALTER TABLE surgeon_run_proposals ADD COLUMN ${column}`);
-    } catch (error) {
-      if (!(error instanceof Error && /duplicate column/i.test(error.message))) {
-        throw error;
-      }
-    }
-  }
-
-  await db.execute(CREATE_SURGEON_RUN_PROPOSALS_REVIEW_STATUS_INDEX_SQL);
-}
-
-/**
- * Migrates a v9 database to the v10 procedural-memory schema.
- *
- * @param db - libSQL client connected to the target database.
- * @returns Promise that resolves once the migration completes.
- */
-async function migrateV9ToV10(db: Client): Promise<void> {
-  await db.execute(CREATE_PROCEDURES_TABLE_SQL);
-  await db.execute(CREATE_PROCEDURES_FTS_TABLE_SQL);
-  await db.execute(CREATE_PROCEDURES_FTS_INSERT_TRIGGER_SQL);
-  await db.execute(CREATE_PROCEDURES_FTS_DELETE_TRIGGER_SQL);
-  await db.execute(CREATE_PROCEDURES_FTS_UPDATE_TRIGGER_SQL);
-  await db.execute(CREATE_PROCEDURES_PROCEDURE_KEY_INDEX_SQL);
-  await db.execute(CREATE_PROCEDURES_REVISION_HASH_INDEX_SQL);
-  await db.execute(CREATE_PROCEDURES_SOURCE_HASH_INDEX_SQL);
-  await db.execute(CREATE_PROCEDURES_RETIRED_INDEX_SQL);
-  await db.execute(CREATE_PROCEDURES_CREATED_AT_INDEX_SQL);
-  await db.execute(CREATE_PROCEDURES_ACTIVE_KEY_UNIQUE_INDEX_SQL);
-}
-
-/**
- * Migrates a v10 database to the v11 working-memory schema.
- *
- * @param db - libSQL client connected to the target database.
- * @returns Promise that resolves once the migration completes.
- */
-async function migrateV10ToV11(db: Client): Promise<void> {
-  for (const statement of WORKING_MEMORY_SCHEMA_STATEMENTS) {
-    await db.execute(statement);
-  }
-}
-
-/**
- * Migrates a v11 database to the v12 session-tree schema.
- *
- * @param db - libSQL client connected to the target database.
- * @returns Promise that resolves once the migration completes.
- */
-async function migrateV11ToV12(db: Client): Promise<void> {
-  for (const statement of SESSION_MEMORY_SCHEMA_STATEMENTS) {
-    await db.execute(statement);
-  }
-}
-
-/**
- * Rebuilds the FTS shadow table from the canonical entries table.
+ * Rebuilds the FTS shadow tables from canonical durable and procedure tables.
  *
  * @param db - libSQL client connected to the target database.
  * @returns Promise that resolves once the rebuild completes.
  */
 export async function rebuildFts(db: Client): Promise<void> {
-  await db.execute("INSERT INTO entries_fts(entries_fts) VALUES ('rebuild')");
+  await db.execute("INSERT INTO durables_fts(durables_fts) VALUES ('rebuild')");
   await db.execute("INSERT INTO procedures_fts(procedures_fts) VALUES ('rebuild')");
 }
 
@@ -767,9 +583,9 @@ export async function prepareBulkWrites(db: Client): Promise<void> {
       `,
       args: [BULK_WRITE_STATE_META_KEY],
     });
-    await db.execute("DROP TRIGGER IF EXISTS entries_ai");
-    await db.execute("DROP TRIGGER IF EXISTS entries_ad");
-    await db.execute("DROP TRIGGER IF EXISTS entries_au");
+    await db.execute("DROP TRIGGER IF EXISTS durables_ai");
+    await db.execute("DROP TRIGGER IF EXISTS durables_ad");
+    await db.execute("DROP TRIGGER IF EXISTS durables_au");
     await db.execute("DROP TRIGGER IF EXISTS procedures_ai");
     await db.execute("DROP TRIGGER IF EXISTS procedures_ad");
     await db.execute("DROP TRIGGER IF EXISTS procedures_au");
@@ -785,9 +601,9 @@ export async function prepareBulkWrites(db: Client): Promise<void> {
  */
 export async function finalizeBulkWrites(db: Client): Promise<void> {
   await runImmediateTransaction(db, async () => {
-    await db.execute(CREATE_ENTRIES_FTS_INSERT_TRIGGER_SQL);
-    await db.execute(CREATE_ENTRIES_FTS_DELETE_TRIGGER_SQL);
-    await db.execute(CREATE_ENTRIES_FTS_UPDATE_TRIGGER_SQL);
+    await db.execute(CREATE_DURABLES_FTS_INSERT_TRIGGER_SQL);
+    await db.execute(CREATE_DURABLES_FTS_DELETE_TRIGGER_SQL);
+    await db.execute(CREATE_DURABLES_FTS_UPDATE_TRIGGER_SQL);
     await db.execute(CREATE_PROCEDURES_FTS_INSERT_TRIGGER_SQL);
     await db.execute(CREATE_PROCEDURES_FTS_DELETE_TRIGGER_SQL);
     await db.execute(CREATE_PROCEDURES_FTS_UPDATE_TRIGGER_SQL);
@@ -896,7 +712,7 @@ async function hasActiveBulkWriteState(db: Client): Promise<boolean> {
 /** Recreates the vector index when the SQLite build supports it. */
 async function ensureVectorIndexes(db: Client): Promise<void> {
   try {
-    await db.execute(CREATE_ENTRIES_EMBEDDING_INDEX_SQL);
+    await db.execute(CREATE_DURABLES_EMBEDDING_INDEX_SQL);
     await db.execute(CREATE_EPISODES_EMBEDDING_INDEX_SQL);
     await db.execute(CREATE_PROCEDURES_EMBEDDING_INDEX_SQL);
   } catch (error) {
@@ -909,7 +725,7 @@ async function ensureVectorIndexes(db: Client): Promise<void> {
 /** Drops the vector index when the SQLite build supports it. */
 async function dropVectorIndexes(db: Client): Promise<void> {
   try {
-    await db.execute(`DROP INDEX IF EXISTS ${VECTOR_INDEX_NAME}`);
+    await db.execute(`DROP INDEX IF EXISTS ${DURABLE_VECTOR_INDEX_NAME}`);
     await db.execute(`DROP INDEX IF EXISTS ${EPISODE_VECTOR_INDEX_NAME}`);
     await db.execute(`DROP INDEX IF EXISTS ${PROCEDURE_VECTOR_INDEX_NAME}`);
   } catch (error) {

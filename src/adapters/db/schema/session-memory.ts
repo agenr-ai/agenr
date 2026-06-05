@@ -6,7 +6,7 @@ const CREATE_SESSION_LINEAGE_EDGES_TABLE_SQL = `
     parent_session_key TEXT,
     parent_source_ref TEXT,
     reason TEXT NOT NULL,
-    fork_entry_id TEXT,
+    fork_durable_id TEXT,
     fork_position TEXT,
     observed_at TEXT NOT NULL
   )

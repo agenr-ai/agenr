@@ -58,7 +58,7 @@ function createSetupRuntime(overrides: Partial<SetupRuntime> = {}): SetupRuntime
         config.dedupModel?.provider === "anthropic" ||
         config.episodeModel?.provider === "anthropic" ||
         config.claimExtraction?.model?.provider === "anthropic" ||
-        config.surgeon?.model?.provider === "anthropic";
+        config.dreaming?.model?.provider === "anthropic";
 
       if (!config.provider || !config.model) {
         return { ready: false, guidance: "Provider and model must both be configured." };
@@ -107,7 +107,7 @@ describe("registerSetupCommand", () => {
 describe("setup stage helpers", () => {
   it("keeps every CLI-context model stage registered in prompt order", () => {
     expect(SETUP_MODEL_STAGES).toHaveLength(5);
-    expect(SETUP_MODEL_STAGES.map((stage) => stage.id)).toEqual(["extraction", "dedup", "episode", "claim", "surgeon"]);
+    expect(SETUP_MODEL_STAGES.map((stage) => stage.id)).toEqual(["extraction", "dedup", "episode", "claim", "dreaming"]);
   });
 
   it("returns all stage keys when no config exists", () => {
@@ -116,7 +116,7 @@ describe("setup stage helpers", () => {
       dedup: undefined,
       episode: undefined,
       claim: undefined,
-      surgeon: undefined,
+      dreaming: undefined,
     });
   });
 
@@ -138,7 +138,7 @@ describe("setup stage helpers", () => {
         provider: "anthropic",
         model: "claude-sonnet-4-6",
       },
-      surgeon: undefined,
+      dreaming: undefined,
     });
   });
 
@@ -440,7 +440,7 @@ describe("runSetupCore", () => {
     expect(prompts.notes.at(-1)?.message).not.toContain("Dedup override");
   });
 
-  it("writes a surgeon override from the advanced task-specific model flow", async () => {
+  it("writes a dreaming override from the advanced task-specific model flow", async () => {
     const prompts = new FakePrompts([
       "openai-api-key",
       "sk-openai",
@@ -461,7 +461,7 @@ describe("runSetupCore", () => {
       runtime,
     });
 
-    expect(result?.config.surgeon?.model).toEqual({
+    expect(result?.config.dreaming?.model).toEqual({
       provider: "openai",
       model: "gpt-5.4",
     });
@@ -473,7 +473,7 @@ describe("runSetupCore", () => {
         credentials: {
           openaiApiKey: "sk-openai",
         },
-        surgeon: {
+        dreaming: {
           model: {
             provider: "openai",
             model: "gpt-5.4",
@@ -483,7 +483,7 @@ describe("runSetupCore", () => {
       }),
     );
     expect(prompts.confirmCalls.some((call) => call.message === "Customize task-specific models? (Advanced)")).toBe(true);
-    expect(prompts.notes.at(-1)?.message).toContain("Surgeon override");
+    expect(prompts.notes.at(-1)?.message).toContain("Dreaming override");
   });
 
   it("writes an episode override from the advanced task-specific model flow", async () => {
@@ -529,7 +529,7 @@ describe("runSetupCore", () => {
     expect(prompts.notes.at(-1)?.message).toContain("Episode override");
   });
 
-  it("preserves an existing surgeon override when customization is skipped", async () => {
+  it("preserves an existing dreaming override when customization is skipped", async () => {
     const prompts = new FakePrompts(["openai-api-key", true, "gpt-5.4-mini", false, "/tmp/custom-knowledge.db"]);
     const runtime = createSetupRuntime();
 
@@ -543,7 +543,7 @@ describe("runSetupCore", () => {
         credentials: {
           openaiApiKey: "sk-openai",
         },
-        surgeon: {
+        dreaming: {
           model: {
             provider: "openai",
             model: "gpt-5.4",
@@ -553,7 +553,7 @@ describe("runSetupCore", () => {
       },
     });
 
-    expect(result?.config.surgeon?.model).toEqual({
+    expect(result?.config.dreaming?.model).toEqual({
       provider: "openai",
       model: "gpt-5.4",
     });
@@ -565,7 +565,7 @@ describe("runSetupCore", () => {
         credentials: {
           openaiApiKey: "sk-openai",
         },
-        surgeon: {
+        dreaming: {
           model: {
             provider: "openai",
             model: "gpt-5.4",
@@ -574,7 +574,7 @@ describe("runSetupCore", () => {
         dbPath: resolveTestPath("/tmp/custom-knowledge.db"),
       }),
     );
-    expect(prompts.notes.at(-1)?.message).not.toContain("Surgeon override");
+    expect(prompts.notes.at(-1)?.message).not.toContain("Dreaming override");
   });
 
   it("marks configs with unavailable override credentials as not ready", async () => {
@@ -605,7 +605,7 @@ describe("runSetupCore", () => {
 });
 
 describe("formatExistingConfig", () => {
-  it("shows the surgeon override when configured", () => {
+  it("shows the dreaming override when configured", () => {
     const summary = formatExistingConfig(
       {
         auth: "openai-api-key",
@@ -614,7 +614,7 @@ describe("formatExistingConfig", () => {
         credentials: {
           openaiApiKey: "sk-openai",
         },
-        surgeon: {
+        dreaming: {
           model: {
             provider: "openai",
             model: "gpt-5.4",
@@ -625,7 +625,7 @@ describe("formatExistingConfig", () => {
       "/tmp/.agenr/knowledge.db",
     );
 
-    expect(summary).toContain("Surgeon override");
+    expect(summary).toContain("Dreaming override");
     expect(summary).toContain("openai/gpt-5.4");
   });
 
@@ -676,7 +676,7 @@ describe("getSetupReadiness", () => {
     });
   });
 
-  it("requires credentials for the surgeon override provider", () => {
+  it("requires credentials for the dreaming override provider", () => {
     expect(
       getSetupReadiness(
         {
@@ -686,7 +686,7 @@ describe("getSetupReadiness", () => {
           credentials: {
             openaiApiKey: "sk-openai",
           },
-          surgeon: {
+          dreaming: {
             model: {
               provider: "anthropic",
               model: "claude-sonnet-4-6",

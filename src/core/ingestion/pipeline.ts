@@ -1,7 +1,7 @@
 import type { DatabasePort, EmbeddingPort, LlmPort, TranscriptPort } from "../ports.js";
 import { applyClaimExtractionResultToEntry, runBatchClaimExtraction, type ClaimExtractionConfig } from "../store/claim-extraction.js";
-import { type StoreEntriesDetailedResult, type StoreEntriesOptions, type StorePipelineOptions, storeEntriesDetailed } from "../store/pipeline.js";
-import type { StoreEntryInput, StoreResult } from "../types.js";
+import { type StoreDurablesDetailedResult, type StoreDurablesOptions, type StorePipelineOptions, storeDurablesDetailed } from "../store/pipeline.js";
+import type { StoreDurableInput, StoreResult } from "../types.js";
 import { annotateExplicitClaimKeyEntry, restoreExplicitClaimKeysAfterDedup } from "./claim-key-preservation.js";
 import { dedupBatch, getDefaultDedupConcurrency } from "./dedup.js";
 import { extractFromTranscript } from "./extract.js";
@@ -67,7 +67,7 @@ export interface ExtractedFileResult {
   file: string;
   skipped: boolean;
   messageCount: number;
-  entries: StoreEntryInput[];
+  entries: StoreDurableInput[];
   chunkCount: number;
   successfulChunks: number;
   failedChunks: number;
@@ -326,7 +326,7 @@ export async function storeExtractedResults(
   const finalResults = new Map<string, IngestFileResult>();
   const successfulResults = results.filter((result) => result.skipped !== true && result.error === undefined);
   const perFileStoreResults = new Map<string, StoreResult>();
-  const allEntries: StoreEntryInput[] = [];
+  const allEntries: StoreDurableInput[] = [];
   const entryOwners: string[] = [];
 
   for (const result of successfulResults) {
@@ -337,14 +337,14 @@ export async function storeExtractedResults(
     }
   }
 
-  const storeOptions: StoreEntriesOptions = {
+  const storeOptions: StoreDurablesOptions = {
     ...options,
     precomputedEmbeddings: options.precomputedEmbeddings,
     onWarning: options.onWarning,
   };
 
   const shouldUseBulkWrites = options.dryRun !== true && allEntries.length > 0;
-  let storeResult: StoreEntriesDetailedResult;
+  let storeResult: StoreDurablesDetailedResult;
 
   if (shouldUseBulkWrites) {
     options.onBulkWriteProgress?.({ phase: "prepare_start" });
@@ -352,7 +352,7 @@ export async function storeExtractedResults(
   }
 
   try {
-    storeResult = await storeEntriesDetailed(allEntries, ports.db, ports.embedding, storeOptions);
+    storeResult = await storeDurablesDetailed(allEntries, ports.db, ports.embedding, storeOptions);
     for (const detail of storeResult.details) {
       const owner = entryOwners[detail.inputIndex];
       if (!owner) {

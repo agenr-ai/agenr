@@ -48,7 +48,7 @@ describe("agenr OpenClaw debug sink", () => {
       sessionId: "sess-1",
       summary: {
         count: 0,
-        routing: { requested: "auto", detectedIntent: "entries", queried: ["entries"], reason: "ok" },
+        routing: { requested: "auto", detectedIntent: "durables", queried: ["durables"], reason: "ok" },
         selectedEntryIds: [],
         episodeIds: [],
         selectedProcedureKey: null,

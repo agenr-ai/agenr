@@ -3,7 +3,7 @@ import { Option, type Command } from "commander";
 import { loadEntryTraceRuntime } from "../../app/memory/inspect.js";
 import type { EntryTrace } from "../../app/memory/ports.js";
 import { resolveClaimSlotPolicy } from "../../core/claim-slot-policy.js";
-import type { Entry } from "../../core/types.js";
+import type { Durable } from "../../core/types.js";
 
 /** Commander options accepted by the `agenr trace` command. */
 interface TraceCommandOptions {
@@ -143,7 +143,7 @@ function renderTraceJson(trace: EntryTrace): string {
  * @param entry - Entry to describe.
  * @returns Narrow state label.
  */
-function describeEntryState(entry: Entry): string {
+function describeEntryState(entry: Durable): string {
   if (entry.superseded_by) {
     return "superseded";
   }
@@ -161,7 +161,7 @@ function describeEntryState(entry: Entry): string {
  * @param entry - Entry to describe.
  * @returns Lifecycle label text.
  */
-function formatClaimLifecycle(entry: Entry): string {
+function formatClaimLifecycle(entry: Durable): string {
   if (!entry.claim_key) {
     return "no-key";
   }
@@ -170,7 +170,7 @@ function formatClaimLifecycle(entry: Entry): string {
 }
 
 /** Builds a compact change summary from one traced claim family. */
-function summarizeClaimFamilyTransition(entries: Entry[]): string | undefined {
+function summarizeClaimFamilyTransition(entries: Durable[]): string | undefined {
   const current = entries.find((entry) => !entry.retired && !entry.superseded_by);
   const prior = [...entries]
     .reverse()
@@ -223,7 +223,7 @@ function resolveTraceSlotPolicy(trace: EntryTrace): { policy: string; reason: st
  * @param slotPolicy - Optional slot-policy metadata when the entry has a claim key.
  * @returns Structured trace entry payload.
  */
-function serializeTraceEntry(entry: Entry, slotPolicy?: { policy: string; reason: string }): Record<string, unknown> {
+function serializeTraceEntry(entry: Durable, slotPolicy?: { policy: string; reason: string }): Record<string, unknown> {
   return {
     id: entry.id,
     subject: entry.subject,

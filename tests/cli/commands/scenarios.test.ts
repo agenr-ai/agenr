@@ -44,7 +44,7 @@ describe("registerScenariosCommand", () => {
       "--id",
       "claim-keys.store.manual-key-trusted",
       "--id",
-      "claim-keys.surgeon.malformed-key-normalized",
+      "claim-keys.dreaming.malformed-key-normalized",
       "--kind",
       "store",
       "--tag",
@@ -59,7 +59,7 @@ describe("registerScenariosCommand", () => {
     expect(parsed.operands).toEqual([]);
     expect(runCommand.opts()).toEqual(
       expect.objectContaining({
-        id: ["claim-keys.store.manual-key-trusted", "claim-keys.surgeon.malformed-key-normalized"],
+        id: ["claim-keys.store.manual-key-trusted", "claim-keys.dreaming.malformed-key-normalized"],
         kind: "store",
         tag: ["trusted"],
         preserveOnFailure: true,

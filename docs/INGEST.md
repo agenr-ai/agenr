@@ -2,7 +2,7 @@
 
 `agenr ingest` has two production paths:
 
-- `agenr ingest <path>` or `agenr ingest entries <path>` for durable entry ingest
+- `agenr ingest <path>` or `agenr ingest durables <path>` for durable entry ingest
 - `agenr ingest episodes [path]` for episodic summary backfill and episode embedding backfill
 
 This document describes the code as it exists now.
@@ -258,7 +258,7 @@ When the run is not a dry run and there are entries to write, the database adapt
 5. rebuild FTS
 6. recreate vector indexes
 
-Inside `storeEntriesDetailed()`, the current store pipeline does:
+Inside `storeDurablesDetailed()`, the current store pipeline does:
 
 1. validation and normalization
 2. within-batch exact content-hash dedup

@@ -1,4 +1,4 @@
-import type { Expiry, EntryType } from "./types.js";
+import type { Expiry, DurableKind } from "./types.js";
 
 /**
  * Stable failure reasons emitted by the shared supersession policy.
@@ -9,7 +9,7 @@ export type SupersessionRuleFailureReason = "type_mismatch" | "milestone" | "cor
  * Minimal entry shape needed to validate whether one entry may supersede another.
  */
 export interface SupersessionCandidate {
-  type: EntryType;
+  type: DurableKind;
   expiry: Expiry;
 }
 

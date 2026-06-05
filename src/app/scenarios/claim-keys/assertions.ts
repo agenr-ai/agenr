@@ -1,4 +1,4 @@
-import type { ClaimKeyQualityPassSummary } from "../../../core/surgeon/types.js";
+import type { ReconcilePassSummary } from "../../../core/dreaming/types.js";
 import type {
   ClaimKeyScenario,
   ClaimKeyScenarioActualState,
@@ -106,16 +106,16 @@ export function buildClaimKeyScenarioAssertions(scenario: ClaimKeyScenario, actu
     }
   }
 
-  if (scenario.expect.surgeonSummary !== undefined) {
-    if (scenario.expect.surgeonSummary === null) {
-      results.push(compareScalar("surgeonSummary", null, actual.surgeonSummary));
+  if (scenario.expect.dreamingSummary !== undefined) {
+    if (scenario.expect.dreamingSummary === null) {
+      results.push(compareScalar("dreamingSummary", null, actual.dreamingSummary));
     } else {
-      if (scenario.expect.surgeonSummary.status !== undefined) {
-        results.push(compareScalar("surgeonSummary.status", scenario.expect.surgeonSummary.status, actual.surgeonSummary?.status ?? null));
+      if (scenario.expect.dreamingSummary.status !== undefined) {
+        results.push(compareScalar("dreamingSummary.status", scenario.expect.dreamingSummary.status, actual.dreamingSummary?.status ?? null));
       }
 
-      if (scenario.expect.surgeonSummary.summary !== undefined) {
-        comparePartialObject("surgeonSummary.summary", scenario.expect.surgeonSummary.summary, actual.surgeonSummary?.summary ?? null, results);
+      if (scenario.expect.dreamingSummary.summary !== undefined) {
+        comparePartialObject("dreamingSummary.summary", scenario.expect.dreamingSummary.summary, actual.dreamingSummary?.summary ?? null, results);
       }
     }
   }
@@ -165,7 +165,7 @@ function compareScalar(label: string, expected: unknown, actual: unknown): Claim
  */
 function comparePartialObject(
   label: string,
-  expected: Partial<ClaimKeyQualityPassSummary> | unknown,
+  expected: Partial<ReconcilePassSummary> | unknown,
   actual: unknown,
   results: ClaimKeyScenarioAssertionResult[],
 ): void {

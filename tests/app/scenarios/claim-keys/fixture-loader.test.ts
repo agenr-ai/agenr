@@ -52,7 +52,7 @@ describe("claim-key scenario fixture loader", () => {
 
     await writeJsonFixture(root, validPath, [
       {
-        entries: [
+        durables: [
           {
             type: "fact",
             subject: "Jim timezone",
@@ -65,7 +65,7 @@ describe("claim-key scenario fixture loader", () => {
     ]);
     await writeJsonFixture(root, invalidPath, [
       {
-        entries: [
+        durables: [
           {
             type: "fact",
             subject: "Jim timezone",

@@ -11,7 +11,7 @@ import {
   sharesProcedureLineage,
 } from "../../../src/core/recall/neighborhood.js";
 import type { Episode, Procedure } from "../../../src/core/types.js";
-import type { RecallCandidateEntry } from "../../../src/core/recall/types.js";
+import type { RecallCandidateDurable } from "../../../src/core/recall/types.js";
 
 describe("selectStrongSeeds", () => {
   it("returns no seeds when the candidate list is empty", () => {
@@ -117,7 +117,7 @@ describe("seededRerank", () => {
 });
 
 describe("sharesEntryLineage", () => {
-  const baseEntry: RecallCandidateEntry = {
+  const baseEntry: RecallCandidateDurable = {
     id: "base",
     subject: "webpack deployment packaging",
     content: "",

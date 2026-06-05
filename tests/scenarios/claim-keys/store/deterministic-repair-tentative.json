@@ -8,7 +8,7 @@
     "preserveOnFailure": true
   },
   "input": {
-    "entries": [
+    "durables": [
       {
         "type": "fact",
         "subject": "Jim's timezone",
@@ -36,8 +36,8 @@
       }
     ],
     "rowCount": {
-      "entries": 1,
-      "activeEntries": 1,
+      "durables": 1,
+      "activeDurables": 1,
       "entriesWithClaimKey": 1
     },
     "storeResult": {

@@ -9,7 +9,7 @@ import type {
   RecallRankingPolicy,
   RecallRrfTrace,
 } from "../../../core/recall/trace.js";
-import type { ClaimKeySource, ClaimKeyStatus, ClaimSupportMode, EntryType, Expiry, ProcedureSource, ProcedureStep } from "../../../core/types.js";
+import type { ClaimKeySource, ClaimKeyStatus, ClaimSupportMode, DurableKind, Expiry, ProcedureSource, ProcedureStep } from "../../../core/types.js";
 import type { ClaimSlotPolicy, ClaimSlotPolicyConfig } from "../../../core/claim-slot-policy.js";
 import type {
   ClaimCentricClaimStatus,
@@ -103,7 +103,7 @@ export interface RecallEvalFixtureEntry {
   /** Optional stable entry identifier supplied by the eval harness. */
   id?: string;
   /** Durable knowledge category aligned with the core entry model. */
-  type: EntryType;
+  type: DurableKind;
   /** Short subject line for the memory entry. */
   subject: string;
   /** Full memory content for the fixture entry. */
@@ -226,7 +226,7 @@ export interface RecallEvalUnifiedMemoryPolicyRequest {
 export interface RecallEvalUnifiedRequest {
   /** Optional unified routing mode. */
   mode?: UnifiedRecallMode;
-  /** Optional session key forwarded into underlying entry recall telemetry. */
+  /** Optional session key forwarded into underlying durable recall telemetry. */
   sessionKey?: string;
   /** Optional memory-policy overrides used by unified recall shaping. */
   memoryPolicy?: RecallEvalUnifiedMemoryPolicyRequest;
@@ -328,7 +328,7 @@ export interface RecallEvalResultEntry {
   /** Content of the recalled memory entry. */
   content: string;
   /** Durable knowledge category of the recalled entry. */
-  type: EntryType;
+  type: DurableKind;
   /** Importance score of the recalled entry. */
   importance: number;
   /** Expiry level of the recalled entry. */
@@ -563,7 +563,7 @@ export interface RecallEvalRankingDiagnostics {
  */
 export interface RecallEvalFilteringDiagnostics {
   /** Active type filters applied during candidate retrieval. */
-  types: EntryType[];
+  types: DurableKind[];
   /** Active tag filters applied during candidate retrieval. */
   tags: string[];
   /** Applied lower created-at bound in ISO format when present. */

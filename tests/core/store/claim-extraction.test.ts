@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { DatabasePort, LlmPort } from "../../../src/core/ports.js";
 import { extractClaimKey, extractClaimKeyDecision, getEntityHints, runBatchClaimExtraction } from "../../../src/core/store/claim-extraction.js";
-import type { Entry, StoreEntryInput } from "../../../src/core/types.js";
+import type { Durable, StoreDurableInput } from "../../../src/core/types.js";
 
 describe("extractClaimKey", () => {
   it("extracts a normalized claim key for an eligible fact entry", async () => {
@@ -490,7 +490,7 @@ describe("extractClaimKey", () => {
             manualEntryCount: 0,
             modelEntryCount: 4,
             jsonRetryEntryCount: 0,
-            surgeonFamilyReuseEntryCount: 0,
+            dreamingFamilyReuseDurableCount: 0,
           },
         ],
       },
@@ -540,7 +540,7 @@ describe("extractClaimKey", () => {
             manualEntryCount: 0,
             modelEntryCount: 5,
             jsonRetryEntryCount: 0,
-            surgeonFamilyReuseEntryCount: 0,
+            dreamingFamilyReuseDurableCount: 0,
           },
         ],
       },
@@ -650,7 +650,7 @@ describe("extractClaimKey", () => {
 
 describe("runBatchClaimExtraction", () => {
   it("honors the configured batch concurrency", async () => {
-    const entries: StoreEntryInput[] = [
+    const entries: StoreDurableInput[] = [
       {
         type: "fact",
         subject: "Jim timezone",
@@ -734,7 +734,7 @@ describe("runBatchClaimExtraction", () => {
   });
 
   it("reports progress for only eligible entries that need extraction", async () => {
-    const entries: StoreEntryInput[] = [
+    const entries: StoreDurableInput[] = [
       {
         type: "fact",
         subject: "Pre-keyed timezone",
@@ -812,7 +812,7 @@ describe("runBatchClaimExtraction", () => {
   });
 
   it("does not let later pre-keyed entries influence earlier entries in the same stage", async () => {
-    const entries: StoreEntryInput[] = [
+    const entries: StoreDurableInput[] = [
       {
         type: "fact",
         subject: "Current status",
@@ -868,7 +868,7 @@ describe("runBatchClaimExtraction", () => {
   });
 
   it("uses bounded full-key hints and same-batch updates for later stages", async () => {
-    const entries: StoreEntryInput[] = [
+    const entries: StoreDurableInput[] = [
       {
         type: "fact",
         subject: "Project X status",
@@ -940,7 +940,7 @@ describe("runBatchClaimExtraction", () => {
   });
 
   it("retries unresolved earlier entries after later trusted siblings expand same-batch support", async () => {
-    const entries: StoreEntryInput[] = [
+    const entries: StoreDurableInput[] = [
       {
         type: "decision",
         subject: "Repo workflow docs",
@@ -1002,7 +1002,7 @@ describe("runBatchClaimExtraction", () => {
   });
 
   it("reports retry-phase progress separately after the primary pass", async () => {
-    const entries: StoreEntryInput[] = [
+    const entries: StoreDurableInput[] = [
       {
         type: "decision",
         subject: "Repo workflow docs",
@@ -1131,19 +1131,19 @@ class MockDatabasePort implements DatabasePort {
     } = {},
   ) {}
 
-  public async insertEntry(): Promise<string> {
-    throw new Error("insertEntry() is not used in these tests.");
+  public async insertDurable(): Promise<string> {
+    throw new Error("insertDurable() is not used in these tests.");
   }
 
   public async prepareForBulkWrites(): Promise<void> {}
 
   public async finalizeBulkWrites(): Promise<void> {}
 
-  public async getEntries(): Promise<Entry[]> {
+  public async getDurables(): Promise<Durable[]> {
     return [];
   }
 
-  public async getEntry(): Promise<Entry | null> {
+  public async getDurable(): Promise<Durable | null> {
     return null;
   }
 
@@ -1155,15 +1155,15 @@ class MockDatabasePort implements DatabasePort {
     return new Set();
   }
 
-  public async retireEntry(): Promise<boolean> {
+  public async retireDurable(): Promise<boolean> {
     return false;
   }
 
-  public async supersedeEntry(): Promise<boolean> {
+  public async supersedeDurable(): Promise<boolean> {
     return false;
   }
 
-  public async findActiveEntriesByClaimKey(): Promise<Entry[]> {
+  public async findActiveDurablesByClaimKey(): Promise<Durable[]> {
     return [];
   }
 
@@ -1175,7 +1175,7 @@ class MockDatabasePort implements DatabasePort {
     return this.values.claimKeyExamples ?? [];
   }
 
-  public async updateEntry(): Promise<boolean> {
+  public async updateDurable(): Promise<boolean> {
     return false;
   }
 

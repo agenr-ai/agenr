@@ -1,5 +1,5 @@
 import { inspectClaimKey, isTrustedClaimKeyForCleanup, normalizeClaimKeySegment, compactClaimKey } from "./claim-key.js";
-import type { Entry, EntryType } from "./types.js";
+import type { Durable, DurableKind } from "./types.js";
 
 const MAX_AUTO_APPLY_ATTRIBUTE_TOKENS = 4;
 const GROUNDING_STOP_TOKENS = new Set([
@@ -93,7 +93,7 @@ export interface ClaimKeySupportHintEntry {
   claimKey: string;
   entity: string;
   attribute: string;
-  type?: EntryType;
+  type?: DurableKind;
   tags: string[];
   sourceContextTokens: string[];
   subjectTokens: string[];
@@ -139,7 +139,7 @@ export interface ClaimKeySupportEvaluation {
   familyReuseCount: number;
   groundedFamilyReuseCount: number;
   relaxedStableSlotFamilyGate: boolean;
-  supportingEntryIds: string[];
+  supportingDurableIds: string[];
   supportEvidence: string[];
   rationaleFragments: string[];
 }
@@ -160,7 +160,7 @@ export interface ClaimKeyCompactnessEvaluation {
  */
 export interface ClaimKeySupportEntryLike {
   id?: string;
-  type?: EntryType;
+  type?: DurableKind;
   subject: string;
   content: string;
   tags?: string[];
@@ -174,7 +174,7 @@ export interface ClaimKeySupportEntryLike {
  * @returns Ordered support seed used for family reuse and grounding checks.
  */
 export function buildTrustedClaimKeySupportSeed(
-  entries: Array<Pick<Entry, "id" | "claim_key" | "importance" | "created_at" | "type" | "tags" | "source_context" | "subject">>,
+  entries: Array<Pick<Durable, "id" | "claim_key" | "importance" | "created_at" | "type" | "tags" | "source_context" | "subject">>,
 ): ClaimKeySupportHintSeed {
   const claimKeyStats = new Map<string, { count: number; maxImportance: number; latestCreatedAt: string }>();
   const trustedEntries: ClaimKeySupportHintEntry[] = [];
@@ -401,7 +401,7 @@ export function evaluateClaimKeySupport(
     familyReuseCount: familyReuseEntries.length,
     groundedFamilyReuseCount: groundedFamilyReuseEntries.length,
     relaxedStableSlotFamilyGate: promotionSupport.relaxedStableSlotFamilyGate,
-    supportingEntryIds: normalizeStringArray([
+    supportingDurableIds: normalizeStringArray([
       ...groundedExactReuseEntries.map((candidate) => candidate.id),
       ...groundedFamilyReuseEntries.map((candidate) => candidate.id),
       ...familyReuseEntries.filter((candidate) => candidate.id.startsWith("example:")).map((candidate) => candidate.id),
@@ -434,7 +434,7 @@ export function createEmptyClaimKeySupportEvaluation(): ClaimKeySupportEvaluatio
     familyReuseCount: 0,
     groundedFamilyReuseCount: 0,
     relaxedStableSlotFamilyGate: false,
-    supportingEntryIds: [],
+    supportingDurableIds: [],
     supportEvidence: [],
     rationaleFragments: [],
   };
@@ -520,7 +520,7 @@ export function tokenizeGroundingText(value: string | undefined): string[] {
  * @param entry - Entry-like object whose text and tags should be tokenized.
  * @returns Ordered unique local lexical tokens.
  */
-export function buildEntryLocalLexicalTokens(entry: ClaimKeySupportEntryLike): string[] {
+export function buildDurableLocalLexicalTokens(entry: ClaimKeySupportEntryLike): string[] {
   return normalizeStringArray([
     ...tokenizeGroundingText(entry.subject),
     ...tokenizeGroundingText(entry.content),
@@ -602,7 +602,7 @@ function inspectGroundingOverlap(
 
 /** Measures entity and attribute lexical overlap between one entry and one candidate claim key. */
 function inspectCandidateLexicalAlignment(entry: ClaimKeySupportEntryLike, entity: string, attribute: string): ClaimKeySupportLexicalAlignment {
-  const lexicalTokens = new Set(buildEntryLocalLexicalTokens(entry));
+  const lexicalTokens = new Set(buildDurableLocalLexicalTokens(entry));
   const entityTokens = entity.split("_").filter((token) => token.length > 0);
   const attributeTokens = attribute.split("_").filter((token) => token.length > 0 && !GROUNDING_STOP_TOKENS.has(token));
 

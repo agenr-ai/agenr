@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { ENTRY_FETCH_MAX_CONTENT_CHARS } from "../../../src/adapters/shared/memory-tool-format.js";
 import { parseFetchToolParams, runFetchMemoryTool } from "../../../src/adapters/shared/memory-tools.js";
 import type { MemoryToolParamReader } from "../../../src/adapters/shared/memory-tools.js";
-import type { Entry } from "../../../src/core/types.js";
+import type { Durable } from "../../../src/core/types.js";
 
 const READER: MemoryToolParamReader = {
   readString(params, key, options) {
@@ -27,7 +27,7 @@ const READER: MemoryToolParamReader = {
   },
 };
 
-const entry: Entry = {
+const entry: Durable = {
   id: "entry-1",
   type: "fact",
   subject: "Skeln architecture",
@@ -53,13 +53,13 @@ describe("agenr_fetch shared tool flow", () => {
       { id: "entry-1", subject: undefined },
       {
         entries: {
-          getEntry: async (entryId) => (entryId === entry.id ? entry : null),
+          getDurable: async (entryId) => (entryId === entry.id ? entry : null),
         },
         embedding: {} as never,
         memory: {
           findEntryBySubject: async () => entry,
           findMostRecentEntry: async () => entry,
-          getEntryTrace: async () => null,
+          getDurableTrace: async () => null,
         },
       },
     );
@@ -74,7 +74,7 @@ describe("agenr_fetch shared tool flow", () => {
   });
 
   it("rejects entry bodies above the fetch size limit", async () => {
-    const oversizedEntry: Entry = {
+    const oversizedEntry: Durable = {
       ...entry,
       content: "x".repeat(ENTRY_FETCH_MAX_CONTENT_CHARS + 1),
     };
@@ -84,13 +84,13 @@ describe("agenr_fetch shared tool flow", () => {
         { id: "entry-1", subject: undefined },
         {
           entries: {
-            getEntry: async () => oversizedEntry,
+            getDurable: async () => oversizedEntry,
           },
           embedding: {} as never,
           memory: {
             findEntryBySubject: async () => oversizedEntry,
             findMostRecentEntry: async () => oversizedEntry,
-            getEntryTrace: async () => null,
+            getDurableTrace: async () => null,
           },
         },
       ),

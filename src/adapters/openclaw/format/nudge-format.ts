@@ -26,7 +26,7 @@ export function buildStoreNudgeMessage(state: MidSessionState, maxPerSession: nu
     }
 
     if (isFirstNudge) {
-      return `[MEMORY CHECK] You've stored ${state.entriesStored} ${state.entriesStored === 1 ? "entry" : "entries"} this session covering ${subjectsLabel}. Review recent conversation for anything else worth keeping - decisions, confirmed approaches, preferences, lessons, or open risks. Store both corrections and validated wins. Skip transient progress and derivable repo facts.`;
+      return `[MEMORY CHECK] You've stored ${state.entriesStored} ${state.entriesStored === 1 ? "entry" : "durables"} this session covering ${subjectsLabel}. Review recent conversation for anything else worth keeping - decisions, confirmed approaches, preferences, lessons, or open risks. Store both corrections and validated wins. Skip transient progress and derivable repo facts.`;
     }
 
     return `[MEMORY CHECK] Session memory covers ${subjectsLabel}. Check for newer durable knowledge - especially non-obvious approaches the user confirmed worked well. Use memory for future-session knowledge, not current task state.`;

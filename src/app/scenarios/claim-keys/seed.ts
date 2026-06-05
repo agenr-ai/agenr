@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 
-import { insertEntry, type SqlExecutor } from "../../../adapters/db/queries.js";
+import { insertDurable, type SqlExecutor } from "../../../adapters/db/queries.js";
 import { buildManualClaimKeyLifecycle, buildPrecomputedClaimKeyLifecycle, type ResolvedClaimKeyLifecycle } from "../../../core/claim-key-lifecycle.js";
 import { normalizeClaimKey } from "../../../core/claim-key.js";
 import { computeContentHash, computeNormContentHash } from "../../../core/store/hashing.js";
 import { validateEntriesWithIndexes } from "../../../core/store/validation.js";
-import type { Entry, StoreEntryInput } from "../../../core/types.js";
+import type { Durable, StoreDurableInput } from "../../../core/types.js";
 import type { ClaimKeyScenarioSeedEntry } from "./types.js";
 
 const DEFAULT_SCENARIO_CREATED_AT = "2026-04-01T10:00:00.000Z";
@@ -16,7 +16,7 @@ const DEFAULT_SCENARIO_CREATED_AT = "2026-04-01T10:00:00.000Z";
  * @param seedEntry - Raw scenario seed entry payload.
  * @returns Canonical stored entry row ready for repository insertion.
  */
-export function buildClaimKeyScenarioSeedEntry(seedEntry: ClaimKeyScenarioSeedEntry): Entry {
+export function buildClaimKeyScenarioSeedEntry(seedEntry: ClaimKeyScenarioSeedEntry): Durable {
   const seedClaimKey = normalizeOptionalString(seedEntry.claim_key);
   const preserveLegacyStoredClaimKey = shouldPreserveLegacyStoredClaimKey(seedClaimKey);
   const validatedInput = validateSeedStoreInput(seedEntry, preserveLegacyStoredClaimKey);
@@ -75,7 +75,7 @@ export function buildClaimKeyScenarioSeedEntry(seedEntry: ClaimKeyScenarioSeedEn
 export async function seedClaimKeyScenarioEntries(executor: SqlExecutor, seedEntries: ClaimKeyScenarioSeedEntry[]): Promise<void> {
   for (const seedEntry of seedEntries) {
     const entry = buildClaimKeyScenarioSeedEntry(seedEntry);
-    await insertEntry(executor, entry, [], entry.content_hash ?? computeContentHash(entry.content, entry.source_file));
+    await insertDurable(executor, entry, [], entry.content_hash ?? computeContentHash(entry.content, entry.source_file));
   }
 }
 
@@ -85,7 +85,7 @@ export async function seedClaimKeyScenarioEntries(executor: SqlExecutor, seedEnt
  * @param seedEntry - Raw scenario seed entry payload.
  * @returns Canonical validated store input.
  */
-function validateSeedStoreInput(seedEntry: ClaimKeyScenarioSeedEntry, preserveLegacyStoredClaimKey: boolean): StoreEntryInput {
+function validateSeedStoreInput(seedEntry: ClaimKeyScenarioSeedEntry, preserveLegacyStoredClaimKey: boolean): StoreDurableInput {
   const validation = validateEntriesWithIndexes([
     {
       type: seedEntry.type,
@@ -136,7 +136,7 @@ function validateSeedStoreInput(seedEntry: ClaimKeyScenarioSeedEntry, preserveLe
  * @param validatedInput - Canonical validated store input.
  * @returns Canonical lifecycle payload, or undefined when the seed has no claim key.
  */
-function resolveSeedClaimKeyLifecycle(seedEntry: ClaimKeyScenarioSeedEntry, validatedInput: StoreEntryInput): ResolvedClaimKeyLifecycle | undefined {
+function resolveSeedClaimKeyLifecycle(seedEntry: ClaimKeyScenarioSeedEntry, validatedInput: StoreDurableInput): ResolvedClaimKeyLifecycle | undefined {
   if (!validatedInput.claim_key) {
     return undefined;
   }

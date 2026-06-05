@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { DatabasePort, EmbeddingPort, LlmPort } from "../ports.js";
 import type { SupersessionRuleFailureReason } from "../supersession.js";
-import type { Entry, StoreEntryInput, StoreResult } from "../types.js";
+import type { Durable, StoreDurableInput, StoreResult } from "../types.js";
 import {
   applyClaimKeyLifecycle,
   buildExtractedClaimKeyLifecycle,
@@ -19,7 +19,7 @@ import { computeContentHash, computeNormContentHash } from "./hashing.js";
 import { validateEntriesWithIndexes } from "./validation.js";
 
 const AUTO_SUPERSESSION_MIN_EXTRACTED_CONFIDENCE = 0.9;
-const AUTO_SUPERSESSION_ELIGIBLE_SOURCES = new Set<NonNullable<Entry["claim_key_source"]>>(["model", "json_retry"]);
+const AUTO_SUPERSESSION_ELIGIBLE_SOURCES = new Set<NonNullable<Durable["claim_key_source"]>>(["model", "json_retry"]);
 
 /**
  * Runtime switches for the store pipeline.
@@ -32,7 +32,7 @@ export interface StorePipelineOptions {
 /**
  * Runtime switches for batch store calls that can reuse precomputed embeddings.
  */
-export interface StoreEntriesOptions extends StorePipelineOptions {
+export interface StoreDurablesOptions extends StorePipelineOptions {
   /** Precomputed embeddings aligned with the original input array. */
   precomputedEmbeddings?: number[][];
   /** Optional best-effort claim-key extraction step. */
@@ -49,7 +49,7 @@ export interface StoreEntriesOptions extends StorePipelineOptions {
 
 /** Validated entry enriched with hashes needed by the store pipeline. */
 interface PreparedEntry {
-  input: StoreEntryInput;
+  input: StoreDurableInput;
   inputIndex: number;
   contentHash: string;
   normContentHash: string;
@@ -73,7 +73,7 @@ export interface StoreEntryDetail {
 /**
  * Store result enriched with per-input decisions.
  */
-export interface StoreEntriesDetailedResult extends StoreResult {
+export interface StoreDurablesDetailedResult extends StoreResult {
   details: StoreEntryDetail[];
 }
 
@@ -100,13 +100,13 @@ interface AutoSupersessionPlan {
  * @param options - Optional pipeline execution flags.
  * @returns Aggregate store counts for stored, skipped, and rejected entries.
  */
-export async function storeEntries(
-  inputs: StoreEntryInput[],
+export async function storeDurables(
+  inputs: StoreDurableInput[],
   db: DatabasePort,
   embedding: EmbeddingPort,
-  options: StoreEntriesOptions = {},
+  options: StoreDurablesOptions = {},
 ): Promise<StoreResult> {
-  const result = await storeEntriesDetailed(inputs, db, embedding, options);
+  const result = await storeDurablesDetailed(inputs, db, embedding, options);
   return {
     stored: result.stored,
     skipped: result.skipped,
@@ -123,12 +123,12 @@ export async function storeEntries(
  * @param options - Optional pipeline execution flags.
  * @returns Aggregate store counts plus per-input outcomes.
  */
-export async function storeEntriesDetailed(
-  inputs: StoreEntryInput[],
+export async function storeDurablesDetailed(
+  inputs: StoreDurableInput[],
   db: DatabasePort,
   embedding: EmbeddingPort,
-  options: StoreEntriesOptions = {},
-): Promise<StoreEntriesDetailedResult> {
+  options: StoreDurablesOptions = {},
+): Promise<StoreDurablesDetailedResult> {
   if (inputs.length === 0) {
     return { stored: 0, skipped: 0, rejected: 0, details: [] };
   }
@@ -184,7 +184,7 @@ export async function storeEntriesDetailed(
 
 /** Resolves embeddings for pending entries from precomputed vectors or the embedding port. */
 async function resolvePendingEmbeddings(
-  inputs: StoreEntryInput[],
+  inputs: StoreDurableInput[],
   entries: PreparedEntry[],
   embedding: EmbeddingPort,
   precomputedEmbeddings?: number[][],
@@ -236,10 +236,10 @@ async function persistEntries(
     for (const [index, preparedEntry] of preparedEntries.entries()) {
       const embedding = embeddings[index] ?? [];
       const entry = buildEntry(preparedEntry, embedding);
-      const entryId = await targetDb.insertEntry(entry, embedding, preparedEntry.contentHash);
+      const entryId = await targetDb.insertDurable(entry, embedding, preparedEntry.contentHash);
       const supersededEntryId = preparedEntry.input.supersedes;
       if (supersededEntryId) {
-        const superseded = await targetDb.supersedeEntry(supersededEntryId, entryId, "update");
+        const superseded = await targetDb.supersedeDurable(supersededEntryId, entryId, "update");
         if (!superseded) {
           onWarning?.(`Stored entry ${entryId} but could not supersede ${supersededEntryId} because the target was missing or inactive.`);
         }
@@ -247,7 +247,7 @@ async function persistEntries(
 
       const autoSupersessionPlan = autoSupersessionPlans.get(preparedEntry.inputIndex);
       if (autoSupersessionPlan?.kind === "link" && autoSupersessionPlan.oldEntryId) {
-        const superseded = await targetDb.supersedeEntry(autoSupersessionPlan.oldEntryId, entryId, "update");
+        const superseded = await targetDb.supersedeDurable(autoSupersessionPlan.oldEntryId, entryId, "update");
         if (!superseded) {
           onWarning?.(
             `Stored entry ${entryId} with claim_key "${preparedEntry.input.claim_key}" but could not auto-supersede ${autoSupersessionPlan.oldEntryId} because the target was missing or inactive.`,
@@ -278,7 +278,7 @@ async function persistEntries(
 }
 
 /** Builds the canonical stored entry record for persistence. */
-function buildEntry(preparedEntry: PreparedEntry, embedding: number[]): Entry {
+function buildEntry(preparedEntry: PreparedEntry, embedding: number[]): Durable {
   const now = new Date().toISOString();
   const acceptedClaimKey = preparedEntry.claimKey;
 
@@ -318,7 +318,7 @@ function buildEntry(preparedEntry: PreparedEntry, embedding: number[]): Entry {
 }
 
 /** Attempts best-effort claim-key extraction for pending entries before embedding. */
-async function maybeExtractClaimKeys(preparedEntries: PreparedEntry[], options: StoreEntriesOptions): Promise<Map<number, ClaimExtractionResult>> {
+async function maybeExtractClaimKeys(preparedEntries: PreparedEntry[], options: StoreDurablesOptions): Promise<Map<number, ClaimExtractionResult>> {
   const claimExtraction = options.claimExtraction;
   if (!claimExtraction || preparedEntries.length === 0) {
     return new Map();
@@ -401,7 +401,7 @@ async function planAutoSupersession(
 ): Promise<Map<number, AutoSupersessionPlan>> {
   const plans = new Map<number, AutoSupersessionPlan>();
   const preparedEntriesByClaimKey = groupPreparedEntriesByClaimKey(preparedEntries);
-  const siblingCache = new Map<string, Entry[]>();
+  const siblingCache = new Map<string, Durable[]>();
 
   for (const preparedEntry of preparedEntries) {
     const claimKey = preparedEntry.claimKey?.claim_key ?? preparedEntry.input.claim_key;
@@ -484,13 +484,13 @@ function groupPreparedEntriesByClaimKey(preparedEntries: PreparedEntry[]): Map<s
 }
 
 /** Loads active same-claim-key siblings once per canonical key. */
-async function getClaimKeySiblings(db: DatabasePort, cache: Map<string, Entry[]>, claimKey: string): Promise<Entry[]> {
+async function getClaimKeySiblings(db: DatabasePort, cache: Map<string, Durable[]>, claimKey: string): Promise<Durable[]> {
   const cached = cache.get(claimKey);
   if (cached) {
     return cached;
   }
 
-  const siblings = await db.findActiveEntriesByClaimKey(claimKey);
+  const siblings = await db.findActiveDurablesByClaimKey(claimKey);
   cache.set(claimKey, siblings);
   return siblings;
 }
@@ -542,7 +542,7 @@ function buildAutoSupersessionEligibilityWarning(preparedEntry: PreparedEntry): 
 /** Explains why a same-claim-key sibling failed the conservative type-policy checks. */
 function buildAutoSupersessionRuleWarning(
   preparedEntry: PreparedEntry,
-  sibling: Pick<Entry, "type" | "expiry">,
+  sibling: Pick<Durable, "type" | "expiry">,
   reason: SupersessionRuleFailureReason,
 ): string {
   if (reason === "type_mismatch") {
@@ -560,7 +560,7 @@ function buildAutoSupersessionRuleWarning(
 
 /** Validates inputs and filters out entries that should not reach persistence. */
 async function buildStorePlan(
-  inputs: StoreEntryInput[],
+  inputs: StoreDurableInput[],
   db: DatabasePort,
 ): Promise<{
   pendingEntries: PreparedEntry[];
@@ -665,7 +665,7 @@ function sortStoreDetails(details: StoreEntryDetail[]): StoreEntryDetail[] {
 }
 
 /** Builds accepted manual claim-key metadata from raw caller input plus the normalized canonical key. */
-function buildManualAcceptedClaimKey(rawInput: StoreEntryInput | undefined, normalizedInput: StoreEntryInput): ResolvedClaimKeyLifecycle | undefined {
+function buildManualAcceptedClaimKey(rawInput: StoreDurableInput | undefined, normalizedInput: StoreDurableInput): ResolvedClaimKeyLifecycle | undefined {
   const canonicalClaimKey = normalizedInput.claim_key;
   if (!canonicalClaimKey) {
     return undefined;

@@ -1,5 +1,5 @@
 import type { DatabasePort, LlmPort } from "../ports.js";
-import type { EntryType, StoreEntryInput } from "../types.js";
+import type { DurableKind, StoreDurableInput } from "../types.js";
 import { applyClaimKeyLifecycle, buildExtractedClaimKeyLifecycle, buildInferredIngestClaimKeySupportContext } from "../claim-key-lifecycle.js";
 import { detectClaimKeySingletonAliasCandidatesFromStats, type ClaimKeyEntityPrefixStats } from "../claim-key-entity-family.js";
 import {
@@ -92,7 +92,7 @@ interface ClaimExtractionHintState {
 
 /** Immutable request bundle for one ordered batch extraction attempt. */
 interface ClaimExtractionStageRequest {
-  entry: StoreEntryInput;
+  entry: StoreDurableInput;
   hintSnapshot: {
     hints: ClaimExtractionHints;
     supportClaimKeys: string[];
@@ -102,7 +102,7 @@ interface ClaimExtractionStageRequest {
 
 /** Completed decision paired back to the source entry. */
 interface ClaimExtractionStageDecision {
-  entry: StoreEntryInput;
+  entry: StoreDurableInput;
   decision: ClaimExtractionDecision;
 }
 
@@ -128,7 +128,7 @@ interface ClaimExtractionAttempt {
 export interface ClaimExtractionConfig {
   enabled: boolean;
   confidenceThreshold: number;
-  eligibleTypes: EntryType[];
+  eligibleTypes: DurableKind[];
   /** Maximum preview workers used by cleanup flows that parallelize claim extraction. Defaults to `10`. */
   concurrency?: number;
 }
@@ -234,7 +234,7 @@ export interface ClaimExtractionDecision {
 }
 
 /** Applies extracted lifecycle metadata directly onto a store input for callers that precompute claim extraction before store. */
-export function applyClaimExtractionResultToEntry(entry: StoreEntryInput, extracted: ClaimExtractionResult): void {
+export function applyClaimExtractionResultToEntry(entry: StoreDurableInput, extracted: ClaimExtractionResult): void {
   const lifecycle = buildExtractedClaimKeyLifecycle(extracted, buildInferredIngestClaimKeySupportContext(entry));
   if (!lifecycle) {
     return;
@@ -256,7 +256,7 @@ export function applyClaimExtractionResultToEntry(entry: StoreEntryInput, extrac
  * @returns Best validated claim metadata, or `null` when no safe suggestion exists.
  */
 export async function previewClaimKeyExtraction(
-  entry: { type: EntryType; subject: string; content: string },
+  entry: { type: DurableKind; subject: string; content: string },
   llm: LlmPort,
   config: ClaimExtractionConfig,
   options: {
@@ -326,7 +326,7 @@ export async function previewClaimKeyExtraction(
  * @returns Extracted claim metadata, or `null` when no safe claim key was found.
  */
 export async function extractClaimKey(
-  entry: { type: EntryType; subject: string; content: string },
+  entry: { type: DurableKind; subject: string; content: string },
   llm: LlmPort,
   config: ClaimExtractionConfig,
   options: {
@@ -350,7 +350,7 @@ export async function extractClaimKey(
  * @returns Accepted claim key plus structured diagnostics for unresolved outcomes.
  */
 export async function extractClaimKeyDecision(
-  entry: { type: EntryType; subject: string; content: string; tags?: string[]; source_context?: string },
+  entry: { type: DurableKind; subject: string; content: string; tags?: string[]; source_context?: string },
   llm: LlmPort,
   config: ClaimExtractionConfig,
   options: {
@@ -563,7 +563,7 @@ export async function getEntityHints(db: DatabasePort): Promise<string[]> {
  * @param onDiagnostic - Optional sink for structured per-entry routing diagnostics.
  */
 export async function runBatchClaimExtraction(
-  results: Array<{ entries: StoreEntryInput[] }>,
+  results: Array<{ entries: StoreDurableInput[] }>,
   ports: {
     createLlm: () => LlmPort;
     db: DatabasePort;
@@ -571,18 +571,18 @@ export async function runBatchClaimExtraction(
   config: ClaimExtractionConfig,
   concurrency = 10,
   onWarning?: (warning: string) => void,
-  onDiagnostic?: (entry: StoreEntryInput, diagnostic: ClaimExtractionDiagnostic) => void,
+  onDiagnostic?: (entry: StoreDurableInput, diagnostic: ClaimExtractionDiagnostic) => void,
   onProgress?: (event: ClaimExtractionProgressEvent) => void,
-): Promise<Map<StoreEntryInput, ClaimExtractionResult>> {
+): Promise<Map<StoreDurableInput, ClaimExtractionResult>> {
   if (!config.enabled) {
     return new Map();
   }
 
   const hintState = await loadClaimExtractionHintState(ports.db);
   const llm = ports.createLlm();
-  const extractedEntries = new Map<StoreEntryInput, ClaimExtractionResult>();
-  const diagnostics = new Map<StoreEntryInput, ClaimExtractionDiagnostic>();
-  const retryEntries: StoreEntryInput[] = [];
+  const extractedEntries = new Map<StoreDurableInput, ClaimExtractionResult>();
+  const diagnostics = new Map<StoreDurableInput, ClaimExtractionDiagnostic>();
+  const retryEntries: StoreDurableInput[] = [];
   const stageSize = normalizeClaimExtractionConcurrency(concurrency);
   const orderedEntries = results.flatMap((result) => result.entries);
   const totalEligibleEntries = orderedEntries.filter((entry) => !entry.claim_key && config.eligibleTypes.includes(entry.type)).length;
@@ -764,7 +764,7 @@ function normalizeClaimExtractionConcurrency(value: number): number {
  */
 function buildClaimExtractionHintSnapshot(
   hintState: ClaimExtractionHintState,
-  entry: StoreEntryInput,
+  entry: StoreDurableInput,
 ): {
   hints: ClaimExtractionHints;
   supportClaimKeys: string[];
@@ -790,7 +790,7 @@ function buildClaimExtractionHintSnapshot(
  * @returns Structured claim-extraction decision for the entry.
  */
 async function extractBatchClaimKeyDecision(
-  entry: StoreEntryInput,
+  entry: StoreDurableInput,
   llm: LlmPort,
   config: ClaimExtractionConfig,
   hintSnapshot: {
@@ -935,7 +935,7 @@ function buildClaimExtractionSystemPrompt(hints: NormalizedClaimExtractionHints,
  * @param entry - Candidate entry content to classify.
  * @returns User-visible extraction payload.
  */
-function buildClaimExtractionUserPrompt(entry: { type: EntryType; subject: string; content: string }): string {
+function buildClaimExtractionUserPrompt(entry: { type: DurableKind; subject: string; content: string }): string {
   return [`Entry type: ${entry.type}`, `Subject: ${entry.subject}`, `Content: ${entry.content}`].join("\n");
 }
 
@@ -948,7 +948,7 @@ function buildClaimExtractionUserPrompt(entry: { type: EntryType; subject: strin
  * @returns Successful model output plus the path that produced it.
  */
 async function attemptClaimExtraction(
-  entry: { type: EntryType; subject: string; content: string },
+  entry: { type: DurableKind; subject: string; content: string },
   hints: NormalizedClaimExtractionHints,
   llm: LlmPort,
 ): Promise<ClaimExtractionAttempt> {
@@ -1161,7 +1161,7 @@ function summarizeAugmentedEntityPrefixStats(entityPrefixStats: ClaimKeyEntityPr
       manualEntryCount: 0,
       modelEntryCount: 0,
       jsonRetryEntryCount: 0,
-      surgeonFamilyReuseEntryCount: 0,
+      dreamingFamilyReuseDurableCount: 0,
     },
   ];
 }
@@ -1347,7 +1347,7 @@ function createHintState(input: {
  */
 function buildEntryHints(
   state: ClaimExtractionHintState,
-  entry: Pick<StoreEntryInput, "project" | "user_id" | "tags" | "source_context">,
+  entry: Pick<StoreDurableInput, "project" | "user_id" | "tags" | "source_context">,
 ): ClaimExtractionHints {
   return {
     entityHints: [...state.entityHints],

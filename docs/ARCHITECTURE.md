@@ -6,13 +6,13 @@ This document describes the architecture that is implemented in the repository t
 
 agenr is a local-first memory system for agent runtimes. The current codebase centers on seven connected capabilities:
 
-1. durable knowledge storage in `entries`
+1. durable knowledge storage in `durables`
 2. episodic session summaries in `episodes`
 3. repo-authored procedural memory synced into `procedures`
-4. hybrid entry recall plus time-aware episode recall
+4. hybrid durable recall plus time-aware episode recall
 5. a unified recall router for agent-facing host integrations
 6. live OpenClaw and Skeln host integrations for prompt injection, continuity or working memory, and memory tools
-7. maintenance and repair workflows through surgeon
+7. maintenance and repair workflows through dreaming
 
 SQLite or libSQL is the system of record. LLMs and embeddings support extraction, summarization, ranking, and repair, but durable state lives in the database.
 
@@ -32,7 +32,7 @@ src/
 │   ├── procedures/
 │   ├── recall/
 │   ├── episode/
-│   └── surgeon/
+│   └── dreaming/
 ├── app/
 │   ├── ingestion/
 │   ├── episode-ingest/
@@ -43,7 +43,7 @@ src/
 │   ├── plugin-runtime/
 │   ├── openclaw/
 │   ├── skeln/
-│   ├── surgeon/
+│   ├── dreaming/
 │   ├── evals/recall/
 │   └── scenarios/claim-keys/
 ├── adapters/
@@ -53,7 +53,6 @@ src/
 │   ├── files/
 │   ├── openclaw/
 │   ├── skeln/
-│   ├── surgeon/
 │   ├── embeddings.ts
 │   └── llm.ts
 ├── cli/
@@ -79,8 +78,8 @@ tests/
 
 Important points about the current tree:
 
-- `src/core/` contains the main domain model, claim-key lifecycle logic, procedure normalization and hashing, entry recall, episode search, ingest parsing, and pure port interfaces.
-- `src/app/` owns orchestration for durable ingest, episode ingest, procedure sync, unified recall, session-start patch selection, surgeon execution, shared host plugin memory composition (`plugin-runtime/`), OpenClaw and Skeln runtime composition, the narrow recall-eval seam, and the repo-local claim-key scenario harness.
+- `src/core/` contains the main domain model, claim-key lifecycle logic, procedure normalization and hashing, durable recall, episode search, ingest parsing, and pure port interfaces.
+- `src/app/` owns orchestration for durable ingest, episode ingest, procedure sync, unified recall, session-start patch selection, dreaming execution, shared host plugin memory composition (`plugin-runtime/`), OpenClaw and Skeln runtime composition, the narrow recall-eval seam, and the repo-local claim-key scenario harness.
 - `src/adapters/` implements libSQL persistence, transcript and procedure-file discovery, config parsing, external model clients, OpenClaw host translation, and the internal HTTP adapter.
 - `src/config.ts`, `src/logger.ts`, `src/ui.ts`, and `src/version.ts` are shared runtime infrastructure, not domain logic.
 - `packages/openclaw-plugin/` owns the publishable OpenClaw plugin bundle and its OpenClaw SDK runtime dependency. The root `agenr` package does not publish the OpenClaw plugin entry.
@@ -104,9 +103,9 @@ That shape is materially true in the current codebase.
 - store-time validation, hashing, claim extraction support, and embedding text construction
 - transcript extraction, chunking, parsing, dedup, and claim-key preservation logic
 - procedure validation, normalization, deterministic recall-text generation, and revision hashing
-- hybrid entry recall ranking and temporal helpers
+- hybrid durable recall ranking and temporal helpers
 - episode search, temporal window parsing, transcript rendering, and summary generation helpers
-- surgeon domain types, pass types, protection rules, and run presets
+- dreaming domain types, run tiers, reconcile summaries, and proposal types
 
 Core is infrastructure-agnostic. It still depends on ports for embeddings, LLM calls, transcript parsing, and persistence where the product requires those capabilities.
 
@@ -120,7 +119,7 @@ Core is infrastructure-agnostic. It still depends on ports for embeddings, LLM c
 - unified routing between entry and episode recall
 - host-neutral session-start patch selection from predecessor artifacts plus durable memory
 - shared OpenClaw runtime service composition
-- surgeon run execution, budgets, prompts, progress, and completion guards
+- dreaming run execution, scan/reconcile/apply orchestration, and progress reporting
 - internal recall-eval execution
 - deterministic claim-key scenario runtimes and sandboxing
 
@@ -134,9 +133,7 @@ Core is infrastructure-agnostic. It still depends on ports for embeddings, LLM c
 - `embeddings.ts` and `llm.ts` resolve external model providers for the CLI and generic runtimes
 - `openclaw/` translates host hooks, session state, transcript parsing, formatting, memory runtime hooks, and agent tools
 - `api/` exposes the single internal recall-eval HTTP route
-- `surgeon/` contains adapter-facing prompt and tool surfaces that sit on top of app-layer surgeon logic
-
-In practice, the database adapter remains an architectural center of gravity. A large amount of system behavior is encoded in schema management, row mapping, and query helpers.
+  In practice, the database adapter remains an architectural center of gravity. A large amount of system behavior is encoded in schema management, row mapping, and query helpers.
 
 ## 4. Runtime entry points
 
@@ -151,11 +148,11 @@ The CLI currently exposes:
 
 - `agenr init`
 - `agenr setup`
-- `agenr ingest entries <path>` with `agenr ingest <path>` as the default durable-ingest form
+- `agenr ingest durables <path>` with `agenr ingest <path>` as the default durable-ingest form
 - `agenr ingest episodes [path]`
 - `agenr ingest procedures [path]`
 - `agenr recall <query>`
-- `agenr surgeon run|status|history|backlog|actions|proposals|review`
+- `agenr dream run|status|history`
 - `agenr trace`
 - `agenr scenarios list|run`
 - `agenr db reset`
@@ -166,13 +163,13 @@ The OpenClaw adapter also exposes a deliberately narrow `memoryPolicy.slotPolici
 
 ## 5. Domain model
 
-### 5.1 Entries
+### 5.1 Durable memory
 
-Durable knowledge rows are modeled by `Entry` in `src/core/types.ts`.
+Durable knowledge rows are modeled by `Durable` in `src/core/types.ts`.
 
-Current entry characteristics:
+Current durable characteristics:
 
-- supported entry types: `fact`, `decision`, `preference`, `lesson`, `relationship`, `milestone`
+- supported durable types: `fact`, `decision`, `preference`, `lesson`, `relationship`, `milestone`
 - supported expiry levels: `core`, `permanent`, `temporary`
 - lifecycle fields for retirement and explicit supersession
 - temporal validity via `valid_from` and `valid_to`
@@ -192,7 +189,7 @@ The implemented claim-key model includes:
 - canonical `claim_key`
 - preserved `claim_key_raw`
 - status: `trusted`, `tentative`, `unresolved`
-- source: `manual`, `model`, `json_retry`, `deterministic_repair`, `surgeon_metadata_rewrite`, `surgeon_family_reuse`, `surgeon_compaction`
+- source: `manual`, `model`, `json_retry`, `deterministic_repair`, `dreaming_reconcile`
 - support provenance fields for where the claim came from and how it was inferred
 
 ### 5.2 Episodes
@@ -205,7 +202,7 @@ Current episode characteristics:
 - activity levels: `substantial`, `minimal`, `none`
 - stable identity prefers `(source, sourceId)` and falls back to `(source, transcriptHash)`
 - episodes store summary text, tags, activity level, timing, optional embeddings, and lifecycle state
-- episodic retrieval is distinct from durable entry recall
+- episodic retrieval is distinct from durable durable recall
 
 ### 5.3 Procedures
 
@@ -214,25 +211,26 @@ Procedural-memory revisions are modeled by `Procedure` in `src/core/types.ts`.
 Current procedure characteristics:
 
 - repo-authored YAML is the source of truth and normalized JSON is the stored runtime form
-- procedures live in their own `procedures` table and are not another `EntryType`
+- procedures live in their own `procedures` table and are not another `DurableKind`
 - current write behavior supports create, source-only update, semantic supersession, unchanged, and invalid planning outcomes
 - procedures store deterministic `recall_text`, `revision_hash`, `source_hash`, optional embeddings, and lifecycle state
 - the current public sync surface is `agenr ingest procedures [path]`
 - dedicated procedure recall runs through `src/app/procedures/recall/`
 - unified recall can route procedural asks into procedures and return a canonical procedure with supporting entries and episodes
 
-### 5.4 Surgeon runs and proposals
+### 5.4 Dreaming runs and proposals
 
-Surgeon state is persisted in:
+Dreaming state is persisted in:
 
-- `surgeon_runs`
-- `surgeon_run_actions`
-- `surgeon_run_proposals`
+- `dream_runs`
+- `dream_run_actions`
+- `dream_proposals`
+- `dream_state`
+- `profile_snapshots`
 
 This subsystem records:
 
-- pass or preset execution
-- token and cost accounting
+- tiered run execution
 - dry-run versus apply mode
 - action audit trails
 - unresolved structural proposals for later inspection
@@ -248,48 +246,50 @@ The storage adapter lives in `src/adapters/db/`.
 The adapter is responsible for:
 
 - schema initialization
-- durable entry CRUD and ingest log writes
+- durable CRUD and ingest log writes
 - episode upsert and embedding backfill writes
 - procedure upsert, active-key lookup, lexical/vector lookup, embedding backfill, and lifecycle writes
 - working-memory and session-memory repository writes for host adapters
 - recall queries
-- surgeon persistence and reporting support
+- dreaming persistence and reporting support
 - transaction-scoped execution where the backend supports it
 
 ### 6.2 Schema
 
-The current logical schema version is `12`.
+The current logical schema version is `1`.
 
 Key tables:
 
-- `entries`
-- `entries_fts`
+- `durables`
+- `durables_fts`
 - `episodes`
 - `procedures`
 - `procedures_fts`
 - `ingest_log`
 - `recall_events`
-- `surgeon_runs`
-- `surgeon_run_actions`
-- `surgeon_run_proposals`
+- `dream_runs`
+- `dream_run_actions`
+- `dream_proposals`
+- `dream_state`
+- `profile_snapshots`
 - `working_sets`
 - `working_events`
 - `session_lineage_edges`
 - `session_artifacts`
 - `_meta`
 
-The `entries` table now carries claim-key lifecycle fields, validity windows, supersession metadata, quality and recall tracking, project and user scoping, and retirement state. The `episodes` table carries source identity, transcript and summary hashes, timing, summary metadata, embeddings, and lifecycle state. The `procedures` table carries canonical normalized body JSON, deterministic recall text, authored-source and revision hashes, optional embeddings, and lifecycle state. The working-memory tables store scoped active-task snapshots, ordered working events, checkpoint mirrors, budget counters, continuation policy, and host runtime lease metadata. The session-memory tables store host-neutral lineage edges and bounded session artifacts such as continuity summaries, recent-session tails, compaction checkpoints, branch-abandonment summaries, and episode pointers.
+The `durables` table carries claim-key lifecycle fields, validity windows, supersession metadata, quality and recall tracking, project and user scoping, and retirement state. The `episodes` table carries source identity, transcript and summary hashes, timing, summary metadata, embeddings, and lifecycle state. The `procedures` table carries canonical normalized body JSON, deterministic recall text, authored-source and revision hashes, optional embeddings, and lifecycle state. The working-memory tables store scoped active-task snapshots, ordered working events, checkpoint mirrors, budget counters, continuation policy, and host runtime lease metadata. The session-memory tables store host-neutral lineage edges and bounded session artifacts such as continuity summaries, recent-session tails, compaction checkpoints, branch-abandonment summaries, and episode pointers.
 
 ### 6.3 Search and indexing
 
 Current indexing behavior:
 
-- active entries participate in FTS5 through `entries_fts`
+- active durables participate in FTS5 through `durables_fts`
 - active procedures participate in FTS5 through `procedures_fts`
-- retired or superseded entries are excluded from active FTS triggers
+- retired or superseded durables are excluded from active FTS triggers
 - retired or superseded procedures are excluded from active FTS triggers
-- entries, episodes, and procedures all store embeddings as `F32_BLOB(1024)`
-- libSQL vector indexes are created for entries, episodes, and procedures when vector support is available
+- durables, episodes, and procedures all store embeddings as `F32_BLOB(1024)`
+- libSQL vector indexes are created for durables, episodes, and procedures when vector support is available
 - the code tolerates missing vector support and degrades gracefully
 
 Episodes do not currently use FTS. Episode retrieval is time-window and vector based.
@@ -298,7 +298,7 @@ Episodes do not currently use FTS. Episode retrieval is time-window and vector b
 
 `src/adapters/db/schema.ts` owns more than table creation. It also manages:
 
-- migrations up to schema version `12`
+- greenfield schema initialization at version `1` with no legacy migration path
 - FTS trigger creation and rebuilds
 - vector index creation and feature probing
 - interrupted bulk-write recovery via `_meta`
@@ -348,9 +348,9 @@ Important implementation details:
 
 The store pipeline is not a thin insert helper. It is one of the core product workflows.
 
-### 7.2 Entry recall
+### 7.2 Durable recall
 
-The entry recall engine is implemented across:
+The durable recall engine is implemented across:
 
 - `src/core/recall/search.ts`
 - `src/core/recall/scoring.ts`
@@ -440,7 +440,7 @@ Current behavior:
 - semantic-only retrieval
 - hybrid temporal plus semantic retrieval
 
-Compared with entry recall, episode recall is more time-oriented. It parses richer date and calendar expressions and scores temporal overlap or proximity ahead of weak recency tie-breakers.
+Compared with durable recall, episode recall is more time-oriented. It parses richer date and calendar expressions and scores temporal overlap or proximity ahead of weak recency tie-breakers.
 
 ### 7.6 OpenClaw runtime
 
@@ -509,42 +509,32 @@ Implemented behaviors include:
 
 Skeln deliberately omits OpenClaw-only surfaces such as `agenr_retire`, `agenr_trace`, predecessor continuity summaries, background predecessor episode ingest, and mid-session store nudges. See [`docs/SKELN-PLUGIN.md`](./SKELN-PLUGIN.md) for the full adapter map.
 
-### 7.8 Surgeon
+### 7.8 Dreaming
 
-The surgeon subsystem spans:
+The dreaming subsystem spans:
 
-- `src/app/surgeon/*`
-- `src/core/surgeon/*`
-- `src/adapters/db/surgeon-port.ts`
-- `src/adapters/db/surgeon-run-log.ts`
-- `src/adapters/db/surgeon-queries.ts`
+- `src/core/dreaming/*`
+- `src/app/dreaming/*`
+- `src/adapters/db/dreaming-port.ts`
+- `src/adapters/db/dreaming-run-log.ts`
+- `src/adapters/db/schema/dreaming.ts`
 
-Implemented passes:
+Milestone 1 implements a pipeline-first skeleton:
 
-- `claim_key_quality`
-- `proposal_resolution`
-- `supersession`
-- `retirement`
+- `scan` loads active durables and claim-key counters for the requested scope
+- `reconcile` runs deterministic claim-key quality maintenance
+- `apply` persists accepted mutations when `--apply` is set
 
-The execution model is mixed:
-
-- `claim_key_quality` is deterministic app logic
-- `proposal_resolution` is deterministic app logic that applies already-eligible claim-key proposals
-- `supersession` and `retirement` run through `pi-agent-core` loops with tool sets
-
-The active prompt and tool surfaces live in `src/app/surgeon/`. The repo no longer keeps a separate production `src/adapters/surgeon/` compatibility layer.
+Later milestones add extract, temporalize, projection, directives, prune, and host triggers.
 
 Runtime safeguards include:
 
 - dry-run by default
-- per-run and daily cost caps
-- context-limit controls
-- entry protection thresholds
-- optional recall simulation when embeddings are configured
-- completion guards
-- pre-apply database backups when possible
+- explicit `--apply` mutation gate
+- tier selection (`light`, `standard`, `deep`)
+- run history and action audit trails
 
-This is closer to a maintenance platform than a single cleanup script.
+See [`docs/DREAMING.md`](./DREAMING.md) for the evolving stage map.
 
 ### 7.9 Claim-key scenario harness
 
@@ -556,7 +546,7 @@ This harness:
 - validates scenario roots, typed inputs, and expectation blocks before execution
 - loads transcript, extraction, claim-extraction, and seed fixtures through dedicated fixture-loader helpers
 - creates isolated sandboxes
-- runs ingest, store, or surgeon paths
+- runs ingest, store, or dreaming paths
 - captures resulting rows, proposals, warnings, and summaries
 - writes artifacts under `.hermes/scenario-artifacts/<runId>/`
 
@@ -593,7 +583,7 @@ Feature-scoped seams also matter:
 - `MemoryRepository` in `src/app/memory/ports.ts`
 - `SessionStartRepository` in `src/app/session-start/ports.ts`
 - before-turn dependency bundle in `src/app/before-turn/ports.ts`
-- surgeon runtime and persistence ports in `src/app/surgeon/ports.ts`
+- dreaming runtime and persistence ports in `src/app/dreaming/ports.ts`
 - episode-ingest support ports in `src/app/episode-ingest/ports.ts`
 
 Configuration is another important seam:
@@ -609,7 +599,7 @@ The parts of the architecture with the most real complexity are:
 
 ### 9.1 Claim-key lifecycle
 
-This cuts across ingest, direct updates, recall, supersession, surgeon, and scenario coverage. If you want to understand why an entry is trusted, tentative, linked, or superseded, start here.
+This cuts across ingest, direct updates, recall, supersession, dreaming, and scenario coverage. If you want to understand why a durable is trusted, tentative, linked, or superseded, start here.
 
 ### 9.2 Database schema and query layer
 
@@ -623,9 +613,9 @@ The `before_prompt_build` path combines session tracking, predecessor lookup, co
 
 There are separate entry and episode recall engines, with a unified router on top and historical-state expansion beneath the entry side.
 
-### 9.5 Surgeon
+### 9.5 Dreaming
 
-Surgeon mixes deterministic structural maintenance, agentic tool loops, persistence, budgets, and safety controls.
+Dreaming mixes deterministic reconcile passes, later LLM extraction stages, persistence, budgets, and safety controls.
 
 ## 10. Suggested reading order
 
@@ -644,7 +634,7 @@ If you need to build context quickly, start with:
 - `src/adapters/openclaw/hooks/before-prompt-build.ts`
 - `src/app/skeln/runtime.ts`
 - `src/adapters/skeln/hooks/before-agent-start.ts`
-- `src/app/surgeon/service.ts`
+- `src/app/dreaming/service.ts`
 - `src/app/scenarios/claim-keys/runtime.ts`
 
 Those files reflect the implemented architecture more accurately than older planning documents.

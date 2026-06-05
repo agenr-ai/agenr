@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { mapEntryRow } from "../../../src/adapters/db/row-mapping.js";
+import { mapDurableRow } from "../../../src/adapters/db/row-mapping.js";
 
-describe("mapEntryRow", () => {
+describe("mapDurableRow", () => {
   it("rejects invalid lifecycle enum values from database rows", () => {
     expect(() =>
-      mapEntryRow({
+      mapDurableRow({
         id: "entry-1",
         type: "fact",
         subject: "Jim timezone",

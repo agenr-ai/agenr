@@ -3,15 +3,22 @@ import { mkdtemp, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createDatabase } from "../../../../src/adapters/db/client.js";
 import { createInternalRecallEvalRoute, type RecallEvalCaseRunner } from "../../../../src/adapters/api/routes/internal-recall-eval.js";
 import { composeEmbeddingText } from "../../../../src/core/store/embedding-text.js";
-import type { Entry } from "../../../../src/core/types.js";
+import type { Durable } from "../../../../src/core/types.js";
+import { useIsolatedAgenrConfig } from "../../../helpers/isolated-config.js";
 import { removeTestPath, waitForDatabaseRelease } from "../../../helpers/temp-paths.js";
 
 const tempPaths: string[] = [];
+
+beforeEach(async () => {
+  const configRoot = await mkdtemp(path.join(os.tmpdir(), "agenr-eval-config-"));
+  tempPaths.push(configRoot);
+  await useIsolatedAgenrConfig(configRoot);
+});
 
 afterEach(async () => {
   vi.unstubAllGlobals();
@@ -561,17 +568,17 @@ async function createTempDirectory(prefix: string): Promise<string> {
 }
 
 /** Seeds a live database entry that should never affect isolated eval execution. */
-async function seedLiveEntry(databasePath: string, entry: Entry): Promise<void> {
+async function seedLiveEntry(databasePath: string, entry: Durable): Promise<void> {
   const database = await createDatabase(databasePath);
   try {
-    await database.insertEntry(entry, hashToVector(composeEmbeddingText(entry), 1024), hashText(entry.content));
+    await database.insertDurable(entry, hashToVector(composeEmbeddingText(entry), 1024), hashText(entry.content));
   } finally {
     await database.close();
   }
 }
 
 /** Creates a canonical entry used for live-state isolation tests. */
-function createEntry(overrides: Partial<Entry>): Entry {
+function createEntry(overrides: Partial<Durable>): Durable {
   const createdAt = overrides.created_at ?? "2026-03-01T00:00:00.000Z";
 
   return {

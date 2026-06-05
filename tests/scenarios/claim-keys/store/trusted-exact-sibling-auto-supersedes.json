@@ -28,7 +28,7 @@
     ]
   },
   "input": {
-    "entries": [
+    "durables": [
       {
         "type": "fact",
         "subject": "Jim timezone",
@@ -64,8 +64,8 @@
       }
     ],
     "rowCount": {
-      "entries": 2,
-      "activeEntries": 1,
+      "durables": 2,
+      "activeDurables": 1,
       "entriesWithClaimKey": 2
     },
     "storeResult": {

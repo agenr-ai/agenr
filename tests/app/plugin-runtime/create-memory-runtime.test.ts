@@ -21,7 +21,8 @@ describe("createPluginMemoryRuntime", () => {
       embeddingModel: "text-embedding-fallback",
     });
 
-    const fetchMock = vi.fn(async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      void init;
       return new Response(
         JSON.stringify({
           data: [{ index: 0, embedding: [7, 8, 9] }],

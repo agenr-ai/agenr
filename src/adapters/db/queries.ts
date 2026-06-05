@@ -5,8 +5,8 @@ import type { InArgs, InStatement, ResultSet } from "@libsql/client";
 import { validateDirectClaimKeyLifecycleUpdate } from "../../core/claim-key-lifecycle.js";
 import type { ClaimKeyEntityPrefixStats } from "../../core/claim-key-entity-family.js";
 import { validateTemporalValidityRange } from "../../core/temporal-validity.js";
-import type { Entry, EntryUpdateInput } from "../../core/types.js";
-import { ACTIVE_ENTRY_CLAUSE, ENTRY_SELECT_COLUMNS, mapEntryRow, readRequiredString, serializeEmbeddingForVector, serializeTags } from "./row-mapping.js";
+import type { Durable, DurableUpdateInput } from "../../core/types.js";
+import { ACTIVE_DURABLE_CLAUSE, DURABLE_SELECT_COLUMNS, mapDurableRow, readRequiredString, serializeEmbeddingForVector, serializeTags } from "./row-mapping.js";
 
 const LOOKUP_CHUNK_SIZE = 100;
 const DEFAULT_QUALITY_SCORE = 0.5;
@@ -42,7 +42,7 @@ export interface SqlExecutor {
  * @param contentHash - Stable content hash for dedup checks.
  * @returns Persisted entry ID.
  */
-export async function insertEntry(executor: SqlExecutor, entry: Entry, embedding: number[], contentHash: string): Promise<string> {
+export async function insertDurable(executor: SqlExecutor, entry: Durable, embedding: number[], contentHash: string): Promise<string> {
   const now = new Date().toISOString();
   const id = entry.id.trim().length > 0 ? entry.id.trim() : randomUUID();
   const createdAt = normalizeTimestamp(entry.created_at) ?? now;
@@ -50,7 +50,7 @@ export async function insertEntry(executor: SqlExecutor, entry: Entry, embedding
   const vectorJson = serializeEmbeddingForVector(embedding);
   await executor.execute({
     sql: `
-      INSERT INTO entries (
+      INSERT INTO durables (
         id,
         type,
         subject,
@@ -151,33 +151,33 @@ export async function insertEntry(executor: SqlExecutor, entry: Entry, embedding
  * @param ids - Entry IDs to resolve.
  * @returns Active entries for the requested IDs.
  */
-export async function getEntries(executor: SqlExecutor, ids: string[]): Promise<Entry[]> {
+export async function getDurables(executor: SqlExecutor, ids: string[]): Promise<Durable[]> {
   const normalizedIds = dedupeStrings(ids);
   if (normalizedIds.length === 0) {
     return [];
   }
 
-  const byId = new Map<string, Entry>();
+  const byId = new Map<string, Durable>();
   for (const chunk of chunkValues(normalizedIds, LOOKUP_CHUNK_SIZE)) {
     const placeholders = chunk.map(() => "?").join(", ");
     const result = await executor.execute({
       sql: `
         SELECT
-          ${ENTRY_SELECT_COLUMNS}
-        FROM entries
+          ${DURABLE_SELECT_COLUMNS}
+        FROM durables
         WHERE id IN (${placeholders})
-          AND ${ACTIVE_ENTRY_CLAUSE}
+          AND ${ACTIVE_DURABLE_CLAUSE}
       `,
       args: chunk,
     });
 
     for (const row of result.rows) {
-      const entry = mapEntryRow(row);
+      const entry = mapDurableRow(row);
       byId.set(entry.id, entry);
     }
   }
 
-  return ids.map((id) => byId.get(id.trim())).filter((entry): entry is Entry => entry !== undefined);
+  return ids.map((id) => byId.get(id.trim())).filter((entry): entry is Durable => entry !== undefined);
 }
 
 /**
@@ -187,8 +187,8 @@ export async function getEntries(executor: SqlExecutor, ids: string[]): Promise<
  * @param id - Entry ID to resolve.
  * @returns Active entry, or null when missing.
  */
-export async function getEntry(executor: SqlExecutor, id: string): Promise<Entry | null> {
-  const [entry] = await getEntries(executor, [id]);
+export async function getDurable(executor: SqlExecutor, id: string): Promise<Durable | null> {
+  const [entry] = await getDurables(executor, [id]);
   return entry ?? null;
 }
 
@@ -211,9 +211,9 @@ export async function findExistingHashes(executor: SqlExecutor, hashes: string[]
     const result = await executor.execute({
       sql: `
         SELECT DISTINCT content_hash
-        FROM entries
+        FROM durables
         WHERE content_hash IN (${placeholders})
-          AND ${ACTIVE_ENTRY_CLAUSE}
+          AND ${ACTIVE_DURABLE_CLAUSE}
       `,
       args: chunk,
     });
@@ -245,9 +245,9 @@ export async function findExistingNormHashes(executor: SqlExecutor, hashes: stri
     const result = await executor.execute({
       sql: `
         SELECT DISTINCT norm_content_hash
-        FROM entries
+        FROM durables
         WHERE norm_content_hash IN (${placeholders})
-          AND ${ACTIVE_ENTRY_CLAUSE}
+          AND ${ACTIVE_DURABLE_CLAUSE}
       `,
       args: chunk,
     });
@@ -268,17 +268,17 @@ export async function findExistingNormHashes(executor: SqlExecutor, hashes: stri
  * @param reason - Optional retirement reason.
  * @returns True when an active row was updated.
  */
-export async function retireEntry(executor: SqlExecutor, id: string, reason?: string): Promise<boolean> {
+export async function retireDurable(executor: SqlExecutor, id: string, reason?: string): Promise<boolean> {
   const now = new Date().toISOString();
   const result = await executor.execute({
     sql: `
-      UPDATE entries
+      UPDATE durables
       SET retired = 1,
           retired_at = ?,
           retired_reason = ?,
           updated_at = ?
       WHERE id = ?
-        AND ${ACTIVE_ENTRY_CLAUSE}
+        AND ${ACTIVE_DURABLE_CLAUSE}
     `,
     args: [now, normalizeOptionalString(reason), now, id],
   });
@@ -296,7 +296,7 @@ export async function retireEntry(executor: SqlExecutor, id: string, reason?: st
  * @param reason - Optional explanation recorded on the superseded entry.
  * @returns True when the target entry was active and updated.
  */
-export async function supersedeEntry(executor: SqlExecutor, oldId: string, newId: string, kind?: string, reason?: string): Promise<boolean> {
+export async function supersedeDurable(executor: SqlExecutor, oldId: string, newId: string, kind?: string, reason?: string): Promise<boolean> {
   const normalizedOldId = oldId.trim();
   const normalizedNewId = newId.trim();
   if (normalizedOldId.length === 0 || normalizedNewId.length === 0 || normalizedOldId === normalizedNewId) {
@@ -306,9 +306,9 @@ export async function supersedeEntry(executor: SqlExecutor, oldId: string, newId
   const existing = await executor.execute({
     sql: `
       SELECT id
-      FROM entries
+      FROM durables
       WHERE id = ?
-        AND ${ACTIVE_ENTRY_CLAUSE}
+        AND ${ACTIVE_DURABLE_CLAUSE}
       LIMIT 1
     `,
     args: [normalizedOldId],
@@ -321,13 +321,13 @@ export async function supersedeEntry(executor: SqlExecutor, oldId: string, newId
   const now = new Date().toISOString();
   const result = await executor.execute({
     sql: `
-      UPDATE entries
+      UPDATE durables
       SET superseded_by = ?,
           supersession_kind = ?,
           supersession_reason = ?,
           updated_at = ?
       WHERE id = ?
-        AND ${ACTIVE_ENTRY_CLAUSE}
+        AND ${ACTIVE_DURABLE_CLAUSE}
     `,
     args: [normalizedNewId, normalizeOptionalString(kind) ?? "update", normalizeOptionalString(reason), now, normalizedOldId],
   });
@@ -342,7 +342,7 @@ export async function supersedeEntry(executor: SqlExecutor, oldId: string, newId
  * @param claimKey - Canonical claim key to match.
  * @returns Active entries with the requested claim key.
  */
-export async function findActiveEntriesByClaimKey(executor: SqlExecutor, claimKey: string): Promise<Entry[]> {
+export async function findActiveDurablesByClaimKey(executor: SqlExecutor, claimKey: string): Promise<Durable[]> {
   const normalizedClaimKey = claimKey.trim();
   if (normalizedClaimKey.length === 0) {
     return [];
@@ -351,14 +351,14 @@ export async function findActiveEntriesByClaimKey(executor: SqlExecutor, claimKe
   const result = await executor.execute({
     sql: `
       SELECT *
-      FROM entries
+      FROM durables
       WHERE claim_key = ?
-        AND ${ACTIVE_ENTRY_CLAUSE}
+        AND ${ACTIVE_DURABLE_CLAUSE}
     `,
     args: [normalizedClaimKey],
   });
 
-  return result.rows.map((row) => mapEntryRow(row));
+  return result.rows.map((row) => mapDurableRow(row));
 }
 
 /**
@@ -371,10 +371,10 @@ export async function getDistinctClaimKeyPrefixes(executor: SqlExecutor): Promis
   const result = await executor.execute({
     sql: `
       SELECT DISTINCT lower(trim(substr(claim_key, 1, instr(claim_key, '/') - 1))) AS claim_key_prefix
-      FROM entries
+      FROM durables
       WHERE claim_key IS NOT NULL
         AND instr(claim_key, '/') > 1
-        AND ${ACTIVE_ENTRY_CLAUSE}
+        AND ${ACTIVE_DURABLE_CLAUSE}
       ORDER BY claim_key_prefix ASC
     `,
   });
@@ -397,9 +397,9 @@ export async function getClaimKeyExamples(executor: SqlExecutor, limit = 8): Pro
   const result = await executor.execute({
     sql: `
       SELECT claim_key
-      FROM entries
+      FROM durables
       WHERE claim_key IS NOT NULL
-        AND ${ACTIVE_ENTRY_CLAUSE}
+        AND ${ACTIVE_DURABLE_CLAUSE}
       GROUP BY claim_key
       ORDER BY COUNT(*) DESC, MAX(importance) DESC, MAX(created_at) DESC, claim_key ASC
       LIMIT ?
@@ -424,22 +424,22 @@ export async function getClaimKeyEntityPrefixStats(executor: SqlExecutor): Promi
     sql: `
       SELECT
         lower(trim(substr(claim_key, 1, instr(claim_key, '/') - 1))) AS claim_key_prefix,
-        COUNT(*) AS active_entry_count,
-        COALESCE(SUM(CASE WHEN claim_key_status = 'trusted' THEN 1 ELSE 0 END), 0) AS trusted_entry_count,
-        COALESCE(SUM(CASE WHEN claim_key_status = 'tentative' THEN 1 ELSE 0 END), 0) AS tentative_entry_count,
-        COALESCE(SUM(CASE WHEN claim_key_status = 'unresolved' THEN 1 ELSE 0 END), 0) AS unresolved_entry_count,
-        COALESCE(SUM(CASE WHEN claim_key_status IS NULL THEN 1 ELSE 0 END), 0) AS legacy_entry_count,
-        COALESCE(SUM(CASE WHEN claim_key_source = 'deterministic_repair' THEN 1 ELSE 0 END), 0) AS deterministic_repair_entry_count,
-        COALESCE(SUM(CASE WHEN claim_key_source = 'manual' THEN 1 ELSE 0 END), 0) AS manual_entry_count,
-        COALESCE(SUM(CASE WHEN claim_key_source = 'model' THEN 1 ELSE 0 END), 0) AS model_entry_count,
-        COALESCE(SUM(CASE WHEN claim_key_source = 'json_retry' THEN 1 ELSE 0 END), 0) AS json_retry_entry_count,
-        COALESCE(SUM(CASE WHEN claim_key_source = 'surgeon_family_reuse' THEN 1 ELSE 0 END), 0) AS surgeon_family_reuse_entry_count
-      FROM entries
+        COUNT(*) AS active_durable_count,
+        COALESCE(SUM(CASE WHEN claim_key_status = 'trusted' THEN 1 ELSE 0 END), 0) AS trusted_durable_count,
+        COALESCE(SUM(CASE WHEN claim_key_status = 'tentative' THEN 1 ELSE 0 END), 0) AS tentative_durable_count,
+        COALESCE(SUM(CASE WHEN claim_key_status = 'unresolved' THEN 1 ELSE 0 END), 0) AS unresolved_durable_count,
+        COALESCE(SUM(CASE WHEN claim_key_status IS NULL THEN 1 ELSE 0 END), 0) AS legacy_durable_count,
+        COALESCE(SUM(CASE WHEN claim_key_source = 'deterministic_repair' THEN 1 ELSE 0 END), 0) AS deterministic_repair_durable_count,
+        COALESCE(SUM(CASE WHEN claim_key_source = 'manual' THEN 1 ELSE 0 END), 0) AS manual_durable_count,
+        COALESCE(SUM(CASE WHEN claim_key_source = 'model' THEN 1 ELSE 0 END), 0) AS model_durable_count,
+        COALESCE(SUM(CASE WHEN claim_key_source = 'json_retry' THEN 1 ELSE 0 END), 0) AS json_retry_durable_count,
+        COALESCE(SUM(CASE WHEN claim_key_source = 'dreaming_reconcile' THEN 1 ELSE 0 END), 0) AS dreaming_reconcile_durable_count
+      FROM durables
       WHERE claim_key IS NOT NULL
         AND instr(claim_key, '/') > 1
-        AND ${ACTIVE_ENTRY_CLAUSE}
+        AND ${ACTIVE_DURABLE_CLAUSE}
       GROUP BY claim_key_prefix
-      ORDER BY active_entry_count DESC, trusted_entry_count DESC, claim_key_prefix ASC
+      ORDER BY active_durable_count DESC, trusted_durable_count DESC, claim_key_prefix ASC
     `,
   });
 
@@ -452,16 +452,16 @@ export async function getClaimKeyEntityPrefixStats(executor: SqlExecutor): Promi
     return [
       {
         entityPrefix,
-        activeEntryCount: coerceRowInteger(row.active_entry_count),
-        trustedEntryCount: coerceRowInteger(row.trusted_entry_count),
-        tentativeEntryCount: coerceRowInteger(row.tentative_entry_count),
-        unresolvedEntryCount: coerceRowInteger(row.unresolved_entry_count),
-        legacyEntryCount: coerceRowInteger(row.legacy_entry_count),
-        deterministicRepairEntryCount: coerceRowInteger(row.deterministic_repair_entry_count),
-        manualEntryCount: coerceRowInteger(row.manual_entry_count),
-        modelEntryCount: coerceRowInteger(row.model_entry_count),
-        jsonRetryEntryCount: coerceRowInteger(row.json_retry_entry_count),
-        surgeonFamilyReuseEntryCount: coerceRowInteger(row.surgeon_family_reuse_entry_count),
+        activeEntryCount: coerceRowInteger(row.active_durable_count),
+        trustedEntryCount: coerceRowInteger(row.trusted_durable_count),
+        tentativeEntryCount: coerceRowInteger(row.tentative_durable_count),
+        unresolvedEntryCount: coerceRowInteger(row.unresolved_durable_count),
+        legacyEntryCount: coerceRowInteger(row.legacy_durable_count),
+        deterministicRepairEntryCount: coerceRowInteger(row.deterministic_repair_durable_count),
+        manualEntryCount: coerceRowInteger(row.manual_durable_count),
+        modelEntryCount: coerceRowInteger(row.model_durable_count),
+        jsonRetryEntryCount: coerceRowInteger(row.json_retry_durable_count),
+        dreamingFamilyReuseDurableCount: coerceRowInteger(row.dreaming_reconcile_durable_count),
       } satisfies ClaimKeyEntityPrefixStats,
     ];
   });
@@ -475,10 +475,10 @@ export async function getClaimKeyEntityPrefixStats(executor: SqlExecutor): Promi
  * @param fields - Mutable fields supported by the port contract.
  * @returns True when an active row was updated.
  */
-export async function updateEntry(
+export async function updateDurable(
   executor: SqlExecutor,
   id: string,
-  fields: EntryUpdateInput,
+  fields: DurableUpdateInput,
   options?: {
     includeInactive?: boolean;
   },
@@ -562,10 +562,10 @@ export async function updateEntry(
 
   const result = await executor.execute({
     sql: `
-      UPDATE entries
+      UPDATE durables
       SET ${assignments.join(", ")}
       WHERE id = ?
-        AND ${options?.includeInactive === true ? "1 = 1" : ACTIVE_ENTRY_CLAUSE}
+        AND ${options?.includeInactive === true ? "1 = 1" : ACTIVE_DURABLE_CLAUSE}
     `,
     args,
   });
@@ -591,9 +591,9 @@ async function loadCurrentValidityBounds(
   const result = await executor.execute({
     sql: `
       SELECT valid_from, valid_to
-      FROM entries
+      FROM durables
       WHERE id = ?
-        AND ${options?.includeInactive === true ? "1 = 1" : ACTIVE_ENTRY_CLAUSE}
+        AND ${options?.includeInactive === true ? "1 = 1" : ACTIVE_DURABLE_CLAUSE}
       LIMIT 1
     `,
     args: [id],
@@ -611,7 +611,7 @@ async function loadCurrentValidityBounds(
 }
 
 /**
- * Records a recall event and updates the entry recall counters.
+ * Records a recall event and updates the durable recall counters.
  *
  * @param executor - SQL executor used for the write.
  * @param entryId - Entry that was recalled.
@@ -623,12 +623,12 @@ export async function recordRecallEvent(executor: SqlExecutor, entryId: string, 
   const now = new Date().toISOString();
   const updateResult = await executor.execute({
     sql: `
-      UPDATE entries
+      UPDATE durables
       SET recall_count = COALESCE(recall_count, 0) + 1,
           last_recalled_at = ?,
           updated_at = ?
       WHERE id = ?
-        AND ${ACTIVE_ENTRY_CLAUSE}
+        AND ${ACTIVE_DURABLE_CLAUSE}
     `,
     args: [now, now, entryId],
   });
@@ -641,7 +641,7 @@ export async function recordRecallEvent(executor: SqlExecutor, entryId: string, 
     sql: `
       INSERT INTO recall_events (
         id,
-        entry_id,
+        durable_id,
         query,
         session_key,
         recalled_at
@@ -687,25 +687,25 @@ export async function getIngestLogEntry(executor: SqlExecutor, filePath: string)
  * @param executor - SQL executor used for the write.
  * @param filePath - Source file path that was ingested.
  * @param fileHash - Hash of the ingested file contents.
- * @param entryCount - Number of entries produced from the file.
+ * @param durableCount - Number of entries produced from the file.
  * @returns Promise that resolves after the write completes.
  */
-export async function insertIngestLogEntry(executor: SqlExecutor, filePath: string, fileHash: string, entryCount: number): Promise<void> {
+export async function insertIngestLogEntry(executor: SqlExecutor, filePath: string, fileHash: string, durableCount: number): Promise<void> {
   await executor.execute({
     sql: `
       INSERT INTO ingest_log (
         file_path,
         file_hash,
         ingested_at,
-        entry_count
+        durable_count
       )
       VALUES (?, ?, ?, ?)
       ON CONFLICT(file_path) DO UPDATE SET
         file_hash = excluded.file_hash,
         ingested_at = excluded.ingested_at,
-        entry_count = excluded.entry_count
+        durable_count = excluded.durable_count
     `,
-    args: [filePath, fileHash, new Date().toISOString(), normalizeInteger(entryCount, 0)],
+    args: [filePath, fileHash, new Date().toISOString(), normalizeInteger(durableCount, 0)],
   });
 }
 

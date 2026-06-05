@@ -15,27 +15,32 @@ import {
   DEFAULT_CLAIM_EXTRACTION_CONCURRENCY,
   DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD,
   DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES,
-  DEFAULT_SURGEON_CONTEXT_LIMIT,
-  DEFAULT_SURGEON_COST_CAP,
-  DEFAULT_SURGEON_DAILY_COST_CAP,
-  DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE,
-  DEFAULT_SURGEON_RETIREMENT_PROTECT_RECALLED_DAYS,
-  DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS,
+  DEFAULT_DREAMING_CONTEXT_LIMIT_TOKENS,
+  DEFAULT_DREAMING_CONTEXT_LOOKUP_MAX_NEIGHBORS,
+  DEFAULT_DREAMING_DAILY_COST_CAP,
+  DEFAULT_DREAMING_DEEP_INTERVAL_HOURS,
+  DEFAULT_DREAMING_EXTRACT_MAX_CHUNKS,
+  DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS,
+  DEFAULT_DREAMING_IMPORTANCE_THRESHOLD,
+  DEFAULT_DREAMING_MAX_PROFILE_DURABLES,
+  DEFAULT_DREAMING_MIN_INTERVAL_MINUTES,
+  DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE,
+  DEFAULT_DREAMING_PRUNE_PROTECT_RECALLED_DAYS,
   isAgenrAuthMethod,
   isAgenrProvider,
-  isEntryType,
-  sameEligibleTypes,
+  isDurableKind,
+  sameEligibleKinds,
   type AgenrClaimExtractionConfig,
   type AgenrConfigInput,
   type AgenrStoredCredentials,
   type ModelConfig,
   type ResolvedAgenrClaimExtractionConfig,
   type ResolvedAgenrConfig,
-  type ResolvedSurgeonConfig,
-  type ResolvedSurgeonPassConfig,
-  type SurgeonConfig,
+  type ResolvedDreamingConfig,
+  type ResolvedDreamingPruneConfig,
+  type DreamingConfig,
 } from "./types.js";
-import type { EntryType } from "../../core/types.js";
+import type { DurableKind } from "../../core/types.js";
 
 /**
  * Options that control config parsing defaults.
@@ -131,9 +136,9 @@ export function toAgenrConfigInput(config: ResolvedAgenrConfig, options: Partial
     input.claimExtraction = claimExtraction;
   }
 
-  const surgeon = toSurgeonInput(config.surgeon);
-  if (surgeon) {
-    input.surgeon = surgeon;
+  const dreaming = toDreamingInput(config.dreaming);
+  if (dreaming) {
+    input.dreaming = dreaming;
   }
 
   if (config.dbPath !== options.defaultDbPath) {
@@ -168,7 +173,7 @@ type NormalizedAgenrConfigResult =
 function normalizeAgenrConfig(value: unknown, options: ParseAgenrConfigOptions): NormalizedAgenrConfigResult {
   const issues: ValidationIssue[] = [];
   const claimDefaults = createDefaultClaimExtractionConfig();
-  const surgeonDefaults = createDefaultSurgeonConfig();
+  const dreamingDefaults = createDefaultDreamingConfig();
 
   if (value === undefined) {
     return {
@@ -176,7 +181,7 @@ function normalizeAgenrConfig(value: unknown, options: ParseAgenrConfigOptions):
       input: {},
       resolved: {
         claimExtraction: claimDefaults,
-        surgeon: surgeonDefaults,
+        dreaming: dreamingDefaults,
         features: { ...DEFAULT_AGENR_FEATURE_FLAGS },
         dbPath: options.defaultDbPath,
         apiPort: DEFAULT_API_PORT,
@@ -204,7 +209,7 @@ function normalizeAgenrConfig(value: unknown, options: ParseAgenrConfigOptions):
   const episodeModel = parseModelConfig(value.episodeModel, "episodeModel", issues);
   const crossEncoderModel = parseModelConfig(value.crossEncoderModel, "crossEncoderModel", issues);
   const claimExtraction = parseClaimExtractionConfig(value.claimExtraction, "claimExtraction", issues);
-  const surgeon = parseSurgeonConfig(value.surgeon, "surgeon", issues);
+  const dreaming = parseDreamingConfig(value.dreaming, "dreaming", issues);
   const features = parseFeatureFlags(value.features, "features", issues);
   const dbPath = parseOptionalTrimmedString(value.dbPath, "dbPath", issues);
   const apiPort = parseOptionalIntegerInRange(value.apiPort, "apiPort", issues, {
@@ -235,7 +240,7 @@ function normalizeAgenrConfig(value: unknown, options: ParseAgenrConfigOptions):
     ...(episodeModel ? { episodeModel } : {}),
     ...(crossEncoderModel ? { crossEncoderModel } : {}),
     ...(claimExtraction.input ? { claimExtraction: claimExtraction.input } : {}),
-    ...(surgeon.input ? { surgeon: surgeon.input } : {}),
+    ...(dreaming.input ? { dreaming: dreaming.input } : {}),
     ...(features.input ? { features: features.input } : {}),
     ...(dbPath ? { dbPath } : {}),
     ...(apiPort !== undefined ? { apiPort } : {}),
@@ -256,7 +261,7 @@ function normalizeAgenrConfig(value: unknown, options: ParseAgenrConfigOptions):
       ...(episodeModel ? { episodeModel } : {}),
       ...(crossEncoderModel ? { crossEncoderModel } : {}),
       claimExtraction: claimExtraction.resolved,
-      surgeon: surgeon.resolved,
+      dreaming: dreaming.resolved,
       features: features.resolved,
       dbPath: dbPath ?? options.defaultDbPath,
       apiPort: apiPort ?? DEFAULT_API_PORT,
@@ -283,7 +288,7 @@ function pushTopLevelIssues(value: Record<string, unknown>, issues: ValidationIs
     "episodeModel",
     "crossEncoderModel",
     "claimExtraction",
-    "surgeon",
+    "dreaming",
     "features",
     "dbPath",
     "apiPort",
@@ -486,143 +491,98 @@ function parseClaimExtractionConfig(
 }
 
 /**
- * Parses the nested surgeon block.
+ * Parses the nested dreaming block.
  *
  * @param value - Raw nested value.
  * @param path - Stable issue path.
  * @param issues - Mutable issue collection.
  * @returns Canonical persisted values plus the resolved runtime block.
  */
-function parseSurgeonConfig(value: unknown, path: string, issues: ValidationIssue[]): { input?: SurgeonConfig; resolved: ResolvedSurgeonConfig } {
-  const defaults = createDefaultSurgeonConfig();
+function parseDreamingConfig(value: unknown, path: string, issues: ValidationIssue[]): { input?: DreamingConfig; resolved: ResolvedDreamingConfig } {
+  const defaults = createDefaultDreamingConfig();
   if (value === undefined) {
-    return {
-      resolved: defaults,
-    };
+    return { resolved: defaults };
   }
 
   if (!isRecord(value)) {
     pushIssue(issues, path, "Expected an object.");
-    return {
-      resolved: defaults,
-    };
+    return { resolved: defaults };
   }
 
   const startIndex = issues.length;
-  pushUnexpectedFields(value, new Set(["model", "costCap", "dailyCostCap", "contextLimit", "customInstructions", "passes"]), path, issues);
+  pushUnexpectedFields(value, new Set(["model", "dailyCostCap", "contextLimitTokens", "customInstructions", "stages"]), path, issues);
 
   const model = parseModelConfig(value.model, `${path}.model`, issues);
-  const costCap = parseOptionalPositiveNumber(value.costCap, `${path}.costCap`, issues);
   const dailyCostCap = parseOptionalNonNegativeNumber(value.dailyCostCap, `${path}.dailyCostCap`, issues);
-  const contextLimit = parseOptionalIntegerInRange(value.contextLimit, `${path}.contextLimit`, issues, { min: 0 });
+  const contextLimitTokens = parseOptionalIntegerInRange(value.contextLimitTokens, `${path}.contextLimitTokens`, issues, { min: 0 });
   const customInstructions = parseOptionalTrimmedString(value.customInstructions, `${path}.customInstructions`, issues);
-  const retirement = parseRetirementPassConfig(value.passes, `${path}.passes`, issues);
+  const prune = parseDreamingPruneConfig(value.stages && isRecord(value.stages) ? value.stages.prune : undefined, `${path}.stages.prune`, issues);
 
   if (issues.length > startIndex) {
-    return {
-      resolved: defaults,
-    };
+    return { resolved: defaults };
   }
 
-  const input: SurgeonConfig = {
+  const input: DreamingConfig = {
     ...(model ? { model } : {}),
-    ...(costCap !== undefined ? { costCap } : {}),
     ...(dailyCostCap !== undefined ? { dailyCostCap } : {}),
-    ...(contextLimit !== undefined ? { contextLimit } : {}),
+    ...(contextLimitTokens !== undefined ? { contextLimitTokens } : {}),
     ...(customInstructions ? { customInstructions } : {}),
-    ...(retirement.input
-      ? {
-          passes: {
-            retirement: retirement.input,
-          },
-        }
-      : {}),
+    ...(prune.input ? { stages: { prune: prune.input } } : {}),
   };
 
   return {
-    ...(hasSurgeonInput(input) ? { input } : {}),
+    ...(hasDreamingInput(input) ? { input } : {}),
     resolved: {
       ...(model ? { model } : {}),
-      costCap: costCap ?? defaults.costCap,
       dailyCostCap: dailyCostCap ?? defaults.dailyCostCap,
-      contextLimit: contextLimit ?? defaults.contextLimit,
+      contextLimitTokens: contextLimitTokens ?? defaults.contextLimitTokens,
       ...(customInstructions ? { customInstructions } : {}),
-      passes: {
-        retirement: retirement.resolved,
+      tiers: defaults.tiers,
+      stages: {
+        ...defaults.stages,
+        prune: prune.resolved,
       },
+      triggers: defaults.triggers,
     },
   };
 }
 
 /**
- * Parses the nested `surgeon.passes.retirement` block.
+ * Parses the nested `dreaming.stages.prune` block.
  *
- * @param value - Raw `passes` value.
+ * @param value - Raw prune config value.
  * @param path - Stable issue path.
  * @param issues - Mutable issue collection.
  * @returns Canonical persisted values plus the resolved runtime block.
  */
-function parseRetirementPassConfig(
+function parseDreamingPruneConfig(
   value: unknown,
   path: string,
   issues: ValidationIssue[],
-): { input?: NonNullable<NonNullable<SurgeonConfig["passes"]>["retirement"]>; resolved: ResolvedSurgeonPassConfig } {
-  const defaults = createDefaultRetirementPassConfig();
+): { input?: NonNullable<NonNullable<DreamingConfig["stages"]>["prune"]>; resolved: ResolvedDreamingPruneConfig } {
+  const defaults = createDefaultDreamingPruneConfig();
   if (value === undefined) {
-    return {
-      resolved: defaults,
-    };
+    return { resolved: defaults };
   }
 
   if (!isRecord(value)) {
     pushIssue(issues, path, "Expected an object.");
-    return {
-      resolved: defaults,
-    };
+    return { resolved: defaults };
   }
 
   const startIndex = issues.length;
-  pushUnexpectedFields(value, new Set(["retirement"]), path, issues);
+  pushUnexpectedFields(value, new Set(["protectRecalledDays", "protectMinImportance"]), path, issues);
 
-  const retirement = value.retirement;
-  if (retirement === undefined) {
-    if (issues.length === startIndex) {
-      pushIssue(issues, path, "Expected a retirement config when passes is provided.");
-    }
-    return {
-      resolved: defaults,
-    };
-  }
-
-  if (!isRecord(retirement)) {
-    pushIssue(issues, `${path}.retirement`, "Expected an object.");
-    return {
-      resolved: defaults,
-    };
-  }
-
-  pushUnexpectedFields(retirement, new Set(["protectRecalledDays", "protectMinImportance", "skipRecentlyEvaluatedDays"]), `${path}.retirement`, issues);
-
-  const protectRecalledDays = parseOptionalIntegerInRange(retirement.protectRecalledDays, `${path}.retirement.protectRecalledDays`, issues, {
-    min: 0,
-  });
-  const protectMinImportance = parseOptionalIntegerInRange(retirement.protectMinImportance, `${path}.retirement.protectMinImportance`, issues, {
-    min: 0,
-  });
-  const skipRecentlyEvaluatedDays = parseOptionalIntegerInRange(retirement.skipRecentlyEvaluatedDays, `${path}.retirement.skipRecentlyEvaluatedDays`, issues, {
-    min: 0,
-  });
+  const protectRecalledDays = parseOptionalIntegerInRange(value.protectRecalledDays, `${path}.protectRecalledDays`, issues, { min: 0 });
+  const protectMinImportance = parseOptionalIntegerInRange(value.protectMinImportance, `${path}.protectMinImportance`, issues, { min: 0 });
 
   if (issues.length > startIndex) {
-    return {
-      resolved: defaults,
-    };
+    return { resolved: defaults };
   }
 
-  const input: NonNullable<NonNullable<SurgeonConfig["passes"]>["retirement"]> = {
+  const input: NonNullable<NonNullable<DreamingConfig["stages"]>["prune"]> = {
     ...(protectRecalledDays !== undefined ? { protectRecalledDays } : {}),
     ...(protectMinImportance !== undefined ? { protectMinImportance } : {}),
-    ...(skipRecentlyEvaluatedDays !== undefined ? { skipRecentlyEvaluatedDays } : {}),
   };
 
   return {
@@ -630,7 +590,6 @@ function parseRetirementPassConfig(
     resolved: {
       protectRecalledDays: protectRecalledDays ?? defaults.protectRecalledDays,
       protectMinImportance: protectMinImportance ?? defaults.protectMinImportance,
-      skipRecentlyEvaluatedDays: skipRecentlyEvaluatedDays ?? defaults.skipRecentlyEvaluatedDays,
     },
   };
 }
@@ -706,7 +665,7 @@ function parseOptionalNonNegativeNumber(value: unknown, path: string, issues: Va
  * @param issues - Mutable issue collection.
  * @returns Unique eligible types when valid.
  */
-function parseEligibleTypes(value: unknown, path: string, issues: ValidationIssue[]): EntryType[] | undefined {
+function parseEligibleTypes(value: unknown, path: string, issues: ValidationIssue[]): DurableKind[] | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -716,8 +675,8 @@ function parseEligibleTypes(value: unknown, path: string, issues: ValidationIssu
     return undefined;
   }
 
-  const normalized: EntryType[] = [];
-  const seen = new Set<EntryType>();
+  const normalized: DurableKind[] = [];
+  const seen = new Set<DurableKind>();
 
   for (const [index, item] of value.entries()) {
     if (typeof item !== "string") {
@@ -726,7 +685,7 @@ function parseEligibleTypes(value: unknown, path: string, issues: ValidationIssu
     }
 
     const trimmed = item.trim();
-    if (!isEntryType(trimmed)) {
+    if (!isDurableKind(trimmed)) {
       pushIssue(issues, `${path}.${index}`, "Expected a supported entry type.");
       continue;
     }
@@ -760,31 +719,48 @@ function createDefaultClaimExtractionConfig(): ResolvedAgenrClaimExtractionConfi
 }
 
 /**
- * Returns the default resolved surgeon config.
+ * Returns the default resolved dreaming config.
  *
- * @returns Surgeon defaults used at runtime.
+ * @returns Dreaming defaults used at runtime.
  */
-function createDefaultSurgeonConfig(): ResolvedSurgeonConfig {
+function createDefaultDreamingConfig(): ResolvedDreamingConfig {
   return {
-    costCap: DEFAULT_SURGEON_COST_CAP,
-    dailyCostCap: DEFAULT_SURGEON_DAILY_COST_CAP,
-    contextLimit: DEFAULT_SURGEON_CONTEXT_LIMIT,
-    passes: {
-      retirement: createDefaultRetirementPassConfig(),
+    dailyCostCap: DEFAULT_DREAMING_DAILY_COST_CAP,
+    contextLimitTokens: DEFAULT_DREAMING_CONTEXT_LIMIT_TOKENS,
+    tiers: {
+      light: { enabled: true },
+      standard: { enabled: true },
+      deep: { enabled: true, intervalHours: DEFAULT_DREAMING_DEEP_INTERVAL_HOURS },
+    },
+    stages: {
+      extract: {
+        maxSessionsPerRun: DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS,
+        maxChunksPerSession: DEFAULT_DREAMING_EXTRACT_MAX_CHUNKS,
+        contextLookup: {
+          enabled: true,
+          maxNeighborsPerCandidate: DEFAULT_DREAMING_CONTEXT_LOOKUP_MAX_NEIGHBORS,
+        },
+      },
+      project: { maxProfileDurables: DEFAULT_DREAMING_MAX_PROFILE_DURABLES },
+      prune: createDefaultDreamingPruneConfig(),
+    },
+    triggers: {
+      postSessionLightDream: true,
+      importanceThreshold: DEFAULT_DREAMING_IMPORTANCE_THRESHOLD,
+      minIntervalMinutes: DEFAULT_DREAMING_MIN_INTERVAL_MINUTES,
     },
   };
 }
 
 /**
- * Returns the default retirement-pass config.
+ * Returns the default prune-stage config.
  *
- * @returns Retirement-pass defaults used at runtime.
+ * @returns Prune-stage defaults used at runtime.
  */
-function createDefaultRetirementPassConfig(): ResolvedSurgeonPassConfig {
+function createDefaultDreamingPruneConfig(): ResolvedDreamingPruneConfig {
   return {
-    protectRecalledDays: DEFAULT_SURGEON_RETIREMENT_PROTECT_RECALLED_DAYS,
-    protectMinImportance: DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE,
-    skipRecentlyEvaluatedDays: DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS,
+    protectRecalledDays: DEFAULT_DREAMING_PRUNE_PROTECT_RECALLED_DAYS,
+    protectMinImportance: DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE,
   };
 }
 
@@ -825,19 +801,18 @@ function hasClaimExtractionInput(value: AgenrClaimExtractionConfig): boolean {
 }
 
 /**
- * Returns whether a surgeon input block contains persisted values.
+ * Returns whether a dreaming input block contains persisted values.
  *
- * @param value - Candidate surgeon block.
+ * @param value - Candidate dreaming block.
  * @returns True when the block should be persisted.
  */
-function hasSurgeonInput(value: SurgeonConfig): boolean {
+function hasDreamingInput(value: DreamingConfig): boolean {
   return (
     hasModelConfig(value.model) ||
-    value.costCap !== undefined ||
     value.dailyCostCap !== undefined ||
-    value.contextLimit !== undefined ||
+    value.contextLimitTokens !== undefined ||
     value.customInstructions !== undefined ||
-    value.passes?.retirement !== undefined
+    value.stages?.prune !== undefined
   );
 }
 
@@ -851,7 +826,7 @@ function toClaimExtractionInput(value: ResolvedAgenrClaimExtractionConfig): Agen
   const input: AgenrClaimExtractionConfig = {
     ...(value.enabled !== true ? { enabled: value.enabled } : {}),
     ...(value.confidenceThreshold !== DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD ? { confidenceThreshold: value.confidenceThreshold } : {}),
-    ...(!sameEligibleTypes(value.eligibleTypes, DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES) ? { eligibleTypes: [...value.eligibleTypes] } : {}),
+    ...(!sameEligibleKinds(value.eligibleTypes, DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES) ? { eligibleTypes: [...value.eligibleTypes] } : {}),
     ...(value.concurrency !== DEFAULT_CLAIM_EXTRACTION_CONCURRENCY ? { concurrency: value.concurrency } : {}),
     ...(hasModelConfig(value.model) ? { model: value.model } : {}),
   };
@@ -860,35 +835,25 @@ function toClaimExtractionInput(value: ResolvedAgenrClaimExtractionConfig): Agen
 }
 
 /**
- * Converts resolved surgeon settings back into the sparse persisted shape.
+ * Converts resolved dreaming settings back into the sparse persisted shape.
  *
- * @param value - Resolved surgeon settings.
+ * @param value - Resolved dreaming settings.
  * @returns Sparse persisted shape, or undefined when all defaults apply.
  */
-function toSurgeonInput(value: ResolvedSurgeonConfig): SurgeonConfig | undefined {
-  const retirement = value.passes.retirement;
-  const retirementInput: NonNullable<NonNullable<SurgeonConfig["passes"]>["retirement"]> = {
-    ...(retirement.protectRecalledDays !== DEFAULT_SURGEON_RETIREMENT_PROTECT_RECALLED_DAYS ? { protectRecalledDays: retirement.protectRecalledDays } : {}),
-    ...(retirement.protectMinImportance !== DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE ? { protectMinImportance: retirement.protectMinImportance } : {}),
-    ...(retirement.skipRecentlyEvaluatedDays !== DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS
-      ? { skipRecentlyEvaluatedDays: retirement.skipRecentlyEvaluatedDays }
-      : {}),
+function toDreamingInput(value: ResolvedDreamingConfig): DreamingConfig | undefined {
+  const prune = value.stages.prune;
+  const pruneInput: NonNullable<NonNullable<DreamingConfig["stages"]>["prune"]> = {
+    ...(prune.protectRecalledDays !== DEFAULT_DREAMING_PRUNE_PROTECT_RECALLED_DAYS ? { protectRecalledDays: prune.protectRecalledDays } : {}),
+    ...(prune.protectMinImportance !== DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE ? { protectMinImportance: prune.protectMinImportance } : {}),
   };
 
-  const input: SurgeonConfig = {
+  const input: DreamingConfig = {
     ...(hasModelConfig(value.model) ? { model: value.model } : {}),
-    ...(value.costCap !== DEFAULT_SURGEON_COST_CAP ? { costCap: value.costCap } : {}),
-    ...(value.dailyCostCap !== DEFAULT_SURGEON_DAILY_COST_CAP ? { dailyCostCap: value.dailyCostCap } : {}),
-    ...(value.contextLimit !== DEFAULT_SURGEON_CONTEXT_LIMIT ? { contextLimit: value.contextLimit } : {}),
+    ...(value.dailyCostCap !== DEFAULT_DREAMING_DAILY_COST_CAP ? { dailyCostCap: value.dailyCostCap } : {}),
+    ...(value.contextLimitTokens !== DEFAULT_DREAMING_CONTEXT_LIMIT_TOKENS ? { contextLimitTokens: value.contextLimitTokens } : {}),
     ...(value.customInstructions ? { customInstructions: value.customInstructions } : {}),
-    ...(Object.keys(retirementInput).length > 0
-      ? {
-          passes: {
-            retirement: retirementInput,
-          },
-        }
-      : {}),
+    ...(Object.keys(pruneInput).length > 0 ? { stages: { prune: pruneInput } } : {}),
   };
 
-  return hasSurgeonInput(input) ? input : undefined;
+  return hasDreamingInput(input) ? input : undefined;
 }

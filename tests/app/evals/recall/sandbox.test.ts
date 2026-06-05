@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createDatabase } from "../../../../src/adapters/db/client.js";
 import { setupRecallEvalSandbox } from "../../../../src/app/evals/recall/sandbox.js";
-import type { Entry } from "../../../../src/core/types.js";
+import type { Durable } from "../../../../src/core/types.js";
 import { removeTestPath, waitForDatabaseRelease } from "../../../helpers/temp-paths.js";
 
 const tempPaths: string[] = [];
@@ -78,7 +78,7 @@ describe("setupRecallEvalSandbox", () => {
         allowedTelemetryWrites: false,
       });
 
-      const hydrated = await sandbox.episodeDatabase.getEntry("snapshot-fact-1");
+      const hydrated = await sandbox.episodeDatabase.getDurable("snapshot-fact-1");
       expect(hydrated?.subject).toBe("pager policy");
       expect(hydrated?.content).toBe("Taylor is on call this week.");
     } finally {
@@ -106,16 +106,16 @@ describe("setupRecallEvalSandbox", () => {
     });
 
     try {
-      await sandbox.fixtureStore.insertEntry(
+      await sandbox.fixtureStore.insertDurable(
         buildEntryFixture("overlay-fact-1", "Overlay fixture content."),
         deterministicVector("overlay-fact-1", 1024),
         contentHashOf("overlay-fact-1"),
       );
 
-      const overlay = await sandbox.episodeDatabase.getEntry("overlay-fact-1");
+      const overlay = await sandbox.episodeDatabase.getDurable("overlay-fact-1");
       expect(overlay?.content).toBe("Overlay fixture content.");
 
-      const snapshotRow = await sandbox.episodeDatabase.getEntry("snapshot-fact-1");
+      const snapshotRow = await sandbox.episodeDatabase.getDurable("snapshot-fact-1");
       expect(snapshotRow?.content).toBe("Jordan is on call this week.");
     } finally {
       await sandbox.cleanup();
@@ -183,10 +183,10 @@ describe("setupRecallEvalSandbox", () => {
 });
 
 /** Seeds a single-entry source database that can be copied into a sandbox. */
-async function seedSnapshotDatabase(dbPath: string, entry: Entry): Promise<void> {
+async function seedSnapshotDatabase(dbPath: string, entry: Durable): Promise<void> {
   const database = await createDatabase(dbPath);
   try {
-    await database.insertEntry(entry, deterministicVector(entry.id, 1024), contentHashOf(entry.id));
+    await database.insertDurable(entry, deterministicVector(entry.id, 1024), contentHashOf(entry.id));
     // Collapse the WAL into the main database file so the snapshot copy
     // sees every seeded row. Without this, libSQL would leave recently
     // written rows in the `-wal` companion file and copyFile would
@@ -198,12 +198,12 @@ async function seedSnapshotDatabase(dbPath: string, entry: Entry): Promise<void>
 }
 
 /** Builds an entry payload and returns it as one parameter for inline seeding. */
-function seedEntryFixture(id: string, content: string): Entry {
+function seedEntryFixture(id: string, content: string): Durable {
   return buildEntryFixture(id, content);
 }
 
 /** Builds a canonical Entry payload for deterministic test fixtures. */
-function buildEntryFixture(id: string, content: string): Entry {
+function buildEntryFixture(id: string, content: string): Durable {
   return {
     id,
     type: "fact",

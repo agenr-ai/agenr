@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { validateEntries } from "../../../src/core/store/validation.js";
-import type { StoreEntryInput } from "../../../src/core/types.js";
+import type { StoreDurableInput } from "../../../src/core/types.js";
 
 describe("validateEntries", () => {
   it("passes through a valid entry", () => {
@@ -129,7 +129,7 @@ describe("validateEntries", () => {
   it("rejects entries with an invalid type", () => {
     const result = validateEntries([
       {
-        type: "invalid" as unknown as StoreEntryInput["type"],
+        type: "invalid" as unknown as StoreDurableInput["type"],
         subject: "subject",
         content: "content",
       },
@@ -223,8 +223,8 @@ describe("validateEntries", () => {
         subject: "subject",
         content: "content",
         claim_key: " Jim / Timezone ",
-        claim_key_status: "legacy" as StoreEntryInput["claim_key_status"],
-        claim_key_source: "handwritten" as StoreEntryInput["claim_key_source"],
+        claim_key_status: "legacy" as StoreDurableInput["claim_key_status"],
+        claim_key_source: "handwritten" as StoreDurableInput["claim_key_source"],
         claim_key_confidence: Number.NaN,
       },
     ]);
@@ -282,7 +282,7 @@ describe("validateEntries", () => {
         content: "content",
       },
       {
-        type: "invalid" as unknown as StoreEntryInput["type"],
+        type: "invalid" as unknown as StoreDurableInput["type"],
         subject: "subject",
         content: "content",
       },

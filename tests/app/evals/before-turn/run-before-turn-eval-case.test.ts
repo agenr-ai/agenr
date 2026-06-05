@@ -3,14 +3,21 @@ import { access, mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createDatabase } from "../../../../src/adapters/db/client.js";
 import { runBeforeTurnEvalCase } from "../../../../src/app/evals/before-turn/index.js";
 import type { CrossEncoderPassage, CrossEncoderPort, CrossEncoderScore } from "../../../../src/core/ports.js";
+import { useIsolatedAgenrConfig } from "../../../helpers/isolated-config.js";
 import { removeTestPath, waitForDatabaseRelease } from "../../../helpers/temp-paths.js";
 
 const tempPaths: string[] = [];
+
+beforeEach(async () => {
+  const configRoot = await mkdtemp(path.join(os.tmpdir(), "agenr-eval-config-"));
+  tempPaths.push(configRoot);
+  await useIsolatedAgenrConfig(configRoot);
+});
 
 afterEach(async () => {
   vi.unstubAllGlobals();
@@ -524,10 +531,10 @@ describe("runBeforeTurnEvalCase", () => {
 
     const overlaySandboxDb = await createDatabase(path.join(sandboxRoot, "knowledge.db"));
     try {
-      const overlayEntry = await overlaySandboxDb.getEntry("overlay-pager");
+      const overlayEntry = await overlaySandboxDb.getDurable("overlay-pager");
       expect(overlayEntry?.content).toBe("Taylor is on call in the overlay fixtures.");
 
-      const snapshotEntry = await overlaySandboxDb.getEntry("snapshot-duke");
+      const snapshotEntry = await overlaySandboxDb.getDurable("snapshot-duke");
       expect(snapshotEntry?.content).toBe("Duke is Jim's dog in the snapshot.");
       expect(snapshotEntry?.recall_count).toBe(0);
     } finally {
@@ -659,10 +666,10 @@ async function createTempDirectory(prefix: string): Promise<string> {
 }
 
 /** Seeds one entry into a standalone live database used to detect state leaks. */
-async function seedLiveEntry(dbPath: string, entry: Parameters<Awaited<ReturnType<typeof createDatabase>>["insertEntry"]>[0]): Promise<void> {
+async function seedLiveEntry(dbPath: string, entry: Parameters<Awaited<ReturnType<typeof createDatabase>>["insertDurable"]>[0]): Promise<void> {
   const database = await createDatabase(dbPath);
   try {
-    await database.insertEntry(entry, hashToVector(`${entry.subject} ${entry.content}`, 1024), entry.id);
+    await database.insertDurable(entry, hashToVector(`${entry.subject} ${entry.content}`, 1024), entry.id);
   } finally {
     await database.close();
   }
@@ -673,10 +680,10 @@ async function seedLiveEntry(dbPath: string, entry: Parameters<Awaited<ReturnTyp
  * WAL so the main database file captures every seeded row before the
  * sandbox copyFile step runs.
  */
-async function seedSnapshotEntry(dbPath: string, entry: Parameters<Awaited<ReturnType<typeof createDatabase>>["insertEntry"]>[0]): Promise<void> {
+async function seedSnapshotEntry(dbPath: string, entry: Parameters<Awaited<ReturnType<typeof createDatabase>>["insertDurable"]>[0]): Promise<void> {
   const database = await createDatabase(dbPath);
   try {
-    await database.insertEntry(entry, hashToVector(`${entry.subject} ${entry.content}`, 1024), entry.id);
+    await database.insertDurable(entry, hashToVector(`${entry.subject} ${entry.content}`, 1024), entry.id);
     await database.execute("PRAGMA wal_checkpoint(TRUNCATE)");
   } finally {
     await database.close();

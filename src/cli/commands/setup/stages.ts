@@ -6,7 +6,7 @@ import type { SetupModelDescriptor, SetupProvider, SetupRuntime } from "./types.
 /**
  * Setup model stages that can reuse or override the default model.
  */
-export type SetupModelStageId = "extraction" | "dedup" | "episode" | "claim" | "surgeon";
+export type SetupModelStageId = "extraction" | "dedup" | "episode" | "claim" | "dreaming";
 
 /**
  * Per-stage override selections gathered during setup.
@@ -85,13 +85,13 @@ const SETUP_MODEL_STAGES: readonly SetupModelStageDefinition[] = [
     }),
   },
   {
-    id: "surgeon",
-    label: "Surgeon",
-    summaryLabel: "Surgeon override",
-    readOverride: (config) => config?.surgeon?.model,
+    id: "dreaming",
+    label: "Dreaming",
+    summaryLabel: "Dreaming override",
+    readOverride: (config) => config?.dreaming?.model,
     applyOverride: (config, override) => ({
       ...config,
-      surgeon: buildNextSurgeonConfig(config.surgeon, override),
+      dreaming: buildNextDreamingConfig(config.dreaming, override),
     }),
   },
 ] as const;
@@ -115,7 +115,7 @@ export function readSetupStageOverrides(config: AgenrConfigInput | undefined): S
       dedup: undefined,
       episode: undefined,
       claim: undefined,
-      surgeon: undefined,
+      dreaming: undefined,
     },
   );
 }
@@ -422,10 +422,10 @@ function hasPersistedClaimExtractionConfig(
  * @param surgeonModel - Selected surgeon model override.
  * @returns Persistable surgeon config, or undefined when empty.
  */
-function buildNextSurgeonConfig(
-  existingSurgeon: AgenrConfigInput["surgeon"] | undefined,
+function buildNextDreamingConfig(
+  existingSurgeon: AgenrConfigInput["dreaming"] | undefined,
   surgeonModel: ModelConfig | undefined,
-): AgenrConfigInput["surgeon"] | undefined {
+): AgenrConfigInput["dreaming"] | undefined {
   if (!existingSurgeon && !surgeonModel) {
     return undefined;
   }
@@ -435,7 +435,7 @@ function buildNextSurgeonConfig(
     ...(surgeonModel ? { model: surgeonModel } : { model: undefined }),
   };
 
-  return hasPersistedSurgeonConfig(nextSurgeon) ? nextSurgeon : undefined;
+  return hasPersistedDreamingConfig(nextSurgeon) ? nextSurgeon : undefined;
 }
 
 /**
@@ -444,21 +444,19 @@ function buildNextSurgeonConfig(
  * @param config - Candidate surgeon config.
  * @returns True when the config should be persisted.
  */
-function hasPersistedSurgeonConfig(config: AgenrConfigInput["surgeon"] | undefined): config is NonNullable<AgenrConfigInput["surgeon"]> {
+function hasPersistedDreamingConfig(config: AgenrConfigInput["dreaming"] | undefined): config is NonNullable<AgenrConfigInput["dreaming"]> {
   if (!config) {
     return false;
   }
 
-  const retirementConfig = config.passes?.retirement;
+  const pruneConfig = config.stages?.prune;
 
   return (
     hasModelOverride(config.model) ||
-    config.costCap !== undefined ||
     config.dailyCostCap !== undefined ||
-    config.contextLimit !== undefined ||
+    config.contextLimitTokens !== undefined ||
     normalizeOptionalString(config.customInstructions) !== undefined ||
-    retirementConfig?.protectRecalledDays !== undefined ||
-    retirementConfig?.protectMinImportance !== undefined ||
-    retirementConfig?.skipRecentlyEvaluatedDays !== undefined
+    pruneConfig?.protectRecalledDays !== undefined ||
+    pruneConfig?.protectMinImportance !== undefined
   );
 }

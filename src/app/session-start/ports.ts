@@ -1,6 +1,6 @@
 import type { ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
 import type { RecallPorts } from "../../core/ports.js";
-import type { Entry } from "../../core/types.js";
+import type { Durable } from "../../core/types.js";
 
 /**
  * Feature-scoped durable-memory lookup contract used by session-start selection.
@@ -12,7 +12,7 @@ export interface SessionStartRepository {
    * @param limit - Maximum number of core entries to return.
    * @returns Ordered active core entries.
    */
-  listCoreEntries(limit: number): Promise<Entry[]>;
+  listCoreEntries(limit: number): Promise<Durable[]>;
 }
 
 /**

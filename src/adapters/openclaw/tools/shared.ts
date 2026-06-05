@@ -2,7 +2,7 @@ import { failedTextResult, readNumberParam, readStringArrayParam, readStringPara
 import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sdk/core";
 
 import { resolveClaimSlotPolicy } from "../../../core/claim-slot-policy.js";
-import type { Entry } from "../../../core/types.js";
+import type { Durable } from "../../../core/types.js";
 import { formatErrorMessage } from "../../shared/errors.js";
 import { truncate } from "../../shared/memory-tool-format.js";
 import type { MemoryToolOutcome, MemoryToolParamReader } from "../../shared/memory-tools.js";
@@ -14,13 +14,13 @@ import {
   asRecord,
   formatTargetSelector,
   normalizeStringArray,
-  parseEntryType,
-  parseEntryTypes,
+  parseDurableKind,
+  parseDurableKinds,
   parseExpiry,
   parseRecallMode,
   sanitizeUpdateToolParams,
 } from "../../shared/entry-tools.js";
-import { buildEntryMemoryResolverPorts, readBooleanParam, resolveTargetEntry as resolveSharedTargetEntry } from "../../shared/resolve-target.js";
+import { buildEntryMemoryResolverPorts, readBooleanParam, resolveTargetDurable as resolveSharedTargetDurable } from "../../shared/resolve-target.js";
 import type { AgenrOpenClawServices } from "../types.js";
 
 /** Shared OpenClaw param reader wired into host-neutral memory tool parsers. */
@@ -40,8 +40,8 @@ export {
   formatErrorMessage,
   formatTargetSelector,
   normalizeStringArray,
-  parseEntryType,
-  parseEntryTypes,
+  parseDurableKind,
+  parseDurableKinds,
   parseExpiry,
   parseRecallMode,
   readBooleanParam,
@@ -73,14 +73,14 @@ export function toOpenClawToolResult(outcome: MemoryToolOutcome) {
  * @param options - Optional selector controls.
  * @returns Matching agenr entry.
  */
-export async function resolveTargetEntry(
+export async function resolveTargetDurable(
   services: AgenrOpenClawServices,
   params: Record<string, unknown>,
   options: {
     allowLast?: boolean;
   } = {},
-): Promise<Entry> {
-  return resolveSharedTargetEntry(buildEntryMemoryResolverPorts(services), params, options);
+): Promise<Durable> {
+  return resolveSharedTargetDurable(buildEntryMemoryResolverPorts(services), params, options);
 }
 
 /**
@@ -155,10 +155,10 @@ export function sanitizeTraceToolParams(params: { id: string | undefined; subjec
  * @returns Human-readable trace output.
  */
 export function formatTrace(
-  entry: Entry,
-  supersededBy: Entry | undefined,
-  supersedes: Entry[],
-  claimFamily: { claimKey: string; slotPolicy?: "exclusive" | "multivalued"; slotPolicyReason?: string; entries: Entry[] } | undefined,
+  entry: Durable,
+  supersededBy: Durable | undefined,
+  supersedes: Durable[],
+  claimFamily: { claimKey: string; slotPolicy?: "exclusive" | "multivalued"; slotPolicyReason?: string; entries: Durable[] } | undefined,
   recallEvents: Array<{ query?: string; sessionKey?: string; recalledAt: string }>,
 ): string {
   const slotPolicy = entry.claim_key
@@ -268,7 +268,7 @@ function formatToolSessionContext(ctx: OpenClawPluginToolContext): string {
  * @param entry - Trace entry to describe.
  * @returns Narrow state label for lineage inspection.
  */
-function describeTraceEntryState(entry: Entry): string {
+function describeTraceEntryState(entry: Durable): string {
   if (entry.superseded_by) {
     return "superseded";
   }
@@ -286,7 +286,7 @@ function describeTraceEntryState(entry: Entry): string {
  * @param entry - Trace entry to describe.
  * @returns Lifecycle label used in lineage inspection.
  */
-function formatClaimLifecycleLabel(entry: Entry): string {
+function formatClaimLifecycleLabel(entry: Durable): string {
   if (!entry.claim_key) {
     return "no-key";
   }
@@ -295,7 +295,7 @@ function formatClaimLifecycleLabel(entry: Entry): string {
 }
 
 /** Builds a compact change summary from a traced claim family when possible. */
-function summarizeTraceClaimFamilyTransition(entries: Entry[]): string | undefined {
+function summarizeTraceClaimFamilyTransition(entries: Durable[]): string | undefined {
   const current = entries.find((entry) => !entry.retired && !entry.superseded_by);
   const prior = [...entries]
     .reverse()

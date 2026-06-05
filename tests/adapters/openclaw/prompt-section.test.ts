@@ -17,7 +17,7 @@ describe("buildAgenrMemoryPromptSection", () => {
     expect(lines.join("\n")).toContain("call agenr_recall first");
     expect(lines.join("\n")).toContain("injected background context");
     expect(lines.join("\n")).toContain("historical and episodic recall");
-    expect(lines.join("\n")).toContain("mode=entries");
+    expect(lines.join("\n")).toContain("mode=durables");
     expect(lines.join("\n")).toContain("mode=auto");
     expect(lines.join("\n")).toContain("mode=episodes");
     expect(lines.join("\n")).toContain("what was the previous approach");

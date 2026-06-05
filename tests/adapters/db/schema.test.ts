@@ -4,14 +4,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   BULK_WRITE_STATE_META_KEY,
   PROCEDURE_VECTOR_INDEX_NAME,
-  VECTOR_INDEX_NAME,
+  DURABLE_VECTOR_INDEX_NAME,
   finalizeBulkWrites,
   getLastBulkIngestAt,
   initSchema,
   prepareBulkWrites,
 } from "../../../src/adapters/db/schema.js";
 
-const FTS_REBUILD_SQLS = ["INSERT INTO entries_fts(entries_fts) VALUES ('rebuild')", "INSERT INTO procedures_fts(procedures_fts) VALUES ('rebuild')"];
+const FTS_REBUILD_SQLS = ["INSERT INTO durables_fts(durables_fts) VALUES ('rebuild')", "INSERT INTO procedures_fts(procedures_fts) VALUES ('rebuild')"];
 
 describe("initSchema", () => {
   const clients: Array<ReturnType<typeof createClient>> = [];
@@ -34,16 +34,18 @@ describe("initSchema", () => {
         FROM sqlite_master
         WHERE type = 'table'
           AND name IN (
-            'entries',
-            'entries_fts',
+            'durables',
+            'durables_fts',
             'ingest_log',
             'episodes',
             'procedures',
             'procedures_fts',
             'recall_events',
-            'surgeon_runs',
-            'surgeon_run_actions',
-            'surgeon_run_proposals',
+            'dream_runs',
+            'dream_run_actions',
+            'dream_proposals',
+            'dream_state',
+            'profile_snapshots',
             'working_sets',
             'working_events',
             'session_lineage_edges',
@@ -61,16 +63,18 @@ describe("initSchema", () => {
 
     expect(tableNames).toEqual(
       new Set([
-        "entries",
-        "entries_fts",
+        "durables",
+        "durables_fts",
         "ingest_log",
         "episodes",
         "procedures",
         "procedures_fts",
         "recall_events",
-        "surgeon_runs",
-        "surgeon_run_actions",
-        "surgeon_run_proposals",
+        "dream_runs",
+        "dream_run_actions",
+        "dream_proposals",
+        "dream_state",
+        "profile_snapshots",
         "working_sets",
         "working_events",
         "session_lineage_edges",
@@ -78,7 +82,7 @@ describe("initSchema", () => {
         "_meta",
       ]),
     );
-    expect(await tableColumns(client, "entries")).toEqual([
+    expect(await tableColumns(client, "durables")).toEqual([
       "id",
       "type",
       "subject",
@@ -169,7 +173,7 @@ describe("initSchema", () => {
         SELECT name
         FROM sqlite_master
         WHERE type = 'trigger'
-          AND name IN ('entries_ai', 'entries_ad', 'entries_au', 'procedures_ai', 'procedures_ad', 'procedures_au')
+          AND name IN ('durables_ai', 'durables_ad', 'durables_au', 'procedures_ai', 'procedures_ad', 'procedures_au')
       `,
     });
     const triggerNames = new Set(
@@ -179,10 +183,10 @@ describe("initSchema", () => {
       }),
     );
 
-    expect(triggerNames).toEqual(new Set(["entries_ai", "entries_ad", "entries_au", "procedures_ai", "procedures_ad", "procedures_au"]));
-    expect(await tableColumns(client, "surgeon_runs")).toEqual([
+    expect(triggerNames).toEqual(new Set(["durables_ai", "durables_ad", "durables_au", "procedures_ai", "procedures_ad", "procedures_au"]));
+    expect(await tableColumns(client, "dream_runs")).toEqual([
       "id",
-      "pass_type",
+      "tier",
       "project",
       "started_at",
       "completed_at",
@@ -193,31 +197,32 @@ describe("initSchema", () => {
       "model",
       "actions_taken",
       "actions_skipped",
-      "entries_retired",
+      "durables_retired",
       "summary",
       "summary_json",
       "error",
       "dry_run",
       "config_json",
     ]);
-    expect(await tableColumns(client, "surgeon_run_actions")).toEqual([
+    expect(await tableColumns(client, "dream_run_actions")).toEqual([
       "id",
       "run_id",
       "action_type",
-      "entry_id",
-      "entry_ids",
+      "durable_id",
+      "durable_ids",
       "reasoning",
+      "evidence_refs_json",
       "recall_delta",
       "details_json",
       "created_at",
     ]);
-    expect(await tableColumns(client, "surgeon_run_proposals")).toEqual([
+    expect(await tableColumns(client, "dream_proposals")).toEqual([
       "id",
       "run_id",
       "group_id",
       "issue_kind",
       "scope",
-      "entry_ids",
+      "durable_ids",
       "current_claim_keys",
       "proposed_claim_keys",
       "rationale",
@@ -230,6 +235,15 @@ describe("initSchema", () => {
       "applied_action_count",
       "created_at",
     ]);
+    expect(await tableColumns(client, "dream_state")).toEqual([
+      "id",
+      "last_successful_run_at",
+      "last_scan_cursor_json",
+      "active_profile_snapshot_id",
+      "unsynthesized_importance_sum",
+      "updated_at",
+    ]);
+    expect(await tableColumns(client, "profile_snapshots")).toEqual(["id", "durable_ids", "directive_ids", "as_of", "content_hash", "run_id", "created_at"]);
     expect(await tableColumns(client, "working_sets")).toEqual([
       "id",
       "scope_key",
@@ -273,7 +287,7 @@ describe("initSchema", () => {
       "parent_session_key",
       "parent_source_ref",
       "reason",
-      "fork_entry_id",
+      "fork_durable_id",
       "fork_position",
       "observed_at",
     ]);
@@ -290,14 +304,14 @@ describe("initSchema", () => {
       "created_at",
       "expires_at",
     ]);
-    expect(await indexExists(client, "idx_surgeon_run_actions_run_id")).toBe(true);
-    expect(await indexExists(client, "idx_surgeon_run_actions_entry_id")).toBe(true);
-    expect(await indexExists(client, "idx_surgeon_run_actions_created_at")).toBe(true);
-    expect(await indexExists(client, "idx_surgeon_run_proposals_run_id")).toBe(true);
-    expect(await indexExists(client, "idx_surgeon_run_proposals_group_id")).toBe(true);
-    expect(await indexExists(client, "idx_surgeon_run_proposals_created_at")).toBe(true);
-    expect(await indexExists(client, "idx_surgeon_run_proposals_review_status")).toBe(true);
-    expect(await indexExists(client, "idx_surgeon_run_proposals_open_issue")).toBe(true);
+    expect(await indexExists(client, "idx_dream_run_actions_run_id")).toBe(true);
+    expect(await indexExists(client, "idx_dream_run_actions_durable_id")).toBe(true);
+    expect(await indexExists(client, "idx_dream_run_actions_created_at")).toBe(true);
+    expect(await indexExists(client, "idx_dream_proposals_run_id")).toBe(true);
+    expect(await indexExists(client, "idx_dream_proposals_group_id")).toBe(true);
+    expect(await indexExists(client, "idx_dream_proposals_created_at")).toBe(true);
+    expect(await indexExists(client, "idx_dream_proposals_review_status")).toBe(true);
+    expect(await indexExists(client, "idx_dream_proposals_open_issue")).toBe(true);
     expect(await indexExists(client, "idx_working_sets_status_last_active")).toBe(true);
     expect(await indexExists(client, "idx_working_sets_scope_status")).toBe(true);
     expect(await indexExists(client, "idx_working_events_working_set_created_at")).toBe(true);
@@ -310,9 +324,9 @@ describe("initSchema", () => {
     expect(await indexExists(client, "idx_session_artifacts_source_ref_kind")).toBe(true);
     expect(await indexExists(client, "idx_session_artifacts_content_hash")).toBe(true);
     expect(await indexExists(client, "idx_session_artifacts_expires_at")).toBe(true);
-    expect(await indexExists(client, "idx_entries_claim_key")).toBe(true);
-    expect(await indexExists(client, "idx_entries_valid_from")).toBe(true);
-    expect(await indexExists(client, "idx_entries_valid_to")).toBe(true);
+    expect(await indexExists(client, "idx_durables_claim_key")).toBe(true);
+    expect(await indexExists(client, "idx_durables_valid_from")).toBe(true);
+    expect(await indexExists(client, "idx_durables_valid_to")).toBe(true);
     expect(await indexExists(client, "idx_episodes_started_at")).toBe(true);
     expect(await indexExists(client, "idx_episodes_ended_at")).toBe(true);
     expect(await indexExists(client, "idx_episodes_source")).toBe(true);
@@ -335,7 +349,7 @@ describe("initSchema", () => {
     await expect(initSchema(client)).resolves.toBeUndefined();
 
     const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("12");
+    expect(version.rows[0]?.value).toBe("1");
     expect(await indexExists(client, "idx_episodes_started_at")).toBe(true);
   });
 
@@ -360,391 +374,7 @@ describe("initSchema", () => {
     await expect(insertTestWorkingSet(client, "working-c", "scope:one", "closed")).resolves.toBeUndefined();
   });
 
-  it("migrates a v5 database to the current schema version", async () => {
-    const client = createClient({ url: ":memory:" });
-    clients.push(client);
-
-    await client.execute("CREATE TABLE _meta (key TEXT PRIMARY KEY, value TEXT)");
-    await client.execute("INSERT INTO _meta (key, value) VALUES ('schema_version', '5')");
-    await client.execute(`
-      CREATE TABLE entries (
-        id TEXT PRIMARY KEY,
-        type TEXT NOT NULL,
-        subject TEXT NOT NULL,
-        content TEXT NOT NULL,
-        importance INTEGER NOT NULL,
-        expiry TEXT NOT NULL,
-        tags TEXT,
-        source_file TEXT,
-        source_context TEXT,
-        embedding F32_BLOB(1024),
-        content_hash TEXT,
-        norm_content_hash TEXT,
-        minhash_sig BLOB,
-        quality_score REAL NOT NULL DEFAULT 0.5,
-        recall_count INTEGER DEFAULT 0,
-        last_recalled_at TEXT,
-        superseded_by TEXT REFERENCES entries(id),
-        cluster_id TEXT,
-        user_id TEXT,
-        project TEXT,
-        retired INTEGER NOT NULL DEFAULT 0,
-        retired_at TEXT,
-        retired_reason TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      )
-    `);
-    await client.execute({
-      sql: `
-        INSERT INTO entries (
-          id,
-          type,
-          subject,
-          content,
-          importance,
-          expiry,
-          tags,
-          quality_score,
-          recall_count,
-          retired,
-          created_at,
-          updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      args: [
-        "v5-entry",
-        "fact",
-        "legacy subject",
-        "Legacy content survives migration.",
-        7,
-        "permanent",
-        "[]",
-        0.5,
-        0,
-        0,
-        "2026-03-20T00:00:00.000Z",
-        "2026-03-20T00:00:00.000Z",
-      ],
-    });
-
-    await initSchema(client);
-
-    expect(await tableColumns(client, "entries")).toEqual([
-      "id",
-      "type",
-      "subject",
-      "content",
-      "importance",
-      "expiry",
-      "tags",
-      "source_file",
-      "source_context",
-      "embedding",
-      "content_hash",
-      "norm_content_hash",
-      "minhash_sig",
-      "quality_score",
-      "recall_count",
-      "last_recalled_at",
-      "superseded_by",
-      "cluster_id",
-      "user_id",
-      "project",
-      "retired",
-      "retired_at",
-      "retired_reason",
-      "created_at",
-      "updated_at",
-      "valid_from",
-      "valid_to",
-      "claim_key",
-      "supersession_kind",
-      "supersession_reason",
-      "claim_key_raw",
-      "claim_key_status",
-      "claim_key_source",
-      "claim_key_confidence",
-      "claim_key_rationale",
-      "claim_support_source_kind",
-      "claim_support_locator",
-      "claim_support_observed_at",
-      "claim_support_mode",
-    ]);
-
-    const migratedEntry = await client.execute({
-      sql: `
-        SELECT
-          subject,
-          content,
-          valid_from,
-          valid_to,
-          claim_key,
-          supersession_kind,
-          supersession_reason,
-          claim_key_raw,
-          claim_key_status,
-          claim_key_source,
-          claim_key_confidence,
-          claim_key_rationale,
-          claim_support_source_kind,
-          claim_support_locator,
-          claim_support_observed_at,
-          claim_support_mode
-        FROM entries
-        WHERE id = 'v5-entry'
-      `,
-    });
-    expect(migratedEntry.rows[0]).toMatchObject({
-      subject: "legacy subject",
-      content: "Legacy content survives migration.",
-      valid_from: null,
-      valid_to: null,
-      claim_key: null,
-      supersession_kind: null,
-      supersession_reason: null,
-      claim_key_raw: null,
-      claim_key_status: null,
-      claim_key_source: null,
-      claim_key_confidence: null,
-      claim_key_rationale: null,
-      claim_support_source_kind: null,
-      claim_support_locator: null,
-      claim_support_observed_at: null,
-      claim_support_mode: null,
-    });
-
-    const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("12");
-  });
-
-  it("migrates a v7 database to the current schema version", async () => {
-    const client = createClient({ url: ":memory:" });
-    clients.push(client);
-
-    await client.execute("CREATE TABLE _meta (key TEXT PRIMARY KEY, value TEXT)");
-    await client.execute("INSERT INTO _meta (key, value) VALUES ('schema_version', '7')");
-    await client.execute(`
-      CREATE TABLE entries (
-        id TEXT PRIMARY KEY,
-        type TEXT NOT NULL,
-        subject TEXT NOT NULL,
-        content TEXT NOT NULL,
-        importance INTEGER NOT NULL,
-        expiry TEXT NOT NULL,
-        tags TEXT,
-        source_file TEXT,
-        source_context TEXT,
-        embedding F32_BLOB(1024),
-        content_hash TEXT,
-        norm_content_hash TEXT,
-        minhash_sig BLOB,
-        quality_score REAL NOT NULL DEFAULT 0.5,
-        recall_count INTEGER DEFAULT 0,
-        last_recalled_at TEXT,
-        superseded_by TEXT REFERENCES entries(id),
-        valid_from TEXT,
-        valid_to TEXT,
-        claim_key TEXT,
-        supersession_kind TEXT,
-        supersession_reason TEXT,
-        cluster_id TEXT,
-        user_id TEXT,
-        project TEXT,
-        retired INTEGER NOT NULL DEFAULT 0,
-        retired_at TEXT,
-        retired_reason TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      )
-    `);
-    await client.execute({
-      sql: `
-        INSERT INTO entries (
-          id,
-          type,
-          subject,
-          content,
-          importance,
-          expiry,
-          tags,
-          claim_key,
-          quality_score,
-          recall_count,
-          retired,
-          created_at,
-          updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      args: [
-        "v7-entry",
-        "decision",
-        "migration baseline",
-        "Existing lifecycle metadata should default to null on migration.",
-        6,
-        "permanent",
-        "[]",
-        "agenr/default_model",
-        0.5,
-        0,
-        0,
-        "2026-04-01T00:00:00.000Z",
-        "2026-04-01T00:00:00.000Z",
-      ],
-    });
-
-    await initSchema(client);
-
-    expect(await tableColumns(client, "entries")).toEqual([
-      "id",
-      "type",
-      "subject",
-      "content",
-      "importance",
-      "expiry",
-      "tags",
-      "source_file",
-      "source_context",
-      "embedding",
-      "content_hash",
-      "norm_content_hash",
-      "minhash_sig",
-      "quality_score",
-      "recall_count",
-      "last_recalled_at",
-      "superseded_by",
-      "valid_from",
-      "valid_to",
-      "claim_key",
-      "supersession_kind",
-      "supersession_reason",
-      "cluster_id",
-      "user_id",
-      "project",
-      "retired",
-      "retired_at",
-      "retired_reason",
-      "created_at",
-      "updated_at",
-      "claim_key_raw",
-      "claim_key_status",
-      "claim_key_source",
-      "claim_key_confidence",
-      "claim_key_rationale",
-      "claim_support_source_kind",
-      "claim_support_locator",
-      "claim_support_observed_at",
-      "claim_support_mode",
-    ]);
-
-    const migratedEntry = await client.execute({
-      sql: `
-        SELECT
-          claim_key,
-          claim_key_raw,
-          claim_key_status,
-          claim_key_source,
-          claim_key_confidence,
-          claim_key_rationale,
-          claim_support_source_kind,
-          claim_support_locator,
-          claim_support_observed_at,
-          claim_support_mode
-        FROM entries
-        WHERE id = 'v7-entry'
-      `,
-    });
-    expect(migratedEntry.rows[0]).toMatchObject({
-      claim_key: "agenr/default_model",
-      claim_key_raw: null,
-      claim_key_status: null,
-      claim_key_source: null,
-      claim_key_confidence: null,
-      claim_key_rationale: null,
-      claim_support_source_kind: null,
-      claim_support_locator: null,
-      claim_support_observed_at: null,
-      claim_support_mode: null,
-    });
-
-    const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("12");
-  });
-
-  it("migrates a v9 database to the current schema version", async () => {
-    const client = createClient({ url: ":memory:" });
-    clients.push(client);
-
-    await client.execute("CREATE TABLE _meta (key TEXT PRIMARY KEY, value TEXT)");
-    await client.execute("INSERT INTO _meta (key, value) VALUES ('schema_version', '9')");
-
-    await initSchema(client);
-
-    expect(await tableColumns(client, "procedures")).toEqual([
-      "id",
-      "procedure_key",
-      "title",
-      "goal",
-      "body_json",
-      "recall_text",
-      "source_file",
-      "source_hash",
-      "revision_hash",
-      "embedding",
-      "retired",
-      "retired_at",
-      "retired_reason",
-      "superseded_by",
-      "created_at",
-      "updated_at",
-    ]);
-    expect(await indexExists(client, "idx_procedures_active_procedure_key")).toBe(true);
-
-    const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("12");
-  });
-
-  it("migrates a v11 database to the session-tree schema", async () => {
-    const client = createClient({ url: ":memory:" });
-    clients.push(client);
-
-    await client.execute("CREATE TABLE _meta (key TEXT PRIMARY KEY, value TEXT)");
-    await client.execute("INSERT INTO _meta (key, value) VALUES ('schema_version', '11')");
-
-    await initSchema(client);
-
-    expect(await tableColumns(client, "session_lineage_edges")).toEqual([
-      "id",
-      "child_session_key",
-      "parent_session_key",
-      "parent_source_ref",
-      "reason",
-      "fork_entry_id",
-      "fork_position",
-      "observed_at",
-    ]);
-    expect(await tableColumns(client, "session_artifacts")).toEqual([
-      "id",
-      "kind",
-      "session_key",
-      "source",
-      "source_id",
-      "source_ref",
-      "content_hash",
-      "summary",
-      "metadata_json",
-      "created_at",
-      "expires_at",
-    ]);
-    expect(await indexExists(client, "idx_session_artifacts_session_kind")).toBe(true);
-
-    const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("12");
-  });
-
-  for (const version of ["2", "3", "4"] as const) {
+  for (const version of ["2", "3", "4", "5", "7", "9", "11", "12"] as const) {
     it(`rejects unsupported schema version ${version}`, async () => {
       const client = createClient({ url: ":memory:" });
       clients.push(client);
@@ -768,7 +398,7 @@ describe("initSchema", () => {
     clients.push(client);
 
     await client.execute(`
-      CREATE TABLE surgeon_runs (
+      CREATE TABLE dream_runs (
         id TEXT PRIMARY KEY,
         started_at TEXT NOT NULL,
         completed_at TEXT,
@@ -778,7 +408,7 @@ describe("initSchema", () => {
     `);
 
     await expect(initSchema(client)).rejects.toThrow(/without schema metadata/i);
-    expect(await tableColumns(client, "surgeon_run_actions")).toEqual([]);
+    expect(await tableColumns(client, "dream_run_actions")).toEqual([]);
   });
 
   it("rebuilds FTS on first initialization", async () => {
@@ -809,9 +439,9 @@ describe("initSchema", () => {
     await initSchema(client);
     await initSchema(client);
 
-    expect(await tableColumns(client, "surgeon_runs")).toEqual([
+    expect(await tableColumns(client, "dream_runs")).toEqual([
       "id",
-      "pass_type",
+      "tier",
       "project",
       "started_at",
       "completed_at",
@@ -822,31 +452,32 @@ describe("initSchema", () => {
       "model",
       "actions_taken",
       "actions_skipped",
-      "entries_retired",
+      "durables_retired",
       "summary",
       "summary_json",
       "error",
       "dry_run",
       "config_json",
     ]);
-    expect(await tableColumns(client, "surgeon_run_actions")).toEqual([
+    expect(await tableColumns(client, "dream_run_actions")).toEqual([
       "id",
       "run_id",
       "action_type",
-      "entry_id",
-      "entry_ids",
+      "durable_id",
+      "durable_ids",
       "reasoning",
+      "evidence_refs_json",
       "recall_delta",
       "details_json",
       "created_at",
     ]);
-    expect(await tableColumns(client, "surgeon_run_proposals")).toEqual([
+    expect(await tableColumns(client, "dream_proposals")).toEqual([
       "id",
       "run_id",
       "group_id",
       "issue_kind",
       "scope",
-      "entry_ids",
+      "durable_ids",
       "current_claim_keys",
       "proposed_claim_keys",
       "rationale",
@@ -884,20 +515,20 @@ describe("initSchema", () => {
     clients.push(client);
 
     await initSchema(client);
-    const vectorIndexExisted = await indexExists(client, VECTOR_INDEX_NAME);
+    const vectorIndexExisted = await indexExists(client, DURABLE_VECTOR_INDEX_NAME);
     const procedureVectorIndexExisted = await indexExists(client, PROCEDURE_VECTOR_INDEX_NAME);
 
     await prepareBulkWrites(client);
 
     expect(await triggerNames(client)).toEqual(new Set());
-    expect(await indexExists(client, VECTOR_INDEX_NAME)).toBe(false);
+    expect(await indexExists(client, DURABLE_VECTOR_INDEX_NAME)).toBe(false);
     expect(await indexExists(client, PROCEDURE_VECTOR_INDEX_NAME)).toBe(false);
 
     await insertTestEntry(client, "entry-1", "Bulk finalize restores FTS searchability.");
     await insertTestProcedure(client, "procedure-1", "Bulk finalize restores procedure FTS searchability.");
 
     const beforeFinalize = await client.execute({
-      sql: "SELECT rowid FROM entries_fts WHERE entries_fts MATCH 'searchability'",
+      sql: "SELECT rowid FROM durables_fts WHERE durables_fts MATCH 'searchability'",
     });
     expect(beforeFinalize.rows).toHaveLength(0);
     const procedureBeforeFinalize = await client.execute({
@@ -907,15 +538,15 @@ describe("initSchema", () => {
 
     await finalizeBulkWrites(client);
 
-    expect(await triggerNames(client)).toEqual(new Set(["entries_ai", "entries_ad", "entries_au", "procedures_ai", "procedures_ad", "procedures_au"]));
-    expect(await indexExists(client, VECTOR_INDEX_NAME)).toBe(vectorIndexExisted);
+    expect(await triggerNames(client)).toEqual(new Set(["durables_ai", "durables_ad", "durables_au", "procedures_ai", "procedures_ad", "procedures_au"]));
+    expect(await indexExists(client, DURABLE_VECTOR_INDEX_NAME)).toBe(vectorIndexExisted);
     expect(await indexExists(client, PROCEDURE_VECTOR_INDEX_NAME)).toBe(procedureVectorIndexExisted);
     const lastBulkIngestAt = await getLastBulkIngestAt(client);
     expect(lastBulkIngestAt).toEqual(expect.any(String));
     expect(Date.parse(lastBulkIngestAt ?? "")).not.toBeNaN();
 
     const afterFinalize = await client.execute({
-      sql: "SELECT rowid FROM entries_fts WHERE entries_fts MATCH 'searchability'",
+      sql: "SELECT rowid FROM durables_fts WHERE durables_fts MATCH 'searchability'",
     });
     expect(afterFinalize.rows).toHaveLength(1);
     const procedureAfterFinalize = await client.execute({
@@ -935,10 +566,10 @@ describe("initSchema", () => {
 
     await initSchema(client);
 
-    expect(await triggerNames(client)).toEqual(new Set(["entries_ai", "entries_ad", "entries_au", "procedures_ai", "procedures_ad", "procedures_au"]));
+    expect(await triggerNames(client)).toEqual(new Set(["durables_ai", "durables_ad", "durables_au", "procedures_ai", "procedures_ad", "procedures_au"]));
 
     const recovered = await client.execute({
-      sql: "SELECT rowid FROM entries_fts WHERE entries_fts MATCH 'dirty'",
+      sql: "SELECT rowid FROM durables_fts WHERE durables_fts MATCH 'dirty'",
     });
     expect(recovered.rows).toHaveLength(1);
     const recoveredProcedure = await client.execute({
@@ -993,7 +624,7 @@ function createTrackedClient(): {
 async function insertTestEntry(client: Client, id: string, content: string): Promise<void> {
   await client.execute({
     sql: `
-      INSERT INTO entries (
+      INSERT INTO durables (
         id,
         type,
         subject,
@@ -1148,7 +779,7 @@ async function triggerNames(client: Client): Promise<Set<string>> {
       SELECT name
       FROM sqlite_master
       WHERE type = 'trigger'
-        AND name IN ('entries_ai', 'entries_ad', 'entries_au', 'procedures_ai', 'procedures_ad', 'procedures_au')
+        AND name IN ('durables_ai', 'durables_ad', 'durables_au', 'procedures_ai', 'procedures_ad', 'procedures_au')
     `,
   });
 

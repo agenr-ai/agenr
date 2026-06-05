@@ -1,14 +1,14 @@
 import type { ClaimSlotPolicy } from "../../core/claim-slot-policy.js";
 import type { ResolvedTemporalWindow } from "../../core/episode/types.js";
 import type { RecallOutput } from "../../core/recall/types.js";
-import type { EntryType, Procedure } from "../../core/types.js";
+import type { DurableKind, Procedure } from "../../core/types.js";
 import type { ProcedureRecallCandidate } from "../procedures/recall/types.js";
 import type { ClaimCentricRecallEntry, ClaimCentricRecallFamily } from "./claim-centric.js";
 
 /**
  * Agent-facing recall mode.
  */
-export type UnifiedRecallMode = "auto" | "entries" | "episodes" | "procedures";
+export type UnifiedRecallMode = "auto" | "durables" | "episodes" | "procedures";
 
 /**
  * Stable high-level intent buckets reported by the unified recall router.
@@ -24,7 +24,7 @@ export interface UnifiedRecallInput {
   limit?: number;
   threshold?: number;
   budget?: number;
-  types?: EntryType[];
+  types?: DurableKind[];
   tags?: string[];
   asOf?: string;
   sessionKey?: string;
@@ -36,7 +36,7 @@ export interface UnifiedRecallInput {
 export interface UnifiedRecallRouting {
   requested: UnifiedRecallMode;
   detectedIntent: UnifiedRecallDetectedIntent;
-  queried: Array<"episodes" | "entries" | "procedures">;
+  queried: Array<"episodes" | "durables" | "procedures">;
   reason: string;
 }
 

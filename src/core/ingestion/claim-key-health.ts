@@ -1,5 +1,5 @@
 import type { ClaimExtractionDiagnostic, ClaimExtractionDiagnosticOutcome } from "../store/claim-extraction.js";
-import type { ClaimKeySource, EntryType, StoreEntryInput } from "../types.js";
+import type { ClaimKeySource, DurableKind, StoreDurableInput } from "../types.js";
 import { detectClaimKeySingletonAliasCandidates } from "../claim-key-entity-family.js";
 import { isSnapshotStyleSourceFile } from "./source-metadata.js";
 
@@ -7,7 +7,7 @@ import { isSnapshotStyleSourceFile } from "./source-metadata.js";
  * Per-type keyed coverage emitted in the compact ingest claim-key health view.
  */
 export interface IngestClaimKeyHealthTypeCoverage {
-  type: EntryType;
+  type: DurableKind;
   total: number;
   eligible: boolean;
   keyed: number;
@@ -30,7 +30,7 @@ export interface IngestClaimKeyHealthSupportCoverage {
  */
 export interface IngestClaimKeyHealthRow {
   inputIndex: number;
-  type: EntryType;
+  type: DurableKind;
   subject: string;
   sourceFile?: string;
   outcome: Exclude<ClaimExtractionDiagnosticOutcome, "accepted" | "ineligible_type">;
@@ -98,9 +98,9 @@ export interface IngestClaimKeyHealthSummary {
  * @returns Compact claim-key health summary for operator-facing reporting.
  */
 export function summarizeIngestClaimKeyHealth(
-  entries: StoreEntryInput[],
+  entries: StoreDurableInput[],
   diagnosticsByIndex: Map<number, ClaimExtractionDiagnostic>,
-  eligibleTypes: EntryType[],
+  eligibleTypes: DurableKind[],
 ): IngestClaimKeyHealthSummary {
   const eligibleTypeSet = new Set(eligibleTypes);
   const eligibleRows = entries.filter((entry) => eligibleTypeSet.has(entry.type));
@@ -263,7 +263,7 @@ export function summarizeIngestClaimKeyHealth(
 }
 
 /** Returns whether one store candidate already carries a non-empty claim key. */
-function hasClaimKey(entry: StoreEntryInput): boolean {
+function hasClaimKey(entry: StoreDurableInput): boolean {
   return typeof entry.claim_key === "string" && entry.claim_key.trim().length > 0;
 }
 
@@ -273,7 +273,7 @@ function hasNonEmptyValue(value?: string): boolean {
 }
 
 /** Returns whether one keyed row carries the full persisted support bundle. */
-function hasCompleteSupportMetadata(entry: StoreEntryInput): boolean {
+function hasCompleteSupportMetadata(entry: StoreDurableInput): boolean {
   return (
     typeof entry.claim_support_source_kind === "string" &&
     entry.claim_support_source_kind.trim().length > 0 &&

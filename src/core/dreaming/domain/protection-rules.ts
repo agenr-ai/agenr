@@ -1,0 +1,67 @@
+import type { Expiry } from "../../types.js";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Lowest importance dreaming may demote a permanent entry to. */
+const SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR = 4;
+
+export { SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR };
+
+/**
+ * Durable fields used by retirement protection guards.
+ */
+export interface DreamProtectionDurable {
+  expiry: Expiry;
+  importance: number;
+  lastRecalledAt?: string | null;
+}
+
+/**
+ * Configuration for retirement protection guards.
+ */
+export interface DreamRetirementProtectionConfig {
+  now: Date;
+  protectRecalledDays: number;
+  protectMinImportance: number;
+}
+
+/**
+ * Determines whether an entry is protected from retirement.
+ *
+ * @param entry - Durable fields evaluated by the hard protection guards.
+ * @param config - Active retirement protection configuration.
+ * @returns Protection status and an optional explanation when protected.
+ */
+export function isProtectedFromRetirement(entry: DreamProtectionDurable, config: DreamRetirementProtectionConfig): { protected: boolean; reason?: string } {
+  if (entry.expiry === "core") {
+    return { protected: true, reason: "Durable expiry is core." };
+  }
+
+  if (entry.importance >= config.protectMinImportance) {
+    return {
+      protected: true,
+      reason: `Durable importance is at or above ${config.protectMinImportance}.`,
+    };
+  }
+
+  if (entry.expiry === "permanent") {
+    return {
+      protected: true,
+      reason: `Durable expiry is permanent. Use update_durable to demote importance instead, but keep importance at or above ${SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR}.`,
+    };
+  }
+
+  const lastRecalledAt = entry.lastRecalledAt?.trim();
+  if (lastRecalledAt) {
+    const parsed = new Date(lastRecalledAt);
+    const ageMs = config.now.getTime() - parsed.getTime();
+    if (!Number.isNaN(parsed.getTime()) && ageMs <= config.protectRecalledDays * DAY_MS) {
+      return {
+        protected: true,
+        reason: `Durable was recalled within the last ${config.protectRecalledDays} days.`,
+      };
+    }
+  }
+
+  return { protected: false };
+}

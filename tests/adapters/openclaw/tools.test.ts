@@ -34,7 +34,7 @@ import {
 import { createNoopAgenrDebugSink } from "../../../src/adapters/openclaw/debug/index.js";
 import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../src/adapters/openclaw/types.js";
 import type { EmbeddingPort, RecallPorts } from "../../../src/core/ports.js";
-import type { Entry, Procedure } from "../../../src/core/types.js";
+import type { Durable, Procedure } from "../../../src/core/types.js";
 import { closeTestDatabases, removeTestPath } from "../../helpers/temp-paths.js";
 
 const openDatabases: SqlDatabase[] = [];
@@ -119,7 +119,7 @@ describe("agenr OpenClaw tools", () => {
     expect(stored).not.toBeNull();
 
     const result = await fetchTool.execute("tool-fetch", { id: stored?.id });
-    const storedEntry = await database.getEntry(stored?.id ?? "");
+    const storedEntry = await database.getDurable(stored?.id ?? "");
     const expectedContent = storedEntry?.content ?? longContent.trim();
 
     expect(result.details).toMatchObject({
@@ -180,7 +180,7 @@ describe("agenr OpenClaw tools", () => {
       status: "retired",
     });
     expect(storedEntry).not.toBeNull();
-    expect(await database.getEntry(storedEntry?.id ?? "")).toBeNull();
+    expect(await database.getDurable(storedEntry?.id ?? "")).toBeNull();
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
         '[agenr] tool=agenr_store session=session-1 key=agent:main:webchat:test store 1 entry subject="feature flag policy" type=decision',
@@ -222,7 +222,7 @@ describe("agenr OpenClaw tools", () => {
     });
   });
 
-  it("runs unified entry recall through injected recall ports", async () => {
+  it("runs unified durable recall through injected recall ports", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
     const entry = createEntry({
@@ -284,7 +284,7 @@ describe("agenr OpenClaw tools", () => {
       routing: {
         requested: "auto",
         detectedIntent: "factual",
-        queried: ["entries"],
+        queried: ["durables"],
       },
       projectedEntries: [
         expect.objectContaining({
@@ -425,7 +425,7 @@ describe("agenr OpenClaw tools", () => {
 
     const result = await recallTool.execute("tool-entity-attribute", {
       query: "Where does Jim Martin's dad live?",
-      mode: "entries",
+      mode: "durables",
       limit: 6,
       threshold: 0.2,
     });
@@ -434,9 +434,9 @@ describe("agenr OpenClaw tools", () => {
       status: "ok",
       count: 1,
       routing: {
-        requested: "entries",
+        requested: "durables",
         detectedIntent: "entity_attribute",
-        queried: ["entries"],
+        queried: ["durables"],
       },
       entries: [expect.objectContaining({ subject: "Jim Martin dad location" })],
     });
@@ -488,7 +488,7 @@ describe("agenr OpenClaw tools", () => {
     });
     expect(result.content[0]?.text).toContain("Episode Matches");
     expect(result.content[0]?.text).toContain("episodic recall");
-    expect(result.content[0]?.text).not.toContain("Entry recall was skipped");
+    expect(result.content[0]?.text).not.toContain("Durable recall was skipped");
   });
 
   it("routes mixed temporal narrative queries to episodes and entries", async () => {
@@ -529,7 +529,7 @@ describe("agenr OpenClaw tools", () => {
       routing: {
         requested: "auto",
         detectedIntent: "mixed",
-        queried: ["episodes", "entries"],
+        queried: ["episodes", "durables"],
       },
       timeWindow: {
         resolvedFrom: "2026-03-29",
@@ -616,10 +616,10 @@ describe("agenr OpenClaw tools", () => {
       routing: {
         requested: "auto",
         detectedIntent: "mixed",
-        queried: ["entries", "episodes"],
+        queried: ["durables", "episodes"],
       },
     });
-    expect(result.content[0]?.text).toContain("requested=auto detected=mixed queried=entries, episodes");
+    expect(result.content[0]?.text).toContain("requested=auto detected=mixed queried=durables, episodes");
   });
 
   it("uses semantic episode search when mode=episodes has no time window", async () => {
@@ -726,7 +726,7 @@ describe("agenr OpenClaw tools", () => {
       routing: {
         requested: "auto",
         detectedIntent: "historical_state",
-        queried: ["entries", "episodes"],
+        queried: ["durables", "episodes"],
       },
       claimTransitions: [
         expect.objectContaining({
@@ -736,7 +736,7 @@ describe("agenr OpenClaw tools", () => {
       ],
     });
     const text = result.content[0]?.text ?? "";
-    expect(text).toContain("requested=auto detected=historical_state queried=entries, episodes");
+    expect(text).toContain("requested=auto detected=historical_state queried=durables, episodes");
     expect(text.indexOf("Entry Matches")).toBeLessThan(text.indexOf("Episode Matches"));
     expect(text).toContain("Claim Transitions");
     expect(text).toContain("slot_policy=exclusive");
@@ -800,7 +800,7 @@ describe("agenr OpenClaw tools", () => {
       id: original?.id,
     });
     const replacementEntryId = (replacementResult.details as { entryId?: string }).entryId ?? "";
-    const replacementEntry = await database.getEntry(replacementEntryId);
+    const replacementEntry = await database.getDurable(replacementEntryId);
 
     expect(replacementResult.details).toMatchObject({
       status: "stored",
@@ -852,7 +852,7 @@ describe("agenr OpenClaw tools", () => {
     const traceResult = await traceTool.execute("tool-18", {
       id: storedEntry?.id,
     });
-    const updatedEntry = await database.getEntry(storedEntry?.id ?? "");
+    const updatedEntry = await database.getDurable(storedEntry?.id ?? "");
 
     expect(updateResult.details).toMatchObject({
       status: "updated",
@@ -1131,7 +1131,7 @@ function createOpenClawHost(
   };
 }
 
-function createVectorRecallPorts(entries: Entry[]): RecallPorts {
+function createVectorRecallPorts(entries: Durable[]): RecallPorts {
   return {
     async embed() {
       return createEmbedding(0, 1);
@@ -1164,7 +1164,7 @@ function createVectorRecallPorts(entries: Entry[]): RecallPorts {
   };
 }
 
-function createExactRecallPorts(entries: Entry[]): RecallPorts {
+function createExactRecallPorts(entries: Durable[]): RecallPorts {
   return {
     async embed() {
       return createEmbedding(0, 1);
@@ -1236,7 +1236,7 @@ async function createTestDatabase(): Promise<SqlDatabase> {
   return database;
 }
 
-function createEntry(overrides: Partial<Entry> = {}): Entry {
+function createEntry(overrides: Partial<Durable> = {}): Durable {
   const now = new Date("2026-03-27T12:00:00.000Z").toISOString();
   return {
     id: overrides.id ?? randomUUID(),

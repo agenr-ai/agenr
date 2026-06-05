@@ -4,7 +4,7 @@ import { ingestPath } from "../../../src/app/ingestion/index.js";
 import type { IngestFilePort, IngestionLlmPort, UsageStats } from "../../../src/app/ingestion/ports.js";
 import type { DatabasePort, EmbeddingPort, LlmPort, TranscriptPort } from "../../../src/core/ports.js";
 import { composeEmbeddingText } from "../../../src/core/store/embedding-text.js";
-import type { Entry, ParsedTranscript, StoreEntryInput } from "../../../src/core/types.js";
+import type { Durable, ParsedTranscript, StoreDurableInput } from "../../../src/core/types.js";
 
 describe("ingestPath", () => {
   it("discovers files and reuses dedup embeddings during store", async () => {
@@ -19,7 +19,7 @@ describe("ingestPath", () => {
     let llmIndex = 0;
     const extractionResponses = [
       {
-        entries: [
+        durables: [
           createInput({
             subject: "one",
             content: "This is durable content from the first extracted file.",
@@ -28,7 +28,7 @@ describe("ingestPath", () => {
         ],
       },
       {
-        entries: [
+        durables: [
           createInput({
             subject: "two",
             content: "This is durable content from the second extracted file.",
@@ -45,7 +45,7 @@ describe("ingestPath", () => {
         transcript,
         db,
         embedding,
-        createExtractionLlm: () => new MockIngestionLlm(extractionResponses[llmIndex++] ?? { entries: [] }),
+        createExtractionLlm: () => new MockIngestionLlm(extractionResponses[llmIndex++] ?? { durables: [] }),
       },
       {
         skipDedup: true,
@@ -82,7 +82,7 @@ describe("ingestPath", () => {
         transcript: new MockTranscriptPort(buildTranscript()),
         db: new MockDatabase(),
         embedding: new MockEmbeddingPort(),
-        createExtractionLlm: () => new MockIngestionLlm({ entries: [] }),
+        createExtractionLlm: () => new MockIngestionLlm({ durables: [] }),
       },
       {
         skipDedup: true,
@@ -112,7 +112,7 @@ describe("ingestPath", () => {
         embedding: new MockEmbeddingPort(),
         createExtractionLlm: () =>
           new MockIngestionLlm({
-            entries: [
+            durables: [
               createInput({
                 type: "fact",
                 subject: "Project X status",
@@ -175,7 +175,7 @@ describe("ingestPath", () => {
         embedding: new MockEmbeddingPort(),
         createExtractionLlm: () =>
           new MockIngestionLlm({
-            entries: [
+            durables: [
               createInput({
                 type: "fact",
                 subject: "Project X status",
@@ -241,7 +241,7 @@ describe("ingestPath", () => {
         transcript: new MockTranscriptPort(buildTranscript()),
         db: new MockDatabase(),
         embedding: new MockEmbeddingPort(entries, vectors),
-        createExtractionLlm: () => new MockIngestionLlm({ entries }),
+        createExtractionLlm: () => new MockIngestionLlm({ durables: entries }),
         createDedupLlm: () => new MockDedupLlm(['{"keep":[0],"drop":[1]}', '{"keep":[1],"drop":[0]}']),
         createClaimExtractionLlm: () =>
           new MockClaimExtractionLlm((_, userMessage) =>
@@ -314,7 +314,7 @@ describe("ingestPath", () => {
         transcript: new MockTranscriptPort(buildTranscript()),
         db: new MockDatabase(),
         embedding: new MockEmbeddingPort(entries, vectors),
-        createExtractionLlm: () => new MockIngestionLlm({ entries }),
+        createExtractionLlm: () => new MockIngestionLlm({ durables: entries }),
         createDedupLlm: () => {
           dedupLlm = new MockDedupLlm(responses.map((response) => response.promise));
           return dedupLlm;
@@ -355,7 +355,7 @@ describe("ingestPath", () => {
         transcript: new MockTranscriptPort(buildTranscript()),
         db: new MockDatabase(),
         embedding: new MockEmbeddingPort(entries, vectors),
-        createExtractionLlm: () => new MockIngestionLlm({ entries }),
+        createExtractionLlm: () => new MockIngestionLlm({ durables: entries }),
         createDedupLlm: () => {
           dedupLlm = new MockDedupLlm(responses.map((response) => response.promise));
           return dedupLlm;
@@ -401,7 +401,7 @@ describe("ingestPath", () => {
         embedding: new MockEmbeddingPort(),
         createExtractionLlm: () =>
           new MockIngestionLlm({
-            entries: [
+            durables: [
               createInput({
                 type: "fact",
                 subject: "Jim timezone",
@@ -470,7 +470,7 @@ describe("ingestPath", () => {
         embedding: new MockEmbeddingPort(),
         createExtractionLlm: () =>
           new MockIngestionLlm({
-            entries: [
+            durables: [
               createInput({
                 type: "fact",
                 subject: "Project X status",
@@ -512,7 +512,7 @@ describe("ingestPath", () => {
         embedding: new MockEmbeddingPort(),
         createExtractionLlm: () =>
           new MockIngestionLlm({
-            entries: [
+            durables: [
               createInput({
                 type: "lesson",
                 subject: "Pooling lesson",
@@ -555,7 +555,7 @@ describe("ingestPath", () => {
         embedding: new MockEmbeddingPort(),
         createExtractionLlm: () =>
           new MockIngestionLlm({
-            entries: [
+            durables: [
               createInput({
                 subject: "Jim home city",
                 content: "Jim lives in Denver, Colorado.",
@@ -605,7 +605,7 @@ describe("ingestPath", () => {
         embedding: new MockEmbeddingPort(),
         createExtractionLlm: () =>
           new MockIngestionLlm({
-            entries: [
+            durables: [
               createInput({
                 subject: "No claim extractor",
                 content: "This entry should still store.",
@@ -654,7 +654,7 @@ describe("ingestPath", () => {
         embedding: new MockEmbeddingPort(),
         createExtractionLlm: () =>
           new MockIngestionLlm({
-            entries: [
+            durables: [
               createInput({
                 subject: "Project X",
                 content: "Project X is active.",
@@ -679,7 +679,7 @@ describe("ingestPath", () => {
         embedding: new MockEmbeddingPort(),
         createExtractionLlm: () =>
           new MockIngestionLlm({
-            entries: [
+            durables: [
               createInput({
                 subject: "The project",
                 content: "The project is active.",
@@ -712,7 +712,7 @@ describe("ingestPath", () => {
         embedding: new MockEmbeddingPort(),
         createExtractionLlm: () =>
           new MockIngestionLlm({
-            entries: [
+            durables: [
               createInput({
                 subject: "Failure case",
                 content: "Claim extraction should fail open.",
@@ -746,7 +746,7 @@ describe("ingestPath", () => {
         embedding: new MockEmbeddingPort(),
         createExtractionLlm: () =>
           new MockIngestionLlm({
-            entries: [
+            durables: [
               createInput({
                 subject: "Bulk window",
                 content: "Claim extraction should happen first.",
@@ -791,7 +791,7 @@ describe("ingestPath", () => {
         embedding: new MockEmbeddingPort(),
         createExtractionLlm: () =>
           new MockIngestionLlm({
-            entries: [
+            durables: [
               createInput({
                 type: "decision",
                 subject: "Repo workflow docs",
@@ -885,7 +885,7 @@ class MockFilePort implements IngestFilePort {
 }
 
 class MockDatabase implements DatabasePort {
-  public readonly insertions: Array<{ entry: Entry; embedding: number[]; contentHash: string }> = [];
+  public readonly insertions: Array<{ entry: Durable; embedding: number[]; contentHash: string }> = [];
   public readonly ingestLogInsertions: Array<{ filePath: string; fileHash: string; entryCount: number }> = [];
   public readonly callOrder: string[] = [];
   public transactionCount = 0;
@@ -894,7 +894,7 @@ class MockDatabase implements DatabasePort {
 
   public constructor(private readonly eventLog?: string[]) {}
 
-  public async insertEntry(entry: Entry, embedding: number[], contentHash: string): Promise<string> {
+  public async insertDurable(entry: Durable, embedding: number[], contentHash: string): Promise<string> {
     this.callOrder.push("insert");
     this.eventLog?.push("insert");
     this.insertions.push({ entry, embedding, contentHash });
@@ -913,11 +913,11 @@ class MockDatabase implements DatabasePort {
     this.eventLog?.push("finalize");
   }
 
-  public async getEntries(): Promise<Entry[]> {
+  public async getDurables(): Promise<Durable[]> {
     return [];
   }
 
-  public async getEntry(): Promise<Entry | null> {
+  public async getDurable(): Promise<Durable | null> {
     return null;
   }
 
@@ -929,15 +929,15 @@ class MockDatabase implements DatabasePort {
     return new Set();
   }
 
-  public async retireEntry(): Promise<boolean> {
+  public async retireDurable(): Promise<boolean> {
     return false;
   }
 
-  public async supersedeEntry(): Promise<boolean> {
+  public async supersedeDurable(): Promise<boolean> {
     return false;
   }
 
-  public async findActiveEntriesByClaimKey(): Promise<Entry[]> {
+  public async findActiveDurablesByClaimKey(): Promise<Durable[]> {
     return [];
   }
 
@@ -947,7 +947,7 @@ class MockDatabase implements DatabasePort {
       .filter((prefix): prefix is string => typeof prefix === "string" && prefix.length > 0);
   }
 
-  public async updateEntry(): Promise<boolean> {
+  public async updateDurable(): Promise<boolean> {
     return false;
   }
 
@@ -973,7 +973,7 @@ class MockEmbeddingPort implements EmbeddingPort {
   public readonly calls: string[][] = [];
   private readonly vectorsByText?: Map<string, number[]>;
 
-  public constructor(entries: StoreEntryInput[] = [], vectors: number[][] = []) {
+  public constructor(entries: StoreDurableInput[] = [], vectors: number[][] = []) {
     this.vectorsByText = entries.length > 0 ? new Map(entries.map((entry, index) => [composeEmbeddingText(entry), vectors[index] ?? []])) : undefined;
   }
 
@@ -1109,8 +1109,8 @@ class MockClaimExtractionLlm implements LlmPort {
   }
 }
 
-function createPairedClusterScenario(clusterCount: number): { entries: StoreEntryInput[]; vectors: number[][] } {
-  const entries: StoreEntryInput[] = [];
+function createPairedClusterScenario(clusterCount: number): { entries: StoreDurableInput[]; vectors: number[][] } {
+  const entries: StoreDurableInput[] = [];
   const vectors: number[][] = [];
 
   for (let clusterIndex = 0; clusterIndex < clusterCount; clusterIndex += 1) {
@@ -1172,7 +1172,7 @@ function buildTranscript(
   };
 }
 
-function createInput(overrides: Partial<StoreEntryInput> = {}): StoreEntryInput {
+function createInput(overrides: Partial<StoreDurableInput> = {}): StoreDurableInput {
   return {
     type: overrides.type ?? "fact",
     subject: overrides.subject ?? "subject",

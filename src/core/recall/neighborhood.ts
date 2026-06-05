@@ -1,7 +1,7 @@
 import type { Episode, Procedure } from "../types.js";
 
 import { tokenize } from "./lexical.js";
-import type { RecallCandidateEntry } from "./types.js";
+import type { RecallCandidateDurable } from "./types.js";
 
 /**
  * Neighborhood expansion and seeded rerank helpers.
@@ -45,7 +45,7 @@ export type NeighborhoodFamily = "supersession_chain" | "claim_key_sibling" | "p
  * respect `includeRetired` as a hard gate so the default entry profile
  * never pulls retired rows into the candidate pool.
  */
-export interface EntryNeighborhoodRequest {
+export interface DurableNeighborhoodRequest {
   /** Seed entry IDs to expand around. */
   seedIds: string[];
   /** Maximum total rows the adapter may return. */
@@ -202,7 +202,7 @@ export function seededRerank<TCandidate extends SeededRerankCandidate>(
  * @param seed - Strong-seed entry the candidate is being compared to.
  * @returns True when the two entries share lineage, false otherwise.
  */
-export function sharesEntryLineage(candidate: RecallCandidateEntry, seed: RecallCandidateEntry): boolean {
+export function sharesEntryLineage(candidate: RecallCandidateDurable, seed: RecallCandidateDurable): boolean {
   if (candidate.id === seed.id) {
     return false;
   }

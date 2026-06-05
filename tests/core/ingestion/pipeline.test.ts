@@ -9,7 +9,7 @@ import { OpenClawTranscriptParser } from "../../../src/adapters/openclaw/transcr
 import { extractFile, ingestFile, storeExtractedResults, type ExtractedFileResult } from "../../../src/core/ingestion/pipeline.js";
 import type { DatabasePort, EmbeddingPort, LlmPort, TranscriptPort } from "../../../src/core/ports.js";
 import { composeEmbeddingText } from "../../../src/core/store/embedding-text.js";
-import type { Entry, ParsedTranscript, StoreEntryInput } from "../../../src/core/types.js";
+import type { Durable, ParsedTranscript, StoreDurableInput } from "../../../src/core/types.js";
 
 const tempDirectories: string[] = [];
 
@@ -28,7 +28,7 @@ describe("extractFile", () => {
     );
     const llm = new MockLlmPort([
       {
-        entries: [
+        durables: [
           {
             type: "decision",
             subject: "package manager",
@@ -84,7 +84,7 @@ describe("extractFile", () => {
     );
     const llm = new MockLlmPort([
       {
-        entries: [
+        durables: [
           {
             type: "decision",
             subject: "agenr package manager",
@@ -127,7 +127,7 @@ describe("extractFile", () => {
       },
     });
     const transcript = new MockTranscriptPort(buildTranscript());
-    const llm = new MockLlmPort([{ entries: [] }]);
+    const llm = new MockLlmPort([{ durables: [] }]);
 
     const result = await extractFile({ filePath, fileHash }, { transcript, llm, db });
 
@@ -146,7 +146,7 @@ describe("extractFile", () => {
     const { filePath, fileHash } = await writeTranscriptFile("session-three");
     const db = new MockDatabase();
     const transcript = new MockTranscriptPort(new Error("Malformed transcript"));
-    const llm = new MockLlmPort([{ entries: [] }]);
+    const llm = new MockLlmPort([{ durables: [] }]);
 
     const result = await extractFile({ filePath, fileHash }, { transcript, llm, db });
 
@@ -378,7 +378,7 @@ describe("ingestFile", () => {
     const transcript = new MockTranscriptPort(buildTranscript());
     const llm = new MockLlmPort([
       {
-        entries: [createInput({ content: "Stored from ingestFile", source_file: filePath })],
+        durables: [createInput({ content: "Stored from ingestFile", source_file: filePath })],
       },
     ]);
     const embedding = new MockEmbeddingPort();
@@ -420,7 +420,7 @@ describe("ingestFile", () => {
     const transcript = new MockTranscriptPort(buildTranscript());
     const llm = new MockLlmPort([
       {
-        entries: [
+        durables: [
           createInput({
             type: "fact",
             subject: "Project X status",
@@ -472,7 +472,7 @@ describe("ingestFile", () => {
       },
       {
         transcript: new MockTranscriptPort(buildTranscript()),
-        llm: new MockLlmPort([{ entries }]),
+        llm: new MockLlmPort([{ durables: entries }]),
         dedupLlm: (() => {
           dedupLlm = new MockDedupLlm(responses.map((response) => response.promise));
           return dedupLlm;
@@ -515,7 +515,7 @@ describe("ingestFile", () => {
       },
       {
         transcript: new MockTranscriptPort(buildTranscript()),
-        llm: new MockLlmPort([{ entries }]),
+        llm: new MockLlmPort([{ durables: entries }]),
         dedupLlm: (() => {
           dedupLlm = new MockDedupLlm(responses.map((response) => response.promise));
           return dedupLlm;
@@ -551,7 +551,7 @@ describe("ingestFile", () => {
     const transcript = new MockTranscriptPort(buildTranscript());
     const llm = new MockLlmPort([
       {
-        entries: [
+        durables: [
           createInput({ type: "fact", subject: "Jim timezone", content: "Jim's timezone is America/Chicago.", source_file: filePath }),
           createInput({ type: "fact", subject: "Jim city", content: "Jim lives in Denver, Colorado.", source_file: filePath }),
         ],
@@ -610,7 +610,7 @@ describe("ingestFile", () => {
     const transcript = new MockTranscriptPort(buildTranscript());
     const llm = new MockLlmPort([
       {
-        entries: [
+        durables: [
           createInput({ type: "fact", subject: "Jim timezone", content: "Jim's timezone is America/Chicago.", source_file: filePath }),
           createInput({ type: "fact", subject: "Jim city", content: "Jim lives in Denver, Colorado.", source_file: filePath }),
         ],
@@ -689,7 +689,7 @@ describe("ingestFile", () => {
     const { filePath, fileHash } = await writeTranscriptFile(`${transcriptLines.join("\n")}\n`);
     const db = new MockDatabase();
     const llm = new TranscriptAwareLlmPort((userMessage) => ({
-      entries: [
+      durables: [
         {
           type: "fact",
           subject: "Jim home city",
@@ -752,7 +752,7 @@ describe("ingestFile", () => {
     const { filePath, fileHash } = await writeTranscriptFile(`${transcriptLines.join("\n")}\n`);
     const db = new MockDatabase();
     const llm = new TranscriptAwareLlmPort((userMessage) => ({
-      entries: [
+      durables: [
         {
           type: "fact",
           subject: "Jim profile slot",
@@ -816,7 +816,7 @@ describe("ingestFile", () => {
     const { filePath, fileHash } = await writeTranscriptFile(`${transcriptLines.join("\n")}\n`);
     const db = new MockDatabase();
     const llm = new TranscriptAwareLlmPort((userMessage) => ({
-      entries: [
+      durables: [
         {
           type: "fact",
           subject: "Broken claim key entry",
@@ -862,7 +862,7 @@ describe("ingestFile", () => {
       },
     });
     const transcript = new MockTranscriptPort(buildTranscript());
-    const llm = new MockLlmPort([{ entries: [] }]);
+    const llm = new MockLlmPort([{ durables: [] }]);
     const embedding = new MockEmbeddingPort();
 
     const result = await ingestFile({ filePath, fileHash }, { transcript, llm, embedding, db });
@@ -879,7 +879,7 @@ describe("ingestFile", () => {
 });
 
 class MockDatabase implements DatabasePort {
-  public readonly insertions: Array<{ entry: Entry; embedding: number[]; contentHash: string }> = [];
+  public readonly insertions: Array<{ entry: Durable; embedding: number[]; contentHash: string }> = [];
   public readonly ingestLogInsertions: Array<{ filePath: string; fileHash: string; entryCount: number }> = [];
   public readonly existingHashes: Set<string>;
   public readonly existingNormHashes: Set<string>;
@@ -904,7 +904,7 @@ class MockDatabase implements DatabasePort {
     this.failInsertMessage = options.failInsertMessage;
   }
 
-  public async insertEntry(entry: Entry, embedding: number[], contentHash: string): Promise<string> {
+  public async insertDurable(entry: Durable, embedding: number[], contentHash: string): Promise<string> {
     this.callOrder.push("insert");
     if (this.failInsertMessage) {
       throw new Error(this.failInsertMessage);
@@ -923,11 +923,11 @@ class MockDatabase implements DatabasePort {
     this.callOrder.push("finalize");
   }
 
-  public async getEntries(): Promise<Entry[]> {
+  public async getDurables(): Promise<Durable[]> {
     return [];
   }
 
-  public async getEntry(): Promise<Entry | null> {
+  public async getDurable(): Promise<Durable | null> {
     return null;
   }
 
@@ -939,15 +939,15 @@ class MockDatabase implements DatabasePort {
     return new Set(hashes.filter((hash) => this.existingNormHashes.has(hash)));
   }
 
-  public async retireEntry(): Promise<boolean> {
+  public async retireDurable(): Promise<boolean> {
     return false;
   }
 
-  public async supersedeEntry(): Promise<boolean> {
+  public async supersedeDurable(): Promise<boolean> {
     return false;
   }
 
-  public async findActiveEntriesByClaimKey(): Promise<Entry[]> {
+  public async findActiveDurablesByClaimKey(): Promise<Durable[]> {
     return [];
   }
 
@@ -955,7 +955,7 @@ class MockDatabase implements DatabasePort {
     return [];
   }
 
-  public async updateEntry(): Promise<boolean> {
+  public async updateDurable(): Promise<boolean> {
     return false;
   }
 
@@ -981,7 +981,7 @@ class MockEmbeddingPort implements EmbeddingPort {
   public readonly calls: string[][] = [];
   private readonly vectorsByText?: Map<string, number[]>;
 
-  public constructor(entries: StoreEntryInput[] = [], vectors: number[][] = []) {
+  public constructor(entries: StoreDurableInput[] = [], vectors: number[][] = []) {
     this.vectorsByText = entries.length > 0 ? new Map(entries.map((entry, index) => [composeEmbeddingText(entry), vectors[index] ?? []])) : undefined;
   }
 
@@ -1014,7 +1014,7 @@ class MockLlmPort implements LlmPort {
 
   public async completeJson<T>(systemPrompt: string, userMessage: string): Promise<T> {
     this.calls.push({ systemPrompt, userMessage });
-    const response = this.responses[this.completeJsonCalls] ?? this.responses.at(-1) ?? { entries: [] };
+    const response = this.responses[this.completeJsonCalls] ?? this.responses.at(-1) ?? { durables: [] };
     this.completeJsonCalls += 1;
 
     if (response instanceof Error) {
@@ -1059,8 +1059,8 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   return { promise, resolve };
 }
 
-function createPairedClusterScenario(clusterCount: number, sourceFile: string): { entries: StoreEntryInput[]; vectors: number[][] } {
-  const entries: StoreEntryInput[] = [];
+function createPairedClusterScenario(clusterCount: number, sourceFile: string): { entries: StoreDurableInput[]; vectors: number[][] } {
+  const entries: StoreDurableInput[] = [];
   const vectors: number[][] = [];
 
   for (let clusterIndex = 0; clusterIndex < clusterCount; clusterIndex += 1) {
@@ -1144,7 +1144,7 @@ function buildTranscript(
   };
 }
 
-function createInput(overrides: Partial<StoreEntryInput> = {}): StoreEntryInput {
+function createInput(overrides: Partial<StoreDurableInput> = {}): StoreDurableInput {
   return {
     type: overrides.type ?? "fact",
     subject: overrides.subject ?? "subject",

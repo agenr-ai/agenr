@@ -1,6 +1,6 @@
 [
   {
-    "entries": [
+    "durables": [
       {
         "type": "decision",
         "subject": "Deployment discussion summary",

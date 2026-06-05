@@ -20,14 +20,14 @@ describe("registerIngestCommand", () => {
     const ingestCommand = findIngestCommand(program);
 
     expect(ingestCommand).toBeDefined();
-    expect(ingestCommand?.commands.map((command) => command.name())).toEqual(expect.arrayContaining(["entries", "episodes", "procedures"]));
+    expect(ingestCommand?.commands.map((command) => command.name())).toEqual(expect.arrayContaining(["durables", "episodes", "procedures"]));
   });
 
   it("requires the entries path argument", async () => {
     const program = new Command();
     registerIngestCommand(program);
 
-    const entriesCommand = requireSubcommand(program, "entries");
+    const entriesCommand = requireSubcommand(program, "durables");
 
     entriesCommand.configureOutput({
       writeErr: () => {},
@@ -44,7 +44,7 @@ describe("registerIngestCommand", () => {
     const program = new Command();
     registerIngestCommand(program);
 
-    const entriesCommand = requireSubcommand(program, "entries");
+    const entriesCommand = requireSubcommand(program, "durables");
 
     const parsed = entriesCommand.parseOptions(["/tmp/session.jsonl", "--verbose", "--dry-run", "--whole-file", "force", "--skip-dedup", "--concurrency", "6"]);
 
@@ -64,7 +64,7 @@ describe("registerIngestCommand", () => {
     const program = new Command();
     registerIngestCommand(program);
 
-    const entriesCommand = requireSubcommand(program, "entries");
+    const entriesCommand = requireSubcommand(program, "durables");
 
     entriesCommand.parseOptions(["/tmp/session.jsonl", "--skip-dedup"]);
 
@@ -79,7 +79,7 @@ describe("registerIngestCommand", () => {
     const program = new Command();
     registerIngestCommand(program);
 
-    const entriesCommand = requireSubcommand(program, "entries");
+    const entriesCommand = requireSubcommand(program, "durables");
 
     entriesCommand.parseOptions(["/tmp/session.jsonl"]);
 
@@ -236,7 +236,7 @@ describe("registerIngestCommand", () => {
     const program = new Command();
     registerMockedIngestCommand(program);
 
-    await program.parseAsync(["node", "test", "ingest", "entries", "  /tmp/transcripts  "], {
+    await program.parseAsync(["node", "test", "ingest", "durables", "  /tmp/transcripts  "], {
       from: "node",
     });
 
@@ -347,7 +347,7 @@ describe("registerIngestCommand", () => {
     const program = new Command();
     registerMockedIngestCommand(program);
 
-    await program.parseAsync(["node", "test", "ingest", "entries", "/tmp/transcripts"], {
+    await program.parseAsync(["node", "test", "ingest", "durables", "/tmp/transcripts"], {
       from: "node",
     });
 
@@ -362,7 +362,7 @@ describe("registerIngestCommand", () => {
         "Extracting claim keys...",
         "Extracting claim keys... 437/1098 entries",
         "Retrying unresolved claim keys... 21/94 entries",
-        "Running store pipeline for 4 entries...",
+        "Running store pipeline for 4 durables...",
         "Preparing database indexes for bulk ingest...",
         "Rebuilding indexes after bulk ingest...",
       ]),
@@ -449,7 +449,7 @@ describe("registerIngestCommand", () => {
     const program = new Command();
     registerMockedIngestCommand(program);
 
-    await program.parseAsync(["node", "test", "ingest", "entries", "/tmp/transcripts", "--concurrency", "50"], {
+    await program.parseAsync(["node", "test", "ingest", "durables", "/tmp/transcripts", "--concurrency", "50"], {
       from: "node",
     });
 
@@ -545,7 +545,7 @@ describe("registerIngestCommand", () => {
     const program = new Command();
     registerMockedIngestCommand(program);
 
-    await program.parseAsync(["node", "test", "ingest", "entries", "/tmp/transcripts"], {
+    await program.parseAsync(["node", "test", "ingest", "durables", "/tmp/transcripts"], {
       from: "node",
     });
 
@@ -563,16 +563,16 @@ describe("registerIngestCommand", () => {
 });
 
 describe("pluralize", () => {
-  it('returns "entries" for zero entries', () => {
-    expect(pluralize(0, "entry", "entries")).toBe("entries");
+  it('returns "durables" for zero entries', () => {
+    expect(pluralize(0, "entry", "durables")).toBe("durables");
   });
 
   it('returns "entry" for one entry', () => {
-    expect(pluralize(1, "entry", "entries")).toBe("entry");
+    expect(pluralize(1, "entry", "durables")).toBe("entry");
   });
 
-  it('returns "entries" for multiple entries', () => {
-    expect(pluralize(2, "entry", "entries")).toBe("entries");
+  it('returns "durables" for multiple entries', () => {
+    expect(pluralize(2, "entry", "durables")).toBe("durables");
   });
 
   it("falls back to appending s for regular plurals", () => {
@@ -615,7 +615,7 @@ function requireIngestCommand(program: Command): Command {
   return ingestCommand;
 }
 
-function requireSubcommand(program: Command, name: "entries" | "episodes"): Command {
+function requireSubcommand(program: Command, name: "durables" | "episodes"): Command {
   const ingestCommand = requireIngestCommand(program);
   const subcommand = ingestCommand.commands.find((command) => command.name() === name);
   if (!subcommand) {

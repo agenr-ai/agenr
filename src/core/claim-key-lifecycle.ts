@@ -7,8 +7,8 @@ import {
   type ClaimKeySource,
   type ClaimKeyStatus,
   type ClaimSupportMode,
-  type EntryUpdateInput,
-  type StoreEntryInput,
+  type DurableUpdateInput,
+  type StoreDurableInput,
 } from "./types.js";
 
 /**
@@ -27,22 +27,22 @@ export interface ResolvedClaimKeyLifecycle extends ClaimKeyLifecycleMetadata {
  */
 export interface NormalizedManualClaimKeyUpdate {
   claimKey: string;
-  updateFields: EntryLifecycleUpdateFields;
+  updateFields: DurableLifecycleUpdateFields;
 }
 
 /**
  * Partial metadata preserved when an explicit claim key is replayed from a trusted source.
  */
 export type PreservedClaimKeyMetadata = Pick<
-  StoreEntryInput,
+  StoreDurableInput,
   "claim_key_raw" | "claim_support_source_kind" | "claim_support_locator" | "claim_support_observed_at" | "claim_support_mode"
 >;
 
 /**
  * Lifecycle fields that may be mutated through direct entry updates.
  */
-export type EntryLifecycleUpdateFields = Pick<
-  EntryUpdateInput,
+export type DurableLifecycleUpdateFields = Pick<
+  DurableUpdateInput,
   | "claim_key"
   | "claim_key_raw"
   | "claim_key_status"
@@ -83,26 +83,26 @@ export interface ClaimKeySupportContext {
  * Best-effort transcript provenance that can support one inferred ingest claim key.
  */
 export type InferredIngestClaimKeySupportInput = Pick<
-  StoreEntryInput,
+  StoreDurableInput,
   "source_file" | "source_context" | "created_at" | "claim_support_source_kind" | "claim_support_locator" | "claim_support_observed_at" | "claim_support_mode"
 >;
 
 /**
- * Narrow support signal needed by surgeon lifecycle derivation.
+ * Narrow support signal needed by reconcile lifecycle derivation.
  */
-export interface SurgeonClaimKeySupportSignal {
+export interface ReconcileClaimKeySupportSignal {
   autoApplyClass?: string | null;
 }
 
 /**
- * Narrow compaction metadata needed by surgeon lifecycle derivation.
+ * Narrow compaction metadata needed by reconcile lifecycle derivation.
  */
 export interface ClaimKeyCompactnessSignal {
   compactedFrom?: string | null;
 }
 
 /**
- * Persisted lifecycle metadata when surgeon will apply a concrete replacement.
+ * Persisted lifecycle metadata when dreaming reconcile will apply a concrete replacement.
  */
 export interface AppliedClaimKeyLifecycleMetadata {
   rawClaimKey?: string;
@@ -111,7 +111,7 @@ export interface AppliedClaimKeyLifecycleMetadata {
 }
 
 /**
- * Deferred lifecycle metadata recorded for unresolved surgeon proposals.
+ * Deferred lifecycle metadata recorded for unresolved dreaming proposals.
  */
 export interface ProposalClaimKeyLifecycleMetadata {
   deferredUntilReview: true;
@@ -121,7 +121,7 @@ export interface ProposalClaimKeyLifecycleMetadata {
 }
 
 /**
- * Structured lifecycle details recorded on surgeon run actions for applied writes.
+ * Structured lifecycle details recorded on dreaming run actions for applied writes.
  */
 export interface ClaimKeyLifecycleAuditDetails {
   claim_key_raw?: string;
@@ -132,7 +132,7 @@ export interface ClaimKeyLifecycleAuditDetails {
 }
 
 /**
- * Structured lifecycle details recorded on surgeon run actions for deferred proposals.
+ * Structured lifecycle details recorded on dreaming run actions for deferred proposals.
  */
 export interface ProposalClaimKeyLifecycleAuditDetails {
   proposal_deferred_until_review: true;
@@ -142,7 +142,7 @@ export interface ProposalClaimKeyLifecycleAuditDetails {
 }
 
 const PRECOMPUTED_LIFECYCLE_FIELDS = ["claim_key_status", "claim_key_source", "claim_key_confidence", "claim_key_rationale"] as const satisfies ReadonlyArray<
-  keyof Pick<StoreEntryInput, "claim_key_status" | "claim_key_source" | "claim_key_confidence" | "claim_key_rationale">
+  keyof Pick<StoreDurableInput, "claim_key_status" | "claim_key_source" | "claim_key_confidence" | "claim_key_rationale">
 >;
 
 /**
@@ -244,7 +244,7 @@ export function requireClaimSupportMode(value: unknown, label: string): ClaimSup
  * @returns True when any explicit lifecycle bundle field is present.
  */
 export function hasPrecomputedClaimKeyLifecycleFields(
-  input: Pick<StoreEntryInput, "claim_key_status" | "claim_key_source" | "claim_key_confidence" | "claim_key_rationale">,
+  input: Pick<StoreDurableInput, "claim_key_status" | "claim_key_source" | "claim_key_confidence" | "claim_key_rationale">,
 ): boolean {
   return PRECOMPUTED_LIFECYCLE_FIELDS.some((field) => input[field] !== undefined);
 }
@@ -320,7 +320,7 @@ export function buildManualClaimKeyUpdateFields(params: {
   supportLocator?: string;
   supportObservedAt?: string;
   supportMode?: ClaimSupportMode;
-}): EntryLifecycleUpdateFields {
+}): DurableLifecycleUpdateFields {
   return normalizeManualClaimKeyUpdate(params).updateFields;
 }
 
@@ -330,7 +330,7 @@ export function buildManualClaimKeyUpdateFields(params: {
  * @param lifecycle - Canonical lifecycle payload.
  * @returns Direct-update lifecycle field bundle.
  */
-export function buildClaimKeyLifecycleUpdateFields(lifecycle: ResolvedClaimKeyLifecycle): EntryLifecycleUpdateFields {
+export function buildClaimKeyLifecycleUpdateFields(lifecycle: ResolvedClaimKeyLifecycle): DurableLifecycleUpdateFields {
   return lifecycleToUpdateFields(lifecycle);
 }
 
@@ -358,7 +358,7 @@ export function buildClaimKeyLifecycleAuditDetails(lifecycle: ResolvedClaimKeyLi
  */
 export function buildPrecomputedClaimKeyLifecycle(
   input: Pick<
-    StoreEntryInput,
+    StoreDurableInput,
     | "claim_key"
     | "claim_key_raw"
     | "claim_key_status"
@@ -406,7 +406,7 @@ export function buildPrecomputedClaimKeyLifecycle(
  * @param fields - Candidate direct-update mutation payload.
  * @returns Canonical lifecycle bundle when the payload includes lifecycle fields.
  */
-export function validateDirectClaimKeyLifecycleUpdate(fields: EntryUpdateInput): ResolvedClaimKeyLifecycle | undefined {
+export function validateDirectClaimKeyLifecycleUpdate(fields: DurableUpdateInput): ResolvedClaimKeyLifecycle | undefined {
   if (!hasDirectLifecycleFields(fields)) {
     return undefined;
   }
@@ -482,7 +482,7 @@ export function buildExtractedClaimKeyLifecycle(
  * @param entry - Entry input that should receive canonical lifecycle fields.
  * @param lifecycle - Canonical lifecycle payload to apply.
  */
-export function applyClaimKeyLifecycle(entry: StoreEntryInput, lifecycle: ResolvedClaimKeyLifecycle): void {
+export function applyClaimKeyLifecycle(entry: StoreDurableInput, lifecycle: ResolvedClaimKeyLifecycle): void {
   entry.claim_key = lifecycle.claim_key;
   entry.claim_key_raw = lifecycle.claim_key_raw;
   entry.claim_key_status = lifecycle.claim_key_status;
@@ -533,7 +533,7 @@ export function buildInferredIngestClaimKeySupportContext(entry: InferredIngestC
  */
 export function buildExplicitClaimKeyPreservationMetadata(
   entry: Pick<
-    StoreEntryInput,
+    StoreDurableInput,
     "claim_key" | "claim_key_raw" | "claim_support_source_kind" | "claim_support_locator" | "claim_support_observed_at" | "claim_support_mode" | "created_at"
   >,
   context: ClaimKeySupportContext,
@@ -566,12 +566,12 @@ export function buildExplicitClaimKeyPreservationMetadata(
  * @returns Survivor with explicit claim metadata merged when the keys agree.
  */
 export function mergeExplicitClaimKeyMetadata(
-  entry: StoreEntryInput,
+  entry: StoreDurableInput,
   candidate: Pick<
-    StoreEntryInput,
+    StoreDurableInput,
     "claim_key" | "claim_key_raw" | "claim_support_source_kind" | "claim_support_locator" | "claim_support_observed_at" | "claim_support_mode" | "created_at"
   >,
-): StoreEntryInput {
+): StoreDurableInput {
   if (!candidate.claim_key) {
     return entry;
   }
@@ -593,21 +593,21 @@ export function mergeExplicitClaimKeyMetadata(
 }
 
 /**
- * Builds surgeon-applied lifecycle metadata for an in-place claim-key rewrite.
+ * Builds reconcile-applied lifecycle metadata for an in-place claim-key rewrite.
  *
  * @param input - Target claim key, prior metadata, and proposal provenance.
- * @returns Canonical lifecycle metadata that surgeon should persist.
+ * @returns Canonical lifecycle metadata that dreaming reconcile should persist.
  */
-export function buildSurgeonAppliedClaimKeyLifecycle(input: {
+export function buildReconcileAppliedClaimKeyLifecycle(input: {
   targetClaimKey: string;
   priorClaimKey: string | null;
   priorClaimKeyRaw?: string;
   rawClaimKey?: string | null;
   source: string;
-  support?: SurgeonClaimKeySupportSignal;
+  support?: ReconcileClaimKeySupportSignal;
   compactness?: ClaimKeyCompactnessSignal;
 }): AppliedClaimKeyLifecycleMetadata {
-  const source = resolveSurgeonClaimKeySource(input.source, input.compactness) ?? "surgeon_compaction";
+  const source = resolveReconcileClaimKeySource(input.source, input.compactness) ?? "dreaming_reconcile";
   return {
     rawClaimKey: resolveLifecycleRawClaimKey({
       targetClaimKey: input.targetClaimKey,
@@ -615,7 +615,7 @@ export function buildSurgeonAppliedClaimKeyLifecycle(input: {
       rawClaimKey: input.rawClaimKey,
       priorClaimKey: input.priorClaimKey,
     }),
-    status: resolveSurgeonClaimKeyStatus({
+    status: resolveReconcileClaimKeyStatus({
       proposedClaimKeys: [input.targetClaimKey],
       source: input.source,
       support: input.support,
@@ -626,12 +626,12 @@ export function buildSurgeonAppliedClaimKeyLifecycle(input: {
 }
 
 /**
- * Builds the full canonical lifecycle bundle surgeon should persist for one applied rewrite.
+ * Builds the full canonical lifecycle bundle dreaming reconcile should persist for one applied rewrite.
  *
  * @param input - Target claim key, provenance, and persisted confidence/rationale fields.
  * @returns Canonical lifecycle payload ready for persistence and audit logging.
  */
-export function buildSurgeonAppliedClaimKeyLifecycleBundle(input: {
+export function buildReconcileAppliedClaimKeyLifecycleBundle(input: {
   targetClaimKey: string;
   priorClaimKey: string | null;
   priorClaimKeyRaw?: string;
@@ -639,10 +639,10 @@ export function buildSurgeonAppliedClaimKeyLifecycleBundle(input: {
   source: string;
   confidence: number;
   rationale: string;
-  support?: SurgeonClaimKeySupportSignal;
+  support?: ReconcileClaimKeySupportSignal;
   compactness?: ClaimKeyCompactnessSignal;
 }): ResolvedClaimKeyLifecycle {
-  const lifecycle = buildSurgeonAppliedClaimKeyLifecycle(input);
+  const lifecycle = buildReconcileAppliedClaimKeyLifecycle(input);
   return {
     claim_key: input.targetClaimKey,
     claim_key_raw: lifecycle.rawClaimKey,
@@ -654,16 +654,16 @@ export function buildSurgeonAppliedClaimKeyLifecycleBundle(input: {
 }
 
 /**
- * Builds deferred lifecycle metadata for an unresolved surgeon proposal.
+ * Builds deferred lifecycle metadata for an unresolved dreaming proposal.
  *
  * @param input - Proposed claim keys, provenance, and any raw-key preservation signal.
  * @returns Deferred lifecycle payload recorded with the proposal audit trail.
  */
-export function buildSurgeonProposalClaimKeyLifecycle(input: {
+export function buildReconcileProposalClaimKeyLifecycle(input: {
   proposedClaimKeys: string[];
   source: string;
   rawClaimKey?: string | null;
-  support?: SurgeonClaimKeySupportSignal;
+  support?: ReconcileClaimKeySupportSignal;
   compactness?: ClaimKeyCompactnessSignal;
 }): ProposalClaimKeyLifecycleMetadata {
   const proposedClaimKeys = normalizeStringArray(input.proposedClaimKeys);
@@ -677,13 +677,13 @@ export function buildSurgeonProposalClaimKeyLifecycle(input: {
 
   return {
     deferredUntilReview: true,
-    proposedStatus: resolveSurgeonClaimKeyStatus({
+    proposedStatus: resolveReconcileClaimKeyStatus({
       proposedClaimKeys,
       source: input.source,
       support: input.support,
       compactness: input.compactness,
     }),
-    proposedSource: resolveSurgeonClaimKeySource(input.source, input.compactness),
+    proposedSource: resolveReconcileClaimKeySource(input.source, input.compactness),
     proposedRawClaimKey: resolveLifecycleRawClaimKey({
       targetClaimKey,
       rawClaimKey: input.rawClaimKey,
@@ -692,12 +692,12 @@ export function buildSurgeonProposalClaimKeyLifecycle(input: {
 }
 
 /**
- * Converts deferred surgeon lifecycle metadata into structured proposal audit details.
+ * Converts deferred reconcile lifecycle metadata into structured proposal audit details.
  *
  * @param lifecycle - Deferred lifecycle payload recorded with the proposal.
  * @returns Structured lifecycle fields for run-action logging.
  */
-export function buildSurgeonProposalClaimKeyAuditDetails(
+export function buildReconcileProposalClaimKeyAuditDetails(
   lifecycle: ProposalClaimKeyLifecycleMetadata | undefined,
 ): ProposalClaimKeyLifecycleAuditDetails | Record<string, never> {
   if (!lifecycle) {
@@ -713,15 +713,15 @@ export function buildSurgeonProposalClaimKeyAuditDetails(
 }
 
 /**
- * Resolves the canonical persisted claim-key source for one surgeon rewrite or proposal.
+ * Resolves the canonical persisted claim-key source for one dreaming reconcile rewrite or proposal.
  *
  * @param source - Surgeon-local provenance label.
  * @param compactness - Optional compaction metadata derived during normalization.
  * @returns Canonical stored lifecycle source when one exists.
  */
-export function resolveSurgeonClaimKeySource(source: string, compactness?: ClaimKeyCompactnessSignal): ClaimKeySource | undefined {
+export function resolveReconcileClaimKeySource(source: string, compactness?: ClaimKeyCompactnessSignal): ClaimKeySource | undefined {
   if (source === "metadata_backfill_rewrite" || source === "metadata_rewrite") {
-    return "surgeon_metadata_rewrite";
+    return "dreaming_reconcile";
   }
 
   if (
@@ -731,33 +731,33 @@ export function resolveSurgeonClaimKeySource(source: string, compactness?: Claim
     source === "entity_family_canonical_candidate" ||
     source === "entity_family_collision"
   ) {
-    return "surgeon_family_reuse";
+    return "dreaming_reconcile";
   }
 
   if (source === "normalize" || compactness?.compactedFrom) {
-    return "surgeon_compaction";
+    return "dreaming_reconcile";
   }
 
   return parseClaimKeySource(source);
 }
 
 /**
- * Resolves the canonical persisted claim-key status for one surgeon rewrite or proposal.
+ * Resolves the canonical persisted claim-key status for one dreaming reconcile rewrite or proposal.
  *
  * @param input - Proposed claim-key set plus provenance and support signals.
  * @returns Canonical stored lifecycle status.
  */
-export function resolveSurgeonClaimKeyStatus(input: {
+export function resolveReconcileClaimKeyStatus(input: {
   proposedClaimKeys: string[];
   source: string;
-  support?: SurgeonClaimKeySupportSignal;
+  support?: ReconcileClaimKeySupportSignal;
   compactness?: ClaimKeyCompactnessSignal;
 }): ClaimKeyStatus {
   if (normalizeStringArray(input.proposedClaimKeys).length === 0) {
     return "unresolved";
   }
 
-  const lifecycleSource = resolveSurgeonClaimKeySource(input.source, input.compactness);
+  const lifecycleSource = resolveReconcileClaimKeySource(input.source, input.compactness);
   if (lifecycleSource === "deterministic_repair" && !input.support?.autoApplyClass) {
     return "tentative";
   }
@@ -782,13 +782,13 @@ export function buildClaimKeyRaw(rawClaimKey: string | null | undefined, canonic
 }
 
 /**
- * Builds the deferred rationale sentence used by surgeon proposal logging.
+ * Builds the deferred rationale sentence used by dreaming proposal logging.
  *
  * @param baseRationale - Existing explanation of why the proposal exists.
  * @param lifecycle - Deferred lifecycle metadata attached to the proposal.
  * @returns Combined rationale string.
  */
-export function buildSurgeonProposalLifecycleRationale(baseRationale: string, lifecycle: ProposalClaimKeyLifecycleMetadata): string {
+export function buildReconcileProposalLifecycleRationale(baseRationale: string, lifecycle: ProposalClaimKeyLifecycleMetadata): string {
   const normalizedBase = baseRationale.trim();
   if (lifecycle.proposedStatus === "unresolved" || !lifecycle.proposedSource) {
     return `${normalizedBase} The entry stays unchanged until review because no safe lifecycle write is ready yet.`;
@@ -819,7 +819,7 @@ function formatExtractedRawClaimKey(extracted: ExtractedClaimKeyLifecycleInput):
 }
 
 /**
- * Resolves the raw claim-key text surgeon should preserve, preferring existing human-entered forms.
+ * Resolves the raw claim-key text dreaming reconcile should preserve, preferring existing human-entered forms.
  *
  * @param input - Canonical target key plus prior raw and canonical variants.
  * @returns Raw claim-key representation when it differs from the canonical replacement.
@@ -852,7 +852,7 @@ const DIRECT_LIFECYCLE_FIELDS = [
   "claim_support_locator",
   "claim_support_observed_at",
   "claim_support_mode",
-] as const satisfies ReadonlyArray<keyof EntryLifecycleUpdateFields>;
+] as const satisfies ReadonlyArray<keyof DurableLifecycleUpdateFields>;
 
 const REQUIRED_DIRECT_LIFECYCLE_FIELDS = [
   "claim_key",
@@ -860,7 +860,7 @@ const REQUIRED_DIRECT_LIFECYCLE_FIELDS = [
   "claim_key_source",
   "claim_key_confidence",
   "claim_key_rationale",
-] as const satisfies ReadonlyArray<keyof EntryLifecycleUpdateFields>;
+] as const satisfies ReadonlyArray<keyof DurableLifecycleUpdateFields>;
 
 /**
  * Returns whether one direct-update payload touches any lifecycle field.
@@ -868,7 +868,7 @@ const REQUIRED_DIRECT_LIFECYCLE_FIELDS = [
  * @param fields - Candidate direct-update mutation payload.
  * @returns True when lifecycle validation should run.
  */
-function hasDirectLifecycleFields(fields: EntryUpdateInput): boolean {
+function hasDirectLifecycleFields(fields: DurableUpdateInput): boolean {
   return DIRECT_LIFECYCLE_FIELDS.some((field) => fields[field] !== undefined);
 }
 
@@ -903,7 +903,7 @@ function normalizeLifecycleClaimKeyInput(
  * @param lifecycle - Canonical lifecycle payload.
  * @returns Direct-update lifecycle field bundle.
  */
-function lifecycleToUpdateFields(lifecycle: ResolvedClaimKeyLifecycle): EntryLifecycleUpdateFields {
+function lifecycleToUpdateFields(lifecycle: ResolvedClaimKeyLifecycle): DurableLifecycleUpdateFields {
   return {
     claim_key: lifecycle.claim_key,
     claim_key_raw: lifecycle.claim_key_raw,

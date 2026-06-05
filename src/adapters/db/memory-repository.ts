@@ -1,9 +1,9 @@
-import { VECTOR_INDEX_NAME } from "./schema.js";
+import { DURABLE_VECTOR_INDEX_NAME } from "./schema.js";
 import { EMBEDDING_DIMENSIONS } from "../embeddings.js";
 import type { ClaimFamily, EntryTrace, MemoryStatusSnapshot, MemoryRepository, EntryRecallEvent } from "../../app/memory/ports.js";
 import { resolveClaimSlotPolicy, type ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
-import type { Entry } from "../../core/types.js";
-import { buildActiveEntryClause, ENTRY_SELECT_COLUMNS, mapEntryRow, readNumber, readOptionalString, readRequiredString } from "./row-mapping.js";
+import type { Durable } from "../../core/types.js";
+import { buildActiveDurableClause, DURABLE_SELECT_COLUMNS, mapDurableRow, readNumber, readOptionalString, readRequiredString } from "./row-mapping.js";
 import type { SqlExecutor } from "./queries.js";
 
 const ZERO_VECTOR = JSON.stringify(Array.from({ length: EMBEDDING_DIMENSIONS }, () => 0));
@@ -39,7 +39,7 @@ export function createMemoryRepository(
  * @param subject - Free-form subject text supplied by the caller.
  * @returns Matching entry from any state, or `null` when none match.
  */
-async function findEntryBySubject(executor: SqlExecutor, subject: string): Promise<Entry | null> {
+async function findEntryBySubject(executor: SqlExecutor, subject: string): Promise<Durable | null> {
   const normalizedSubject = subject.trim();
   if (normalizedSubject.length === 0) {
     return null;
@@ -48,13 +48,13 @@ async function findEntryBySubject(executor: SqlExecutor, subject: string): Promi
   const result = await executor.execute({
     sql: `
       SELECT
-        ${ENTRY_SELECT_COLUMNS},
+        ${DURABLE_SELECT_COLUMNS},
         CASE
           WHEN lower(subject) = lower(?) THEN 0
           WHEN lower(subject) LIKE lower(?) THEN 1
           ELSE 2
         END AS match_rank
-      FROM entries
+      FROM durables
       WHERE lower(subject) = lower(?)
          OR lower(subject) LIKE lower(?)
       ORDER BY match_rank ASC, created_at DESC
@@ -64,7 +64,7 @@ async function findEntryBySubject(executor: SqlExecutor, subject: string): Promi
   });
 
   const row = result.rows[0];
-  return row ? mapEntryRow(row) : null;
+  return row ? mapDurableRow(row) : null;
 }
 
 /**
@@ -73,19 +73,19 @@ async function findEntryBySubject(executor: SqlExecutor, subject: string): Promi
  * @param executor - SQL executor used for the lookup.
  * @returns Newest entry, or `null` when the database is empty.
  */
-async function findMostRecentEntry(executor: SqlExecutor): Promise<Entry | null> {
+async function findMostRecentEntry(executor: SqlExecutor): Promise<Durable | null> {
   const result = await executor.execute({
     sql: `
       SELECT
-        ${ENTRY_SELECT_COLUMNS}
-      FROM entries
+        ${DURABLE_SELECT_COLUMNS}
+      FROM durables
       ORDER BY created_at DESC
       LIMIT 1
     `,
   });
 
   const row = result.rows[0];
-  return row ? mapEntryRow(row) : null;
+  return row ? mapDurableRow(row) : null;
 }
 
 /**
@@ -96,13 +96,13 @@ async function findMostRecentEntry(executor: SqlExecutor): Promise<Entry | null>
  * @returns Minimal provenance facts for the requested entry, or `null` when missing.
  */
 async function getEntryTrace(executor: SqlExecutor, entryId: string, claimSlotPolicyConfig?: ClaimSlotPolicyConfig): Promise<EntryTrace | null> {
-  const entry = await getEntryByIdIncludingInactive(executor, entryId);
+  const entry = await getDurableByIdIncludingInactive(executor, entryId);
   if (!entry) {
     return null;
   }
 
   const [supersededBy, supersedes, claimFamily, recallEvents] = await Promise.all([
-    entry.superseded_by ? getEntryByIdIncludingInactive(executor, entry.superseded_by) : Promise.resolve(null),
+    entry.superseded_by ? getDurableByIdIncludingInactive(executor, entry.superseded_by) : Promise.resolve(null),
     listSupersededEntries(executor, entry.id),
     entry.claim_key ? getClaimFamily(executor, entry.claim_key, claimSlotPolicyConfig) : Promise.resolve(undefined),
     listRecallEvents(executor, entry.id),
@@ -130,8 +130,8 @@ async function getMemoryStatusSnapshot(executor: SqlExecutor): Promise<MemorySta
         COUNT(*) AS active_entries,
         SUM(CASE WHEN expiry = 'core' THEN 1 ELSE 0 END) AS core_entries,
         COUNT(DISTINCT source_file) AS source_files
-      FROM entries
-      WHERE ${buildActiveEntryClause()}
+      FROM durables
+      WHERE ${buildActiveDurableClause()}
     `,
   });
 
@@ -162,7 +162,7 @@ async function probeVectorAvailability(executor: SqlExecutor): Promise<boolean> 
     await executor.execute({
       sql: `
         SELECT COUNT(*) AS matches
-        FROM vector_top_k('${VECTOR_INDEX_NAME}', vector32(?), ?) AS matches
+        FROM vector_top_k('${DURABLE_VECTOR_INDEX_NAME}', vector32(?), ?) AS matches
       `,
       args: [ZERO_VECTOR, 1],
     });
@@ -179,7 +179,7 @@ async function probeVectorAvailability(executor: SqlExecutor): Promise<boolean> 
  * @param entryId - Entry identifier to resolve.
  * @returns Entry from any state, or `null` when absent.
  */
-async function getEntryByIdIncludingInactive(executor: SqlExecutor, entryId: string): Promise<Entry | null> {
+async function getDurableByIdIncludingInactive(executor: SqlExecutor, entryId: string): Promise<Durable | null> {
   const normalizedId = entryId.trim();
   if (normalizedId.length === 0) {
     return null;
@@ -188,8 +188,8 @@ async function getEntryByIdIncludingInactive(executor: SqlExecutor, entryId: str
   const result = await executor.execute({
     sql: `
       SELECT
-        ${ENTRY_SELECT_COLUMNS}
-      FROM entries
+        ${DURABLE_SELECT_COLUMNS}
+      FROM durables
       WHERE id = ?
       LIMIT 1
     `,
@@ -197,7 +197,7 @@ async function getEntryByIdIncludingInactive(executor: SqlExecutor, entryId: str
   });
 
   const row = result.rows[0];
-  return row ? mapEntryRow(row) : null;
+  return row ? mapDurableRow(row) : null;
 }
 
 /**
@@ -207,19 +207,19 @@ async function getEntryByIdIncludingInactive(executor: SqlExecutor, entryId: str
  * @param entryId - Canonical entry identifier.
  * @returns Older entries that now point at the target via `superseded_by`.
  */
-async function listSupersededEntries(executor: SqlExecutor, entryId: string): Promise<Entry[]> {
+async function listSupersededEntries(executor: SqlExecutor, entryId: string): Promise<Durable[]> {
   const result = await executor.execute({
     sql: `
       SELECT
-        ${ENTRY_SELECT_COLUMNS}
-      FROM entries
+        ${DURABLE_SELECT_COLUMNS}
+      FROM durables
       WHERE superseded_by = ?
       ORDER BY created_at DESC
     `,
     args: [entryId],
   });
 
-  return result.rows.map((row) => mapEntryRow(row));
+  return result.rows.map((row) => mapDurableRow(row));
 }
 
 /**
@@ -238,14 +238,14 @@ async function getClaimFamily(executor: SqlExecutor, claimKey: string, claimSlot
   const result = await executor.execute({
     sql: `
       SELECT
-        ${ENTRY_SELECT_COLUMNS}
-      FROM entries
+        ${DURABLE_SELECT_COLUMNS}
+      FROM durables
       WHERE claim_key = ?
       ORDER BY created_at ASC, id ASC
     `,
     args: [normalizedClaimKey],
   });
-  const entries = result.rows.map((row) => mapEntryRow(row));
+  const entries = result.rows.map((row) => mapDurableRow(row));
 
   const slotPolicy = resolveClaimSlotPolicy(normalizedClaimKey, claimSlotPolicyConfig);
 
@@ -272,7 +272,7 @@ async function listRecallEvents(executor: SqlExecutor, entryId: string): Promise
         session_key,
         recalled_at
       FROM recall_events
-      WHERE entry_id = ?
+      WHERE durable_id = ?
       ORDER BY recalled_at DESC
       LIMIT 10
     `,

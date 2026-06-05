@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
 import { createRecallAdapter } from "../../../src/adapters/db/recall-adapter.js";
 import { closeTestDatabases, removeTestPath } from "../../helpers/temp-paths.js";
-import type { Entry } from "../../../src/core/types.js";
+import type { Durable } from "../../../src/core/types.js";
 
 const databases: SqlDatabase[] = [];
 const databasePaths: string[] = [];
@@ -36,8 +36,8 @@ describe("createRecallAdapter historical expansion", () => {
       content: "Keep webpack as the fallback packager.",
     });
 
-    await database.insertEntry(withClaimKey, createEmbedding(0, 1), "packaging-current");
-    await database.insertEntry(withoutClaimKey, createEmbedding(1, 1), "packaging-fallback");
+    await database.insertDurable(withClaimKey, createEmbedding(0, 1), "packaging-current");
+    await database.insertDurable(withoutClaimKey, createEmbedding(1, 1), "packaging-fallback");
 
     const vectorCandidates = await adapter.vectorSearch({
       embedding: Array.from({ length: 1024 }, (_, index) => (index < 2 ? 1 : 0)),
@@ -119,13 +119,13 @@ describe("createRecallAdapter historical expansion", () => {
       created_at: "2026-02-27T00:00:00.000Z",
     });
 
-    await database.insertEntry(currentWorkflow, createEmbedding(0, 1), "workflow-current");
-    await database.insertEntry(priorWorkflow, createEmbedding(0, 0.9), "workflow-prior");
-    await database.insertEntry(retiredBridge, createEmbedding(0, 0.85), "workflow-retired-bridge");
-    await database.insertEntry(activeSibling, createEmbedding(0, 0.8), "workflow-active-sibling");
-    await database.insertEntry(currentTracking, createEmbedding(1, 1), "tracking-current");
-    await database.insertEntry(retiredTracking, createEmbedding(1, 0.9), "tracking-retired");
-    await database.insertEntry(unrelated, createEmbedding(2, 1), "artifact");
+    await database.insertDurable(currentWorkflow, createEmbedding(0, 1), "workflow-current");
+    await database.insertDurable(priorWorkflow, createEmbedding(0, 0.9), "workflow-prior");
+    await database.insertDurable(retiredBridge, createEmbedding(0, 0.85), "workflow-retired-bridge");
+    await database.insertDurable(activeSibling, createEmbedding(0, 0.8), "workflow-active-sibling");
+    await database.insertDurable(currentTracking, createEmbedding(1, 1), "tracking-current");
+    await database.insertDurable(retiredTracking, createEmbedding(1, 0.9), "tracking-retired");
+    await database.insertDurable(unrelated, createEmbedding(2, 1), "artifact");
 
     const predecessors = await adapter.expandNeighborhood!({
       seedIds: [currentWorkflow.id, currentTracking.id],
@@ -171,9 +171,9 @@ describe("createRecallAdapter historical expansion", () => {
       created_at: "2026-02-10T00:00:00.000Z",
     });
 
-    await database.insertEntry(current, createEmbedding(0, 1), "packaging-current");
-    await database.insertEntry(tentativeOlder, createEmbedding(0, 0.9), "packaging-tentative");
-    await database.insertEntry(trustedOlder, createEmbedding(0, 0.85), "packaging-trusted");
+    await database.insertDurable(current, createEmbedding(0, 1), "packaging-current");
+    await database.insertDurable(tentativeOlder, createEmbedding(0, 0.9), "packaging-tentative");
+    await database.insertDurable(trustedOlder, createEmbedding(0, 0.85), "packaging-trusted");
 
     const predecessors = await adapter.expandNeighborhood!({
       seedIds: [current.id],
@@ -197,10 +197,10 @@ describe("createRecallAdapter historical expansion", () => {
       created_at: "2026-03-20T00:00:00.000Z",
     });
 
-    await database.insertEntry(current, createEmbedding(0, 1), "current-entry");
+    await database.insertDurable(current, createEmbedding(0, 1), "current-entry");
 
     for (let index = 0; index < 12; index += 1) {
-      await database.insertEntry(
+      await database.insertDurable(
         createEntry({
           id: `older-entry-${index.toString().padStart(2, "0")}`,
           subject: `memory slot revision ${index}`,
@@ -250,8 +250,8 @@ describe("createRecallAdapter historical expansion", () => {
       retired_reason: "superseded by GitHub issues",
     });
 
-    await database.insertEntry(current, createEmbedding(0, 1), "tracking-current");
-    await database.insertEntry(retired, createEmbedding(0, 0.8), "tracking-retired");
+    await database.insertDurable(current, createEmbedding(0, 1), "tracking-current");
+    await database.insertDurable(retired, createEmbedding(0, 0.8), "tracking-retired");
 
     const hydrated = await adapter.hydrateEntries([retired.id, current.id]);
 
@@ -269,7 +269,7 @@ async function createTestDatabase(): Promise<SqlDatabase> {
   return database;
 }
 
-function createEntry(overrides: Partial<Entry> = {}): Entry {
+function createEntry(overrides: Partial<Durable> = {}): Durable {
   const now = new Date().toISOString();
   return {
     id: overrides.id ?? randomUUID(),

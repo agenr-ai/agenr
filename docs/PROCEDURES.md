@@ -13,7 +13,7 @@ Implemented behavior today:
 - automatic before-turn prompting in OpenClaw and Skeln can proactively surface one canonical procedure suggestion when the current turn is a strong how-to match
 - the app-layer recall-eval runtime can seed procedure fixtures and assert canonical unified procedure answers
 
-That means procedures now have both a dedicated read path and a live unified read path for host plugins and eval-driven callers. The standalone CLI `agenr recall` command still targets entry recall only.
+That means procedures now have both a dedicated read path and a live unified read path for host plugins and eval-driven callers. The standalone CLI `agenr recall` command still targets durable recall only.
 
 ## Procedures vs Other Memory
 
@@ -23,7 +23,7 @@ That means procedures now have both a dedicated read path and a live unified rea
 | Granularity                  | Atomic durable knowledge                    | One summary per session        | One authored workflow per task                    |
 | Source of truth              | Extracted or tool-supplied structured input | Generated session summaries    | Repo-authored YAML                                |
 | Runtime form                 | Stored entry rows                           | Stored episode rows            | Stored normalized procedure revisions             |
-| Current public write path    | `agenr ingest entries <path>` and tools     | `agenr ingest episodes [path]` | `agenr ingest procedures [path]`                  |
+| Current public write path    | `agenr ingest durables <path>` and tools    | `agenr ingest episodes [path]` | `agenr ingest procedures [path]`                  |
 | Current public recall path   | Live                                        | Live                           | Live via unified host-plugin recall and eval seam |
 | Current internal recall path | Core + unified recall                       | Unified recall                 | Dedicated app-layer recall plus unified routing   |
 
@@ -230,7 +230,7 @@ Current read-side behavior:
 - embedding or vector-search failures degrade to lexical-only ranking instead of failing the full recall path
 - callers receive ranked candidates plus one canonical top procedure only when the leader clears conservative thresholding and separation rules
 
-This service is intentionally separate from `src/core/recall/search.ts` and does not treat procedures as another `EntryType`. Unified recall calls into it as a sibling backend, not as a variant of entry recall.
+This service is intentionally separate from `src/core/recall/search.ts` and does not treat procedures as another `DurableKind`. Unified recall calls into it as a sibling backend, not as a variant of durable recall.
 
 ### Source-only updates do not create new revisions
 
@@ -254,10 +254,10 @@ If prune or delete semantics are needed later, they should arrive through an exp
 
 The seed procedures are:
 
-- `agenr/surgeon-review`
 - `agenr/sandbox-validation`
 - `agenr/claim-key-scenario-run`
 - `agenr/openclaw-local-plugin-check`
+- `agenr/obsidian-llm-wiki`
 
 These seed files intentionally pressure-test:
 

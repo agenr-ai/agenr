@@ -12,16 +12,16 @@ import {
   hasPrecomputedClaimKeyLifecycleFields,
   normalizeManualClaimKeyUpdate,
   parseClaimKeyConfidence,
-  buildSurgeonAppliedClaimKeyLifecycle,
-  buildSurgeonAppliedClaimKeyLifecycleBundle,
-  buildSurgeonProposalClaimKeyAuditDetails,
-  buildSurgeonProposalClaimKeyLifecycle,
+  buildReconcileAppliedClaimKeyLifecycle,
+  buildReconcileAppliedClaimKeyLifecycleBundle,
+  buildReconcileProposalClaimKeyAuditDetails,
+  buildReconcileProposalClaimKeyLifecycle,
   parseClaimKeySource,
   parseClaimKeyStatus,
   parseClaimSupportMode,
   validateDirectClaimKeyLifecycleUpdate,
 } from "../../src/core/claim-key-lifecycle.js";
-import type { StoreEntryInput } from "../../src/core/types.js";
+import type { StoreDurableInput } from "../../src/core/types.js";
 
 describe("claim-key lifecycle helpers", () => {
   it("builds canonical manual lifecycle metadata", () => {
@@ -150,9 +150,9 @@ describe("claim-key lifecycle helpers", () => {
     ).toEqual({});
   });
 
-  it("lets surgeon reuse the shared lifecycle source and status rules", () => {
+  it("lets dreaming reconcile reuse the shared lifecycle source and status rules", () => {
     expect(
-      buildSurgeonAppliedClaimKeyLifecycle({
+      buildReconcileAppliedClaimKeyLifecycle({
         targetClaimKey: "jim/timezone",
         priorClaimKey: null,
         rawClaimKey: "Jim/timezone",
@@ -165,7 +165,7 @@ describe("claim-key lifecycle helpers", () => {
     });
 
     expect(
-      buildSurgeonProposalClaimKeyLifecycle({
+      buildReconcileProposalClaimKeyLifecycle({
         proposedClaimKeys: ["jim/timezone"],
         source: "entity_family_auto_convergence",
         rawClaimKey: "Jim/timezone",
@@ -173,14 +173,14 @@ describe("claim-key lifecycle helpers", () => {
     ).toEqual({
       deferredUntilReview: true,
       proposedStatus: "trusted",
-      proposedSource: "surgeon_family_reuse",
+      proposedSource: "dreaming_reconcile",
       proposedRawClaimKey: "Jim/timezone",
     });
   });
 
-  it("builds full surgeon-applied lifecycle bundles for persistence", () => {
+  it("builds full reconcile-applied lifecycle bundles for persistence", () => {
     expect(
-      buildSurgeonAppliedClaimKeyLifecycleBundle({
+      buildReconcileAppliedClaimKeyLifecycleBundle({
         targetClaimKey: "jim/home_city",
         priorClaimKey: " Jim / Home City ",
         rawClaimKey: " Jim / Home City ",
@@ -192,14 +192,14 @@ describe("claim-key lifecycle helpers", () => {
       claim_key: "jim/home_city",
       claim_key_raw: "Jim / Home City",
       claim_key_status: "trusted",
-      claim_key_source: "surgeon_compaction",
+      claim_key_source: "dreaming_reconcile",
       claim_key_confidence: 0.99,
       claim_key_rationale: 'Canonical normalization preserves the slot while rewriting " Jim / Home City " to "jim/home_city".',
     });
   });
 
   it("maps shared lifecycle bundles into update and audit field shapes", () => {
-    const lifecycle = buildSurgeonAppliedClaimKeyLifecycleBundle({
+    const lifecycle = buildReconcileAppliedClaimKeyLifecycleBundle({
       targetClaimKey: "jim/home_city",
       priorClaimKey: " Jim / Home City ",
       rawClaimKey: " Jim / Home City ",
@@ -212,7 +212,7 @@ describe("claim-key lifecycle helpers", () => {
       claim_key: "jim/home_city",
       claim_key_raw: "Jim / Home City",
       claim_key_status: "trusted",
-      claim_key_source: "surgeon_compaction",
+      claim_key_source: "dreaming_reconcile",
       claim_key_confidence: 0.99,
       claim_key_rationale: 'Canonical normalization preserves the slot while rewriting " Jim / Home City " to "jim/home_city".',
       claim_support_source_kind: undefined,
@@ -223,16 +223,16 @@ describe("claim-key lifecycle helpers", () => {
     expect(buildClaimKeyLifecycleAuditDetails(lifecycle)).toEqual({
       claim_key_raw: "Jim / Home City",
       claim_key_status: "trusted",
-      claim_key_source: "surgeon_compaction",
+      claim_key_source: "dreaming_reconcile",
       claim_key_confidence: 0.99,
       claim_key_rationale: 'Canonical normalization preserves the slot while rewriting " Jim / Home City " to "jim/home_city".',
     });
   });
 
-  it("maps deferred surgeon proposal lifecycle metadata into audit details", () => {
+  it("maps deferred dreaming proposal lifecycle metadata into audit details", () => {
     expect(
-      buildSurgeonProposalClaimKeyAuditDetails(
-        buildSurgeonProposalClaimKeyLifecycle({
+      buildReconcileProposalClaimKeyAuditDetails(
+        buildReconcileProposalClaimKeyLifecycle({
           proposedClaimKeys: ["agenr/status"],
           source: "metadata_backfill_rewrite",
           rawClaimKey: "project/status",
@@ -241,13 +241,13 @@ describe("claim-key lifecycle helpers", () => {
     ).toEqual({
       proposal_deferred_until_review: true,
       proposal_claim_key_status: "trusted",
-      proposal_claim_key_source: "surgeon_metadata_rewrite",
+      proposal_claim_key_source: "dreaming_reconcile",
       proposal_claim_key_raw: "project/status",
     });
   });
 
   it("applies one resolved lifecycle payload directly onto store inputs", () => {
-    const entry: StoreEntryInput = {
+    const entry: StoreDurableInput = {
       type: "fact",
       subject: "Jim timezone",
       content: "Jim uses America/Chicago.",
@@ -274,7 +274,7 @@ describe("claim-key lifecycle helpers", () => {
   it("parses only supported lifecycle boundary values", () => {
     expect(parseClaimKeyStatus("trusted")).toBe("trusted");
     expect(parseClaimKeyStatus("legacy")).toBeUndefined();
-    expect(parseClaimKeySource("surgeon_compaction")).toBe("surgeon_compaction");
+    expect(parseClaimKeySource("dreaming_reconcile")).toBe("dreaming_reconcile");
     expect(parseClaimKeySource("handwritten")).toBeUndefined();
     expect(parseClaimKeyConfidence(0.75)).toBe(0.75);
     expect(parseClaimKeyConfidence(1.2)).toBeUndefined();
@@ -296,7 +296,7 @@ describe("claim-key lifecycle helpers", () => {
         claim_key_status: "trusted",
       }),
     ).toBe(true);
-    const supportOnlyEntry: StoreEntryInput = {
+    const supportOnlyEntry: StoreDurableInput = {
       type: "fact",
       subject: "subject",
       content: "content",

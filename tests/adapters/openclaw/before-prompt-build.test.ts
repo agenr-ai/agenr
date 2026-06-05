@@ -27,8 +27,8 @@ import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../src/adap
 import { computeProcedureRevisionHash, computeProcedureSourceHash } from "../../../src/core/procedures/hashing.js";
 import { composeProcedureRecallText } from "../../../src/core/procedures/recall-text.js";
 import type { EmbeddingPort, LlmPort, RecallPorts } from "../../../src/core/ports.js";
-import type { RecallCandidateEntry } from "../../../src/core/recall/types.js";
-import type { Entry, Procedure } from "../../../src/core/types.js";
+import type { RecallCandidateDurable } from "../../../src/core/recall/types.js";
+import type { Durable, Procedure } from "../../../src/core/types.js";
 import { closeTestDatabases, removeTestPath } from "../../helpers/temp-paths.js";
 
 const openDatabases: SqlDatabase[] = [];
@@ -66,7 +66,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     const executeSpy = vi.spyOn(database, "execute");
     const logger = createLogger();
     const recall = createObservedRecallPorts();
-    await database.insertEntry(
+    await database.insertDurable(
       createEntry({
         type: "decision",
         subject: "master branch workflow",
@@ -77,7 +77,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       createEmbedding(0, 1),
       "core-workflow",
     );
-    await database.insertEntry(
+    await database.insertDurable(
       createEntry({
         type: "milestone",
         subject: "latest plugin work",
@@ -254,7 +254,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       }),
     );
     const recall = createObservedRecallPorts({
-      ftsCandidates: [toRecallCandidateEntry(durableEntry)],
+      ftsCandidates: [toRecallCandidateDurable(durableEntry)],
       hydratedEntries: [durableEntry],
     });
     const tracker = createSessionStartTracker();
@@ -346,7 +346,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       importance: 8,
     });
     const recall = createObservedRecallPorts({
-      ftsCandidates: [toRecallCandidateEntry(adjacent), toRecallCandidateEntry(identity)],
+      ftsCandidates: [toRecallCandidateDurable(adjacent), toRecallCandidateDurable(identity)],
       hydratedEntries: [adjacent, identity],
     });
     const tracker = createSessionStartTracker();
@@ -450,7 +450,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       importance: 8,
     });
     const recall = createObservedRecallPorts({
-      ftsCandidates: [toRecallCandidateEntry(identity)],
+      ftsCandidates: [toRecallCandidateDurable(identity)],
       hydratedEntries: [identity],
     });
     const tracker = createSessionStartTracker();
@@ -570,7 +570,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       importance: 8,
     });
     const recall = createObservedRecallPorts({
-      ftsCandidates: [toRecallCandidateEntry(logsEntry)],
+      ftsCandidates: [toRecallCandidateDurable(logsEntry)],
       hydratedEntries: [logsEntry],
     });
     const tracker = createSessionStartTracker();
@@ -756,7 +756,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       }),
     );
     const recall = createObservedRecallPorts({
-      ftsCandidates: [toRecallCandidateEntry(durableEntry)],
+      ftsCandidates: [toRecallCandidateDurable(durableEntry)],
       hydratedEntries: [durableEntry],
     });
     const tracker = createSessionStartTracker();
@@ -857,9 +857,9 @@ describe("handleAgenrBeforePromptBuild", () => {
       importance: 8,
     });
 
-    await database.insertEntry(coreEntry, createEmbedding(0, 1), "core-workflow");
-    await database.insertEntry(relevantEntry, createEmbedding(1, 1), "relevant-workflow");
-    await database.insertEntry(recentEntry, createEmbedding(2, 1), "recent-workflow");
+    await database.insertDurable(coreEntry, createEmbedding(0, 1), "core-workflow");
+    await database.insertDurable(relevantEntry, createEmbedding(1, 1), "relevant-workflow");
+    await database.insertDurable(recentEntry, createEmbedding(2, 1), "recent-workflow");
 
     const predecessorFile = await writeSessionFileToDirectory(sessionsDir, "predecessor-session", [
       {
@@ -1313,7 +1313,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     const logger = createLogger();
     const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
     const recall = createObservedRecallPorts();
-    await database.insertEntry(
+    await database.insertDurable(
       createEntry({
         type: "decision",
         subject: "master branch workflow",
@@ -1324,7 +1324,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       createEmbedding(0, 1),
       "core-workflow",
     );
-    await database.insertEntry(
+    await database.insertDurable(
       createEntry({
         type: "lesson",
         subject: "artifact memory should stay off",
@@ -2018,7 +2018,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
     const currentSessionId = "session-tui-episode-timeout";
     const currentSessionKey = "agent:main:tui-a23e4567-e89b-12d3-a456-426614174000";
-    await database.insertEntry(
+    await database.insertDurable(
       createEntry({
         type: "decision",
         subject: "background episode writing",
@@ -2674,8 +2674,8 @@ function createLlmPort(complete: LlmPort["complete"]): LlmPort {
 
 function createObservedRecallPorts(
   options: {
-    ftsCandidates?: RecallCandidateEntry[];
-    hydratedEntries?: Entry[];
+    ftsCandidates?: RecallCandidateDurable[];
+    hydratedEntries?: Durable[];
   } = {},
 ) {
   const hydratedEntriesById = new Map((options.hydratedEntries ?? []).map((entry) => [entry.id, entry]));
@@ -2768,7 +2768,7 @@ function createMetadataBlock(sentinel: string, payload: object): string {
   return [sentinel, "```json", JSON.stringify(payload), "```"].join("\n");
 }
 
-function createEntry(overrides: Partial<Entry> = {}): Entry {
+function createEntry(overrides: Partial<Durable> = {}): Durable {
   const now = new Date("2026-03-27T12:00:00.000Z").toISOString();
   return {
     id: overrides.id ?? randomUUID(),
@@ -2843,7 +2843,7 @@ function createProcedure(overrides: Partial<Procedure> = {}): Procedure {
   };
 }
 
-function toRecallCandidateEntry(entry: Entry): RecallCandidateEntry {
+function toRecallCandidateDurable(entry: Durable): RecallCandidateDurable {
   return {
     id: entry.id,
     subject: entry.subject,

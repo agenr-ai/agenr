@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import { runSessionStart } from "../../../src/app/session-start/index.js";
 import type { SessionStartDeps } from "../../../src/app/session-start/index.js";
-import type { RecallCandidateEntry } from "../../../src/core/recall/types.js";
+import type { RecallCandidateDurable } from "../../../src/core/recall/types.js";
 import type { RecallPorts } from "../../../src/core/ports.js";
-import type { Entry } from "../../../src/core/types.js";
+import type { Durable } from "../../../src/core/types.js";
 
 describe("runSessionStart", () => {
   it("returns only always-on core memory when no predecessor artifacts exist", async () => {
@@ -68,7 +68,7 @@ describe("runSessionStart", () => {
     });
     const deps = createDeps({
       coreEntries: [coreEntry],
-      ftsCandidates: [toRecallCandidateEntry(coreEntry), toRecallCandidateEntry(recalledEntry)],
+      ftsCandidates: [toRecallCandidateDurable(coreEntry), toRecallCandidateDurable(recalledEntry)],
       hydratedEntries: [coreEntry, recalledEntry],
     });
 
@@ -120,7 +120,7 @@ describe("runSessionStart", () => {
       importance: 9,
     });
     const deps = createDeps({
-      ftsCandidates: [toRecallCandidateEntry(recalledEntry)],
+      ftsCandidates: [toRecallCandidateDurable(recalledEntry)],
       hydratedEntries: [recalledEntry],
     });
 
@@ -195,7 +195,7 @@ describe("runSessionStart", () => {
     });
     const deps = createDeps({
       coreEntries: [coreEntry],
-      ftsCandidates: [toRecallCandidateEntry(recalledEntry)],
+      ftsCandidates: [toRecallCandidateDurable(recalledEntry)],
       hydratedEntries: [recalledEntry],
     });
 
@@ -232,9 +232,9 @@ describe("runSessionStart", () => {
 
 function createDeps(
   options: {
-    coreEntries?: Entry[];
-    ftsCandidates?: RecallCandidateEntry[];
-    hydratedEntries?: Entry[];
+    coreEntries?: Durable[];
+    ftsCandidates?: RecallCandidateDurable[];
+    hydratedEntries?: Durable[];
     ftsSearchImplementation?: RecallPorts["ftsSearch"];
   } = {},
 ): SessionStartDeps {
@@ -265,7 +265,7 @@ function createDeps(
   };
 }
 
-function createEntry(overrides: Partial<Entry> = {}): Entry {
+function createEntry(overrides: Partial<Durable> = {}): Durable {
   const now = "2026-04-14T10:00:00.000Z";
   return {
     id: overrides.id ?? "entry-1",
@@ -309,7 +309,7 @@ function createEntry(overrides: Partial<Entry> = {}): Entry {
   };
 }
 
-function toRecallCandidateEntry(entry: Entry): RecallCandidateEntry {
+function toRecallCandidateDurable(entry: Durable): RecallCandidateDurable {
   return {
     id: entry.id,
     subject: entry.subject,

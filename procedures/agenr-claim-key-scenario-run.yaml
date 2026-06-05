@@ -1,15 +1,15 @@
 procedure_key: agenr/claim-key-scenario-run
 title: Run the claim-key scenario harness
-goal: List, select, and run the repo-local claim-key scenario harness in a repeatable way so ingest, store, or surgeon behavior can be validated in isolated sandboxes.
+goal: List, select, and run the repo-local claim-key scenario harness in a repeatable way so ingest, store, or dreaming behavior can be validated in isolated sandboxes.
 when_to_use:
-  - You need deterministic regression coverage for claim-key ingest, store, or surgeon behavior.
+  - You need deterministic regression coverage for claim-key ingest, store, or dreaming behavior.
   - You want to debug one scenario kind or one scenario ID without touching the shared sandbox database.
 when_not_to_use:
   - You need to exercise the shared sandbox database instead of isolated scenario sandboxes.
   - You only need the normal production CLI behavior and not the deterministic scenario harness.
 prerequisites:
   - The repository dependencies are installed and the scenario fixtures are available.
-  - You know whether you want ingest, store, or surgeon scenarios, or you can list them first.
+  - You know whether you want ingest, store, or dreaming scenarios, or you can list them first.
 steps:
   - id: read-scenario-guide
     kind: read_reference
@@ -28,7 +28,7 @@ steps:
   - id: run-scenario-kind
     kind: run_command
     instruction: Run one class of deterministic scenario with preserved sandbox artifacts and verbose output.
-    command: agenr scenarios run --kind <ingest|store|surgeon> --preserve --verbose
+    command: agenr scenarios run --kind <ingest|store|dreaming> --preserve --verbose
   - id: run-specific-scenario
     kind: run_command
     instruction: Run a single deterministic scenario by exact ID when you need narrow reproduction.

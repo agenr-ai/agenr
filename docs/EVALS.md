@@ -308,7 +308,7 @@ Top-level shape:
     "limit": 5
   },
   "unified": {
-    "mode": "entries",
+    "mode": "durables",
     "sessionKey": "agent:test:tui",
     "memoryPolicy": {
       "slotPolicies": {
@@ -386,7 +386,7 @@ Each `memoryPool` item supports these fields:
 
 Boundary validation details:
 
-- `type` must be one of the live `EntryType` values
+- `type` must be one of the live `DurableKind` values
 - `expiry` must be one of the live `Expiry` values
 - `importance` must be an integer from `1-10`
 - `created_at`, `updated_at`, `retired_at`, `claim_support_observed_at`, `valid_from`, and `valid_to` must be parseable timestamps

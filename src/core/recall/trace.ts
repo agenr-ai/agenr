@@ -1,5 +1,5 @@
 import type { ClaimSlotPolicyConfig } from "../claim-slot-policy.js";
-import type { EntryType } from "../types.js";
+import type { DurableKind } from "../types.js";
 
 /**
  * Stable reason emitted when recall returns no final results.
@@ -23,7 +23,7 @@ export type RecallDegradedReason = "query_embedding_failed" | "vector_search_fai
  */
 export interface RecallFilterTrace {
   /** Active type filters after query normalization. */
-  types: EntryType[];
+  types: DurableKind[];
   /** Active tag filters after query normalization. */
   tags: string[];
   /** Applied lower created-at bound in ISO format when present. */

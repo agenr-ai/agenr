@@ -1,6 +1,6 @@
 import type { ClaimCentricClaimStatus, ClaimCentricMemoryState, ClaimCentricRecallExplanation } from "../recall/claim-centric.js";
 import type { RecallExecutionTraceSummary } from "../../core/recall/index.js";
-import type { Entry } from "../../core/types.js";
+import type { Durable } from "../../core/types.js";
 
 /**
  * Policy hints that shape one session-start selection pass.
@@ -53,7 +53,7 @@ export interface SessionStartPatchItem {
   /** Stable final rank in the bounded durable-memory set. */
   rank: number;
   /** Hydrated durable entry selected for session start. */
-  entry: Entry;
+  entry: Durable;
   /** Whether the item came from always-on core memory or artifact-grounded recall. */
   sourceKind: "core" | "artifact_recall";
   /** Optional final ranking score when the item came from recall. */

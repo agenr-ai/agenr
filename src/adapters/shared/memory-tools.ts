@@ -1,9 +1,9 @@
 import type { ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
 import { normalizeManualClaimKeyUpdate } from "../../core/claim-key-lifecycle.js";
 import type { DatabasePort, EmbeddingPort, EpisodeDatabasePort, ProcedureDatabasePort, RecallPorts } from "../../core/ports.js";
-import { storeEntriesDetailed } from "../../core/store/pipeline.js";
+import { storeDurablesDetailed } from "../../core/store/pipeline.js";
 import { validateTemporalValidityRange } from "../../core/temporal-validity.js";
-import { ENTRY_TYPES, type EntryType, type Expiry } from "../../core/types.js";
+import { DURABLE_KINDS, type DurableKind, type Expiry } from "../../core/types.js";
 import type { MemoryRepository } from "../../app/memory/ports.js";
 import type { PluginClaimExtractionRuntime, PluginEmbeddingStatus, PluginMemoryRuntimeServices } from "../../app/plugin-runtime/types.js";
 import { runUnifiedRecall, type UnifiedRecallMode, type UnifiedRecallResult } from "../../app/recall/index.js";
@@ -15,12 +15,12 @@ import {
   UPDATE_EXPIRY_DESCRIPTION,
   asRecord,
   normalizeStringArray,
-  parseEntryType,
-  parseEntryTypes,
+  parseDurableKind,
+  parseDurableKinds,
   parseExpiry,
   parseRecallMode,
 } from "./entry-tools.js";
-import { buildEntryMemoryResolverPorts, resolveTargetEntry } from "./resolve-target.js";
+import { buildEntryMemoryResolverPorts, resolveTargetDurable } from "./resolve-target.js";
 import { assertEntryFetchableContentLength, buildFetchToolDetails, formatFetchedEntryText } from "./memory-tool-format.js";
 
 export {
@@ -41,7 +41,7 @@ export interface MemoryToolParamReader {
 
 /** Parsed agenr_store parameters. */
 export interface StoreToolParams {
-  type: EntryType;
+  type: DurableKind;
   subject: string;
   content: string;
   importance: number | undefined;
@@ -61,7 +61,7 @@ export interface RecallToolParams {
   limit: number | undefined;
   threshold: number | undefined;
   budget: number | undefined;
-  types: EntryType[];
+  types: DurableKind[];
   tags: string[];
   asOf: string | undefined;
 }
@@ -130,7 +130,7 @@ const STORE_TOOL_PARAMETERS = {
   properties: {
     type: {
       type: "string",
-      enum: [...ENTRY_TYPES],
+      enum: [...DURABLE_KINDS],
       description: ENTRY_TYPE_DESCRIPTION,
     },
     subject: {
@@ -196,7 +196,7 @@ const RECALL_TOOL_PARAMETERS = {
       type: "string",
       enum: [...RECALL_MODES],
       description:
-        "Recall mode: auto routes between exact entry recall, historical-state recall, procedural recall, and episodes; entries forces semantic recall; episodes forces temporal or semantic session recall; procedures forces procedural recall.",
+        "Recall mode: auto routes between exact durable recall, historical-state recall, procedural recall, and episodes; entries forces semantic recall; episodes forces temporal or semantic session recall; procedures forces procedural recall.",
     },
     limit: {
       type: "integer",
@@ -219,7 +219,7 @@ const RECALL_TOOL_PARAMETERS = {
       type: "array",
       items: {
         type: "string",
-        enum: [...ENTRY_TYPES],
+        enum: [...DURABLE_KINDS],
       },
       description: "Optional knowledge types to filter by, such as decision, preference, lesson, fact, milestone, or relationship.",
     },
@@ -292,7 +292,7 @@ const FETCH_TOOL_PARAMETERS = {
 /** Parses raw agenr_store parameters through the host's reader boundary. */
 export function parseStoreToolParams(rawParams: unknown, reader: MemoryToolParamReader): StoreToolParams {
   const params = asRecord(rawParams);
-  const type = parseEntryType(reader.readString(params, "type", { required: true, label: "type" }) ?? "");
+  const type = parseDurableKind(reader.readString(params, "type", { required: true, label: "type" }) ?? "");
   return {
     type,
     subject: reader.readString(params, "subject", { required: true, label: "subject" }) ?? "",
@@ -322,7 +322,7 @@ export function parseRecallToolParams(rawParams: unknown, reader: MemoryToolPara
     limit: reader.readNumber(params, "limit", { integer: true, strict: true }),
     threshold: reader.readNumber(params, "threshold", { strict: true }),
     budget,
-    types: parseEntryTypes(reader.readStringArray(params, "types")),
+    types: parseDurableKinds(reader.readStringArray(params, "types")),
     tags: normalizeStringArray(reader.readStringArray(params, "tags")),
     asOf: reader.readString(params, "asOf"),
   };
@@ -363,7 +363,7 @@ export async function runStoreMemoryTool(
     onWarning?: (warning: string) => void;
   },
 ): Promise<MemoryToolOutcome> {
-  const result = await storeEntriesDetailed(
+  const result = await storeDurablesDetailed(
     [
       {
         type: params.type,
@@ -478,7 +478,7 @@ export async function runFetchMemoryTool(
     extraDetails?: Record<string, unknown>;
   } = {},
 ): Promise<MemoryToolOutcome> {
-  const entry = await resolveTargetEntry(buildEntryMemoryResolverPorts(services), { id: params.id, subject: params.subject });
+  const entry = await resolveTargetDurable(buildEntryMemoryResolverPorts(services), { id: params.id, subject: params.subject });
   assertEntryFetchableContentLength(entry.content);
 
   return okOutcome(formatFetchedEntryText(entry), buildFetchToolDetails(entry, options.extraDetails));
@@ -514,7 +514,7 @@ export async function runUpdateMemoryTool(
             throw new Error("claimKey must use canonical entity/attribute format.");
           }
         })();
-  const entry = await resolveTargetEntry(buildEntryMemoryResolverPorts(services), { id: params.id, subject: params.subject });
+  const entry = await resolveTargetDurable(buildEntryMemoryResolverPorts(services), { id: params.id, subject: params.subject });
 
   if (
     params.importance === undefined &&
@@ -533,7 +533,7 @@ export async function runUpdateMemoryTool(
 
   const normalizedValidFrom = params.validFrom !== undefined ? mergedValidity.value.validFrom : undefined;
   const normalizedValidTo = params.validTo !== undefined ? mergedValidity.value.validTo : undefined;
-  const updated = await services.entries.updateEntry(entry.id, {
+  const updated = await services.entries.updateDurable(entry.id, {
     ...(params.importance !== undefined ? { importance: params.importance } : {}),
     ...(params.expiry !== undefined ? { expiry: params.expiry } : {}),
     ...(normalizedClaimKeyUpdate?.updateFields ?? {}),

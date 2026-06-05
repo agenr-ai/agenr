@@ -1,4 +1,4 @@
-import type { Entry, TranscriptChunk } from "../types.js";
+import type { Durable, TranscriptChunk } from "../types.js";
 
 /** Previously extracted entry summary used to suppress chunk-local duplicates. */
 type PreviouslyExtracted = {
@@ -138,7 +138,7 @@ const BAD_EXAMPLE_NEARDUPE = `BAD (near-duplicate pair - emit only one):
 WHY: These express the same underlying policy from two angles. Emit one entry only. Use preference when the transcript is mainly about a named person's priority or value. Use decision only when the transcript shows the project adopted it as a standing rule.`;
 
 const EMPTY_EXAMPLE = `If nothing qualifies, return exactly:
-{"entries":[]}`;
+{"durables":[]}`;
 
 const CHUNK_CALIBRATION_BLOCK = [
   "## Chunk Calibration",
@@ -349,8 +349,8 @@ export function buildExtractionSystemPrompt(options: { wholeFile?: boolean; extr
     "",
     "## Output",
     "",
-    'Return JSON only: {"entries":[...]}',
-    'Use {"entries":[]} when nothing qualifies.',
+    'Return JSON only: {"durables":[...]}',
+    'Use {"durables":[]} when nothing qualifies.',
     "",
     "Each entry must have:",
     '{ "type": "fact|decision|preference|lesson|relationship|milestone", "subject": "2-6 word topic noun phrase", "content": "specific declarative statement grounded in the concrete person, system, relationship, routine, or situation, min 20 chars", "importance": "high|standard|low", "expiry": "permanent|temporary", "tags": ["1-4", "lowercase", "tags"], "source_context": "one sentence, max 20 words" }',
@@ -402,7 +402,7 @@ export function buildExtractionSystemPrompt(options: { wholeFile?: boolean; extr
 export function buildChunkPrompt(
   chunk: TranscriptChunk,
   options: {
-    relatedEntries?: Entry[];
+    relatedEntries?: Durable[];
     previouslyExtracted?: PreviouslyExtracted[];
   } = {},
 ): string {

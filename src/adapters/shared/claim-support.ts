@@ -1,4 +1,4 @@
-import type { Entry } from "../../core/types.js";
+import type { Durable } from "../../core/types.js";
 
 /**
  * Minimal host session shape needed for tool-call provenance labels.
@@ -43,7 +43,7 @@ export function buildToolCallClaimSupport(
   prefix: SessionSourcePrefix,
   toolName: string,
   observedAt: string,
-): Pick<Entry, "claim_support_source_kind" | "claim_support_locator" | "claim_support_observed_at" | "claim_support_mode"> {
+): Pick<Durable, "claim_support_source_kind" | "claim_support_locator" | "claim_support_observed_at" | "claim_support_mode"> {
   return {
     claim_support_source_kind: "tool_call",
     claim_support_locator: `${buildSessionSourceFile(session, prefix)}#${toolName}`,

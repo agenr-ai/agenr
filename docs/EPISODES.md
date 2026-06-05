@@ -20,7 +20,7 @@ Current production behavior covers OpenClaw and Skeln sessions:
 | Lifecycle   | May be updated, superseded, or retired                                   | May be regenerated, updated, superseded, or retired                               |
 | Retrieval   | Semantic similarity, lexical FTS, importance and recency shaping         | Temporal overlap, semantic vector search, or hybrid temporal + semantic reranking |
 | Source      | LLM extraction from transcripts and other inputs                         | LLM summary generation from normalized session transcripts                        |
-| Storage     | `entries` plus `entries_fts`                                             | `episodes`                                                                        |
+| Storage     | `entries` plus `durables_fts`                                            | `episodes`                                                                        |
 
 Authority note: episode summaries are not transcripts, logs, or exact records. They are useful historical compression. When exact wording, exact counts, or exact timestamps matter, confirm against the source transcript or live state.
 
@@ -229,7 +229,7 @@ Auto mode now distinguishes four intent families:
 
 When `historical_state` is detected:
 
-- entry recall receives `rankingProfile: "historical_state"`
+- durable recall receives `rankingProfile: "historical_state"`
 - semantic episode search is allowed even without a resolved time window
 - OpenClaw tool output renders entries before episodes
 
@@ -237,7 +237,7 @@ When `historical_state` is detected:
 
 | Situation                                            | Queried                                                                                                                |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `mode=entries`                                       | entries only                                                                                                           |
+| `mode=durables`                                      | entries only                                                                                                           |
 | `mode=episodes` with time window                     | episodes only                                                                                                          |
 | `mode=episodes` without time window                  | episodes only, using semantic search when embeddings are available and otherwise returning no semantic episode matches |
 | historical-state query                               | entries and episodes                                                                                                   |
@@ -357,7 +357,7 @@ Unified episode recall can currently add several user-facing notices:
 - `Semantic episode search unavailable - no semantic episode results could be returned.`
 - `Threshold, type filters, and tag filters were applied to entries only.`
 
-That last notice matters because `threshold`, `types`, and `tags` still apply only to entry recall in the unified layer.
+That last notice matters because `threshold`, `types`, and `tags` still apply only to durable recall in the unified layer.
 
 ## Architecture
 

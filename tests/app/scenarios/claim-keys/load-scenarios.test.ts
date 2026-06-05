@@ -15,7 +15,7 @@ describe("validateClaimKeyScenario", () => {
             seedFixtureFile: "fixtures/seed.json",
           },
           input: {
-            entries: [
+            durables: [
               {
                 type: "fact",
                 subject: "Jim timezone",
@@ -38,7 +38,7 @@ describe("validateClaimKeyScenario", () => {
           id: "claim-keys.store.unexpected-field",
           kind: "store",
           input: {
-            entries: [
+            durables: [
               {
                 type: "fact",
                 subject: "Jim timezone",
@@ -73,7 +73,7 @@ describe("validateClaimKeyScenario", () => {
             ],
           },
           input: {
-            entries: [
+            durables: [
               {
                 type: "fact",
                 subject: "Jim timezone",
@@ -96,7 +96,7 @@ describe("validateClaimKeyScenario", () => {
           id: "claim-keys.store.invalid-assert-lifecycle",
           kind: "store",
           input: {
-            entries: [
+            durables: [
               {
                 type: "fact",
                 subject: "Jim timezone",
@@ -130,7 +130,7 @@ describe("validateClaimKeyScenario", () => {
           id: "claim-keys.store.extra-root-field",
           kind: "store",
           input: {
-            entries: [
+            durables: [
               {
                 type: "fact",
                 subject: "Jim timezone",

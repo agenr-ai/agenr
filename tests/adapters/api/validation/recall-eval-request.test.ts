@@ -233,7 +233,7 @@ describe("parseRecallEvalCaseRequest", () => {
         asOf: "2026-03-01T00:00:00.000Z",
       },
       unified: {
-        mode: "entries",
+        mode: "durables",
         sessionKey: "agent:test:tui",
         memoryPolicy: {
           slotPolicies: {
@@ -267,7 +267,7 @@ describe("parseRecallEvalCaseRequest", () => {
         rankingPolicy: undefined,
       },
       unified: {
-        mode: "entries",
+        mode: "durables",
         sessionKey: "agent:test:tui",
         memoryPolicy: {
           slotPolicies: {
@@ -376,7 +376,7 @@ describe("parseRecallEvalCaseRequest", () => {
           text: "who owns the repository",
         },
         unified: {
-          mode: "entries",
+          mode: "durables",
         },
       }),
     ).toThrowError(RecallEvalRequestValidationError);
@@ -390,7 +390,7 @@ describe("parseRecallEvalCaseRequest", () => {
           text: "who owns the repository",
         },
         unified: {
-          mode: "entries",
+          mode: "durables",
         },
       });
     } catch (error) {

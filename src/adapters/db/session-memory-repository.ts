@@ -27,7 +27,7 @@ const SESSION_LINEAGE_EDGE_SELECT_COLUMNS = `
   parent_session_key,
   parent_source_ref,
   reason,
-  fork_entry_id,
+  fork_durable_id,
   fork_position,
   observed_at
 `;
@@ -102,7 +102,7 @@ async function upsertLineageEdgeWithExecutor(executor: SqlExecutor, input: Upser
         parent_session_key,
         parent_source_ref,
         reason,
-        fork_entry_id,
+        fork_durable_id,
         fork_position,
         observed_at
       )
@@ -337,7 +337,7 @@ function mapSessionLineageEdgeRow(row: Row): SessionLineageEdge {
     parentSessionKey: readOptionalString(row, "parent_session_key"),
     parentSourceRef: readOptionalString(row, "parent_source_ref"),
     reason: parseSessionLineageReason(readRequiredString(row, "reason")),
-    forkEntryId: readOptionalString(row, "fork_entry_id"),
+    forkEntryId: readOptionalString(row, "fork_durable_id"),
     forkPosition: readOptionalString(row, "fork_position"),
     observedAt: readRequiredString(row, "observed_at"),
   };

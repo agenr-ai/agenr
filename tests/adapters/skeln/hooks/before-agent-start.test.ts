@@ -3,7 +3,7 @@ import type { ExtensionContext } from "../../../../src/adapters/skeln/skeln-type
 
 import type { SessionStartDeps } from "../../../../src/app/session-start/index.js";
 import { resolveRuntimeCapabilities } from "../../../../src/app/features/capabilities.js";
-import type { Entry } from "../../../../src/core/types.js";
+import type { Durable } from "../../../../src/core/types.js";
 import { buildAgenrSkelnInjectionMessage, handleAgenrSkelnBeforeAgentStart } from "../../../../src/adapters/skeln/hooks/before-agent-start.js";
 import { createSessionStartTracker } from "../../../../src/app/plugin-runtime/session-tracking.js";
 import type { AgenrSkelnServices } from "../../../../src/app/skeln/runtime.js";
@@ -529,7 +529,7 @@ function createServices(input: {
   } as unknown as AgenrSkelnServices;
 }
 
-function createSessionStartDeps(coreEntries: Entry[]): SessionStartDeps {
+function createSessionStartDeps(coreEntries: Durable[]): SessionStartDeps {
   return {
     repository: {
       listCoreEntries: vi.fn(async () => coreEntries),
@@ -544,7 +544,7 @@ function createSessionStartDeps(coreEntries: Entry[]): SessionStartDeps {
   };
 }
 
-function createEntry(overrides: Partial<Entry> & Pick<Entry, "id" | "subject" | "content">): Entry {
+function createEntry(overrides: Partial<Durable> & Pick<Durable, "id" | "subject" | "content">): Durable {
   return {
     type: "fact",
     importance: 7,

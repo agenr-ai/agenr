@@ -458,7 +458,7 @@ describe("createLlmClient", () => {
   it("accumulates usage stats for completeJson calls", async () => {
     piAiMocks.getModel.mockReturnValue(buildModel());
     piAiMocks.completeSimple.mockResolvedValue({
-      ...buildAssistantMessage('{"entries":["kept"]}'),
+      ...buildAssistantMessage('{"durables":["kept"]}'),
       usage: buildUsage({
         input: 12,
         output: 5,
@@ -477,7 +477,7 @@ describe("createLlmClient", () => {
 
     const client = createLlmClient("openai", "gpt-5.4-mini");
 
-    await expect(client.completeJson("system", "user")).resolves.toEqual({ entries: ["kept"] });
+    await expect(client.completeJson("system", "user")).resolves.toEqual({ durables: ["kept"] });
 
     expect(client.metadata.usage).toEqual({
       calls: 1,
@@ -511,7 +511,7 @@ describe("createLlmClient", () => {
         }),
       })
       .mockResolvedValueOnce({
-        ...buildAssistantMessage('{"entries":[]}'),
+        ...buildAssistantMessage('{"durables":[]}'),
         usage: buildUsage({
           input: 7,
           output: 3,
@@ -531,7 +531,7 @@ describe("createLlmClient", () => {
     const client = createLlmClient("openai", "gpt-5.4-mini");
 
     await expect(client.complete("system", "user")).resolves.toBe("hello");
-    await expect(client.completeJson("system", "user")).resolves.toEqual({ entries: [] });
+    await expect(client.completeJson("system", "user")).resolves.toEqual({ durables: [] });
 
     expect(client.metadata.usage).toEqual({
       calls: 2,
@@ -575,6 +575,6 @@ describe("createLlmClient", () => {
 
 describe("stripCodeFence", () => {
   it("removes json code fences", () => {
-    expect(stripCodeFence('```json\n{"entries":[]}\n```')).toBe('{"entries":[]}');
+    expect(stripCodeFence('```json\n{"durables":[]}\n```')).toBe('{"durables":[]}');
   });
 });

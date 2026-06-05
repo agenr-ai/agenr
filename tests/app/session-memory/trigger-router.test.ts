@@ -348,8 +348,8 @@ describe("routeSessionMemoryTrigger", () => {
           type: "session_compact",
           sessionKey: "session-1",
           workingScope: {
-            sessionKey: "session-1",
-            scopeKey: "session:session-1",
+            sessionId: "session-1",
+            conversationKey: "session-1",
           },
           artifact: {
             kind: "compaction_checkpoint",
@@ -433,8 +433,8 @@ describe("routeSessionMemoryTrigger", () => {
           type: "session_shutdown",
           sessionKey: "session-1",
           workingScope: {
-            sessionKey: "session-1",
-            scopeKey: "session:session-1",
+            sessionId: "session-1",
+            conversationKey: "session-1",
           },
           shutdownReason: "quit",
           observedAt: "2026-05-30T00:00:00.000Z",
@@ -459,8 +459,8 @@ describe("routeSessionMemoryTrigger", () => {
     expect(workingMemory.run).toHaveBeenCalledWith({
       action: "update",
       scope: {
-        sessionKey: "session-1",
-        scopeKey: "session:session-1",
+        sessionId: "session-1",
+        conversationKey: "session-1",
       },
       operation: {
         type: "merge_checkpoint",

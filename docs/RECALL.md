@@ -8,12 +8,12 @@ Recall in `agenr` is a hybrid retrieval and ranking system for three memory surf
 
 The system is exposed through multiple callers:
 
-- `agenr recall <query>` for entry recall at the CLI
+- `agenr recall <query>` for durable recall at the CLI
 - `runUnifiedRecall()` and host-plugin `agenr_recall` for routed entry, episode, and procedure recall
 - host-plugin `agenr_fetch` for full durable entry bodies after recall previews truncate them
 - automatic host prompt-time recall paths for session start and later user turns
 
-Host-plugin entry recall returns truncated previews (`contentPreview`, `contentChars`, `previewTruncated`) in both tool text and structured details. When any preview truncates, tool text also includes a `Fetch Guidance` section pointing agents to `agenr_fetch`. `agenr_fetch` returns the full stored body up to 32,768 trimmed characters and rejects larger entries with an actionable error.
+Host-plugin durable recall returns truncated previews (`contentPreview`, `contentChars`, `previewTruncated`) in both tool text and structured details. When any preview truncates, tool text also includes a `Fetch Guidance` section pointing agents to `agenr_fetch`. `agenr_fetch` returns the full stored body up to 32,768 trimmed characters and rejects larger entries with an actionable error.
 
 This document explains how recall works today: the retrieval channels, ranking equations, routing concepts, tuning knobs, and the boundaries between durable memory, episodic context, and procedures.
 
@@ -29,9 +29,9 @@ Recall optimizes for a few core properties:
 
 ## Recall surfaces
 
-### Entry recall
+### Durable recall
 
-Entry recall is the durable-memory path. It is the right surface for:
+Durable recall is the durable-memory path. It is the right surface for:
 
 - facts
 - decisions
@@ -67,14 +67,14 @@ These paths reuse the same recall concepts, but they are not the same thing as c
 
 ## Code map
 
-- `src/cli/commands/recall.ts` - CLI option parsing and entry recall formatting
+- `src/cli/commands/recall.ts` - CLI option parsing and durable recall formatting
 - `src/app/recall/unified.ts` - routed recall across entries, episodes, and procedures
 - `src/app/recall/types.ts` - unified recall request and response types
 - `src/app/procedures/recall/service.ts` - procedure retrieval and canonical selection
 - `src/app/session-start/service.ts` - session-start durable recall selection
 - `src/app/before-turn/service.ts` - proactive before-turn durable and procedure recall
-- `src/core/recall/search.ts` - entry recall pipeline orchestration
-- `src/core/recall/scoring.ts` - entry recall score math
+- `src/core/recall/search.ts` - durable recall pipeline orchestration
+- `src/core/recall/scoring.ts` - durable recall score math
 - `src/core/recall/fusion.ts` - reciprocal rank fusion
 - `src/core/recall/lexical.ts` - lexical tokenization and query planning
 - `src/core/recall/neighborhood.ts` - neighborhood expansion shapes and seeded rerank helpers
@@ -82,7 +82,7 @@ These paths reuse the same recall concepts, but they are not the same thing as c
 - `src/core/recall/cross-encoder.ts` - cross-encoder rerank orchestration
 - `src/core/recall/temporal.ts` - entry-side temporal parsing and `around` inference
 - `src/core/recall/trace.ts` - typed execution trace summaries
-- `src/core/recall/types.ts` - entry recall inputs, outputs, candidates, and filters
+- `src/core/recall/types.ts` - durable recall inputs, outputs, candidates, and filters
 - `src/core/episode/search.ts` - episode retrieval modes
 - `src/core/episode/scoring.ts` - temporal episode score math
 - `src/core/episode/temporal-window.ts` - episode time-window parsing
@@ -161,7 +161,7 @@ Typical routing behavior:
 
 Unified recall returns separate sections rather than one mixed ranked list. Durable memory, episode context, and procedure candidates remain visibly distinct because they carry different authority.
 
-## CLI entry recall surface
+## CLI durable recall surface
 
 The standalone CLI currently exposes the entry-recall path:
 
@@ -191,7 +191,7 @@ Key CLI knobs:
 - `--around-radius` - Gaussian radius in days, default `14`
 - `--verbose` - include score breakdowns
 
-## Entry recall pipeline
+## Durable recall pipeline
 
 The durable entry pipeline is the core hybrid recall path.
 
@@ -207,7 +207,7 @@ The durable entry pipeline is the core hybrid recall path.
 
 ### 2. Hard filters and time parsing
 
-Entry recall has two different temporal concepts:
+Durable recall has two different temporal concepts:
 
 - `since` and `until` are hard filters
 - `around` is a scoring bias
@@ -230,13 +230,13 @@ When embeddings are available, recall embeds the query once and uses that vector
 
 If embedding generation fails:
 
-- entry recall can degrade to lexical-only mode
+- durable recall can degrade to lexical-only mode
 - unified recall may emit notices instead of failing
 - explicit entry-only calls can still choose to fail rather than silently degrade, depending on the caller
 
 ### 4. Candidate retrieval
 
-Entry recall runs vector and lexical retrieval in parallel.
+Durable recall runs vector and lexical retrieval in parallel.
 
 #### Vector retrieval
 
@@ -318,7 +318,7 @@ Where:
 
 The raw score is normalized so that a candidate ranked first in every active channel maps to `1.0`.
 
-This matters because entry recall can fuse:
+This matters because durable recall can fuse:
 
 - vector ranking
 - lexical ranking
@@ -402,7 +402,7 @@ This is intentionally conservative:
 - the rerank reinforces structure already present in the pool
 - it does not replace the underlying relevance model
 
-## Historical-state entry recall
+## Historical-state durable recall
 
 Historical-state recall is a ranking variant for questions such as:
 
@@ -410,7 +410,7 @@ Historical-state recall is a ranking variant for questions such as:
 - what changed
 - what did we use before
 
-When `rankingProfile: "historical_state"` is active, entry recall changes behavior in a few ways:
+When `rankingProfile: "historical_state"` is active, durable recall changes behavior in a few ways:
 
 1. it expands into supersession chains, claim-key siblings, and retired topic-family candidates
 2. it flattens default recency to a neutral value when there is no explicit time anchor
@@ -590,7 +590,7 @@ In hybrid mode, the fused RRF score becomes the main relevance signal, with temp
 
 ## Procedure recall
 
-Procedure recall is a dedicated path rather than a thin alias for entry recall.
+Procedure recall is a dedicated path rather than a thin alias for durable recall.
 
 Key ideas:
 
@@ -728,7 +728,7 @@ Recall exposes several practical tuning knobs across the CLI, unified recall, an
 
 ### Surface-specific defaults that matter
 
-- entry recall default `limit` is `10`
+- durable recall default `limit` is `10`
 - entry `around` default radius is `14` days
 - recency half-life is `365` days for `permanent` and `30` days for `temporary`
 - entry final score weights are `0.5 relevance`, `0.25 recency`, `0.25 importance`

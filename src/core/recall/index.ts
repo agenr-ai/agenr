@@ -16,7 +16,7 @@ export {
   sharesEpisodeLineage,
   sharesProcedureLineage,
 } from "./neighborhood.js";
-export type { EntryNeighborhoodRequest, NeighborhoodFamily, SeededRerankCandidate, SeededRerankOptions } from "./neighborhood.js";
+export type { DurableNeighborhoodRequest, NeighborhoodFamily, SeededRerankCandidate, SeededRerankOptions } from "./neighborhood.js";
 export { cosineSimilarity, gaussianRecency, importanceScore, recencyScore, scoreCandidate } from "./scoring.js";
 export { recall } from "./search.js";
 export { inferAroundDate, parseRelativeDate } from "./temporal.js";

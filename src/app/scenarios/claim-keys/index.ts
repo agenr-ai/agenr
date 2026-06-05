@@ -10,5 +10,5 @@ export type {
   ClaimKeyScenarioRunOptions,
   ClaimKeyScenarioRunResult,
   ClaimKeyScenarioSummary,
-  ClaimKeyScenarioSurgeonSummarySnapshot,
+  ClaimKeyScenarioDreamingSummarySnapshot,
 } from "./types.js";

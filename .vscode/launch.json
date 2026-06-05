@@ -4,7 +4,7 @@
     {
       "id": "transcriptPath",
       "type": "promptString",
-      "description": "Path to transcripts for ingest entries",
+      "description": "Path to transcripts for ingest durables",
       "default": "/Users/jmartin/.openclaw/sessions"
     },
     {
@@ -20,12 +20,6 @@
       "default": "claim key"
     },
     {
-      "id": "surgeonRunId",
-      "type": "promptString",
-      "description": "Surgeon run ID for surgeon actions",
-      "default": "replace-me"
-    },
-    {
       "id": "scenarioId",
       "type": "promptString",
       "description": "Scenario ID for a single scenario run",
@@ -34,12 +28,12 @@
   ],
   "configurations": [
     {
-      "name": "agenr: ingest entries (sandbox)",
+      "name": "agenr: ingest durables (sandbox)",
       "type": "node",
       "request": "launch",
       "runtimeExecutable": "node",
       "program": "${workspaceFolder}/dist/cli.js",
-      "args": ["ingest", "entries", "${input:transcriptPath}", "--verbose"],
+      "args": ["ingest", "durables", "${input:transcriptPath}", "--verbose"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
@@ -91,12 +85,12 @@
       "preLaunchTask": "pnpm: build:debug"
     },
     {
-      "name": "agenr: surgeon run (sandbox)",
+      "name": "agenr: dream run (sandbox)",
       "type": "node",
       "request": "launch",
       "runtimeExecutable": "node",
       "program": "${workspaceFolder}/dist/cli.js",
-      "args": ["surgeon", "run", "--verbose"],
+      "args": ["dream", "run", "--tier", "standard", "--verbose"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
@@ -110,12 +104,12 @@
       "preLaunchTask": "pnpm: build:debug"
     },
     {
-      "name": "agenr: surgeon status (sandbox)",
+      "name": "agenr: dream status (sandbox)",
       "type": "node",
       "request": "launch",
       "runtimeExecutable": "node",
       "program": "${workspaceFolder}/dist/cli.js",
-      "args": ["surgeon", "status"],
+      "args": ["dream", "status"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
@@ -129,31 +123,12 @@
       "preLaunchTask": "pnpm: build:debug"
     },
     {
-      "name": "agenr: surgeon history (sandbox)",
+      "name": "agenr: dream history (sandbox)",
       "type": "node",
       "request": "launch",
       "runtimeExecutable": "node",
       "program": "${workspaceFolder}/dist/cli.js",
-      "args": ["surgeon", "history", "--limit", "20"],
-      "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
-      "internalConsoleOptions": "neverOpen",
-      "sourceMaps": true,
-      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
-      "skipFiles": ["<node_internals>/**"],
-      "env": {
-        "AGENR_DB_PATH": "/Users/jmartin/.openclaw-sandbox/agenr-data/knowledge.db",
-        "AGENR_CONFIG_PATH": "/Users/jmartin/.openclaw-sandbox/agenr-data/config.json"
-      },
-      "preLaunchTask": "pnpm: build:debug"
-    },
-    {
-      "name": "agenr: surgeon actions (sandbox)",
-      "type": "node",
-      "request": "launch",
-      "runtimeExecutable": "node",
-      "program": "${workspaceFolder}/dist/cli.js",
-      "args": ["surgeon", "actions", "${input:surgeonRunId}"],
+      "args": ["dream", "history", "--limit", "20"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
@@ -212,12 +187,12 @@
       "preLaunchTask": "pnpm: build:debug"
     },
     {
-      "name": "agenr: scenarios run surgeon",
+      "name": "agenr: scenarios run dreaming",
       "type": "node",
       "request": "launch",
       "runtimeExecutable": "node",
       "program": "${workspaceFolder}/dist/cli.js",
-      "args": ["scenarios", "run", "--kind", "surgeon", "--preserve", "--verbose"],
+      "args": ["scenarios", "run", "--kind", "dreaming", "--preserve", "--verbose"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",

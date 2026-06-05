@@ -15,8 +15,8 @@ import {
 const tempDirectories: string[] = [];
 const WAVE_TWO_SCENARIO_IDS = [
   "claim-keys.ingest.ambiguous-narrative-abstains",
-  "claim-keys.surgeon.ambiguous-family-proposal",
-  "claim-keys.surgeon.missing-key-backfill-high-confidence",
+  "claim-keys.dreaming.ambiguous-family-proposal",
+  "claim-keys.dreaming.missing-key-backfill-high-confidence",
 ] as const;
 const WAVE_THREE_SCENARIO_IDS = [
   "claim-keys.ingest.clear-slot-inferred",
@@ -37,6 +37,9 @@ describe("claim-key scenario runtime", () => {
 
     expect(allScenarios).toHaveLength(10);
     expect(allScenarios.map((scenario) => scenario.id)).toEqual([
+      "claim-keys.dreaming.ambiguous-family-proposal",
+      "claim-keys.dreaming.malformed-key-normalized",
+      "claim-keys.dreaming.missing-key-backfill-high-confidence",
       "claim-keys.ingest.ambiguous-narrative-abstains",
       "claim-keys.ingest.clear-slot-inferred",
       "claim-keys.ingest.explicit-tool-key-preserved",
@@ -44,9 +47,6 @@ describe("claim-key scenario runtime", () => {
       "claim-keys.store.extracted-model-key-trusted",
       "claim-keys.store.manual-key-trusted",
       "claim-keys.store.trusted-exact-sibling-auto-supersedes",
-      "claim-keys.surgeon.ambiguous-family-proposal",
-      "claim-keys.surgeon.malformed-key-normalized",
-      "claim-keys.surgeon.missing-key-backfill-high-confidence",
     ]);
     expect(storeScenarios).toHaveLength(4);
     expect(storeScenarios.every((scenario) => scenario.kind === "store")).toBe(true);
@@ -66,7 +66,7 @@ describe("claim-key scenario runtime", () => {
             reset: false,
           },
           input: {
-            entries: [
+            durables: [
               {
                 type: "fact",
                 subject: "Invalid",
@@ -96,9 +96,9 @@ describe("claim-key scenario runtime", () => {
     );
   });
 
-  it("runs real store, ingest, and surgeon scenarios end to end", async () => {
+  it("runs real store, ingest, and dreaming scenarios end to end", async () => {
     const summary = await runClaimKeyScenariosRuntime({
-      ids: ["claim-keys.store.manual-key-trusted", "claim-keys.ingest.explicit-tool-key-preserved", "claim-keys.surgeon.malformed-key-normalized"],
+      ids: ["claim-keys.store.manual-key-trusted", "claim-keys.ingest.explicit-tool-key-preserved", "claim-keys.dreaming.malformed-key-normalized"],
     });
 
     expect(summary.matchedCount).toBe(3);
@@ -118,7 +118,7 @@ describe("claim-key scenario runtime", () => {
     expect(summary.failedCount).toBe(0);
   });
 
-  it("runs the Wave 2 scenario set end to end and writes surgeon artifacts", async () => {
+  it("runs the Wave 2 scenario set end to end and writes dreaming artifacts", async () => {
     const summary = await runClaimKeyScenariosRuntime({
       ids: [...WAVE_TWO_SCENARIO_IDS],
     });
@@ -135,13 +135,13 @@ describe("claim-key scenario runtime", () => {
       };
     };
     const proposals = JSON.parse(
-      await readFile(path.join(summary.artifactRoot, "claim-keys.surgeon.ambiguous-family-proposal", "proposals.json"), "utf8"),
+      await readFile(path.join(summary.artifactRoot, "claim-keys.dreaming.ambiguous-family-proposal", "proposals.json"), "utf8"),
     ) as Array<{
       eligibleForApply: boolean;
       issueKind: string;
     }>;
-    const surgeonSummary = JSON.parse(
-      await readFile(path.join(summary.artifactRoot, "claim-keys.surgeon.missing-key-backfill-high-confidence", "surgeon-summary.json"), "utf8"),
+    const dreamingSummary = JSON.parse(
+      await readFile(path.join(summary.artifactRoot, "claim-keys.dreaming.missing-key-backfill-high-confidence", "dreaming-summary.json"), "utf8"),
     ) as {
       summary: {
         counts: {
@@ -158,8 +158,8 @@ describe("claim-key scenario runtime", () => {
         issueKind: "mixed_claim_key_group",
       }),
     ]);
-    expect(surgeonSummary.summary.counts.identifiedBackfills).toBe(1);
-    expect(surgeonSummary.summary.counts.appliedBackfills).toBe(1);
+    expect(dreamingSummary.summary.counts.identifiedBackfills).toBe(1);
+    expect(dreamingSummary.summary.counts.appliedBackfills).toBe(1);
   });
 
   it("runs the Wave 3 scenario set end to end and writes store artifacts", async () => {
@@ -237,7 +237,7 @@ describe("claim-key scenario runtime", () => {
             preserveOnFailure: true,
           },
           input: {
-            entries: [
+            durables: [
               {
                 type: "fact",
                 subject: "Jim timezone",
@@ -294,7 +294,7 @@ async function createScenarioRoot(prefix: string): Promise<string> {
   await Promise.all([
     mkdir(path.join(root, "ingest"), { recursive: true }),
     mkdir(path.join(root, "store"), { recursive: true }),
-    mkdir(path.join(root, "surgeon"), { recursive: true }),
+    mkdir(path.join(root, "dreaming"), { recursive: true }),
     mkdir(path.join(root, "fixtures"), { recursive: true }),
   ]);
 

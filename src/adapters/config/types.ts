@@ -1,5 +1,5 @@
 import type { ClaimExtractionConfig } from "../../core/store/claim-extraction.js";
-import { ENTRY_TYPES, type EntryType } from "../../core/types.js";
+import { DURABLE_KINDS, type DurableKind } from "../../core/types.js";
 import {
   AGENR_FEATURE_FLAG_KEYS,
   DEFAULT_AGENR_FEATURE_FLAGS,
@@ -52,34 +52,45 @@ export interface ModelConfig {
 }
 
 /**
- * Per-pass surgeon configuration.
+ * Prune-stage protection configuration for dreaming runs.
  */
-export interface SurgeonPassConfig {
-  /** Protect entries recalled within this many days. */
+export interface DreamingPruneConfig {
+  /** Protect durables recalled within this many days. */
   protectRecalledDays?: number;
-  /** Protect entries at or above this importance. */
+  /** Protect durables at or above this importance. */
   protectMinImportance?: number;
-  /** Skip entries evaluated by surgeon in the last N days. */
-  skipRecentlyEvaluatedDays?: number;
 }
 
 /**
- * Surgeon module configuration persisted in `config.json`.
+ * Dreaming module configuration persisted in `config.json`.
  */
-export interface SurgeonConfig {
-  /** Model override for surgeon runs. */
+export interface DreamingConfig {
+  /** Model override for dreaming runs. */
   model?: ModelConfig;
-  /** Maximum cost per run in USD. */
-  costCap?: number;
-  /** Maximum total surgeon cost in the last 24 hours. */
+  /** Maximum total dreaming cost in the last 24 hours. */
   dailyCostCap?: number;
   /** Context token limit override. */
-  contextLimit?: number;
-  /** Custom instructions appended to the surgeon system prompt. */
+  contextLimitTokens?: number;
+  /** Custom instructions appended to dreaming synthesis prompts. */
   customInstructions?: string;
-  /** Per-pass configuration. */
-  passes?: {
-    retirement?: SurgeonPassConfig;
+  tiers?: {
+    light?: { enabled?: boolean };
+    standard?: { enabled?: boolean };
+    deep?: { enabled?: boolean; intervalHours?: number };
+  };
+  stages?: {
+    extract?: {
+      maxSessionsPerRun?: number;
+      maxChunksPerSession?: number;
+      contextLookup?: { enabled?: boolean; maxNeighborsPerCandidate?: number };
+    };
+    project?: { maxProfileDurables?: number };
+    prune?: DreamingPruneConfig;
+  };
+  triggers?: {
+    postSessionLightDream?: boolean;
+    importanceThreshold?: number;
+    minIntervalMinutes?: number;
   };
 }
 
@@ -140,8 +151,8 @@ export interface AgenrConfigInput {
   crossEncoderModel?: ModelConfig;
   /** Best-effort claim-key extraction settings. */
   claimExtraction?: AgenrClaimExtractionConfig;
-  /** Surgeon module configuration. */
-  surgeon?: SurgeonConfig;
+  /** Dreaming module configuration. */
+  dreaming?: DreamingConfig;
   /** Staged rollout feature flags. All default to false. */
   features?: AgenrFeatureFlagConfig;
   /** Database file path. */
@@ -164,45 +175,56 @@ export interface ResolvedAgenrClaimExtractionConfig extends ClaimExtractionConfi
 }
 
 /**
- * Fully resolved retirement-pass protection settings.
+ * Fully resolved prune-stage protection settings.
  */
-export interface ResolvedSurgeonPassConfig {
-  /** Protect entries recalled within this many days. */
+export interface ResolvedDreamingPruneConfig {
+  /** Protect durables recalled within this many days. */
   protectRecalledDays: number;
-  /** Protect entries at or above this importance. */
+  /** Protect durables at or above this importance. */
   protectMinImportance: number;
-  /** Skip entries evaluated by surgeon in the last N days. */
-  skipRecentlyEvaluatedDays: number;
 }
 
 /**
- * Fully resolved surgeon runtime configuration.
+ * Fully resolved dreaming runtime configuration.
  */
-export interface ResolvedSurgeonConfig {
-  /** Optional model override for surgeon runs. */
+export interface ResolvedDreamingConfig {
+  /** Optional model override for dreaming runs. */
   model?: ModelConfig;
-  /** Maximum cost per run in USD. */
-  costCap: number;
-  /** Maximum total surgeon cost in the last 24 hours. */
+  /** Maximum total dreaming cost in the last 24 hours. */
   dailyCostCap: number;
   /** Context token limit override. */
-  contextLimit: number;
-  /** Custom instructions appended to the surgeon system prompt. */
+  contextLimitTokens: number;
+  /** Custom instructions appended to dreaming synthesis prompts. */
   customInstructions?: string;
-  /** Per-pass configuration with defaults applied. */
-  passes: {
-    retirement: ResolvedSurgeonPassConfig;
+  tiers: {
+    light: { enabled: boolean };
+    standard: { enabled: boolean };
+    deep: { enabled: boolean; intervalHours: number };
+  };
+  stages: {
+    extract: {
+      maxSessionsPerRun: number;
+      maxChunksPerSession: number;
+      contextLookup: { enabled: boolean; maxNeighborsPerCandidate: number };
+    };
+    project: { maxProfileDurables: number };
+    prune: ResolvedDreamingPruneConfig;
+  };
+  triggers: {
+    postSessionLightDream: boolean;
+    importanceThreshold: number;
+    minIntervalMinutes: number;
   };
 }
 
 /**
  * Fully normalized agenr runtime configuration.
  */
-export interface ResolvedAgenrConfig extends Omit<AgenrConfigInput, "claimExtraction" | "surgeon" | "dbPath" | "apiPort"> {
+export interface ResolvedAgenrConfig extends Omit<AgenrConfigInput, "claimExtraction" | "dreaming" | "dbPath" | "apiPort"> {
   /** Best-effort claim-key extraction settings with defaults applied. */
   claimExtraction: ResolvedAgenrClaimExtractionConfig;
-  /** Surgeon module configuration with defaults applied. */
-  surgeon: ResolvedSurgeonConfig;
+  /** Dreaming module configuration with defaults applied. */
+  dreaming: ResolvedDreamingConfig;
   /** Feature flags with defaults applied. */
   features: ResolvedAgenrFeatureFlags;
   /** Database file path after config resolution. */
@@ -212,34 +234,32 @@ export interface ResolvedAgenrConfig extends Omit<AgenrConfigInput, "claimExtrac
 }
 
 /**
- * Default surgeon cost cap in USD.
+ * Default 24-hour dreaming cost cap in USD.
  */
-const DEFAULT_SURGEON_COST_CAP = 15.0;
+const DEFAULT_DREAMING_DAILY_COST_CAP = 75.0;
 
 /**
- * Default 24-hour surgeon cost cap in USD.
+ * Default dreaming context limit override. Zero means auto-detect.
  */
-const DEFAULT_SURGEON_DAILY_COST_CAP = 75.0;
+const DEFAULT_DREAMING_CONTEXT_LIMIT_TOKENS = 0;
 
 /**
- * Default surgeon context limit override. Zero means auto-detect.
+ * Default prune-stage recall protection window in days.
  */
-const DEFAULT_SURGEON_CONTEXT_LIMIT = 0;
+const DEFAULT_DREAMING_PRUNE_PROTECT_RECALLED_DAYS = 14;
 
 /**
- * Default retirement-pass recall protection window in days.
+ * Default prune-stage importance protection threshold.
  */
-const DEFAULT_SURGEON_RETIREMENT_PROTECT_RECALLED_DAYS = 14;
+const DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE = 9;
 
-/**
- * Default retirement-pass importance protection threshold.
- */
-const DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE = 9;
-
-/**
- * Default surgeon skip window for recently evaluated entries.
- */
-const DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS = 7;
+const DEFAULT_DREAMING_IMPORTANCE_THRESHOLD = 25;
+const DEFAULT_DREAMING_MIN_INTERVAL_MINUTES = 30;
+const DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS = 8;
+const DEFAULT_DREAMING_EXTRACT_MAX_CHUNKS = 12;
+const DEFAULT_DREAMING_CONTEXT_LOOKUP_MAX_NEIGHBORS = 5;
+const DEFAULT_DREAMING_MAX_PROFILE_DURABLES = 8;
+const DEFAULT_DREAMING_DEEP_INTERVAL_HOURS = 168;
 
 /**
  * Default claim-extraction concurrency.
@@ -254,7 +274,7 @@ const DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD = 0.8;
 /**
  * Default claim-extraction entry types.
  */
-const DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES = ["fact", "preference", "decision", "lesson"] as const satisfies readonly EntryType[];
+const DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES = ["fact", "preference", "decision", "lesson"] as const satisfies readonly DurableKind[];
 
 /**
  * Default HTTP API port.
@@ -315,12 +335,17 @@ export {
   DEFAULT_CLAIM_EXTRACTION_CONCURRENCY,
   DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD,
   DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES,
-  DEFAULT_SURGEON_CONTEXT_LIMIT,
-  DEFAULT_SURGEON_COST_CAP,
-  DEFAULT_SURGEON_DAILY_COST_CAP,
-  DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE,
-  DEFAULT_SURGEON_RETIREMENT_PROTECT_RECALLED_DAYS,
-  DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS,
+  DEFAULT_DREAMING_CONTEXT_LIMIT_TOKENS,
+  DEFAULT_DREAMING_CONTEXT_LOOKUP_MAX_NEIGHBORS,
+  DEFAULT_DREAMING_DAILY_COST_CAP,
+  DEFAULT_DREAMING_DEEP_INTERVAL_HOURS,
+  DEFAULT_DREAMING_EXTRACT_MAX_CHUNKS,
+  DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS,
+  DEFAULT_DREAMING_IMPORTANCE_THRESHOLD,
+  DEFAULT_DREAMING_MAX_PROFILE_DURABLES,
+  DEFAULT_DREAMING_MIN_INTERVAL_MINUTES,
+  DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE,
+  DEFAULT_DREAMING_PRUNE_PROTECT_RECALLED_DAYS,
   SUPPORTED_AGENR_PROVIDERS,
 };
 
@@ -386,7 +411,7 @@ export function getAuthMethodDefinition(auth: AgenrAuthMethod): AuthMethodDefini
  * @param right - Right candidate list.
  * @returns True when both lists contain the same entry types in the same order.
  */
-export function sameEligibleTypes(left: readonly EntryType[], right: readonly EntryType[]): boolean {
+export function sameEligibleKinds(left: readonly DurableKind[], right: readonly DurableKind[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
@@ -396,6 +421,6 @@ export function sameEligibleTypes(left: readonly EntryType[], right: readonly En
  * @param value - Candidate string to inspect.
  * @returns True when the string is one of agenr's entry types.
  */
-export function isEntryType(value: string): value is EntryType {
-  return ENTRY_TYPES.includes(value as EntryType);
+export function isDurableKind(value: string): value is DurableKind {
+  return DURABLE_KINDS.includes(value as DurableKind);
 }

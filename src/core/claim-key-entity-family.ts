@@ -1,7 +1,7 @@
 /* eslint-disable jsdoc/require-jsdoc -- private scoring helpers are intentionally dense; exported API is documented. */
 
 import { inspectClaimKey, normalizeClaimKeySegment } from "./claim-key.js";
-import type { ClaimKeySource, ClaimKeyStatus, Entry } from "./types.js";
+import type { ClaimKeySource, ClaimKeyStatus, Durable } from "./types.js";
 
 const ENTITY_FAMILY_GROUNDING_STOP_TOKENS = new Set([
   "a",
@@ -87,7 +87,7 @@ export interface ClaimKeyEntityFamilyEvidence {
  */
 export interface ClaimKeyEntityFamilyPairSupport {
   entityPrefixes: [string, string];
-  supportingEntryIds: string[];
+  supportingDurableIds: string[];
   sharedAttributes: string[];
   confidence: number;
   autoSafe: boolean;
@@ -100,7 +100,7 @@ export interface ClaimKeyEntityFamilyPairSupport {
  */
 export interface ClaimKeyEntityFamilyCandidate {
   entityPrefixes: string[];
-  entryIds: string[];
+  durableIds: string[];
   claimKeys: string[];
   canonicalEntityPrefix: string | null;
   canonicalSelectionReasons: string[];
@@ -133,7 +133,7 @@ export interface ClaimKeyEntityPrefixStats {
   manualEntryCount: number;
   modelEntryCount: number;
   jsonRetryEntryCount: number;
-  surgeonFamilyReuseEntryCount: number;
+  dreamingFamilyReuseDurableCount: number;
 }
 
 /**
@@ -171,7 +171,7 @@ export interface ClaimKeySingletonAliasCandidate {
 
 interface TrustedClaimKeyEntityProfile {
   entityPrefix: string;
-  entryIds: Set<string>;
+  durableIds: Set<string>;
   claimKeys: Set<string>;
   attributeSet: Set<string>;
   attributeHeadSet: Set<string>;
@@ -218,7 +218,7 @@ interface SingletonAliasLexicalRelation {
  * @param entries - Working-set entries to inspect.
  * @returns Conservatively detected entity-family convergence candidates.
  */
-export function detectClaimKeyEntityFamilyCandidates(entries: Entry[]): ClaimKeyEntityFamilyCandidate[] {
+export function detectClaimKeyEntityFamilyCandidates(entries: Durable[]): ClaimKeyEntityFamilyCandidate[] {
   const profiles = buildTrustedClaimKeyEntityProfiles(entries);
   if (profiles.size < 2) {
     return [];
@@ -265,13 +265,13 @@ export function detectClaimKeyEntityFamilyCandidates(entries: Entry[]): ClaimKey
         });
 
     const componentProfiles = component.map((entity) => profiles.get(entity)).filter((profile): profile is TrustedClaimKeyEntityProfile => Boolean(profile));
-    const entryIds = normalizeStringArray(componentProfiles.flatMap((profile) => [...profile.entryIds]));
+    const durableIds = normalizeStringArray(componentProfiles.flatMap((profile) => [...profile.durableIds]));
     const claimKeys = normalizeStringArray(componentProfiles.flatMap((profile) => [...profile.claimKeys]));
     const confidence = componentSupport.length > 0 ? Math.max(...componentSupport.map((support) => support.confidence)) : 0.75;
 
     families.push({
       entityPrefixes: [...component].sort((left, right) => left.localeCompare(right)),
-      entryIds,
+      durableIds,
       claimKeys,
       canonicalEntityPrefix,
       canonicalSelectionReasons: canonicalSelection.reasons,
@@ -333,7 +333,7 @@ export function summarizeClaimKeyEntityPrefixStats(observations: ClaimKeyEntityP
         manualEntryCount: 0,
         modelEntryCount: 0,
         jsonRetryEntryCount: 0,
-        surgeonFamilyReuseEntryCount: 0,
+        dreamingFamilyReuseDurableCount: 0,
       } satisfies ClaimKeyEntityPrefixStats);
 
     existing.activeEntryCount += 1;
@@ -365,8 +365,8 @@ export function summarizeClaimKeyEntityPrefixStats(observations: ClaimKeyEntityP
       case "json_retry":
         existing.jsonRetryEntryCount += 1;
         break;
-      case "surgeon_family_reuse":
-        existing.surgeonFamilyReuseEntryCount += 1;
+      case "dreaming_reconcile":
+        existing.dreamingFamilyReuseDurableCount += 1;
         break;
       default:
         break;
@@ -439,7 +439,7 @@ export function detectClaimKeySingletonAliasCandidatesFromStats(stats: ClaimKeyE
     .sort((left, right) => right.confidence - left.confidence || left.aliasEntityPrefix.localeCompare(right.aliasEntityPrefix));
 }
 
-function buildTrustedClaimKeyEntityProfiles(entries: Entry[]): Map<string, TrustedClaimKeyEntityProfile> {
+function buildTrustedClaimKeyEntityProfiles(entries: Durable[]): Map<string, TrustedClaimKeyEntityProfile> {
   const profiles = new Map<string, TrustedClaimKeyEntityProfile>();
 
   for (const entry of entries) {
@@ -456,7 +456,7 @@ function buildTrustedClaimKeyEntityProfiles(entries: Entry[]): Map<string, Trust
     const entityPrefix = inspection.normalized.entity;
     const attribute = inspection.normalized.attribute;
     const profile = getOrCreateProfile(profiles, entityPrefix);
-    profile.entryIds.add(entry.id);
+    profile.durableIds.add(entry.id);
     profile.claimKeys.add(inspection.normalized.claimKey);
     profile.attributeSet.add(attribute);
     const [attributeHead = attribute] = attribute.split("_");
@@ -491,7 +491,7 @@ function getOrCreateProfile(profiles: Map<string, TrustedClaimKeyEntityProfile>,
   const tokenList = entityPrefix.split("_").filter((token) => token.length > 0);
   const created: TrustedClaimKeyEntityProfile = {
     entityPrefix,
-    entryIds: new Set<string>(),
+    durableIds: new Set<string>(),
     claimKeys: new Set<string>(),
     attributeSet: new Set<string>(),
     attributeHeadSet: new Set<string>(),
@@ -634,7 +634,7 @@ function evaluateEntityFamilyPairSupport(
 
   return {
     entityPrefixes: [leftProfile.entityPrefix, rightProfile.entityPrefix],
-    supportingEntryIds: normalizeStringArray([...leftProfile.entryIds, ...rightProfile.entryIds]),
+    supportingDurableIds: normalizeStringArray([...leftProfile.durableIds, ...rightProfile.durableIds]),
     sharedAttributes,
     confidence,
     autoSafe: lexicalRelation.autoSafe && (sharedAttributes.length >= 2 || (sharedAttributes.length === 1 && groundingAnchorCount >= 1 && groundingScore >= 2)),

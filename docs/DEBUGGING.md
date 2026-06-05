@@ -48,13 +48,12 @@ with sourcemaps mapped back to TypeScript.
 
 Sandbox-backed shared DB/config commands:
 
-- `agenr: ingest entries (sandbox)`
+- `agenr: ingest durables (sandbox)`
 - `agenr: ingest episodes (sandbox)`
 - `agenr: recall (sandbox)`
-- `agenr: surgeon run (sandbox)`
-- `agenr: surgeon status (sandbox)`
-- `agenr: surgeon history (sandbox)`
-- `agenr: surgeon actions (sandbox)`
+- `agenr: dream run (sandbox)`
+- `agenr: dream status (sandbox)`
+- `agenr: dream history (sandbox)`
 - `agenr: db reset (sandbox)`
 
 Scenario-focused commands:
@@ -62,7 +61,7 @@ Scenario-focused commands:
 - `agenr: scenarios list`
 - `agenr: scenarios run ingest`
 - `agenr: scenarios run store`
-- `agenr: scenarios run surgeon`
+- `agenr: scenarios run dreaming`
 - `agenr: scenarios run single ID`
 
 ## Important distinction: sandbox DB vs scenario sandboxes
@@ -71,7 +70,7 @@ There are two different debugging modes here.
 
 ### 1. Shared sandbox DB/config
 
-Commands like `ingest`, `episodes`, `recall`, `surgeon`, and `db reset` are pointed at the shared sandbox database via `AGENR_DB_PATH` and `AGENR_CONFIG_PATH`.
+Commands like `ingest`, `episodes`, `recall`, `dream`, and `db reset` are pointed at the shared sandbox database via `AGENR_DB_PATH` and `AGENR_CONFIG_PATH`.
 
 Use these when you want to debug the normal runtime behavior against the local sandbox environment.
 
@@ -83,7 +82,7 @@ Use these when you want to debug deterministic scenario harness behavior for:
 
 - ingest
 - store
-- surgeon
+- dreaming
 
 This is expected and correct. The scenario runner is intentionally isolated from the shared sandbox database.
 
@@ -94,7 +93,7 @@ Some launch configs prompt for runtime values:
 - transcript path
 - episode path
 - recall query
-- surgeon run ID
+- dream run ID
 - scenario ID
 
 Defaults are set in `launch.json`, but you can override them on launch.
@@ -130,11 +129,11 @@ Trace:
 - `src/cli/commands/trace.ts`
 - `src/app/memory/inspect.ts`
 
-Surgeon:
+Dreaming:
 
-- `src/cli/commands/surgeon.ts`
-- `src/app/surgeon/runtime.ts`
-- `src/app/surgeon/progress.ts`
+- `src/cli/commands/dreaming.ts`
+- `src/app/dreaming/runtime.ts`
+- `src/app/dreaming/progress.ts`
 
 Scenarios:
 
@@ -172,7 +171,7 @@ Check these first:
 
 Debug durable ingest against the sandbox:
 
-- choose `agenr: ingest entries (sandbox)`
+- choose `agenr: ingest durables (sandbox)`
 - provide a transcript root such as `/Users/jmartin/.openclaw/sessions`
 - set breakpoints in `src/cli/commands/ingest.ts` and deeper app/core layers
 
@@ -192,9 +191,9 @@ Debug store path via deterministic scenarios:
 - `AGENTS.md`
 - `docs/INGEST.md`
 - `docs/EPISODES.md`
-- `docs/STORE.md`
+- `docs/DURABLES.md`
 - `docs/RECALL.md`
-- `docs/SURGEON.md`
+- `docs/DREAMING.md`
 - `docs/SKELN-PLUGIN.md`
 - `.vscode/launch.json`
 - `.vscode/tasks.json`

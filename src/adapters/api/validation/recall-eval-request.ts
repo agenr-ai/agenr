@@ -12,7 +12,7 @@ import {
 } from "../../../app/evals/recall/index.js";
 import type { ClaimSlotPolicyConfig, ClaimSlotPolicy } from "../../../core/claim-slot-policy.js";
 import type { RecallRankingPolicy } from "../../../core/recall/trace.js";
-import { ENTRY_TYPES } from "../../../core/types.js";
+import { DURABLE_KINDS } from "../../../core/types.js";
 import {
   extractParseableCaseId,
   mapFixtureEntryDto as mapSharedFixtureEntryDto,
@@ -70,7 +70,7 @@ const FAULT_INJECTION_KEYS = new Set<string>(["queryEmbeddingFailure", "vectorSe
 const RECALL_PATHS = ["core", "unified"] as const;
 const RECALL_RANKING_PROFILES = ["historical_state"] as const;
 const RANKING_POLICY_TOGGLES = ["enabled", "disabled"] as const;
-const UNIFIED_RECALL_MODES = ["auto", "entries", "episodes"] as const;
+const UNIFIED_RECALL_MODES = ["auto", "durables", "episodes"] as const;
 const CLAIM_SLOT_POLICIES = ["exclusive", "multivalued"] as const;
 
 /**
@@ -368,7 +368,7 @@ function parseRecallRequest(value: unknown, issues: RecallEvalValidationIssue[])
     budget: parseOptionalIntegerInRange(recallRequest.budget, "recallRequest.budget", issues, {
       min: 0,
     }),
-    types: parseOptionalEntryTypeArray(recallRequest.types, "recallRequest.types", issues),
+    types: parseOptionalDurableKindArray(recallRequest.types, "recallRequest.types", issues),
     tags: parseOptionalStringArray(recallRequest.tags, "recallRequest.tags", issues),
     since: parseOptionalTrimmedString(recallRequest.since, "recallRequest.since", issues),
     until: parseOptionalTrimmedString(recallRequest.until, "recallRequest.until", issues),
@@ -621,9 +621,9 @@ function parseUnifiedMemoryPolicy(value: unknown, issues: RecallEvalValidationIs
  * @param issues - Mutable validation issue collection.
  * @returns Valid entry type when recognized.
  */
-function parseEntryType(value: unknown, path: string, issues: RecallEvalValidationIssue[]): InternalEvalFixtureEntryDto["type"] | undefined {
-  if (typeof value !== "string" || !ENTRY_TYPES.includes(value as RecallEvalFixtureEntry["type"])) {
-    pushIssue(issues, path, `Expected one of: ${ENTRY_TYPES.join(", ")}.`);
+function parseDurableKind(value: unknown, path: string, issues: RecallEvalValidationIssue[]): InternalEvalFixtureEntryDto["type"] | undefined {
+  if (typeof value !== "string" || !DURABLE_KINDS.includes(value as RecallEvalFixtureEntry["type"])) {
+    pushIssue(issues, path, `Expected one of: ${DURABLE_KINDS.join(", ")}.`);
     return undefined;
   }
 
@@ -702,7 +702,7 @@ function parseOptionalRankingProfile(value: unknown, path: string, issues: Recal
  * @param issues - Mutable validation issue collection.
  * @returns Valid entry-type array when recognized.
  */
-function parseOptionalEntryTypeArray(value: unknown, path: string, issues: RecallEvalValidationIssue[]): RecallEvalQueryRequest["types"] | undefined {
+function parseOptionalDurableKindArray(value: unknown, path: string, issues: RecallEvalValidationIssue[]): RecallEvalQueryRequest["types"] | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -714,7 +714,7 @@ function parseOptionalEntryTypeArray(value: unknown, path: string, issues: Recal
 
   const parsed: NonNullable<RecallEvalQueryRequest["types"]> = [];
   for (const [index, item] of value.entries()) {
-    const entryType = parseEntryType(item, `${path}[${index}]`, issues);
+    const entryType = parseDurableKind(item, `${path}[${index}]`, issues);
     if (entryType !== undefined) {
       parsed.push(entryType);
     }

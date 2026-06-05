@@ -3,7 +3,7 @@ import { failedTextResult, readStringParam, textResult } from "openclaw/plugin-s
 import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sdk/core";
 
 import type { AgenrOpenClawServices } from "../types.js";
-import { asRecord, formatTargetSelector, logToolCall, logToolFailure, resolveTargetEntry, sanitizeRetireToolParams, toolFailureResult } from "./shared.js";
+import { asRecord, formatTargetSelector, logToolCall, logToolFailure, resolveTargetDurable, sanitizeRetireToolParams, toolFailureResult } from "./shared.js";
 
 const RETIRE_TOOL_PARAMETERS = {
   type: "object",
@@ -46,8 +46,8 @@ export function createAgenrRetireTool(ctx: OpenClawPluginToolContext, servicesPr
         const reason = readStringParam(params, "reason");
         logToolCall(logger, "agenr_retire", ctx, `target=${formatTargetSelector(id, subject)}`, sanitizeRetireToolParams({ id, subject, reason }));
         const services = await servicesPromise;
-        const entry = await resolveTargetEntry(services, params);
-        const retired = await services.entries.retireEntry(entry.id, reason);
+        const entry = await resolveTargetDurable(services, params);
+        const retired = await services.entries.retireDurable(entry.id, reason);
 
         if (!retired) {
           return failedTextResult(`Entry ${entry.id} is not active, so it could not be retired.`, {

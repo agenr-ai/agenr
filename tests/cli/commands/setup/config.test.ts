@@ -10,7 +10,13 @@ describe("buildNextConfig", () => {
       provider: "openai",
       model: "gpt-5.4-mini",
       primaryCredential: "sk-test",
-      stageOverrides: {},
+      stageOverrides: {
+        extraction: undefined,
+        dedup: undefined,
+        episode: undefined,
+        claim: undefined,
+        dreaming: undefined,
+      },
       dbPath: "/tmp/knowledge.db",
       populateAllFeatures: true,
     });
@@ -27,7 +33,13 @@ describe("buildNextConfig", () => {
       provider: "openai",
       model: "gpt-5.4-mini",
       primaryCredential: "sk-test",
-      stageOverrides: {},
+      stageOverrides: {
+        extraction: undefined,
+        dedup: undefined,
+        episode: undefined,
+        claim: undefined,
+        dreaming: undefined,
+      },
       dbPath: "/tmp/knowledge.db",
     });
 

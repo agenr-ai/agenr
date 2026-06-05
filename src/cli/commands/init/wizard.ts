@@ -266,12 +266,12 @@ export async function runInitWizard(options: InitWizardOptions = {}): Promise<vo
           const ingestResult = await runtime.runBulkIngest(filesToIngest, activeConfig, prompts);
           ingestStatus =
             `${ingestResult.filesProcessed} ${pluralize(ingestResult.filesProcessed, "session")} processed, ` +
-            `${ingestResult.storedEntries} ${pluralize(ingestResult.storedEntries, "entry", "entries")} stored`;
+            `${ingestResult.storedEntries} ${pluralize(ingestResult.storedEntries, "entry", "durables")} stored`;
 
           prompts.log.info(
             [
               formatLabel("Ingested", `${ingestResult.filesProcessed} ${pluralize(ingestResult.filesProcessed, "session")}`),
-              formatLabel("Stored", `${ingestResult.storedEntries} ${pluralize(ingestResult.storedEntries, "entry", "entries")}`),
+              formatLabel("Stored", `${ingestResult.storedEntries} ${pluralize(ingestResult.storedEntries, "entry", "durables")}`),
               formatLabel("Failures", `${ingestResult.failedFiles}`),
               formatLabel("Cost", formatCostUsd(ingestResult.totalCostUsd)),
             ].join("\n"),
@@ -357,7 +357,7 @@ async function runBulkIngest(files: string[], config: AgenrConfigInput, prompts:
     const failedFiles = result.extractionRuns.filter((run) => run.result.error !== undefined).length;
     const totalCostUsd = result.extractionRuns.reduce((total, run) => total + run.usage.totalCost, 0) + result.dedupUsage.totalCost;
 
-    spinner.stop(`Ingest complete: ${storedEntries} ${pluralize(storedEntries, "entry", "entries")} stored.`);
+    spinner.stop(`Ingest complete: ${storedEntries} ${pluralize(storedEntries, "entry", "durables")} stored.`);
     return {
       filesProcessed: files.length,
       storedEntries,
@@ -459,7 +459,7 @@ function buildInitSummary(options: {
     formatLabel("Gateway", options.gatewayStatus),
     formatLabel("Sessions", options.sessionStatus),
     formatLabel("Ingest", options.ingestStatus),
-    formatLabel("Corpus health", "Use `agenr surgeon status` after ingest to review backlog and claim-key health"),
+    formatLabel("Corpus health", "Use `agenr dream status` after ingest to review backlog and claim-key health"),
   ];
 
   return lines.join("\n");

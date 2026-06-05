@@ -3,14 +3,14 @@
  * These types have zero infrastructure dependencies.
  */
 
-// ── Entry types ──────────────────────────────────────────────────────
+// ── Durable memory types ─────────────────────────────────────────────
 
-/** Ordered list of supported durable knowledge entry categories. */
-const ENTRY_TYPES = ["fact", "decision", "preference", "lesson", "relationship", "milestone"] as const;
+/** Ordered list of supported durable memory kinds. */
+const DURABLE_KINDS = ["fact", "decision", "preference", "lesson", "relationship", "milestone"] as const;
 /**
- * Union of all supported knowledge entry categories.
+ * Union of all supported durable memory kinds.
  */
-export type EntryType = (typeof ENTRY_TYPES)[number];
+export type DurableKind = (typeof DURABLE_KINDS)[number];
 
 /** Ordered list of supported explicit supersession relationships. */
 const SUPERSESSION_KINDS = ["update", "correction", "duplicate", "merge", "refinement"] as const;
@@ -27,15 +27,16 @@ const CLAIM_KEY_SOURCES = [
   "model",
   "json_retry",
   "deterministic_repair",
-  "surgeon_metadata_rewrite",
-  "surgeon_family_reuse",
-  "surgeon_compaction",
+  "dreaming_extract",
+  "dreaming_reconcile",
+  "dreaming_temporalize",
+  "dreaming_project",
 ] as const;
 
 /** Ordered list of supported claim-support provenance modes. */
 const CLAIM_SUPPORT_MODES = ["explicit", "normalized", "inferred"] as const;
 
-export { CLAIM_KEY_SOURCES, CLAIM_KEY_STATUSES, CLAIM_SUPPORT_MODES, ENTRY_TYPES, EXPIRY_LEVELS, SUPERSESSION_KINDS };
+export { CLAIM_KEY_SOURCES, CLAIM_KEY_STATUSES, CLAIM_SUPPORT_MODES, DURABLE_KINDS, EXPIRY_LEVELS, SUPERSESSION_KINDS };
 
 /**
  * Union of all supported recall durability levels.
@@ -75,7 +76,7 @@ const PROCEDURE_STEP_KINDS = ["run_command", "read_reference", "inspect_state", 
 const PROCEDURE_CONDITION_KINDS = ["harness_is", "tool_available", "file_exists", "path_exists", "env_flag", "repo_state", "user_confirmed"] as const;
 
 /** Ordered list of supported procedure provenance source kinds. */
-const PROCEDURE_SOURCE_KINDS = ["skill", "doc", "entry", "episode", "repo_file", "manual"] as const;
+const PROCEDURE_SOURCE_KINDS = ["skill", "doc", "durable", "episode", "repo_file", "manual"] as const;
 
 export { EPISODE_ACTIVITY_LEVELS, EPISODE_SOURCES };
 export { PROCEDURE_CONDITION_KINDS, PROCEDURE_SOURCE_KINDS, PROCEDURE_STEP_KINDS };
@@ -123,9 +124,9 @@ export interface ClaimKeyLifecycleMetadata {
 /**
  * Canonical stored knowledge record.
  */
-export interface Entry extends ClaimKeyLifecycleMetadata {
+export interface Durable extends ClaimKeyLifecycleMetadata {
   id: string;
-  type: EntryType;
+  type: DurableKind;
   subject: string;
   content: string;
   importance: number;
@@ -163,21 +164,21 @@ export interface Entry extends ClaimKeyLifecycleMetadata {
  * lifecycle payload for the target claim key. Partial lifecycle patches are
  * rejected at the persistence boundary.
  */
-export interface EntryUpdateInput {
-  importance?: Entry["importance"];
-  expiry?: Entry["expiry"];
-  claim_key?: Entry["claim_key"];
-  claim_key_raw?: Entry["claim_key_raw"];
-  claim_key_status?: Entry["claim_key_status"];
-  claim_key_source?: Entry["claim_key_source"];
-  claim_key_confidence?: Entry["claim_key_confidence"];
-  claim_key_rationale?: Entry["claim_key_rationale"];
-  claim_support_source_kind?: Entry["claim_support_source_kind"];
-  claim_support_locator?: Entry["claim_support_locator"];
-  claim_support_observed_at?: Entry["claim_support_observed_at"];
-  claim_support_mode?: Entry["claim_support_mode"];
-  valid_from?: Entry["valid_from"];
-  valid_to?: Entry["valid_to"];
+export interface DurableUpdateInput {
+  importance?: Durable["importance"];
+  expiry?: Durable["expiry"];
+  claim_key?: Durable["claim_key"];
+  claim_key_raw?: Durable["claim_key_raw"];
+  claim_key_status?: Durable["claim_key_status"];
+  claim_key_source?: Durable["claim_key_source"];
+  claim_key_confidence?: Durable["claim_key_confidence"];
+  claim_key_rationale?: Durable["claim_key_rationale"];
+  claim_support_source_kind?: Durable["claim_support_source_kind"];
+  claim_support_locator?: Durable["claim_support_locator"];
+  claim_support_observed_at?: Durable["claim_support_observed_at"];
+  claim_support_mode?: Durable["claim_support_mode"];
+  valid_from?: Durable["valid_from"];
+  valid_to?: Durable["valid_to"];
 }
 
 /**
@@ -428,8 +429,8 @@ export interface Procedure extends ProcedureDefinition, ProcedureLifecycleMetada
  * rationale. Callers may additionally preserve raw/support metadata when an
  * explicit claim key came from a trusted transcript or tool-call path.
  */
-export interface StoreEntryInput {
-  type: EntryType;
+export interface StoreDurableInput {
+  type: DurableKind;
   subject: string;
   content: string;
   importance?: number;
@@ -443,10 +444,10 @@ export interface StoreEntryInput {
   supersedes?: string;
   claim_key?: string;
   claim_key_raw?: string;
-  claim_key_status?: Entry["claim_key_status"];
-  claim_key_source?: Entry["claim_key_source"];
-  claim_key_confidence?: Entry["claim_key_confidence"];
-  claim_key_rationale?: Entry["claim_key_rationale"];
+  claim_key_status?: Durable["claim_key_status"];
+  claim_key_source?: Durable["claim_key_source"];
+  claim_key_confidence?: Durable["claim_key_confidence"];
+  claim_key_rationale?: Durable["claim_key_rationale"];
   claim_support_source_kind?: string;
   claim_support_locator?: string;
   claim_support_observed_at?: string;

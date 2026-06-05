@@ -3,14 +3,21 @@ import { access, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createDatabase } from "../../../../src/adapters/db/client.js";
 import { runRecallEvalCase } from "../../../../src/app/evals/recall/index.js";
 import type { CrossEncoderPassage, CrossEncoderPort, CrossEncoderScore } from "../../../../src/core/ports.js";
+import { useIsolatedAgenrConfig } from "../../../helpers/isolated-config.js";
 import { removeTestPath, waitForDatabaseRelease } from "../../../helpers/temp-paths.js";
 
 const tempPaths: string[] = [];
+
+beforeEach(async () => {
+  const configRoot = await mkdtemp(path.join(os.tmpdir(), "agenr-eval-config-"));
+  tempPaths.push(configRoot);
+  await useIsolatedAgenrConfig(configRoot);
+});
 
 afterEach(async () => {
   vi.unstubAllGlobals();
@@ -213,7 +220,7 @@ describe("runRecallEvalCase", () => {
       const rows = await sandboxDatabase.execute({
         sql: `
           SELECT id, retired, retired_at, retired_reason, superseded_by, created_at, updated_at, last_recalled_at
-          FROM entries
+          FROM durables
           ORDER BY id
         `,
       });
@@ -639,7 +646,7 @@ describe("runRecallEvalCase", () => {
         limit: 2,
       },
       unified: {
-        mode: "entries",
+        mode: "durables",
         sessionKey: "agent:test:tui",
         memoryPolicy: {
           slotPolicies: {
@@ -661,9 +668,9 @@ describe("runRecallEvalCase", () => {
         path: "unified",
         unified: {
           routing: {
-            requested: "entries",
+            requested: "durables",
             detectedIntent: "historical_state",
-            queried: ["entries"],
+            queried: ["durables"],
           },
           notices: [],
           episodeCount: 0,

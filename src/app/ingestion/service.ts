@@ -22,7 +22,7 @@ import {
   type ClaimExtractionDiagnostic,
   type ClaimExtractionProgressEvent as CoreClaimExtractionProgressEvent,
 } from "../../core/store/claim-extraction.js";
-import type { StoreEntryInput } from "../../core/types.js";
+import type { StoreDurableInput } from "../../core/types.js";
 import type { IngestPathPorts, IngestionLlmPort, UsageStats } from "./ports.js";
 
 /** Default maximum number of files to extract in parallel. */
@@ -92,7 +92,7 @@ export interface IngestPathResult {
 
 /** Extracted entry annotated with its source file and flattened order. */
 interface TaggedEntry {
-  entry: StoreEntryInput;
+  entry: StoreDurableInput;
   fileIndex: number;
   originalIndex: number;
 }
@@ -343,12 +343,12 @@ function buildEmptyDedupResult(): DedupResult {
 }
 
 /** Flattens extracted file entries into the final store-candidate order. */
-function flattenEntries(results: ExtractedFileResult[]): StoreEntryInput[] {
+function flattenEntries(results: ExtractedFileResult[]): StoreDurableInput[] {
   return results.flatMap((result) => result.entries);
 }
 
 /** Resolves one flattened store-candidate index for a concrete entry object. */
-function findFlattenedEntryIndex(results: ExtractedFileResult[], target: StoreEntryInput): number {
+function findFlattenedEntryIndex(results: ExtractedFileResult[], target: StoreDurableInput): number {
   let index = 0;
   for (const result of results) {
     for (const entry of result.entries) {
@@ -384,7 +384,7 @@ function collectTaggedEntries(results: ExtractedFileResult[]): TaggedEntry[] {
 
 /** Rebuilds per-file extraction results using the dedup survivor set. */
 function rebuildResultsWithSurvivors(results: ExtractedFileResult[], taggedEntries: TaggedEntry[], dedupResult: DedupResult): ExtractedFileResult[] {
-  const survivorsByOriginalIndex = new Map<number, StoreEntryInput>();
+  const survivorsByOriginalIndex = new Map<number, StoreDurableInput>();
   for (const [offset, originalIndex] of dedupResult.survivorIndices.entries()) {
     const survivor = dedupResult.survivors[offset];
     if (survivor) {
@@ -392,7 +392,7 @@ function rebuildResultsWithSurvivors(results: ExtractedFileResult[], taggedEntri
     }
   }
 
-  const entriesByFileIndex = new Map<number, StoreEntryInput[]>();
+  const entriesByFileIndex = new Map<number, StoreDurableInput[]>();
   for (const taggedEntry of taggedEntries) {
     const survivor = survivorsByOriginalIndex.get(taggedEntry.originalIndex);
     if (!survivor) {

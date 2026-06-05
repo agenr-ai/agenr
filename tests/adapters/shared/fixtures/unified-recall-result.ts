@@ -38,10 +38,10 @@ export function createUnifiedRecallResult(content: string): UnifiedRecallResult 
   const entryFamilies = projectClaimCentricRecallEntries(entries);
   return {
     routing: {
-      requested: "entries",
+      requested: "durables",
       detectedIntent: "factual",
-      queried: ["entries"],
-      reason: "Entry recall requested.",
+      queried: ["durables"],
+      reason: "Durable recall requested.",
     },
     procedureCandidates: [],
     procedureNotices: [],

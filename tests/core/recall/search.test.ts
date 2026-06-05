@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CrossEncoderPort, RecallPorts } from "../../../src/core/ports.js";
-import type { Entry } from "../../../src/core/types.js";
+import type { Durable } from "../../../src/core/types.js";
 import { recall } from "../../../src/core/recall/search.js";
 import type { RecallExecutionTraceSummary } from "../../../src/core/recall/trace.js";
-import type { EntityAttributeKind, FtsCandidate, RecallCandidateEntry, VectorCandidate } from "../../../src/core/recall/types.js";
+import type { EntityAttributeKind, FtsCandidate, RecallCandidateDurable, VectorCandidate } from "../../../src/core/recall/types.js";
 
 const NOW = new Date("2026-03-26T12:00:00.000Z");
 
@@ -1964,7 +1964,7 @@ describe("recall raw evidence gating", () => {
  * @returns Recall ports and the telemetry spy used by assertions.
  */
 function createRecallPortsFixture(params: {
-  entries: Entry[];
+  entries: Durable[];
   vectorCandidates: Array<{ id: string; vectorSim: number }>;
   ftsCandidates?: Array<{ id: string; rank: number; tier: FtsCandidate["tier"] }>;
   predecessorCandidateIds?: string[];
@@ -1978,7 +1978,7 @@ function createRecallPortsFixture(params: {
 } {
   const entriesById = new Map(params.entries.map((entry) => [entry.id, entry]));
   const recordRecallEvents = vi.fn(async () => undefined);
-  const expandNeighborhood = vi.fn(async () => (params.predecessorCandidateIds ?? []).map((id) => toRecallCandidateEntry(requireEntry(entriesById, id))));
+  const expandNeighborhood = vi.fn(async () => (params.predecessorCandidateIds ?? []).map((id) => toRecallCandidateDurable(requireEntry(entriesById, id))));
   // Mirror the production adapter's ordering contract so RRF fusion sees the
   // strongest vector candidate at rank 0 regardless of fixture declaration order.
   const sortedVectorCandidates = params.vectorCandidates.slice().sort((left, right) => right.vectorSim - left.vectorSim || left.id.localeCompare(right.id));
@@ -1994,18 +1994,18 @@ function createRecallPortsFixture(params: {
         throw params.vectorSearchError;
       }
       return sortedVectorCandidates.map((candidate) => ({
-        entry: toRecallCandidateEntry(requireEntry(entriesById, candidate.id)),
+        entry: toRecallCandidateDurable(requireEntry(entriesById, candidate.id)),
         vectorSim: candidate.vectorSim,
       }));
     },
     ftsSearch: async (): Promise<FtsCandidate[]> =>
       (params.ftsCandidates ?? []).map((candidate) => ({
-        entry: toRecallCandidateEntry(requireEntry(entriesById, candidate.id)),
+        entry: toRecallCandidateDurable(requireEntry(entriesById, candidate.id)),
         rank: candidate.rank,
         tier: candidate.tier,
       })),
     expandNeighborhood,
-    hydrateEntries: async (ids: string[]): Promise<Entry[]> => ids.map((id) => requireEntry(entriesById, id)),
+    hydrateEntries: async (ids: string[]): Promise<Durable[]> => ids.map((id) => requireEntry(entriesById, id)),
     recordRecallEvents,
     ...(params.crossEncoder ? { crossEncoder: params.crossEncoder } : {}),
   };
@@ -2023,7 +2023,7 @@ function createRecallPortsFixture(params: {
  * @param entry - Hydrated entry fixture.
  * @returns Candidate entry view.
  */
-function toRecallCandidateEntry(entry: Entry): RecallCandidateEntry {
+function toRecallCandidateDurable(entry: Durable): RecallCandidateDurable {
   return {
     id: entry.id,
     subject: entry.subject,
@@ -2049,7 +2049,7 @@ function toRecallCandidateEntry(entry: Entry): RecallCandidateEntry {
  * @param id - Entry identifier.
  * @returns Matching fixture entry.
  */
-function requireEntry(entriesById: Map<string, Entry>, id: string): Entry {
+function requireEntry(entriesById: Map<string, Durable>, id: string): Durable {
   const entry = entriesById.get(id);
   if (!entry) {
     throw new Error(`Missing recall test entry: ${id}`);
@@ -2064,7 +2064,7 @@ function requireEntry(entriesById: Map<string, Entry>, id: string): Entry {
  * @param overrides - Entry field overrides.
  * @returns Fully populated entry.
  */
-function buildEntry(overrides: Partial<Entry> & Pick<Entry, "id" | "subject" | "content">): Entry {
+function buildEntry(overrides: Partial<Durable> & Pick<Durable, "id" | "subject" | "content">): Durable {
   const createdAt = overrides.created_at ?? NOW.toISOString();
   const updatedAt = overrides.updated_at ?? createdAt;
 

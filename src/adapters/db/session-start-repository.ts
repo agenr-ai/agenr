@@ -1,7 +1,7 @@
 import type { SessionStartRepository } from "../../app/session-start/index.js";
-import type { Entry } from "../../core/types.js";
+import type { Durable } from "../../core/types.js";
 
-import { buildActiveEntryClause, ENTRY_SELECT_COLUMNS, mapEntryRow } from "./row-mapping.js";
+import { buildActiveDurableClause, DURABLE_SELECT_COLUMNS, mapDurableRow } from "./row-mapping.js";
 import type { SqlExecutor } from "./queries.js";
 
 /**
@@ -23,7 +23,7 @@ export function createSessionStartRepository(executor: SqlExecutor): SessionStar
  * @param limit - Maximum number of entries to return.
  * @returns Active core entries ordered by importance and recency.
  */
-async function listCoreEntries(executor: SqlExecutor, limit: number): Promise<Entry[]> {
+async function listCoreEntries(executor: SqlExecutor, limit: number): Promise<Durable[]> {
   if (limit <= 0) {
     return [];
   }
@@ -31,9 +31,9 @@ async function listCoreEntries(executor: SqlExecutor, limit: number): Promise<En
   const result = await executor.execute({
     sql: `
       SELECT
-        ${ENTRY_SELECT_COLUMNS}
-      FROM entries
-      WHERE ${buildActiveEntryClause()}
+        ${DURABLE_SELECT_COLUMNS}
+      FROM durables
+      WHERE ${buildActiveDurableClause()}
         AND expiry = 'core'
       ORDER BY importance DESC, created_at DESC
       LIMIT ?
@@ -41,5 +41,5 @@ async function listCoreEntries(executor: SqlExecutor, limit: number): Promise<En
     args: [limit],
   });
 
-  return result.rows.map((row) => mapEntryRow(row));
+  return result.rows.map((row) => mapDurableRow(row));
 }

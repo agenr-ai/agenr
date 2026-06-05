@@ -7,12 +7,17 @@ import {
   DEFAULT_CLAIM_EXTRACTION_CONCURRENCY,
   DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD,
   DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES,
-  DEFAULT_SURGEON_CONTEXT_LIMIT,
-  DEFAULT_SURGEON_COST_CAP,
-  DEFAULT_SURGEON_DAILY_COST_CAP,
-  DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE,
-  DEFAULT_SURGEON_RETIREMENT_PROTECT_RECALLED_DAYS,
-  DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS,
+  DEFAULT_DREAMING_CONTEXT_LIMIT_TOKENS,
+  DEFAULT_DREAMING_CONTEXT_LOOKUP_MAX_NEIGHBORS,
+  DEFAULT_DREAMING_DAILY_COST_CAP,
+  DEFAULT_DREAMING_DEEP_INTERVAL_HOURS,
+  DEFAULT_DREAMING_EXTRACT_MAX_CHUNKS,
+  DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS,
+  DEFAULT_DREAMING_IMPORTANCE_THRESHOLD,
+  DEFAULT_DREAMING_MAX_PROFILE_DURABLES,
+  DEFAULT_DREAMING_MIN_INTERVAL_MINUTES,
+  DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE,
+  DEFAULT_DREAMING_PRUNE_PROTECT_RECALLED_DAYS,
 } from "../../../src/config.js";
 
 const DEFAULT_DB_PATH = "/tmp/agenr-default/knowledge.db";
@@ -46,16 +51,33 @@ describe("parseAgenrConfig", () => {
           eligibleTypes: [...DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES],
           concurrency: DEFAULT_CLAIM_EXTRACTION_CONCURRENCY,
         },
-        surgeon: {
-          costCap: DEFAULT_SURGEON_COST_CAP,
-          dailyCostCap: DEFAULT_SURGEON_DAILY_COST_CAP,
-          contextLimit: DEFAULT_SURGEON_CONTEXT_LIMIT,
-          passes: {
-            retirement: {
-              protectRecalledDays: DEFAULT_SURGEON_RETIREMENT_PROTECT_RECALLED_DAYS,
-              protectMinImportance: DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE,
-              skipRecentlyEvaluatedDays: DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS,
+        dreaming: {
+          dailyCostCap: DEFAULT_DREAMING_DAILY_COST_CAP,
+          contextLimitTokens: DEFAULT_DREAMING_CONTEXT_LIMIT_TOKENS,
+          tiers: {
+            light: { enabled: true },
+            standard: { enabled: true },
+            deep: { enabled: true, intervalHours: DEFAULT_DREAMING_DEEP_INTERVAL_HOURS },
+          },
+          stages: {
+            extract: {
+              maxSessionsPerRun: DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS,
+              maxChunksPerSession: DEFAULT_DREAMING_EXTRACT_MAX_CHUNKS,
+              contextLookup: {
+                enabled: true,
+                maxNeighborsPerCandidate: DEFAULT_DREAMING_CONTEXT_LOOKUP_MAX_NEIGHBORS,
+              },
             },
+            project: { maxProfileDurables: DEFAULT_DREAMING_MAX_PROFILE_DURABLES },
+            prune: {
+              protectRecalledDays: DEFAULT_DREAMING_PRUNE_PROTECT_RECALLED_DAYS,
+              protectMinImportance: DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE,
+            },
+          },
+          triggers: {
+            postSessionLightDream: true,
+            importanceThreshold: DEFAULT_DREAMING_IMPORTANCE_THRESHOLD,
+            minIntervalMinutes: DEFAULT_DREAMING_MIN_INTERVAL_MINUTES,
           },
         },
         features: DEFAULT_AGENR_FEATURE_FLAGS,
@@ -71,9 +93,9 @@ describe("parseAgenrConfig", () => {
         claimExtraction: {
           concurrency: 0,
         },
-        surgeon: {
-          passes: {
-            retirement: {
+        dreaming: {
+          stages: {
+            prune: {
               protectMinImportance: -1,
             },
           },
@@ -97,7 +119,7 @@ describe("parseAgenrConfig", () => {
         { path: "provider", message: "Expected a supported provider." },
         { path: "credentials", message: "Expected an object." },
         { path: "claimExtraction.concurrency", message: "Expected a positive integer." },
-        { path: "surgeon.passes.retirement.protectMinImportance", message: "Expected a non-negative integer." },
+        { path: "dreaming.stages.prune.protectMinImportance", message: "Expected a non-negative integer." },
         { path: "apiPort", message: "Expected an integer from 1 to 65535." },
         { path: "features.workingMemory", message: "Expected a boolean." },
         { path: "features.extraFlag", message: "Unexpected field." },

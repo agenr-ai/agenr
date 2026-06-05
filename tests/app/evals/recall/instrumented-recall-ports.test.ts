@@ -2,12 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createInstrumentedRecallPorts } from "../../../../src/app/evals/recall/instrumented-recall-ports.js";
 import type { RecallPorts } from "../../../../src/core/ports.js";
-import type { EntryNeighborhoodRequest } from "../../../../src/core/recall/neighborhood.js";
-import type { Entry } from "../../../../src/core/types.js";
+import type { DurableNeighborhoodRequest } from "../../../../src/core/recall/neighborhood.js";
+import type { Durable } from "../../../../src/core/types.js";
 
 describe("createInstrumentedRecallPorts", () => {
   it("observes adapter boundaries without changing recall port behavior", async () => {
-    const hydratedEntry: Entry = {
+    const hydratedEntry: Durable = {
       id: "entry-1",
       type: "fact",
       subject: "subject",
@@ -61,7 +61,7 @@ describe("createInstrumentedRecallPorts", () => {
         tier: "exact" as const,
       },
     ];
-    const neighborhoodRequest: EntryNeighborhoodRequest = {
+    const neighborhoodRequest: DurableNeighborhoodRequest = {
       seedIds: ["entry-1"],
       budget: 24,
       families: ["supersession_chain"],

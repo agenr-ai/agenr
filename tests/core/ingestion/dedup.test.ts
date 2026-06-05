@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { dedupBatch } from "../../../src/core/ingestion/dedup.js";
 import type { EmbeddingPort, LlmPort } from "../../../src/core/ports.js";
 import { composeEmbeddingText } from "../../../src/core/store/embedding-text.js";
-import type { StoreEntryInput } from "../../../src/core/types.js";
+import type { StoreDurableInput } from "../../../src/core/types.js";
 
 describe("dedupBatch", () => {
   it("passes through entries with no similar neighbors", async () => {
@@ -501,7 +501,7 @@ class MockEmbeddingPort implements EmbeddingPort {
   public readonly calls: string[][] = [];
   private readonly vectorsByText: Map<string, number[]>;
 
-  public constructor(vectors: number[][], entries: StoreEntryInput[]) {
+  public constructor(vectors: number[][], entries: StoreDurableInput[]) {
     this.vectorsByText = new Map(entries.map((entry, index) => [composeEmbeddingText(entry), vectors[index] ?? []]));
   }
 
@@ -546,8 +546,8 @@ class MockLlmPort implements LlmPort {
   }
 }
 
-function createPairedClusterScenario(clusterCount: number): { entries: StoreEntryInput[]; vectors: number[][] } {
-  const entries: StoreEntryInput[] = [];
+function createPairedClusterScenario(clusterCount: number): { entries: StoreDurableInput[]; vectors: number[][] } {
+  const entries: StoreDurableInput[] = [];
   const vectors: number[][] = [];
 
   for (let clusterIndex = 0; clusterIndex < clusterCount; clusterIndex += 1) {
@@ -577,7 +577,7 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   return { promise, resolve };
 }
 
-function createInput(overrides: Partial<StoreEntryInput> = {}): StoreEntryInput {
+function createInput(overrides: Partial<StoreDurableInput> = {}): StoreDurableInput {
   return {
     type: overrides.type ?? "fact",
     subject: overrides.subject ?? "subject",

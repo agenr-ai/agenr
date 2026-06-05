@@ -1,5 +1,5 @@
 import { requireClaimKeySource, requireClaimKeyStatus, requireClaimSupportMode } from "../../../../core/claim-key-lifecycle.js";
-import type { EntryType, Expiry, StoreEntryInput } from "../../../../core/types.js";
+import type { DurableKind, Expiry, StoreDurableInput } from "../../../../core/types.js";
 import type {
   ClaimKeyIngestScenarioInput,
   ClaimKeyScenario,
@@ -8,9 +8,9 @@ import type {
   ClaimKeyScenarioSeedEntry,
   ClaimKeyScenarioSetup,
   ClaimKeyScenarioStoreOptions,
-  ClaimKeyScenarioSurgeonOptions,
+  ClaimKeyScenarioDreamingOptions,
   ClaimKeyStoreScenarioInput,
-  ClaimKeySurgeonScenarioInput,
+  ClaimKeyDreamingScenarioInput,
 } from "../types.js";
 import {
   readObject,
@@ -30,12 +30,12 @@ const ROOT_KEYS = new Set(["id", "kind", "input", "expect", "description", "tags
 const SETUP_KEYS = new Set(["seedEntries", "seedFixtureFile", "preRunSurgeon"]);
 const SANDBOX_KEYS = new Set(["reset", "preserveOnFailure", "preserveAlways", "name"]);
 const INGEST_INPUT_KEYS = new Set(["transcriptFile", "ingestOptions", "modelFixtures"]);
-const STORE_INPUT_KEYS = new Set(["entries", "storeOptions", "modelFixtures"]);
-const SURGEON_INPUT_KEYS = new Set(["pass", "surgeonOptions", "modelFixtures"]);
+const STORE_INPUT_KEYS = new Set(["durables", "storeOptions", "modelFixtures"]);
+const DREAMING_INPUT_KEYS = new Set(["pass", "dreamingOptions", "modelFixtures"]);
 const MODEL_FIXTURE_KEYS = new Set(["extractionResponsesFile", "claimExtractionResponsesFile"]);
 const INGEST_OPTIONS_KEYS = new Set(["verbose", "surface", "project"]);
 const STORE_OPTIONS_KEYS = new Set(["claimExtraction", "verbose"]);
-const SURGEON_OPTIONS_KEYS = new Set(["apply", "verbose", "project", "entryIds", "claimKeyPrefix", "type", "includeInactive"]);
+const DREAMING_OPTIONS_KEYS = new Set(["apply", "verbose", "project", "durableIds", "claimKeyPrefix", "type", "includeInactive"]);
 const STORE_ENTRY_KEYS = new Set([
   "type",
   "subject",
@@ -93,8 +93,8 @@ const SEED_ENTRY_KEYS = new Set([
   "created_at",
   "updated_at",
 ]);
-const SUPPORTED_KINDS = ["ingest", "store", "surgeon"] as const;
-const SUPPORTED_ENTRY_TYPES = ["fact", "decision", "preference", "lesson", "relationship", "milestone"] as const satisfies readonly EntryType[];
+const SUPPORTED_KINDS = ["ingest", "store", "dreaming"] as const;
+const SUPPORTED_DURABLE_KINDS = ["fact", "decision", "preference", "lesson", "relationship", "milestone"] as const satisfies readonly DurableKind[];
 const SUPPORTED_EXPIRY_VALUES = ["core", "permanent", "temporary"] as const satisfies readonly Expiry[];
 
 /**
@@ -154,7 +154,7 @@ export function readIngestInput(value: unknown, filePath: string, rootDir: strin
  */
 export function readStoreInput(value: unknown, filePath: string, rootDir: string): ClaimKeyStoreScenarioInput {
   const record = readObject(value, "Scenario input", filePath, STORE_INPUT_KEYS);
-  const entries = readStoreEntries(record.entries, filePath);
+  const entries = readStoreEntries(record.durables, filePath);
   const storeOptions = readStoreOptions(record.storeOptions, filePath);
   const modelFixtures = readModelFixtures(record.modelFixtures, filePath, rootDir, "store");
 
@@ -170,26 +170,26 @@ export function readStoreInput(value: unknown, filePath: string, rootDir: string
 }
 
 /**
- * Reads and validates one surgeon input block.
+ * Reads and validates one dreaming input block.
  *
  * @param value - Raw input payload.
  * @param filePath - Source scenario path for error messages.
  * @param rootDir - Scenario root used for relative fixture resolution.
- * @returns Validated surgeon input.
+ * @returns Validated dreaming input.
  */
-export function readSurgeonInput(value: unknown, filePath: string, rootDir: string): ClaimKeySurgeonScenarioInput {
-  const record = readObject(value, "Scenario input", filePath, SURGEON_INPUT_KEYS);
+export function readDreamingInput(value: unknown, filePath: string, rootDir: string): ClaimKeyDreamingScenarioInput {
+  const record = readObject(value, "Scenario input", filePath, DREAMING_INPUT_KEYS);
   const pass = readRequiredString(record.pass, "input.pass", filePath);
-  const surgeonOptions = readSurgeonOptions(record.surgeonOptions, filePath);
-  const modelFixtures = readModelFixtures(record.modelFixtures, filePath, rootDir, "surgeon");
+  const dreamingOptions = readDreamingOptions(record.dreamingOptions, filePath);
+  const modelFixtures = readModelFixtures(record.modelFixtures, filePath, rootDir, "dreaming");
 
   if (pass !== "claim_key_quality") {
-    throw new Error(`Invalid scenario ${filePath}: surgeon scenarios only support pass = "claim_key_quality".`);
+    throw new Error(`Invalid scenario ${filePath}: dreaming scenarios only support pass = "claim_key_quality".`);
   }
 
   return {
     pass: "claim_key_quality",
-    ...(surgeonOptions ? { surgeonOptions } : {}),
+    ...(dreamingOptions ? { dreamingOptions } : {}),
     ...(modelFixtures ? { modelFixtures } : {}),
   };
 }
@@ -355,31 +355,31 @@ function readStoreOptions(value: unknown, filePath: string): ClaimKeyScenarioSto
 }
 
 /**
- * Reads one narrow surgeon-options block.
+ * Reads one narrow dreaming-options block.
  *
- * @param value - Raw surgeon-options payload.
+ * @param value - Raw dreaming-options payload.
  * @param filePath - Source scenario path for error messages.
- * @returns Validated surgeon options when present.
+ * @returns Validated dreaming options when present.
  */
-function readSurgeonOptions(value: unknown, filePath: string): ClaimKeyScenarioSurgeonOptions | undefined {
+function readDreamingOptions(value: unknown, filePath: string): ClaimKeyScenarioDreamingOptions | undefined {
   if (value === undefined) {
     return undefined;
   }
 
-  const record = readObject(value, "Scenario surgeonOptions", filePath, SURGEON_OPTIONS_KEYS);
-  const apply = readOptionalBoolean(record.apply, "input.surgeonOptions.apply", filePath);
-  const verbose = readOptionalBoolean(record.verbose, "input.surgeonOptions.verbose", filePath);
-  const project = readOptionalNullableString(record.project, "input.surgeonOptions.project", filePath);
-  const entryIds = readOptionalStringArray(record.entryIds, "input.surgeonOptions.entryIds", filePath);
-  const claimKeyPrefix = readOptionalString(record.claimKeyPrefix, "input.surgeonOptions.claimKeyPrefix", filePath);
-  const type = readOptionalString(record.type, "input.surgeonOptions.type", filePath);
-  const includeInactive = readOptionalBoolean(record.includeInactive, "input.surgeonOptions.includeInactive", filePath);
+  const record = readObject(value, "Scenario dreamingOptions", filePath, DREAMING_OPTIONS_KEYS);
+  const apply = readOptionalBoolean(record.apply, "input.dreamingOptions.apply", filePath);
+  const verbose = readOptionalBoolean(record.verbose, "input.dreamingOptions.verbose", filePath);
+  const project = readOptionalNullableString(record.project, "input.dreamingOptions.project", filePath);
+  const durableIds = readOptionalStringArray(record.durableIds, "input.dreamingOptions.durableIds", filePath);
+  const claimKeyPrefix = readOptionalString(record.claimKeyPrefix, "input.dreamingOptions.claimKeyPrefix", filePath);
+  const type = readOptionalString(record.type, "input.dreamingOptions.type", filePath);
+  const includeInactive = readOptionalBoolean(record.includeInactive, "input.dreamingOptions.includeInactive", filePath);
 
   return {
     ...(apply !== undefined ? { apply } : {}),
     ...(verbose !== undefined ? { verbose } : {}),
     ...(project !== undefined ? { project } : {}),
-    ...(entryIds ? { entryIds } : {}),
+    ...(durableIds ? { durableIds } : {}),
     ...(claimKeyPrefix ? { claimKeyPrefix } : {}),
     ...(type ? { type } : {}),
     ...(includeInactive !== undefined ? { includeInactive } : {}),
@@ -393,12 +393,12 @@ function readSurgeonOptions(value: unknown, filePath: string): ClaimKeyScenarioS
  * @param filePath - Source scenario path for error messages.
  * @returns Validated store-entry array.
  */
-function readStoreEntries(value: unknown, filePath: string): StoreEntryInput[] {
+function readStoreEntries(value: unknown, filePath: string): StoreDurableInput[] {
   if (!Array.isArray(value)) {
-    throw new Error(`Invalid scenario ${filePath}: input.entries must be an array.`);
+    throw new Error(`Invalid scenario ${filePath}: input.durables must be an array.`);
   }
 
-  return value.map((entry, index) => readStoreEntryInput(entry, `${filePath} input.entries[${index}]`));
+  return value.map((entry, index) => readStoreDurableInput(entry, `${filePath} input.durables[${index}]`));
 }
 
 /**
@@ -408,9 +408,9 @@ function readStoreEntries(value: unknown, filePath: string): StoreEntryInput[] {
  * @param label - Human-readable validation label.
  * @returns Validated store entry input.
  */
-function readStoreEntryInput(value: unknown, label: string): StoreEntryInput {
+function readStoreDurableInput(value: unknown, label: string): StoreDurableInput {
   const record = readObject(value, label, label, STORE_ENTRY_KEYS);
-  const type = readRequiredEnum(record.type, `${label}.type`, label, SUPPORTED_ENTRY_TYPES);
+  const type = readRequiredEnum(record.type, `${label}.type`, label, SUPPORTED_DURABLE_KINDS);
   const subject = readRequiredString(record.subject, `${label}.subject`, label);
   const content = readRequiredString(record.content, `${label}.content`, label);
 
@@ -463,7 +463,7 @@ function readStoreEntryInput(value: unknown, label: string): StoreEntryInput {
  */
 function readSeedEntry(value: unknown, label: string): ClaimKeyScenarioSeedEntry {
   const record = readObject(value, label, label, SEED_ENTRY_KEYS);
-  const type = readRequiredEnum(record.type, `${label}.type`, label, SUPPORTED_ENTRY_TYPES);
+  const type = readRequiredEnum(record.type, `${label}.type`, label, SUPPORTED_DURABLE_KINDS);
   const subject = readRequiredString(record.subject, `${label}.subject`, label);
   const content = readRequiredString(record.content, `${label}.content`, label);
 

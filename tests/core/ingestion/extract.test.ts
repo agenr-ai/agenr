@@ -24,10 +24,10 @@ function buildMessage(index: number, role: "user" | "assistant", text: string, t
   };
 }
 
-function buildLlm(implementation: LlmPort["completeJson"]): LlmPort {
+function buildLlm(implementation: (...args: Parameters<LlmPort["completeJson"]>) => Promise<unknown>): LlmPort {
   return {
     complete: vi.fn(async () => ""),
-    completeJson: vi.fn(implementation),
+    completeJson: vi.fn(implementation) as LlmPort["completeJson"],
   };
 }
 
@@ -38,7 +38,7 @@ describe("extractFromTranscript", () => {
       buildMessage(1, "assistant", "Understood.", "2026-03-01T10:01:00.000Z"),
     ]);
     const llm = buildLlm(async () => ({
-      entries: [
+      durables: [
         {
           type: "decision",
           subject: "agenr package manager",
@@ -89,7 +89,7 @@ describe("extractFromTranscript", () => {
       buildMessage(1, "assistant", "Second message", "2026-03-01T10:05:00.000Z"),
     ]);
     const llm = buildLlm(async () => ({
-      entries: [
+      durables: [
         {
           type: "fact",
           subject: "working topic",
@@ -117,7 +117,7 @@ describe("extractFromTranscript", () => {
       },
     };
     const llm = buildLlm(async () => ({
-      entries: [
+      durables: [
         {
           type: "fact",
           subject: "working topic",
@@ -136,7 +136,7 @@ describe("extractFromTranscript", () => {
 
   it("uses whole-file mode when the transcript fits in context", async () => {
     const transcript = buildTranscript([buildMessage(0, "user", "We always use pnpm for this repository.")]);
-    const llm = buildLlm(async () => ({ entries: [] }));
+    const llm = buildLlm(async () => ({ durables: [] }));
 
     await extractFromTranscript(transcript, llm, {
       contextWindowTokens: 100_000,
@@ -156,7 +156,7 @@ describe("extractFromTranscript", () => {
       buildMessage(2, "user", largeText),
       buildMessage(3, "assistant", largeText),
     ]);
-    const llm = buildLlm(async () => ({ entries: [] }));
+    const llm = buildLlm(async () => ({ durables: [] }));
 
     const result = await extractFromTranscript(transcript, llm, {
       wholeFile: "never",
@@ -172,7 +172,7 @@ describe("extractFromTranscript", () => {
     const llm = buildLlm(async (_systemPrompt, userMessage) => {
       if (!userMessage.includes("Previously extracted from this file")) {
         return {
-          entries: [
+          durables: [
             {
               type: "decision",
               subject: "agenr package manager",
@@ -184,7 +184,7 @@ describe("extractFromTranscript", () => {
         };
       }
 
-      return { entries: [] };
+      return { durables: [] };
     });
 
     await extractFromTranscript(transcript, llm, {
@@ -206,7 +206,7 @@ describe("extractFromTranscript", () => {
         .fn<LlmPort["completeJson"]>()
         .mockRejectedValueOnce(new Error("temporary failure"))
         .mockResolvedValueOnce({
-          entries: [
+          durables: [
             {
               type: "decision",
               subject: "agenr package manager",
@@ -255,7 +255,7 @@ describe("extractFromTranscript", () => {
 
   it('honors wholeFile: "never" even when the transcript would fit in context', async () => {
     const transcript = buildTranscript([buildMessage(0, "user", "Short transcript.")]);
-    const llm = buildLlm(async () => ({ entries: [] }));
+    const llm = buildLlm(async () => ({ durables: [] }));
 
     await extractFromTranscript(transcript, llm, {
       wholeFile: "never",
@@ -269,7 +269,7 @@ describe("extractFromTranscript", () => {
 
   it("uses a conservative system prompt budget when resolving whole-file auto mode", async () => {
     const transcript = buildTranscript([buildMessage(0, "user", "x".repeat(18_400))]);
-    const llm = buildLlm(async () => ({ entries: [] }));
+    const llm = buildLlm(async () => ({ durables: [] }));
 
     await extractFromTranscript(transcript, llm, {
       contextWindowTokens: 10_000,

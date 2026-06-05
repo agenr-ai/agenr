@@ -2,18 +2,16 @@ import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { getModel } from "@earendil-works/pi-ai";
-
-import { createSurgeonPort } from "../../../adapters/db/surgeon-port.js";
-import { getLastSurgeonRun } from "../../../adapters/db/surgeon-run-log.js";
-import { ENTRY_SELECT_COLUMNS, mapEntryRow } from "../../../adapters/db/row-mapping.js";
+import { createDreamPort } from "../../../adapters/db/dreaming-port.js";
+import { getLastDreamRun } from "../../../adapters/db/dreaming-run-log.js";
+import { DURABLE_SELECT_COLUMNS, mapDurableRow } from "../../../adapters/db/row-mapping.js";
 import { localTranscriptFiles } from "../../../adapters/files/transcript-files.js";
 import { openClawTranscriptParser } from "../../../adapters/openclaw/transcript/parser.js";
 import { resolveClaimExtractionConfig } from "../../../config.js";
 import { ingestPath } from "../../ingestion/index.js";
-import { storeEntriesDetailed } from "../../../core/store/pipeline.js";
-import type { Entry, StoreResult } from "../../../core/types.js";
-import { runSurgeon } from "../../surgeon/service.js";
+import { storeDurablesDetailed } from "../../../core/store/pipeline.js";
+import type { Durable, StoreResult } from "../../../core/types.js";
+import { runDream } from "../../dreaming/service.js";
 import { buildClaimKeyScenarioAssertions, summarizeClaimKeyScenarioDiffs } from "./assertions.js";
 import { createDeterministicEmbeddingPort, createFixtureIngestionLlm, createFixtureLlm } from "./deterministic-fixtures.js";
 import { loadClaimExtractionFixtureResponses, loadExtractionFixtureResponses, loadSeedFixtureEntries } from "./fixture-loader.js";
@@ -27,7 +25,7 @@ import type {
   ClaimKeyScenarioRunOptions,
   ClaimKeyScenarioRunResult,
   ClaimKeyScenarioSummary,
-  ClaimKeyScenarioSurgeonSummarySnapshot,
+  ClaimKeyScenarioDreamingSummarySnapshot,
 } from "./types.js";
 
 const DEFAULT_ARTIFACT_ROOT = ".hermes/scenario-artifacts";
@@ -160,14 +158,14 @@ async function runOneClaimKeyScenario(
     warnings: [],
     rows: [],
     rowCount: {
-      entries: 0,
-      activeEntries: 0,
+      durables: 0,
+      activeDurables: 0,
       entriesWithClaimKey: 0,
       proposals: 0,
     },
     proposals: [],
     storeResult: null,
-    surgeonSummary: null,
+    dreamingSummary: null,
   };
   let preservedSandboxPath: string | undefined;
 
@@ -178,7 +176,7 @@ async function runOneClaimKeyScenario(
       await seedScenarioSetup(scenario, sandbox.database, options.rootDir);
 
       let storeResult: StoreResult | null = null;
-      let surgeonSummary: ClaimKeyScenarioSurgeonSummarySnapshot | null = null;
+      let dreamingSummary: ClaimKeyScenarioDreamingSummarySnapshot | null = null;
 
       switch (scenario.kind) {
         case "ingest":
@@ -187,18 +185,18 @@ async function runOneClaimKeyScenario(
         case "store":
           storeResult = await runStoreScenario(scenario, sandbox.database, warnings, options.rootDir);
           break;
-        case "surgeon":
-          surgeonSummary = await runSurgeonScenario(scenario, sandbox.database, warnings, options.rootDir);
+        case "dreaming":
+          dreamingSummary = await runDreamingScenario(scenario, sandbox.database, warnings, options.rootDir);
           break;
       }
 
-      actual = await captureActualState(sandbox.database, warnings, storeResult, surgeonSummary);
+      actual = await captureActualState(sandbox.database, warnings, storeResult, dreamingSummary);
     } catch (error) {
       actual = await captureActualState(
         sandbox.database,
         warnings,
         actual.storeResult,
-        actual.surgeonSummary,
+        actual.dreamingSummary,
         error instanceof Error ? error.message : String(error),
       );
     }
@@ -364,7 +362,7 @@ async function runStoreScenario(
   rootDir: string,
 ): Promise<StoreResult> {
   const claimExtractionResponses = await loadClaimExtractionFixtureResponses(rootDir, scenario.input.modelFixtures?.claimExtractionResponsesFile);
-  const result = await storeEntriesDetailed(scenario.input.entries, database, createDeterministicEmbeddingPort(), {
+  const result = await storeDurablesDetailed(scenario.input.entries, database, createDeterministicEmbeddingPort(), {
     ...(scenario.input.storeOptions?.claimExtraction === true && claimExtractionResponses
       ? {
           claimExtraction: {
@@ -387,50 +385,43 @@ async function runStoreScenario(
 }
 
 /**
- * Runs one surgeon scenario through the real claim-key-quality run path.
+ * Runs one dreaming scenario through the real reconcile run path.
  *
- * @param scenario - Surgeon scenario definition.
+ * @param scenario - Dreaming scenario definition.
  * @param database - Open scenario sandbox database.
  * @param warnings - Mutable warning sink.
  * @param rootDir - Scenario root used for fixture resolution.
- * @returns Structured surgeon summary snapshot from the latest run.
+ * @returns Structured dreaming summary snapshot from the latest run.
  */
-async function runSurgeonScenario(
-  scenario: Extract<ClaimKeyScenario, { kind: "surgeon" }>,
+async function runDreamingScenario(
+  scenario: Extract<ClaimKeyScenario, { kind: "dreaming" }>,
   database: Awaited<ReturnType<typeof createClaimKeyScenarioSandbox>>["database"],
   _warnings: string[],
   rootDir: string,
-): Promise<ClaimKeyScenarioSurgeonSummarySnapshot | null> {
+): Promise<ClaimKeyScenarioDreamingSummarySnapshot | null> {
   const claimExtractionResponses = await loadClaimExtractionFixtureResponses(rootDir, scenario.input.modelFixtures?.claimExtractionResponsesFile);
 
-  await runSurgeon(
+  await runDream(
     {
-      pass: "claim_key_quality",
-      project: scenario.input.surgeonOptions?.project ?? undefined,
-      type: scenario.input.surgeonOptions?.type,
-      claimKeyPrefix: scenario.input.surgeonOptions?.claimKeyPrefix,
-      entryIds: scenario.input.surgeonOptions?.entryIds,
-      includeInactive: scenario.input.surgeonOptions?.includeInactive === true,
-      budget: 0,
-      apply: scenario.input.surgeonOptions?.apply !== false,
-      skipEvaluatedDays: 0,
-      verbose: scenario.input.surgeonOptions?.verbose === true,
+      tier: "standard",
+      project: scenario.input.dreamingOptions?.project ?? undefined,
+      type: scenario.input.dreamingOptions?.type,
+      claimKeyPrefix: scenario.input.dreamingOptions?.claimKeyPrefix,
+      durableIds: scenario.input.dreamingOptions?.durableIds,
+      includeInactive: scenario.input.dreamingOptions?.includeInactive === true,
+      apply: scenario.input.dreamingOptions?.apply !== false,
+      verbose: scenario.input.dreamingOptions?.verbose === true,
       json: false,
     },
     {
-      port: createSurgeonPort(database),
-      config: null,
-      model: getModel("openai", "gpt-5.4-mini"),
+      port: createDreamPort(database),
+      config: claimExtractionResponses ? { claimExtraction: resolveClaimExtractionConfig() } : null,
+      ...(claimExtractionResponses ? { createClaimExtractionLlm: () => createFixtureLlm(claimExtractionResponses) } : {}),
       now: () => SCENARIO_NOW,
-      ...(claimExtractionResponses
-        ? {
-            createClaimExtractionLlm: () => createFixtureLlm(claimExtractionResponses),
-          }
-        : {}),
     },
   );
 
-  return loadLatestSurgeonSummary(database);
+  return loadLatestDreamingSummary(database);
 }
 
 /**
@@ -439,7 +430,7 @@ async function runSurgeonScenario(
  * @param database - Open sandbox database.
  * @param warnings - Ordered warning list accumulated during execution.
  * @param storeResult - Optional store result captured from the main flow.
- * @param surgeonSummary - Optional surgeon summary captured from the main flow.
+ * @param dreamingSummary - Optional dreaming summary captured from the main flow.
  * @param executionError - Optional execution error message.
  * @returns Actual observable state used for assertions and artifacts.
  */
@@ -447,25 +438,25 @@ async function captureActualState(
   database: Awaited<ReturnType<typeof createClaimKeyScenarioSandbox>>["database"],
   warnings: string[],
   storeResult: StoreResult | null,
-  surgeonSummary: ClaimKeyScenarioSurgeonSummarySnapshot | null,
+  dreamingSummary: ClaimKeyScenarioDreamingSummarySnapshot | null,
   executionError?: string,
 ): Promise<ClaimKeyScenarioActualState> {
   const rows = await loadAllEntries(database);
-  const latestSurgeonSummary = surgeonSummary ?? (await loadLatestSurgeonSummary(database));
-  const proposals = latestSurgeonSummary ? await loadLatestSurgeonProposals(database, latestSurgeonSummary.runId) : [];
+  const latestDreamingSummary = dreamingSummary ?? (await loadLatestDreamingSummary(database));
+  const proposals = latestDreamingSummary ? await loadLatestDreamProposals(database, latestDreamingSummary.runId) : [];
 
   return {
     warnings,
     rows,
     rowCount: {
-      entries: rows.length,
-      activeEntries: rows.filter((row) => row.retired !== true && !row.superseded_by).length,
+      durables: rows.length,
+      activeDurables: rows.filter((row) => row.retired !== true && !row.superseded_by).length,
       entriesWithClaimKey: rows.filter((row) => typeof row.claim_key === "string" && row.claim_key.length > 0).length,
       proposals: proposals.length,
     },
     proposals,
     storeResult,
-    surgeonSummary: latestSurgeonSummary,
+    dreamingSummary: latestDreamingSummary,
     ...(executionError ? { executionError } : {}),
   };
 }
@@ -476,28 +467,28 @@ async function captureActualState(
  * @param database - Open sandbox database.
  * @returns Hydrated ordered entry rows.
  */
-async function loadAllEntries(database: Awaited<ReturnType<typeof createClaimKeyScenarioSandbox>>["database"]): Promise<Entry[]> {
+async function loadAllEntries(database: Awaited<ReturnType<typeof createClaimKeyScenarioSandbox>>["database"]): Promise<Durable[]> {
   const rows = await database.execute({
     sql: `
-      SELECT ${ENTRY_SELECT_COLUMNS}
-      FROM entries
+      SELECT ${DURABLE_SELECT_COLUMNS}
+      FROM durables
       ORDER BY created_at ASC, id ASC
     `,
   });
 
-  return rows.rows.map((row) => mapEntryRow(row));
+  return rows.rows.map((row) => mapDurableRow(row));
 }
 
 /**
- * Loads the latest persisted surgeon summary, when a surgeon run exists.
+ * Loads the latest persisted dreaming summary, when a dreaming run exists.
  *
  * @param database - Open sandbox database.
- * @returns Latest surgeon summary snapshot, or null when no run exists.
+ * @returns Latest dreaming summary snapshot, or null when no run exists.
  */
-async function loadLatestSurgeonSummary(
+async function loadLatestDreamingSummary(
   database: Awaited<ReturnType<typeof createClaimKeyScenarioSandbox>>["database"],
-): Promise<ClaimKeyScenarioSurgeonSummarySnapshot | null> {
-  const latestRun = await getLastSurgeonRun(database);
+): Promise<ClaimKeyScenarioDreamingSummarySnapshot | null> {
+  const latestRun = await getLastDreamRun(database);
   if (!latestRun) {
     return null;
   }
@@ -505,23 +496,23 @@ async function loadLatestSurgeonSummary(
   return {
     runId: latestRun.id,
     status: latestRun.status,
-    passType: latestRun.passType,
-    summary: latestRun.summaryJson?.claim_key_quality ?? null,
+    passType: latestRun.tier,
+    summary: latestRun.summaryJson?.reconcile ?? null,
   };
 }
 
 /**
- * Loads structured surgeon proposals for the requested run ID.
+ * Loads structured dreaming proposals for the requested run ID.
  *
  * @param database - Open sandbox database.
  * @param runId - Run identifier whose proposals should be loaded.
  * @returns Ordered proposal snapshots.
  */
-async function loadLatestSurgeonProposals(
+async function loadLatestDreamProposals(
   database: Awaited<ReturnType<typeof createClaimKeyScenarioSandbox>>["database"],
   runId: string,
 ): Promise<ClaimKeyScenarioProposalSnapshot[]> {
-  const port = createSurgeonPort(database);
+  const port = createDreamPort(database);
   const proposals = await port.getRunProposals(runId);
 
   return proposals.map((proposal) => ({
@@ -530,7 +521,7 @@ async function loadLatestSurgeonProposals(
     groupId: proposal.groupId,
     issueKind: proposal.issueKind,
     scope: proposal.scope,
-    entryIds: proposal.entryIds,
+    durableIds: proposal.durableIds,
     currentClaimKeys: proposal.currentClaimKeys,
     proposedClaimKeys: proposal.proposedClaimKeys,
     rationale: proposal.rationale,
@@ -566,8 +557,8 @@ async function writeScenarioArtifacts(
     await writeJson(path.join(scenarioArtifactRoot, "store-result.json"), actual.storeResult);
   }
 
-  if (actual.surgeonSummary) {
-    await writeJson(path.join(scenarioArtifactRoot, "surgeon-summary.json"), actual.surgeonSummary);
+  if (actual.dreamingSummary) {
+    await writeJson(path.join(scenarioArtifactRoot, "dreaming-summary.json"), actual.dreamingSummary);
   }
 
   if (actual.proposals.length > 0) {

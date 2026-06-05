@@ -1,10 +1,10 @@
 import type { MemoryRepository } from "../../app/memory/ports.js";
 import type { DatabasePort } from "../../core/ports.js";
-import type { Entry } from "../../core/types.js";
+import type { Durable } from "../../core/types.js";
 
 /** Database and memory ports used to resolve id/subject tool targets. */
 export interface EntryMemoryResolverServices {
-  entries: Pick<DatabasePort, "getEntry">;
+  entries: Pick<DatabasePort, "getDurable">;
   memory: Pick<MemoryRepository, "findEntryBySubject" | "findMostRecentEntry" | "getEntryTrace">;
 }
 
@@ -16,7 +16,7 @@ export interface EntryMemoryResolverServices {
  */
 export function buildEntryMemoryResolverPorts(services: EntryMemoryResolverServices): EntryResolverPorts {
   return {
-    getEntryById: async (entryId) => (await services.entries.getEntry(entryId)) ?? (await services.memory.getEntryTrace(entryId))?.entry ?? null,
+    getDurableById: async (entryId) => (await services.entries.getDurable(entryId)) ?? (await services.memory.getEntryTrace(entryId))?.entry ?? null,
     findEntryBySubject: async (subject) => services.memory.findEntryBySubject(subject),
     findMostRecentEntry: async () => services.memory.findMostRecentEntry(),
   };
@@ -27,11 +27,11 @@ export function buildEntryMemoryResolverPorts(services: EntryMemoryResolverServi
  */
 export interface EntryResolverPorts {
   /** Finds an entry by canonical id. */
-  getEntryById(id: string): Promise<Entry | null>;
+  getDurableById(id: string): Promise<Durable | null>;
   /** Finds the newest entry matching a subject. */
-  findEntryBySubject(subject: string): Promise<Entry | null>;
+  findEntryBySubject(subject: string): Promise<Durable | null>;
   /** Finds the newest entry in the store. */
-  findMostRecentEntry(): Promise<Entry | null>;
+  findMostRecentEntry(): Promise<Durable | null>;
 }
 
 /**
@@ -42,13 +42,13 @@ export interface EntryResolverPorts {
  * @param options - Optional selector controls.
  * @returns Matching agenr entry.
  */
-export async function resolveTargetEntry(
+export async function resolveTargetDurable(
   ports: EntryResolverPorts,
   params: Record<string, unknown>,
   options: {
     allowLast?: boolean;
   } = {},
-): Promise<Entry> {
+): Promise<Durable> {
   const id = readOptionalStringParam(params, "id");
   const subject = readOptionalStringParam(params, "subject");
   const last = options.allowLast ? readBooleanParam(params, "last") : undefined;
@@ -68,7 +68,7 @@ export async function resolveTargetEntry(
   }
 
   if (id) {
-    const entry = await ports.getEntryById(id);
+    const entry = await ports.getDurableById(id);
     if (!entry) {
       throw new Error(`No agenr entry found for id ${id}.`);
     }

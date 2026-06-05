@@ -6,15 +6,15 @@ import { composeEmbeddingText } from "../../../src/adapters/embeddings.js";
 import { annotateExplicitClaimKeyEntry } from "../../../src/core/ingestion/claim-key-preservation.js";
 import type { DatabasePort, EmbeddingPort, LlmPort } from "../../../src/core/ports.js";
 import { computeContentHash, computeNormContentHash } from "../../../src/core/store/hashing.js";
-import { storeEntries } from "../../../src/core/store/pipeline.js";
-import type { Entry, StoreEntryInput } from "../../../src/core/types.js";
+import { storeDurables } from "../../../src/core/store/pipeline.js";
+import type { Durable, StoreDurableInput } from "../../../src/core/types.js";
 
-describe("storeEntries", () => {
+describe("storeDurables", () => {
   it("stores a single entry successfully", async () => {
     const db = new MockDatabase();
     const embedding = new MockEmbeddingPort();
 
-    const result = await storeEntries([createInput()], db, embedding);
+    const result = await storeDurables([createInput()], db, embedding);
 
     expect(result).toEqual({ stored: 1, skipped: 0, rejected: 0 });
     expect(db.insertions).toHaveLength(1);
@@ -29,7 +29,7 @@ describe("storeEntries", () => {
     });
     const embedding = new MockEmbeddingPort();
 
-    const result = await storeEntries([input], db, embedding);
+    const result = await storeDurables([input], db, embedding);
 
     expect(result).toEqual({ stored: 0, skipped: 1, rejected: 0 });
     expect(db.insertions).toEqual([]);
@@ -46,7 +46,7 @@ describe("storeEntries", () => {
     });
     const embedding = new MockEmbeddingPort();
 
-    const result = await storeEntries([input], db, embedding);
+    const result = await storeDurables([input], db, embedding);
 
     expect(result).toEqual({ stored: 0, skipped: 1, rejected: 0 });
     expect(db.insertions).toEqual([]);
@@ -66,7 +66,7 @@ describe("storeEntries", () => {
     });
     const embedding = new MockEmbeddingPort();
 
-    const result = await storeEntries(inputs, db, embedding);
+    const result = await storeDurables(inputs, db, embedding);
 
     expect(result).toEqual({ stored: 3, skipped: 2, rejected: 0 });
     expect(db.insertions).toHaveLength(3);
@@ -89,7 +89,7 @@ describe("storeEntries", () => {
     const db = new MockDatabase();
     const embedding = new MockEmbeddingPort();
 
-    const result = await storeEntries(inputs, db, embedding);
+    const result = await storeDurables(inputs, db, embedding);
 
     expect(result).toEqual({ stored: 1, skipped: 1, rejected: 0 });
     expect(db.insertions).toHaveLength(1);
@@ -100,7 +100,7 @@ describe("storeEntries", () => {
     const db = new MockDatabase();
     const embedding = new MockEmbeddingPort();
 
-    await expect(storeEntries([], db, embedding)).resolves.toEqual({
+    await expect(storeDurables([], db, embedding)).resolves.toEqual({
       stored: 0,
       skipped: 0,
       rejected: 0,
@@ -111,7 +111,7 @@ describe("storeEntries", () => {
     const db = new MockDatabase();
     const embedding = new MockEmbeddingPort();
 
-    const result = await storeEntries([createInput({ subject: "valid" }), createInput({ subject: "   " })], db, embedding);
+    const result = await storeDurables([createInput({ subject: "valid" }), createInput({ subject: "   " })], db, embedding);
 
     expect(result).toEqual({ stored: 1, skipped: 0, rejected: 1 });
     expect(db.insertions).toHaveLength(1);
@@ -121,7 +121,7 @@ describe("storeEntries", () => {
     const db = new MockDatabase();
     const embedding = new MockEmbeddingPort();
 
-    const result = await storeEntries([createInput()], db, embedding, { dryRun: true });
+    const result = await storeDurables([createInput()], db, embedding, { dryRun: true });
 
     expect(result).toEqual({ stored: 0, skipped: 0, rejected: 0 });
     expect(db.insertions).toEqual([]);
@@ -136,7 +136,7 @@ describe("storeEntries", () => {
       createInput({ type: "lesson", subject: "subject-b", content: "content-b" }),
     ];
 
-    await storeEntries(inputs, db, embedding);
+    await storeDurables(inputs, db, embedding);
 
     expect(embedding.calls).toEqual([inputs.map((input) => composeEmbeddingText(input))]);
   });
@@ -149,7 +149,7 @@ describe("storeEntries", () => {
     const db = new MockDatabase();
     const embedding = new MockEmbeddingPort();
 
-    await storeEntries([input], db, embedding);
+    await storeDurables([input], db, embedding);
 
     expect(db.insertions[0]?.entry.content_hash).toBe(computeContentHash(input.content, input.source_file));
     expect(db.insertions[0]?.entry.norm_content_hash).toBe(computeNormContentHash(input.content));
@@ -164,7 +164,7 @@ describe("storeEntries", () => {
       [20, 21],
     ];
 
-    const result = await storeEntries(inputs, db, embedding, { precomputedEmbeddings });
+    const result = await storeDurables(inputs, db, embedding, { precomputedEmbeddings });
 
     expect(result).toEqual({ stored: 2, skipped: 0, rejected: 0 });
     expect(embedding.calls).toEqual([]);
@@ -187,7 +187,7 @@ describe("storeEntries", () => {
       [30, 31],
     ];
 
-    const result = await storeEntries(inputs, db, embedding, { precomputedEmbeddings });
+    const result = await storeDurables(inputs, db, embedding, { precomputedEmbeddings });
 
     expect(result).toEqual({ stored: 2, skipped: 1, rejected: 0 });
     expect(embedding.calls).toEqual([]);
@@ -203,7 +203,7 @@ describe("storeEntries", () => {
     const embedding = new MockEmbeddingPort();
     const createdAt = "2026-03-01T10:00:00.000Z";
 
-    await storeEntries([createInput({ created_at: createdAt })], db, embedding);
+    await storeDurables([createInput({ created_at: createdAt })], db, embedding);
 
     const inserted = db.insertions[0]?.entry;
     expect(inserted?.created_at).toBe(createdAt);
@@ -222,7 +222,7 @@ describe("storeEntries", () => {
       confidence: 0.93,
     });
 
-    await storeEntries(
+    await storeDurables(
       [
         createInput({
           subject: "Jim's home city",
@@ -276,7 +276,7 @@ describe("storeEntries", () => {
       });
     });
 
-    const storePromise = storeEntries(
+    const storePromise = storeDurables(
       [
         createInput({ subject: "Jim timezone", content: "Jim's timezone is America/Chicago." }),
         createInput({ subject: "Jim city", content: "Jim lives in Denver, Colorado." }),
@@ -330,7 +330,7 @@ describe("storeEntries", () => {
     ];
     const llm = new MockLlmPort((callIndex) => responses[callIndex]?.promise);
 
-    const storePromise = storeEntries(
+    const storePromise = storeDurables(
       [
         createInput({ subject: "Jim timezone", content: "Jim's timezone is America/Chicago." }),
         createInput({ subject: "Jim city", content: "Jim lives in Denver, Colorado." }),
@@ -374,7 +374,7 @@ describe("storeEntries", () => {
           },
     );
 
-    await storeEntries(
+    await storeDurables(
       [
         createInput({
           subject: "Jim's timezone",
@@ -418,7 +418,7 @@ describe("storeEntries", () => {
       confidence: 0.93,
     });
 
-    await storeEntries(
+    await storeDurables(
       [
         createInput({
           subject: "Jim's home city",
@@ -455,8 +455,8 @@ describe("storeEntries", () => {
       claim_key: " Jim / Timezone ",
     });
 
-    await storeEntries([baseInput], directDb, embedding);
-    await storeEntries(
+    await storeDurables([baseInput], directDb, embedding);
+    await storeDurables(
       [
         annotateExplicitClaimKeyEntry(
           { ...baseInput },
@@ -494,7 +494,7 @@ describe("storeEntries", () => {
     const db = new MockDatabase();
     const embedding = new MockEmbeddingPort();
 
-    await storeEntries(
+    await storeDurables(
       [
         createInput({
           subject: "Jim's home city",
@@ -521,7 +521,7 @@ describe("storeEntries", () => {
     const embedding = new MockEmbeddingPort();
     const warnings: string[] = [];
 
-    const result = await storeEntries(
+    const result = await storeDurables(
       [
         createInput({
           subject: "Jim timezone",
@@ -554,7 +554,7 @@ describe("storeEntries", () => {
     const db = new MockDatabase();
     const embedding = new MockEmbeddingPort();
 
-    await storeEntries(
+    await storeDurables(
       [
         createInput({
           subject: "Project X status",
@@ -585,7 +585,7 @@ describe("storeEntries", () => {
     const db = new MockDatabase();
     const embedding = new MockEmbeddingPort();
 
-    const result = await storeEntries(
+    const result = await storeDurables(
       [
         createInput({
           subject: "Project X status",
@@ -606,7 +606,7 @@ describe("storeEntries", () => {
     const db = new MockDatabase();
     const embedding = new MockEmbeddingPort();
 
-    await storeEntries(
+    await storeDurables(
       [
         createInput({
           subject: "Jim timezone",
@@ -648,7 +648,7 @@ describe("storeEntries", () => {
     });
     const embedding = new MockEmbeddingPort();
 
-    const result = await storeEntries(
+    const result = await storeDurables(
       [
         createInput({
           subject: "Jim's home city",
@@ -691,7 +691,7 @@ describe("storeEntries", () => {
       confidence: 0.96,
     });
 
-    const result = await storeEntries(
+    const result = await storeDurables(
       [
         createInput({
           subject: "Jim's timezone",
@@ -730,7 +730,7 @@ describe("storeEntries", () => {
     const db = new MockDatabase();
     const embedding = new MockEmbeddingPort();
 
-    const result = await storeEntries(
+    const result = await storeDurables(
       [
         createInput({
           subject: "Jim's home city",
@@ -759,7 +759,7 @@ describe("storeEntries", () => {
     const embedding = new MockEmbeddingPort();
     const warnings: string[] = [];
 
-    const result = await storeEntries(
+    const result = await storeDurables(
       [
         createInput({
           subject: "Jim's home city",
@@ -798,7 +798,7 @@ describe("storeEntries", () => {
     });
     const warnings: string[] = [];
 
-    const result = await storeEntries(
+    const result = await storeDurables(
       [
         createInput({
           subject: "Jim's timezone",
@@ -845,7 +845,7 @@ describe("storeEntries", () => {
       confidence: 0.92,
     });
 
-    await storeEntries(
+    await storeDurables(
       [
         createInput({
           type: "decision",
@@ -889,7 +889,7 @@ describe("storeEntries", () => {
       confidence: 0.74,
     });
 
-    await storeEntries(
+    await storeDurables(
       [
         createInput({
           type: "decision",
@@ -935,7 +935,7 @@ describe("storeEntries", () => {
     const embedding = new MockEmbeddingPort();
     const warnings: string[] = [];
 
-    const result = await storeEntries(
+    const result = await storeDurables(
       [
         createInput({
           type: "decision",
@@ -969,7 +969,7 @@ describe("storeEntries", () => {
     const embedding = new MockEmbeddingPort();
     const supersededId = randomUUID();
 
-    const result = await storeEntries(
+    const result = await storeDurables(
       [
         createInput({
           subject: "new home city",
@@ -1001,7 +1001,7 @@ describe("storeEntries", () => {
     const embedding = new MockEmbeddingPort();
     const warnings: string[] = [];
 
-    const result = await storeEntries(
+    const result = await storeDurables(
       [
         createInput({
           subject: "replacement entry",
@@ -1024,12 +1024,12 @@ describe("storeEntries", () => {
 });
 
 class MockDatabase implements DatabasePort {
-  public readonly insertions: Array<{ entry: Entry; embedding: number[]; contentHash: string }> = [];
+  public readonly insertions: Array<{ entry: Durable; embedding: number[]; contentHash: string }> = [];
   public readonly existingHashes: Set<string>;
   public readonly existingNormHashes: Set<string>;
   public readonly claimKeyPrefixes: string[];
   public readonly claimKeyExamples: string[];
-  public readonly activeEntriesByClaimKey: Record<string, Entry[]>;
+  public readonly activeEntriesByClaimKey: Record<string, Durable[]>;
   public readonly claimKeyLookupCalls: string[] = [];
   public readonly supersedeCalls: Array<{ oldId: string; newId: string; kind?: string; reason?: string }> = [];
   public transactionCount = 0;
@@ -1041,7 +1041,7 @@ class MockDatabase implements DatabasePort {
       existingNormHashes?: Set<string>;
       claimKeyPrefixes?: string[];
       claimKeyExamples?: string[];
-      activeEntriesByClaimKey?: Record<string, Entry[]>;
+      activeEntriesByClaimKey?: Record<string, Durable[]>;
       supersedeResult?: boolean;
     } = {},
   ) {
@@ -1053,7 +1053,7 @@ class MockDatabase implements DatabasePort {
     this.supersedeResult = options.supersedeResult ?? true;
   }
 
-  public async insertEntry(entry: Entry, embedding: number[], contentHash: string): Promise<string> {
+  public async insertDurable(entry: Durable, embedding: number[], contentHash: string): Promise<string> {
     this.insertions.push({
       entry,
       embedding,
@@ -1066,11 +1066,11 @@ class MockDatabase implements DatabasePort {
 
   public async finalizeBulkWrites(): Promise<void> {}
 
-  public async getEntries(): Promise<Entry[]> {
+  public async getDurables(): Promise<Durable[]> {
     return [];
   }
 
-  public async getEntry(): Promise<Entry | null> {
+  public async getDurable(): Promise<Durable | null> {
     return null;
   }
 
@@ -1082,16 +1082,16 @@ class MockDatabase implements DatabasePort {
     return new Set(hashes.filter((hash) => this.existingNormHashes.has(hash)));
   }
 
-  public async retireEntry(): Promise<boolean> {
+  public async retireDurable(): Promise<boolean> {
     return false;
   }
 
-  public async supersedeEntry(oldId: string, newId: string, kind?: string, reason?: string): Promise<boolean> {
+  public async supersedeDurable(oldId: string, newId: string, kind?: string, reason?: string): Promise<boolean> {
     this.supersedeCalls.push({ oldId, newId, kind, reason });
     return this.supersedeResult;
   }
 
-  public async findActiveEntriesByClaimKey(claimKey: string): Promise<Entry[]> {
+  public async findActiveDurablesByClaimKey(claimKey: string): Promise<Durable[]> {
     this.claimKeyLookupCalls.push(claimKey);
     return this.activeEntriesByClaimKey[claimKey] ?? [];
   }
@@ -1104,7 +1104,7 @@ class MockDatabase implements DatabasePort {
     return this.claimKeyExamples.slice(0, limit ?? this.claimKeyExamples.length);
   }
 
-  public async updateEntry(): Promise<boolean> {
+  public async updateDurable(): Promise<boolean> {
     return false;
   }
 
@@ -1163,7 +1163,7 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   return { promise, resolve };
 }
 
-function createInput(overrides: Partial<StoreEntryInput> = {}): StoreEntryInput {
+function createInput(overrides: Partial<StoreDurableInput> = {}): StoreDurableInput {
   return {
     type: overrides.type ?? "fact",
     subject: overrides.subject ?? "subject",
@@ -1190,7 +1190,7 @@ function createInput(overrides: Partial<StoreEntryInput> = {}): StoreEntryInput 
   };
 }
 
-function createExistingEntry(overrides: Partial<Entry> & Pick<Entry, "claim_key">): Entry {
+function createExistingEntry(overrides: Partial<Durable> & Pick<Durable, "claim_key">): Durable {
   const now = "2026-04-04T12:00:00.000Z";
 
   return {

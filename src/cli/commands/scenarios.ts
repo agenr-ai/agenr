@@ -227,7 +227,7 @@ function renderScenarioRunSummary(summary: ClaimKeyScenarioSummary): string {
  */
 function parseScenarioKind(value: string): ClaimKeyScenarioKind {
   const normalized = value.trim().toLowerCase();
-  if (normalized !== "ingest" && normalized !== "store" && normalized !== "surgeon") {
+  if (normalized !== "ingest" && normalized !== "store" && normalized !== "dreaming") {
     throw new InvalidArgumentError(`Invalid scenario kind: ${value}`);
   }
 

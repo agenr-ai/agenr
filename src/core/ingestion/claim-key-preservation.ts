@@ -1,4 +1,4 @@
-import type { ClaimSupportMode, StoreEntryInput } from "../types.js";
+import type { ClaimSupportMode, StoreDurableInput } from "../types.js";
 import { buildExplicitClaimKeyPreservationMetadata, mergeExplicitClaimKeyMetadata } from "../claim-key-lifecycle.js";
 
 import type { DedupResult } from "./dedup.js";
@@ -24,7 +24,7 @@ export interface ExplicitClaimKeySupportContext {
  * @param context - Best-effort support metadata visible at the extraction site.
  * @returns Entry with explicit claim-key support metadata filled in when possible.
  */
-export function annotateExplicitClaimKeyEntry(entry: StoreEntryInput, context: ExplicitClaimKeySupportContext): StoreEntryInput {
+export function annotateExplicitClaimKeyEntry(entry: StoreDurableInput, context: ExplicitClaimKeySupportContext): StoreDurableInput {
   if (!entry.claim_key) {
     return entry;
   }
@@ -42,8 +42,8 @@ export function annotateExplicitClaimKeyEntry(entry: StoreEntryInput, context: E
  * @param dedupResult - Dedup result whose survivors may need preserved claim-key metadata reapplied.
  * @returns Survivors with explicit claim-key metadata restored when the cluster agrees on one key.
  */
-export function restoreExplicitClaimKeysAfterDedup(originalEntries: StoreEntryInput[], dedupResult: DedupResult): StoreEntryInput[] {
-  const claimKeyByKeptIndex = new Map<number, StoreEntryInput>();
+export function restoreExplicitClaimKeysAfterDedup(originalEntries: StoreDurableInput[], dedupResult: DedupResult): StoreDurableInput[] {
+  const claimKeyByKeptIndex = new Map<number, StoreDurableInput>();
 
   for (const clusterDetail of dedupResult.clusterDetails) {
     const candidate = resolveClusterClaimKeyCandidate(clusterDetail.entryIndices.map((index) => originalEntries[index]).filter(isDefined));
@@ -68,7 +68,7 @@ export function restoreExplicitClaimKeysAfterDedup(originalEntries: StoreEntryIn
 }
 
 /** Resolves one explicit claim-key candidate when every explicit entry in the cluster agrees on the slot. */
-function resolveClusterClaimKeyCandidate(entries: StoreEntryInput[]): StoreEntryInput | undefined {
+function resolveClusterClaimKeyCandidate(entries: StoreDurableInput[]): StoreDurableInput | undefined {
   const explicitEntries = entries.filter(hasExplicitClaimKey);
   if (explicitEntries.length === 0) {
     return undefined;
@@ -83,7 +83,7 @@ function resolveClusterClaimKeyCandidate(entries: StoreEntryInput[]): StoreEntry
 }
 
 /** Returns whether an entry carries a non-empty explicit claim key. */
-function hasExplicitClaimKey(entry: StoreEntryInput): entry is StoreEntryInput & { claim_key: string } {
+function hasExplicitClaimKey(entry: StoreDurableInput): entry is StoreDurableInput & { claim_key: string } {
   return typeof entry.claim_key === "string" && entry.claim_key.trim().length > 0;
 }
 

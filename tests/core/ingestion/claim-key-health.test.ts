@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { summarizeIngestClaimKeyHealth } from "../../../src/core/ingestion/claim-key-health.js";
 import type { ClaimExtractionDiagnostic } from "../../../src/core/store/claim-extraction.js";
-import type { StoreEntryInput } from "../../../src/core/types.js";
+import type { StoreDurableInput } from "../../../src/core/types.js";
 
 describe("summarizeIngestClaimKeyHealth", () => {
   it("surfaces suspicious singleton alias families while ignoring scoped namespace nesting", () => {
-    const entries: StoreEntryInput[] = [
+    const entries: StoreDurableInput[] = [
       createEntry({ subject: "Jim timezone", claim_key: "jim/timezone", claim_key_status: "trusted", claim_key_source: "model" }),
       createEntry({
         subject: "Jim editor preference",
@@ -55,7 +55,7 @@ describe("summarizeIngestClaimKeyHealth", () => {
   });
 });
 
-function createEntry(overrides: Partial<StoreEntryInput> = {}): StoreEntryInput {
+function createEntry(overrides: Partial<StoreDurableInput> = {}): StoreDurableInput {
   return {
     type: overrides.type ?? "fact",
     subject: overrides.subject ?? "subject",

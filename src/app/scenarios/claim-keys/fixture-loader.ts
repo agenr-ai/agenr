@@ -45,7 +45,7 @@ export interface ClaimKeyScenarioClaimExtractionFixtureResponse {
 }
 
 const CLAIM_EXTRACTION_FIXTURE_KEYS = new Set(["entity", "attribute", "confidence", "no_claim", "__error"]);
-const EXTRACTION_RESPONSE_KEYS = new Set(["entries"]);
+const EXTRACTION_RESPONSE_KEYS = new Set(["durables"]);
 const EXTRACTION_ENTRY_KEYS = new Set([
   "type",
   "subject",
@@ -232,12 +232,12 @@ async function readJsonFile(filePath: string): Promise<unknown> {
  */
 function readExtractionFixtureResponse(value: unknown, label: string): ClaimKeyScenarioExtractionFixtureResponse {
   const record = readObject(value, "Fixture response", label, EXTRACTION_RESPONSE_KEYS);
-  if (!Array.isArray(record.entries)) {
-    throw new Error(`Invalid scenario ${label}: entries must be an array.`);
+  if (!Array.isArray(record.durables)) {
+    throw new Error(`Invalid scenario ${label}: durables must be an array.`);
   }
 
   return {
-    entries: record.entries.map((entry, index) => readExtractionFixtureEntry(entry, `${label}.entries[${index}]`)),
+    entries: record.durables.map((entry, index) => readExtractionFixtureEntry(entry, `${label}.durables[${index}]`)),
   };
 }
 

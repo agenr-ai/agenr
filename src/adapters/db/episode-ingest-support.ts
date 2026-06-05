@@ -30,7 +30,7 @@ export interface EpisodeIngestSupportPort {
  */
 export function createEpisodeIngestSupportPort(executor: SqlExecutor): EpisodeIngestSupportPort {
   return {
-    countEntries: async () => countRows(executor, "SELECT COUNT(*) AS count FROM entries"),
+    countEntries: async () => countRows(executor, "SELECT COUNT(*) AS count FROM durables"),
     hasRelevantProvenanceMatch: async (sampleFiles) => hasRelevantProvenanceMatch(executor, sampleFiles),
   };
 }
@@ -56,7 +56,7 @@ async function hasRelevantProvenanceMatch(executor: SqlExecutor, sampleFiles: st
   const basenames = Array.from(new Set(sampleFiles.map((filePath) => path.basename(filePath))));
   const basenameClauses = basenames.map(() => "(source_file = ? OR source_file LIKE ?)").join(" OR ");
   const basenameArgs = basenames.flatMap((basename) => [basename, `%/${basename}`]);
-  const entryMatches = await countRows(executor, `SELECT COUNT(*) AS count FROM entries WHERE source_file IS NOT NULL AND (${basenameClauses})`, basenameArgs);
+  const entryMatches = await countRows(executor, `SELECT COUNT(*) AS count FROM durables WHERE source_file IS NOT NULL AND (${basenameClauses})`, basenameArgs);
 
   return entryMatches > 0;
 }

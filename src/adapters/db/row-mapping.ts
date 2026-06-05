@@ -2,12 +2,12 @@ import type { Row } from "@libsql/client";
 
 export { cosineSimilarity } from "../../core/recall/scoring.js";
 import { parseClaimKeySource, parseClaimKeyStatus, parseClaimSupportMode } from "../../core/claim-key-lifecycle.js";
-import type { Entry, Episode } from "../../core/types.js";
+import type { Durable, Episode } from "../../core/types.js";
 
 const DEFAULT_QUALITY_SCORE = 0.5;
-const ACTIVE_ENTRY_CLAUSE = "retired = 0 AND superseded_by IS NULL";
+const ACTIVE_DURABLE_CLAUSE = "retired = 0 AND superseded_by IS NULL";
 const ACTIVE_EPISODE_CLAUSE = "retired = 0 AND superseded_by IS NULL";
-const ENTRY_SELECT_COLUMNS = `
+const DURABLE_SELECT_COLUMNS = `
   id,
   type,
   subject,
@@ -48,7 +48,7 @@ const ENTRY_SELECT_COLUMNS = `
   updated_at
 `;
 
-export { ACTIVE_ENTRY_CLAUSE, ACTIVE_EPISODE_CLAUSE, ENTRY_SELECT_COLUMNS };
+export { ACTIVE_DURABLE_CLAUSE, ACTIVE_EPISODE_CLAUSE, DURABLE_SELECT_COLUMNS };
 
 /**
  * Builds the SQL predicate that filters out retired and superseded entries.
@@ -56,9 +56,9 @@ export { ACTIVE_ENTRY_CLAUSE, ACTIVE_EPISODE_CLAUSE, ENTRY_SELECT_COLUMNS };
  * @param alias - Optional table alias to prefix column references.
  * @returns Active-entry predicate for raw SQL fragments.
  */
-export function buildActiveEntryClause(alias?: string): string {
+export function buildActiveDurableClause(alias?: string): string {
   if (!alias) {
-    return ACTIVE_ENTRY_CLAUSE;
+    return ACTIVE_DURABLE_CLAUSE;
   }
 
   return `${alias}.retired = 0 AND ${alias}.superseded_by IS NULL`;
@@ -267,17 +267,17 @@ export function readEmbedding(row: Row, key: string): number[] {
  * @param row - Raw libSQL result row.
  * @returns Hydrated core entry.
  */
-export function mapEntryRow(row: Row): Entry {
+export function mapDurableRow(row: Row): Durable {
   const type = readRequiredString(row, "type");
   const expiry = readRequiredString(row, "expiry");
 
   return {
     id: readRequiredString(row, "id"),
-    type: type as Entry["type"],
+    type: type as Durable["type"],
     subject: readRequiredString(row, "subject"),
     content: readRequiredString(row, "content"),
     importance: readNumber(row, "importance", 0),
-    expiry: expiry as Entry["expiry"],
+    expiry: expiry as Durable["expiry"],
     tags: deserializeTags(row.tags),
     source_file: readOptionalString(row, "source_file"),
     source_context: readOptionalString(row, "source_context"),

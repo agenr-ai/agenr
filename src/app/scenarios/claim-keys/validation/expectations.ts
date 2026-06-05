@@ -13,14 +13,14 @@ import {
   readObject,
   readOptionalClaimKeyQualitySummary,
   readProposalScope,
-  readOptionalSurgeonRunStatus,
+  readOptionalDreamRunStatus,
   readOptionalStringArray,
   readRequiredBoolean,
   readRequiredInteger,
   readRequiredString,
 } from "./shared.js";
 
-const EXPECTATION_KEYS = new Set(["warnings", "rows", "rowCount", "proposals", "storeResult", "surgeonSummary"]);
+const EXPECTATION_KEYS = new Set(["warnings", "rows", "rowCount", "proposals", "storeResult", "dreamingSummary"]);
 const WARNING_KEYS = new Set(["contains", "absent"]);
 const ROW_EXPECTATION_KEYS = new Set(["match", "assert"]);
 const ROW_MATCH_KEYS = new Set(["id", "subject", "content", "claim_key"]);
@@ -44,9 +44,9 @@ const ROW_ASSERT_KEYS = new Set([
 const PROPOSAL_EXPECTATION_KEYS = new Set(["match", "assert"]);
 const PROPOSAL_MATCH_KEYS = new Set(["id", "groupId", "issueKind", "source"]);
 const PROPOSAL_ASSERT_KEYS = new Set(["issueKind", "scope", "source", "eligibleForApply", "confidence"]);
-const ROW_COUNT_KEYS = new Set(["entries", "activeEntries", "entriesWithClaimKey", "proposals"]);
+const ROW_COUNT_KEYS = new Set(["durables", "activeDurables", "entriesWithClaimKey", "proposals"]);
 const STORE_RESULT_KEYS = new Set(["stored", "skipped", "rejected"]);
-const SURGEON_SUMMARY_KEYS = new Set(["status", "summary"]);
+const DREAMING_SUMMARY_KEYS = new Set(["status", "summary"]);
 
 /**
  * Reads one expectation block and rejects unsupported fields.
@@ -62,7 +62,7 @@ export function readExpectations(value: unknown, filePath: string): ClaimKeyScen
   const rowCount = readRowCountExpectation(record.rowCount, filePath);
   const proposals = readProposalExpectations(record.proposals, filePath);
   const storeResult = readStoreResultExpectation(record.storeResult, filePath);
-  const surgeonSummary = readSurgeonSummaryExpectation(record.surgeonSummary, filePath);
+  const dreamingSummary = readDreamingSummaryExpectation(record.dreamingSummary, filePath);
 
   return {
     ...(warnings ? { warnings } : {}),
@@ -70,7 +70,7 @@ export function readExpectations(value: unknown, filePath: string): ClaimKeyScen
     ...(rowCount ? { rowCount } : {}),
     ...(proposals ? { proposals } : {}),
     ...(storeResult !== undefined ? { storeResult } : {}),
-    ...(surgeonSummary !== undefined ? { surgeonSummary } : {}),
+    ...(dreamingSummary !== undefined ? { dreamingSummary } : {}),
   };
 }
 
@@ -122,7 +122,7 @@ function readRowExpectations(value: unknown, filePath: string): ClaimKeyScenario
 }
 
 /**
- * Reads surgeon-proposal expectations.
+ * Reads dreaming-proposal expectations.
  *
  * @param value - Raw proposal-expectation payload.
  * @param filePath - Source scenario path for error messages.
@@ -161,8 +161,8 @@ function readRowCountExpectation(value: unknown, filePath: string): ClaimKeyScen
   const record = readObject(value, "Scenario expect.rowCount", filePath, ROW_COUNT_KEYS);
 
   return {
-    ...(record.entries !== undefined ? { entries: readRequiredInteger(record.entries, "expect.rowCount.entries", filePath) } : {}),
-    ...(record.activeEntries !== undefined ? { activeEntries: readRequiredInteger(record.activeEntries, "expect.rowCount.activeEntries", filePath) } : {}),
+    ...(record.durables !== undefined ? { durables: readRequiredInteger(record.durables, "expect.rowCount.durables", filePath) } : {}),
+    ...(record.activeDurables !== undefined ? { activeDurables: readRequiredInteger(record.activeDurables, "expect.rowCount.activeDurables", filePath) } : {}),
     ...(record.entriesWithClaimKey !== undefined
       ? { entriesWithClaimKey: readRequiredInteger(record.entriesWithClaimKey, "expect.rowCount.entriesWithClaimKey", filePath) }
       : {}),
@@ -195,13 +195,13 @@ function readStoreResultExpectation(value: unknown, filePath: string): ClaimKeyS
 }
 
 /**
- * Reads surgeon-summary expectations.
+ * Reads dreaming-summary expectations.
  *
- * @param value - Raw surgeon-summary payload.
+ * @param value - Raw dreaming-summary payload.
  * @param filePath - Source scenario path for error messages.
  * @returns Surgeon-summary expectation, null, or undefined.
  */
-function readSurgeonSummaryExpectation(value: unknown, filePath: string): ClaimKeyScenarioExpectations["surgeonSummary"] | undefined {
+function readDreamingSummaryExpectation(value: unknown, filePath: string): ClaimKeyScenarioExpectations["dreamingSummary"] | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -210,11 +210,11 @@ function readSurgeonSummaryExpectation(value: unknown, filePath: string): ClaimK
     return null;
   }
 
-  const record = readObject(value, "Scenario expect.surgeonSummary", filePath, SURGEON_SUMMARY_KEYS);
+  const record = readObject(value, "Scenario expect.dreamingSummary", filePath, DREAMING_SUMMARY_KEYS);
 
   return {
-    ...(record.status !== undefined ? { status: readOptionalSurgeonRunStatus(record.status, "expect.surgeonSummary.status", filePath) } : {}),
-    ...(record.summary !== undefined ? { summary: readOptionalClaimKeyQualitySummary(record.summary, "expect.surgeonSummary.summary", filePath) } : {}),
+    ...(record.status !== undefined ? { status: readOptionalDreamRunStatus(record.status, "expect.dreamingSummary.status", filePath) } : {}),
+    ...(record.summary !== undefined ? { summary: readOptionalClaimKeyQualitySummary(record.summary, "expect.dreamingSummary.summary", filePath) } : {}),
   };
 }
 

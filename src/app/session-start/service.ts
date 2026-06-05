@@ -1,5 +1,5 @@
 import { recall, type RecallExecutionTraceSummary, type RecallOutput } from "../../core/recall/index.js";
-import type { Entry } from "../../core/types.js";
+import type { Durable } from "../../core/types.js";
 
 import { projectClaimCentricRecallEntry } from "../recall/claim-centric.js";
 import { buildSessionStartContextSections } from "./context-sections.js";
@@ -115,7 +115,7 @@ async function runArtifactRecallSelection(
  * @param entry - Active core entry selected for session-start use.
  * @returns Structured patch item with stable explanation metadata.
  */
-function buildCorePatchItem(entry: Entry): SessionStartPatchItem {
+function buildCorePatchItem(entry: Durable): SessionStartPatchItem {
   return {
     rank: 0,
     entry,
@@ -294,7 +294,7 @@ function normalizeThreshold(value: number | undefined): number {
  * @param entry - Durable entry being surfaced at session start.
  * @returns Memory-state label suitable for inspection surfaces.
  */
-function resolveMemoryState(entry: Entry): SessionStartPatchItem["memoryState"] {
+function resolveMemoryState(entry: Durable): SessionStartPatchItem["memoryState"] {
   if (entry.superseded_by) {
     return "superseded";
   }
@@ -312,7 +312,7 @@ function resolveMemoryState(entry: Entry): SessionStartPatchItem["memoryState"] 
  * @param entry - Durable entry being surfaced at session start.
  * @returns Claim-lifecycle label suitable for inspection surfaces.
  */
-function resolveClaimStatus(entry: Entry): SessionStartPatchItem["claimStatus"] {
+function resolveClaimStatus(entry: Durable): SessionStartPatchItem["claimStatus"] {
   if (!normalizeOptionalString(entry.claim_key)) {
     return "no_key";
   }
@@ -326,7 +326,7 @@ function resolveClaimStatus(entry: Entry): SessionStartPatchItem["claimStatus"] 
  * @param entry - Durable entry being surfaced at session start.
  * @returns Compact freshness summary.
  */
-function buildFreshnessLabel(entry: Entry): string {
+function buildFreshnessLabel(entry: Durable): string {
   const parts = [`created ${entry.created_at}`];
   const validFrom = normalizeOptionalString(entry.valid_from);
   const validTo = normalizeOptionalString(entry.valid_to);
@@ -343,7 +343,7 @@ function buildFreshnessLabel(entry: Entry): string {
  * @param entry - Durable entry being surfaced at session start.
  * @returns Compact provenance summary, or undefined when none exists.
  */
-function buildProvenanceSummary(entry: Entry): string | undefined {
+function buildProvenanceSummary(entry: Durable): string | undefined {
   const parts = [
     entry.superseded_by ? `superseded_by=${entry.superseded_by}` : undefined,
     entry.supersession_kind ? `kind=${entry.supersession_kind}` : undefined,

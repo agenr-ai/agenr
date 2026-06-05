@@ -8,12 +8,12 @@ import {
   resolveEmbeddingApiKey,
   resolveEmbeddingModel,
 } from "../../src/adapters/embeddings.js";
-import { ENTRY_TYPES, type StoreEntryInput } from "../../src/core/types.js";
+import { DURABLE_KINDS, type StoreDurableInput } from "../../src/core/types.js";
 
 describe("composeEmbeddingText", () => {
   it("produces the expected format for each entry type", () => {
-    for (const type of ENTRY_TYPES) {
-      const entry: StoreEntryInput = {
+    for (const type of DURABLE_KINDS) {
+      const entry: StoreDurableInput = {
         type,
         subject: "memory subject",
         content: "memory content",

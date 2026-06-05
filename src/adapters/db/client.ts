@@ -6,7 +6,7 @@ import { createClient, type Client, type InArgs, type InStatement, type ResultSe
 import { resolveLocalFilesystemPath, toAbsoluteFileUrl } from "../../filesystem-path.js";
 import type { DatabasePort, EpisodeDatabasePort, ProcedureDatabasePort } from "../../core/ports.js";
 import type { EpisodeInput, TemporalWindow } from "../../core/episode/types.js";
-import type { Entry, EntryUpdateInput, Episode, EpisodeSource, Procedure } from "../../core/types.js";
+import type { Durable, DurableUpdateInput, Episode, EpisodeSource, Procedure } from "../../core/types.js";
 import {
   episodeVectorSearch,
   getEpisodeBySourceId,
@@ -29,21 +29,21 @@ import {
   upsertProcedure,
 } from "./procedure-queries.js";
 import {
-  findActiveEntriesByClaimKey,
+  findActiveDurablesByClaimKey,
   getClaimKeyEntityPrefixStats,
   findExistingHashes,
   findExistingNormHashes,
   getClaimKeyExamples,
-  getEntries,
+  getDurables,
   getDistinctClaimKeyPrefixes,
-  getEntry,
+  getDurable,
   getIngestLogEntry,
-  insertEntry,
+  insertDurable,
   insertIngestLogEntry,
-  retireEntry,
-  supersedeEntry,
+  retireDurable,
+  supersedeDurable,
   type SqlExecutor,
-  updateEntry,
+  updateDurable,
 } from "./queries.js";
 import { finalizeBulkWrites, initSchema, prepareBulkWrites } from "./schema.js";
 
@@ -89,8 +89,8 @@ class LibsqlDatabase implements SqlDatabase {
   ) {}
 
   /** Inserts a new entry row and its derived storage fields. */
-  public async insertEntry(entry: Entry, embedding: number[], contentHash: string): Promise<string> {
-    return insertEntry(this.executor, entry, embedding, contentHash);
+  public async insertDurable(entry: Durable, embedding: number[], contentHash: string): Promise<string> {
+    return insertDurable(this.executor, entry, embedding, contentHash);
   }
 
   /** Drops indexes and triggers that slow down bulk ingest writes. */
@@ -104,13 +104,13 @@ class LibsqlDatabase implements SqlDatabase {
   }
 
   /** Loads entries by identifier while preserving caller order when possible. */
-  public async getEntries(ids: string[]): Promise<Entry[]> {
-    return getEntries(this.executor, ids);
+  public async getDurables(ids: string[]): Promise<Durable[]> {
+    return getDurables(this.executor, ids);
   }
 
   /** Loads a single entry by identifier. */
-  public async getEntry(id: string): Promise<Entry | null> {
-    return getEntry(this.executor, id);
+  public async getDurable(id: string): Promise<Durable | null> {
+    return getDurable(this.executor, id);
   }
 
   /** Finds which exact content hashes already exist in storage. */
@@ -209,18 +209,18 @@ class LibsqlDatabase implements SqlDatabase {
   }
 
   /** Marks an entry as retired with an optional reason. */
-  public async retireEntry(id: string, reason?: string): Promise<boolean> {
-    return retireEntry(this.executor, id, reason);
+  public async retireDurable(id: string, reason?: string): Promise<boolean> {
+    return retireDurable(this.executor, id, reason);
   }
 
   /** Marks one active entry as superseded by a newer entry. */
-  public async supersedeEntry(oldId: string, newId: string, kind?: string, reason?: string): Promise<boolean> {
-    return supersedeEntry(this.executor, oldId, newId, kind, reason);
+  public async supersedeDurable(oldId: string, newId: string, kind?: string, reason?: string): Promise<boolean> {
+    return supersedeDurable(this.executor, oldId, newId, kind, reason);
   }
 
   /** Finds active entries by exact claim key. */
-  public async findActiveEntriesByClaimKey(claimKey: string): Promise<Entry[]> {
-    return findActiveEntriesByClaimKey(this.executor, claimKey);
+  public async findActiveDurablesByClaimKey(claimKey: string): Promise<Durable[]> {
+    return findActiveDurablesByClaimKey(this.executor, claimKey);
   }
 
   /** Lists distinct entity prefixes derived from active claim keys. */
@@ -239,8 +239,8 @@ class LibsqlDatabase implements SqlDatabase {
   }
 
   /** Updates mutable entry fields such as importance, expiry, and temporal metadata. */
-  public async updateEntry(id: string, fields: EntryUpdateInput): Promise<boolean> {
-    return updateEntry(this.executor, id, fields);
+  public async updateDurable(id: string, fields: DurableUpdateInput): Promise<boolean> {
+    return updateDurable(this.executor, id, fields);
   }
 
   /** Looks up the ingest log row for a previously processed file. */

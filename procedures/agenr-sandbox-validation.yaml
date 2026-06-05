@@ -38,7 +38,7 @@ steps:
   - id: ingest-sandbox-entries
     kind: run_command
     instruction: Ingest durable entries into the sandbox when the change affects transcript extraction or store behavior.
-    command: sandbox-agenr ingest entries <path> --verbose
+    command: sandbox-agenr ingest durables <path> --verbose
   - id: ingest-sandbox-episodes
     kind: run_command
     instruction: Backfill episodic summaries when the change affects episode ingest or mixed recall behavior.

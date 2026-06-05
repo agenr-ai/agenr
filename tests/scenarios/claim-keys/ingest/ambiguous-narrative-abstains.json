@@ -26,8 +26,8 @@
       }
     ],
     "rowCount": {
-      "entries": 1,
-      "activeEntries": 1,
+      "durables": 1,
+      "activeDurables": 1,
       "entriesWithClaimKey": 0
     },
     "storeResult": {

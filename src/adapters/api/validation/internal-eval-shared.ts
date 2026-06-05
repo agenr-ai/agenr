@@ -1,5 +1,5 @@
-import type { ClaimKeySource, ClaimKeyStatus, ClaimSupportMode, EntryType, Expiry, ProcedureSource, ProcedureStep } from "../../../core/types.js";
-import { CLAIM_KEY_SOURCES, CLAIM_KEY_STATUSES, CLAIM_SUPPORT_MODES, ENTRY_TYPES, EXPIRY_LEVELS } from "../../../core/types.js";
+import type { ClaimKeySource, ClaimKeyStatus, ClaimSupportMode, DurableKind, Expiry, ProcedureSource, ProcedureStep } from "../../../core/types.js";
+import { CLAIM_KEY_SOURCES, CLAIM_KEY_STATUSES, CLAIM_SUPPORT_MODES, DURABLE_KINDS, EXPIRY_LEVELS } from "../../../core/types.js";
 import { normalizeProcedureDefinition } from "../../../core/procedures/normalization.js";
 import type { ValidationIssue } from "../../shared/validation.js";
 import {
@@ -119,7 +119,7 @@ export interface InternalEvalFixtureEntryDto {
   /** Optional stable entry identifier. */
   id?: string;
   /** Durable entry type. */
-  type: EntryType;
+  type: DurableKind;
   /** Fixture subject line. */
   subject: string;
   /** Fixture content body. */
@@ -549,7 +549,7 @@ function parseFixtureEntry(value: unknown, index: number, issues: ValidationIssu
 
   pushUnexpectedFields(fixture, FIXTURE_ENTRY_KEYS, basePath, issues);
 
-  const type = parseEntryType(fixture.type, `${basePath}.type`, issues);
+  const type = parseDurableKind(fixture.type, `${basePath}.type`, issues);
   const subject = parseRequiredTrimmedString(fixture.subject, `${basePath}.subject`, issues);
   const content = parseRequiredTrimmedString(fixture.content, `${basePath}.content`, issues);
 
@@ -657,13 +657,13 @@ function parseFixtureProcedure(value: unknown, index: number, issues: Validation
 }
 
 /** Parses a valid entry type enum member. */
-function parseEntryType(value: unknown, path: string, issues: ValidationIssue[]): EntryType | undefined {
-  if (typeof value !== "string" || !ENTRY_TYPES.includes(value as EntryType)) {
-    pushIssue(issues, path, `Expected one of: ${ENTRY_TYPES.join(", ")}.`);
+function parseDurableKind(value: unknown, path: string, issues: ValidationIssue[]): DurableKind | undefined {
+  if (typeof value !== "string" || !DURABLE_KINDS.includes(value as DurableKind)) {
+    pushIssue(issues, path, `Expected one of: ${DURABLE_KINDS.join(", ")}.`);
     return undefined;
   }
 
-  return value as EntryType;
+  return value as DurableKind;
 }
 
 /** Parses an optional expiry enum member. */

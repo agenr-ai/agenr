@@ -4,7 +4,7 @@ import { projectClaimCentricRecallEntries } from "../../../src/app/recall/claim-
 import { buildClaimTransitionExplanations } from "../../../src/app/recall/transitions.js";
 import type { EpisodeResult } from "../../../src/core/episode/types.js";
 import type { RecallOutput } from "../../../src/core/recall/types.js";
-import type { Entry, Episode } from "../../../src/core/types.js";
+import type { Durable, Episode } from "../../../src/core/types.js";
 
 describe("buildClaimTransitionExplanations", () => {
   it("keeps episode context when a matching episode only wins because of token overlap", () => {
@@ -135,7 +135,7 @@ describe("buildClaimTransitionExplanations", () => {
   });
 });
 
-function createRecallOutput(entry: Entry, score: number): RecallOutput {
+function createRecallOutput(entry: Durable, score: number): RecallOutput {
   return {
     entry,
     score,
@@ -198,7 +198,7 @@ function createEpisode(overrides: Partial<Episode> & Pick<Episode, "id" | "summa
   };
 }
 
-function createEntry(overrides: Partial<Entry> & Pick<Entry, "id" | "subject" | "content">): Entry {
+function createEntry(overrides: Partial<Durable> & Pick<Durable, "id" | "subject" | "content">): Durable {
   const now = "2026-03-30T00:00:00.000Z";
   return {
     id: overrides.id,

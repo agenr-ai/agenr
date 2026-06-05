@@ -7,8 +7,8 @@ import type { BeforeTurnDeps } from "../../../src/app/before-turn/index.js";
 import { computeProcedureRevisionHash, computeProcedureSourceHash } from "../../../src/core/procedures/hashing.js";
 import { composeProcedureRecallText } from "../../../src/core/procedures/recall-text.js";
 import type { ProcedureDatabasePort, RecallPorts } from "../../../src/core/ports.js";
-import type { RecallCandidateEntry } from "../../../src/core/recall/types.js";
-import type { Entry, Procedure } from "../../../src/core/types.js";
+import type { RecallCandidateDurable } from "../../../src/core/recall/types.js";
+import type { Durable, Procedure } from "../../../src/core/types.js";
 
 describe("runBeforeTurn", () => {
   it("abstains when the current turn is empty after normalization", async () => {
@@ -141,7 +141,7 @@ describe("runBeforeTurn", () => {
       importance: 9,
     });
     const deps = createDeps({
-      ftsCandidates: [toRecallCandidateEntry(entry)],
+      ftsCandidates: [toRecallCandidateDurable(entry)],
       hydratedEntries: [entry],
     });
 
@@ -185,7 +185,7 @@ describe("runBeforeTurn", () => {
       importance: 9,
     });
     const deps = createDeps({
-      ftsCandidates: [toRecallCandidateEntry(entry)],
+      ftsCandidates: [toRecallCandidateDurable(entry)],
       hydratedEntries: [entry],
     });
 
@@ -226,7 +226,7 @@ describe("runBeforeTurn", () => {
       if (params.text === "What should we do next?") {
         return [
           {
-            entry: toRecallCandidateEntry(entry),
+            entry: toRecallCandidateDurable(entry),
             rank: -1,
             tier: "all_tokens",
           },
@@ -277,7 +277,7 @@ describe("runBeforeTurn", () => {
       if (params.text === "What should we do next?") {
         return [
           {
-            entry: toRecallCandidateEntry(entry),
+            entry: toRecallCandidateDurable(entry),
             rank: -1,
             tier: "all_tokens",
           },
@@ -287,7 +287,7 @@ describe("runBeforeTurn", () => {
       if (params.text.includes("Topic: Finish the release notes for the before-turn slice.")) {
         return [
           {
-            entry: toRecallCandidateEntry(entry),
+            entry: toRecallCandidateDurable(entry),
             rank: -1,
             tier: "all_tokens",
           },
@@ -354,7 +354,7 @@ describe("runBeforeTurn", () => {
       });
       const ftsSearch = vi.fn<RecallPorts["ftsSearch"]>(async () => [
         {
-          entry: toRecallCandidateEntry(entry),
+          entry: toRecallCandidateDurable(entry),
           rank: -1,
           tier: "all_tokens",
         },
@@ -416,7 +416,7 @@ describe("runBeforeTurn", () => {
       });
       const ftsSearch = vi.fn<RecallPorts["ftsSearch"]>(async () => [
         {
-          entry: toRecallCandidateEntry(entry),
+          entry: toRecallCandidateDurable(entry),
           rank: -1,
           tier: "all_tokens",
         },
@@ -472,7 +472,7 @@ describe("runBeforeTurn", () => {
       });
       const ftsSearch = vi.fn<RecallPorts["ftsSearch"]>(async () => [
         {
-          entry: toRecallCandidateEntry(entry),
+          entry: toRecallCandidateDurable(entry),
           rank: -1,
           tier: "all_tokens",
         },
@@ -516,7 +516,7 @@ describe("runBeforeTurn", () => {
       if (params.text === "What about him?\nTopic: Duke is Jim's dog.") {
         return [
           {
-            entry: toRecallCandidateEntry(entry),
+            entry: toRecallCandidateDurable(entry),
             rank: -1,
             tier: "all_tokens",
           },
@@ -569,7 +569,7 @@ describe("runBeforeTurn", () => {
       importance: 8,
     });
     const deps = createDeps({
-      ftsCandidates: [toRecallCandidateEntry(adjacent), toRecallCandidateEntry(identity)],
+      ftsCandidates: [toRecallCandidateDurable(adjacent), toRecallCandidateDurable(identity)],
       hydratedEntries: [adjacent, identity],
     });
 
@@ -618,7 +618,7 @@ describe("runBeforeTurn", () => {
       importance: 9,
     });
     const deps = createDeps({
-      ftsCandidates: [toRecallCandidateEntry(familySummary), toRecallCandidateEntry(relationshipRole)],
+      ftsCandidates: [toRecallCandidateDurable(familySummary), toRecallCandidateDurable(relationshipRole)],
       hydratedEntries: [familySummary, relationshipRole],
     });
 
@@ -661,7 +661,7 @@ describe("runBeforeTurn", () => {
       importance: 10,
     });
     const deps = createDeps({
-      ftsCandidates: [toRecallCandidateEntry(familySummary)],
+      ftsCandidates: [toRecallCandidateDurable(familySummary)],
       hydratedEntries: [familySummary],
     });
 
@@ -715,7 +715,7 @@ describe("runBeforeTurn", () => {
       claim_key: "duke/owner",
     });
     const deps = createDeps({
-      ftsCandidates: [toRecallCandidateEntry(cousins), toRecallCandidateEntry(bedNote), toRecallCandidateEntry(owner)],
+      ftsCandidates: [toRecallCandidateDurable(cousins), toRecallCandidateDurable(bedNote), toRecallCandidateDurable(owner)],
       hydratedEntries: [cousins, bedNote, owner],
     });
 
@@ -761,7 +761,7 @@ describe("runBeforeTurn", () => {
       importance: 9,
     });
     const deps = createDeps({
-      ftsCandidates: [toRecallCandidateEntry(relationshipDefinition), toRecallCandidateEntry(habits)],
+      ftsCandidates: [toRecallCandidateDurable(relationshipDefinition), toRecallCandidateDurable(habits)],
       hydratedEntries: [relationshipDefinition, habits],
     });
 
@@ -820,7 +820,7 @@ describe("runBeforeTurn", () => {
       importance: 9,
     });
     const deps = createDeps({
-      ftsCandidates: [toRecallCandidateEntry(identity), toRecallCandidateEntry(biography)],
+      ftsCandidates: [toRecallCandidateDurable(identity), toRecallCandidateDurable(biography)],
       hydratedEntries: [identity, biography],
     });
 
@@ -868,7 +868,7 @@ describe("runBeforeTurn", () => {
       importance: 9,
     });
     const deps = createDeps({
-      ftsCandidates: [toRecallCandidateEntry(notes), toRecallCandidateEntry(background)],
+      ftsCandidates: [toRecallCandidateDurable(notes), toRecallCandidateDurable(background)],
       hydratedEntries: [notes, background],
     });
 
@@ -911,7 +911,7 @@ describe("runBeforeTurn", () => {
       importance: 8,
     });
     const deps = createDeps({
-      ftsCandidates: [toRecallCandidateEntry(adjacent), toRecallCandidateEntry(identity)],
+      ftsCandidates: [toRecallCandidateDurable(adjacent), toRecallCandidateDurable(identity)],
       hydratedEntries: [adjacent, identity],
     });
 
@@ -950,7 +950,7 @@ describe("runBeforeTurn", () => {
       when_to_use: ["Use this when implementing the post-sessionStart proactive surfacing slice."],
     });
     const deps = createDeps({
-      ftsCandidates: [toRecallCandidateEntry(entry)],
+      ftsCandidates: [toRecallCandidateDurable(entry)],
       hydratedEntries: [entry],
       procedureFtsMatches: [{ procedure, rank: -1 }],
     });
@@ -1017,7 +1017,7 @@ describe("runBeforeTurn", () => {
       content: "If embeddings fail, before-turn durable recall should degrade rather than abort.",
     });
     const deps = createDeps({
-      ftsCandidates: [toRecallCandidateEntry(entry)],
+      ftsCandidates: [toRecallCandidateDurable(entry)],
       hydratedEntries: [entry],
     });
 
@@ -1056,7 +1056,7 @@ describe("runBeforeTurn", () => {
       importance: 7,
     });
     const deps = createDeps({
-      ftsCandidates: [toRecallCandidateEntry(first), toRecallCandidateEntry(second), toRecallCandidateEntry(third)],
+      ftsCandidates: [toRecallCandidateDurable(first), toRecallCandidateDurable(second), toRecallCandidateDurable(third)],
       hydratedEntries: [first, second, third],
     });
 
@@ -1091,7 +1091,7 @@ describe("runBeforeTurn", () => {
       importance: 8,
     });
     const deps = createDeps({
-      ftsCandidates: [toRecallCandidateEntry(first), toRecallCandidateEntry(second)],
+      ftsCandidates: [toRecallCandidateDurable(first), toRecallCandidateDurable(second)],
       hydratedEntries: [first, second],
     });
 
@@ -1127,7 +1127,7 @@ describe("runBeforeTurn", () => {
       importance: 8,
     });
     const deps = createDeps({
-      ftsCandidates: [toRecallCandidateEntry(first), toRecallCandidateEntry(second)],
+      ftsCandidates: [toRecallCandidateDurable(first), toRecallCandidateDurable(second)],
       hydratedEntries: [first, second],
     });
 
@@ -1152,8 +1152,8 @@ describe("runBeforeTurn", () => {
 
 function createDeps(
   options: {
-    ftsCandidates?: RecallCandidateEntry[];
-    hydratedEntries?: Entry[];
+    ftsCandidates?: RecallCandidateDurable[];
+    hydratedEntries?: Durable[];
     ftsSearchImplementation?: RecallPorts["ftsSearch"];
     procedureFtsMatches?: Array<{ procedure: Procedure; rank: number }>;
     procedureVectorMatches?: Array<{ procedure: Procedure; vectorSim: number }>;
@@ -1218,7 +1218,7 @@ function createProcedureDatabase(
   };
 }
 
-function createEntry(overrides: Partial<Entry> = {}): Entry {
+function createEntry(overrides: Partial<Durable> = {}): Durable {
   const now = "2026-04-14T10:00:00.000Z";
   return {
     id: overrides.id ?? "entry-1",
@@ -1262,7 +1262,7 @@ function createEntry(overrides: Partial<Entry> = {}): Entry {
   };
 }
 
-function toRecallCandidateEntry(entry: Entry): RecallCandidateEntry {
+function toRecallCandidateDurable(entry: Durable): RecallCandidateDurable {
   return {
     id: entry.id,
     subject: entry.subject,

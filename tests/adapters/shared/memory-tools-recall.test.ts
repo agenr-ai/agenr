@@ -70,10 +70,10 @@ describe("agenr_recall shared tool params", () => {
     const mockedRunUnifiedRecall = vi.mocked(runUnifiedRecall);
     mockedRunUnifiedRecall.mockResolvedValue({
       routing: {
-        requested: "entries",
+        requested: "durables",
         detectedIntent: "factual",
-        queried: ["entries"],
-        reason: "Entry recall requested.",
+        queried: ["durables"],
+        reason: "Durable recall requested.",
       },
       procedureCandidates: [],
       procedureNotices: [],
@@ -87,7 +87,7 @@ describe("agenr_recall shared tool params", () => {
     } satisfies UnifiedRecallResult);
 
     await runRecallMemoryTool(
-      parseRecallToolParams({ query: "skeln architecture", mode: "entries", budget: 750 }, READER),
+      parseRecallToolParams({ query: "skeln architecture", mode: "durables", budget: 750 }, READER),
       {
         episodes: {} as never,
         procedures: {} as never,
@@ -100,7 +100,7 @@ describe("agenr_recall shared tool params", () => {
     expect(mockedRunUnifiedRecall).toHaveBeenCalledWith(
       expect.objectContaining({
         text: "skeln architecture",
-        mode: "entries",
+        mode: "durables",
         budget: 750,
         sessionKey: "session:test",
       }),

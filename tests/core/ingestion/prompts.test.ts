@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { buildChunkPrompt, buildExtractionSystemPrompt } from "../../../src/core/ingestion/prompts.js";
-import type { Entry, TranscriptChunk } from "../../../src/core/types.js";
+import type { Durable, TranscriptChunk } from "../../../src/core/types.js";
 
-function buildEntry(overrides: Partial<Entry> = {}): Entry {
+function buildEntry(overrides: Partial<Durable> = {}): Durable {
   return {
     id: "entry-1",
     type: "fact",
@@ -29,7 +29,7 @@ describe("buildExtractionSystemPrompt", () => {
     expect(prompt).toContain("## Importance");
     expect(prompt).toContain("- milestone:");
     expect(prompt).not.toContain("- todo:");
-    expect(prompt).toContain('Return JSON only: {"entries":[...]}');
+    expect(prompt).toContain('Return JSON only: {"durables":[...]}');
     expect(prompt).toContain('"high", "standard", or "low"');
     expect(prompt).toContain("## Claim-Key Preservation");
     expect(prompt).toContain("Treat explicit tool-call claim keys as authoritative");

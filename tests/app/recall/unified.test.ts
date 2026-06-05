@@ -8,10 +8,10 @@ import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/clien
 import * as recallSearch from "../../../src/core/recall/search.js";
 import { routeRecall, runUnifiedRecall } from "../../../src/app/recall/unified.js";
 import type { EpisodeDatabasePort, RecallPorts } from "../../../src/core/ports.js";
-import type { RecallCandidateEntry } from "../../../src/core/recall/types.js";
+import type { RecallCandidateDurable } from "../../../src/core/recall/types.js";
 import { computeProcedureRevisionHash, computeProcedureSourceHash } from "../../../src/core/procedures/hashing.js";
 import { composeProcedureRecallText } from "../../../src/core/procedures/recall-text.js";
-import type { Entry, Episode, Procedure } from "../../../src/core/types.js";
+import type { Durable, Episode, Procedure } from "../../../src/core/types.js";
 import { closeTestDatabases, removeTestPath } from "../../helpers/temp-paths.js";
 
 const databases: SqlDatabase[] = [];
@@ -34,23 +34,23 @@ describe("runUnifiedRecall", () => {
         requested: "auto",
         text: "what was the previous deployment approach",
         parsedTimeWindow: false,
-        hasEntryFilters: false,
+        hasDurableFilters: false,
       }),
     ).toEqual({
       requested: "auto",
       detectedIntent: "historical_state",
-      queried: ["entries", "episodes"],
+      queried: ["durables", "episodes"],
       reason: "The query asks about a previous state or transition, so both entries and episodes were queried.",
     });
   });
 
-  it("passes budget through to entry recall", async () => {
+  it("passes budget through to durable recall", async () => {
     const recallSpy = vi.spyOn(recallSearch, "recall").mockResolvedValue([]);
 
     await runUnifiedRecall(
       {
         text: "skeln architecture",
-        mode: "entries",
+        mode: "durables",
         budget: 500,
       },
       {
@@ -79,7 +79,7 @@ describe("runUnifiedRecall", () => {
         requested: "auto",
         text: "what workflow did we use before the dev recall command existed for local recall evals",
         parsedTimeWindow: false,
-        hasEntryFilters: false,
+        hasDurableFilters: false,
       }).detectedIntent,
     ).toBe("historical_state");
     expect(
@@ -87,7 +87,7 @@ describe("runUnifiedRecall", () => {
         requested: "auto",
         text: "what short-lived plan did we consider earlier that day before the final freshness ranking fix",
         parsedTimeWindow: false,
-        hasEntryFilters: false,
+        hasDurableFilters: false,
       }).detectedIntent,
     ).toBe("historical_state");
   });
@@ -98,7 +98,7 @@ describe("runUnifiedRecall", () => {
         requested: "auto",
         text: "how old is this repo",
         parsedTimeWindow: false,
-        hasEntryFilters: false,
+        hasDurableFilters: false,
       }).detectedIntent,
     ).toBe("factual");
     expect(
@@ -106,7 +106,7 @@ describe("runUnifiedRecall", () => {
         requested: "auto",
         text: "what happened before the deploy",
         parsedTimeWindow: false,
-        hasEntryFilters: false,
+        hasDurableFilters: false,
       }).detectedIntent,
     ).not.toBe("historical_state");
     expect(
@@ -114,31 +114,31 @@ describe("runUnifiedRecall", () => {
         requested: "auto",
         text: "what do we use to build releases",
         parsedTimeWindow: false,
-        hasEntryFilters: false,
+        hasDurableFilters: false,
       }).detectedIntent,
     ).toBe("factual");
   });
 
-  it("routes narrow entity-attribute questions to precision-first entry recall", () => {
+  it("routes narrow entity-attribute questions to precision-first durable recall", () => {
     expect(
       routeRecall({
         requested: "auto",
         text: "Where does Jim Martin's dad live?",
         parsedTimeWindow: false,
-        hasEntryFilters: false,
+        hasDurableFilters: false,
       }),
     ).toEqual({
       requested: "auto",
       detectedIntent: "entity_attribute",
-      queried: ["entries"],
-      reason: "The query asks for a specific entity attribute, so precision-first entry recall was used.",
+      queried: ["durables"],
+      reason: "The query asks for a specific entity attribute, so precision-first durable recall was used.",
     });
     expect(
       routeRecall({
         requested: "auto",
         text: "who is Duke?",
         parsedTimeWindow: false,
-        hasEntryFilters: false,
+        hasDurableFilters: false,
       }).detectedIntent,
     ).toBe("entity_attribute");
   });
@@ -149,7 +149,7 @@ describe("runUnifiedRecall", () => {
         requested: "auto",
         text: "who is on call this week",
         parsedTimeWindow: false,
-        hasEntryFilters: false,
+        hasDurableFilters: false,
       }).detectedIntent,
     ).toBe("factual");
   });
@@ -160,7 +160,7 @@ describe("runUnifiedRecall", () => {
         requested: "auto",
         text: "how do I rotate the production signing key safely",
         parsedTimeWindow: false,
-        hasEntryFilters: false,
+        hasDurableFilters: false,
       }),
     ).toEqual({
       requested: "auto",
@@ -176,9 +176,9 @@ describe("runUnifiedRecall", () => {
         requested: "auto",
         text: "what do we use to authenticate API requests",
         parsedTimeWindow: false,
-        hasEntryFilters: false,
+        hasDurableFilters: false,
       }).queried,
-    ).toEqual(["entries"]);
+    ).toEqual(["durables"]);
   });
 
   it("uses pure semantic episode search for explicit episode mode without a time window", async () => {
@@ -255,7 +255,7 @@ describe("runUnifiedRecall", () => {
         recall: createRecallPorts({
           vectorSearch: async () => [
             {
-              entry: toRecallCandidateEntry(priorEntry),
+              entry: toRecallCandidateDurable(priorEntry),
               vectorSim: 0.82,
             },
           ],
@@ -269,7 +269,7 @@ describe("runUnifiedRecall", () => {
     expect(result.routing).toMatchObject({
       requested: "auto",
       detectedIntent: "historical_state",
-      queried: ["entries", "episodes"],
+      queried: ["durables", "episodes"],
     });
     expect(episodeVectorSearch).toHaveBeenCalledWith({
       embedding: [1, 0],
@@ -326,7 +326,7 @@ describe("runUnifiedRecall", () => {
     expect(result.notices).toContain("Semantic episode search unavailable - showing temporal results only.");
   });
 
-  it("surfaces degraded entry notices instead of skipping entry recall when embeddings are unavailable", async () => {
+  it("surfaces degraded entry notices instead of skipping durable recall when embeddings are unavailable", async () => {
     const entry = createEntry({
       id: "policy-new",
       subject: "pager policy",
@@ -347,7 +347,7 @@ describe("runUnifiedRecall", () => {
           },
           ftsSearch: async () => [
             {
-              entry: toRecallCandidateEntry(entry),
+              entry: toRecallCandidateDurable(entry),
               rank: 1,
               tier: "all_tokens",
             },
@@ -363,7 +363,7 @@ describe("runUnifiedRecall", () => {
     expect(result.notices).toContain("Embeddings failed during recall, so Agenr fell back to lexical-only entry ranking.");
   });
 
-  it("logs entity-attribute detection and keeps the query on entry recall only", async () => {
+  it("logs entity-attribute detection and keeps the query on durable recall only", async () => {
     const entry = createEntry({
       id: "jim-dad-location",
       subject: "Jim Martin dad location",
@@ -382,7 +382,7 @@ describe("runUnifiedRecall", () => {
         recall: createRecallPorts({
           ftsSearch: async () => [
             {
-              entry: toRecallCandidateEntry(entry),
+              entry: toRecallCandidateDurable(entry),
               rank: 1,
               tier: "all_tokens",
             },
@@ -396,7 +396,7 @@ describe("runUnifiedRecall", () => {
 
     expect(result.routing).toMatchObject({
       detectedIntent: "entity_attribute",
-      queried: ["entries"],
+      queried: ["durables"],
     });
     expect(result.entries.map((item) => item.entry.id)).toEqual(["jim-dad-location"]);
     expect(debugLog).toHaveBeenCalledWith(expect.stringContaining('unified recall matched entity-attribute kind="location" entity="Jim Martin\'s dad"'));
@@ -449,11 +449,11 @@ describe("runUnifiedRecall", () => {
         recall: createRecallPorts({
           vectorSearch: async () => [
             {
-              entry: toRecallCandidateEntry(priorEntry),
+              entry: toRecallCandidateDurable(priorEntry),
               vectorSim: 0.82,
             },
             {
-              entry: toRecallCandidateEntry(currentEntry),
+              entry: toRecallCandidateDurable(currentEntry),
               vectorSim: 0.82,
             },
           ],
@@ -732,7 +732,7 @@ function createEpisode(overrides: Partial<Episode> = {}): Episode {
   };
 }
 
-function createEntry(overrides: Partial<Entry> & Pick<Entry, "id" | "subject" | "content">): Entry {
+function createEntry(overrides: Partial<Durable> & Pick<Durable, "id" | "subject" | "content">): Durable {
   const now = "2026-03-30T00:00:00.000Z";
   return {
     id: overrides.id,
@@ -807,7 +807,7 @@ function createProcedure(overrides: Partial<Procedure> = {}): Procedure {
   };
 }
 
-function toRecallCandidateEntry(entry: Entry): RecallCandidateEntry {
+function toRecallCandidateDurable(entry: Durable): RecallCandidateDurable {
   return {
     id: entry.id,
     subject: entry.subject,

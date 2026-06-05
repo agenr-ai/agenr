@@ -180,7 +180,7 @@ Current composition includes:
 Important current behavior:
 
 - embedding availability is resolved from config without a startup network probe
-- `agenr_recall` stays available even when embeddings are unavailable and can degrade entry recall into lexical-only mode
+- `agenr_recall` stays available even when embeddings are unavailable and can degrade durable recall into lexical-only mode
 - session-start core-memory injection does not need embeddings
 - before-turn procedure suggestion degrades to lexical-only ranking when query embeddings are unavailable
 - claim extraction is only wired when agenr claim-extraction config is enabled and the OpenClaw LLM client can be created
@@ -194,7 +194,7 @@ It is only included when `agenr_recall` is available.
 Current guidance covers:
 
 - always call `agenr_recall` before answering questions about prior work, decisions, preferences, dates, unfinished work, or past sessions
-- `mode=entries` for exact durable facts and decisions
+- `mode=durables` for exact durable facts and decisions
 - `mode=auto` for normal recall and historical-state questions such as "what was the previous approach"
 - `mode=episodes` for explicit session-narrative recall
 - put time phrases directly in the recall query for temporal questions
@@ -423,7 +423,7 @@ Current sanitization examples:
 
 ### `agenr_store`
 
-`agenr_store` is a thin wrapper over `storeEntriesDetailed(...)`.
+`agenr_store` is a thin wrapper over `storeDurablesDetailed(...)`.
 
 Current request fields:
 
@@ -453,8 +453,8 @@ Current request fields:
 Current behavior:
 
 - attaches `sessionKey` for recall telemetry
-- degrades entry recall into lexical-only mode when query embeddings or vector search fail
-- supports unified routing across exact entry recall, historical-state recall, procedural recall, and episodic recall
+- degrades durable recall into lexical-only mode when query embeddings or vector search fail
+- supports unified routing across exact durable recall, historical-state recall, procedural recall, and episodic recall
 - supports `mode=procedures` to force dedicated procedure recall
 - returns routing metadata, rendered text, canonical procedure data, ranked procedure candidates, structured entry previews (not full bodies), claim-centric projected entry annotations, structured episode results, and notices
 - entry previews are truncated in both text and structured details; use `agenr_fetch` for the full stored body

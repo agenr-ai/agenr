@@ -364,7 +364,7 @@ function normalizeProcedureSource(record: Record<string, unknown>, label: string
         throw new Error(`Invalid procedure ${filePath}: ${label}.${kind} sources require a path.`);
       }
       break;
-    case "entry":
+    case "durable":
     case "episode":
       if (!locator) {
         throw new Error(`Invalid procedure ${filePath}: ${label}.${kind} sources require a locator.`);

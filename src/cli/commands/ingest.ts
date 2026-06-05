@@ -23,7 +23,7 @@ import {
   type IngestFileResult,
   type StoreExtractedResultsProgressEvent,
 } from "../../core/ingestion/index.js";
-import type { StoreEntryInput, StoreResult } from "../../core/types.js";
+import type { StoreDurableInput, StoreResult } from "../../core/types.js";
 import { setVerbose } from "../../logger.js";
 import { banner, formatLabel, ui } from "../../ui.js";
 import { InvalidArgumentError, Option, type Command } from "commander";
@@ -45,7 +45,7 @@ interface IngestCommandOptions {
   concurrency?: number;
 }
 
-/** Normalized CLI payload for `agenr ingest entries`. */
+/** Normalized CLI payload for `agenr ingest durables`. */
 interface NormalizedIngestEntriesCommand {
   targetPath: string;
   verbose: boolean;
@@ -64,7 +64,7 @@ interface FileUsageSummary {
 
 /** Extracted entry annotated with its source file and original flattened index. */
 interface TaggedEntry {
-  entry: StoreEntryInput;
+  entry: StoreDurableInput;
   fileIndex: number;
   originalIndex: number;
 }
@@ -85,7 +85,7 @@ export function registerIngestCommand(program: Command): void {
 /** Registers the default `agenr ingest [path]` durable-entry ingest subcommand. */
 function registerIngestEntriesCommand(parent: Command): void {
   const ingestCommand = parent
-    .command("entries <path>", { isDefault: true })
+    .command("durables <path>", { isDefault: true })
     .description("Ingest OpenClaw session files into the knowledge database")
     .option("--verbose", "Show detailed progress")
     .option("--dry-run", "Parse and extract without storing")
@@ -265,7 +265,7 @@ function registerIngestEntriesCommand(parent: Command): void {
         clack.log.step(buildSuccessMessage(path.basename(result.file), result, commandInput, usage, index === 0));
       }
 
-      const summaryParts = [`${totals.stored} ${pluralize(totals.stored, "entry", "entries")} stored`, `${totals.deduped} deduped`];
+      const summaryParts = [`${totals.stored} ${pluralize(totals.stored, "entry", "durables")} stored`, `${totals.deduped} deduped`];
 
       if (totals.rejected > 0) {
         summaryParts.push(`${totals.rejected} rejected`);
@@ -609,18 +609,18 @@ function printDedupSummary(dedupResult: DedupResult, taggedEntries: TaggedEntry[
   }
 
   if (options.skipDedup === true) {
-    clack.log.step(`Dedup: skipped (--skip-dedup), ${taggedEntries.length} ${pluralize(taggedEntries.length, "entry", "entries")} passed through.`);
+    clack.log.step(`Dedup: skipped (--skip-dedup), ${taggedEntries.length} ${pluralize(taggedEntries.length, "entry", "durables")} passed through.`);
     return;
   }
 
   clack.log.step(
-    `Dedup: ${dedupResult.inputCount} ${pluralize(dedupResult.inputCount, "entry", "entries")} -> ${dedupResult.clustersArbitrated} similar ${pluralize(dedupResult.clustersArbitrated, "cluster")} found (similarity > ${formatThreshold(dedupResult.similarityThreshold)})`,
+    `Dedup: ${dedupResult.inputCount} ${pluralize(dedupResult.inputCount, "entry", "durables")} -> ${dedupResult.clustersArbitrated} similar ${pluralize(dedupResult.clustersArbitrated, "cluster")} found (similarity > ${formatThreshold(dedupResult.similarityThreshold)})`,
   );
   clack.log.step(
     `Dedup: ${dedupResult.clustersArbitrated} ${pluralize(dedupResult.clustersArbitrated, "cluster")} arbitrated (${dedupResult.llmCalls} ${pluralize(dedupResult.llmCalls, "LLM call")})`,
   );
   clack.log.step(
-    `Dedup: ${dedupResult.survivors.length} ${pluralize(dedupResult.survivors.length, "entry", "entries")} survived, ${dedupResult.removedCount} removed (${formatCost(dedupCost)})`,
+    `Dedup: ${dedupResult.survivors.length} ${pluralize(dedupResult.survivors.length, "entry", "durables")} survived, ${dedupResult.removedCount} removed (${formatCost(dedupCost)})`,
   );
 
   for (const warning of dedupResult.warnings) {
@@ -648,7 +648,7 @@ function formatDedupClusterDetail(clusterIndex: number, detail: DedupResult["clu
   });
 
   const lines = [
-    `Dedup cluster ${clusterIndex + 1} (${detail.entryIndices.length} ${pluralize(detail.entryIndices.length, "entry", "entries")}, max similarity ${detail.maxSimilarity.toFixed(2)}):`,
+    `Dedup cluster ${clusterIndex + 1} (${detail.entryIndices.length} ${pluralize(detail.entryIndices.length, "entry", "durables")}, max similarity ${detail.maxSimilarity.toFixed(2)}):`,
   ];
 
   for (const [localIndex, originalIndex] of detail.entryIndices.entries()) {
@@ -724,7 +724,7 @@ function progressMessageForIngestStage(event: IngestStageProgressEvent): string 
     case "claim_extraction_start":
       return "Extracting claim keys...";
     case "store_start":
-      return `Running store pipeline for ${event.totalEntries} ${pluralize(event.totalEntries, "entry", "entries")}...`;
+      return `Running store pipeline for ${event.totalEntries} ${pluralize(event.totalEntries, "entry", "durables")}...`;
   }
 }
 

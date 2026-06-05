@@ -10,7 +10,7 @@ import {
   logToolCall,
   logToolFailure,
   readBooleanParam,
-  resolveTargetEntry,
+  resolveTargetDurable,
   sanitizeTraceToolParams,
   toolFailureResult,
 } from "./shared.js";
@@ -58,7 +58,7 @@ export function createAgenrTraceTool(ctx: OpenClawPluginToolContext, servicesPro
         const last = readBooleanParam(params, "last");
         logToolCall(logger, "agenr_trace", ctx, `target=${formatTargetSelector(id, subject, last)}`, sanitizeTraceToolParams({ id, subject, last }));
         const services = await servicesPromise;
-        const entry = await resolveTargetEntry(services, params, { allowLast: true });
+        const entry = await resolveTargetDurable(services, params, { allowLast: true });
         const trace = await services.memory.getEntryTrace(entry.id);
 
         if (!trace) {

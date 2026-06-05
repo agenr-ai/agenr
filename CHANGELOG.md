@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Breaking
+
+- **Greenfield schema with `durables` and dreaming tables.** The `entries` table and all `surgeon_*` tables are gone. This build only supports schema version `1` on a fresh database. Delete existing knowledge databases and re-run `agenr init` or `agenr db reset` before upgrading.
+- **`entries` renamed to `durables` across types, SQL, ingest, recall, and scenarios.** There are no compatibility aliases. Extraction JSON now uses a top-level `durables` array.
+- **Surgeon removed; dreaming replaces it.** `agenr surgeon ...` commands, `surgeon` config, and surgeon docs are deleted. Use `agenr dream run|status|history` and the `dreaming` config section instead.
+
+### Added
+
+- **Dreaming Milestone 1 skeleton.** Scan, deterministic reconcile, and apply stages with `dream_runs`, `dream_run_actions`, `dream_proposals`, `dream_state`, and `profile_snapshots` persistence.
+- **Docs:** `docs/DURABLES.md`, `docs/DREAMING.md` (stub). `docs/STORE.md` and `docs/SURGEON.md` removed.
+
+### Changed
+
+- **Claim-key scenario harness** now supports `dreaming` scenarios instead of `surgeon` scenarios.
+- **AGENTS.md, ARCHITECTURE.md, README.md, DEBUGGING.md, and VS Code launch configs** updated for the durable/dreaming nomenclature.
+
 ## [3.3.0] - 2026-06-02
 
 Feature flag defaults, Skeln install policy, and OpenClaw package cleanup release.
@@ -316,7 +332,7 @@ Ingest concurrency and progress reporting patch release.
 
 - **Dedup now honors bounded concurrency.** Multi-entry similarity clusters are now arbitrated in parallel with deterministic result ordering, and ingest paths explicitly thread configured/default concurrency into dedup instead of leaving arbitration serial.
 - **Claim extraction now uses real batch concurrency without violating ordered semantics.** Batch claim-key extraction now honors configured concurrency, preserves past-only hint visibility via per-entry frozen hint snapshots, and propagates sensible defaults through the relevant ingest/store paths instead of falling back to historical hardcoded single-worker behavior.
-- **Ingest spinner now reports real post-extraction stages.** Non-verbose `agenr ingest entries` runs now surface dedup, claim-key extraction, store pipeline, and bulk-write index preparation/finalization stages instead of looking stuck after `(N/N extracted)`.
+- **Ingest spinner now reports real post-extraction stages.** Non-verbose `agenr ingest durables` runs now surface dedup, claim-key extraction, store pipeline, and bulk-write index preparation/finalization stages instead of looking stuck after `(N/N extracted)`.
 
 ### Validation
 
@@ -523,7 +539,7 @@ The surgeon retirement pass — an autonomous agent that evaluates and retires s
 ### Added
 
 - **Surgeon retirement pass.** A standalone agent loop powered by `@mariozechner/pi-agent-core` that evaluates knowledge entries and retires semantically stale ones. Runs as `agenr surgeon run` with full dry-run and apply modes, budget governance, and completion guards.
-- **7 surgeon tools.** `get_health_stats`, `query_candidates`, `inspect_entry`, `simulate_recall`, `retire_entry`, `update_entry`, and `complete_pass` — each adapted from the v0 surgeon for v1's simpler schema.
+- **7 surgeon tools.** `get_health_stats`, `query_candidates`, `inspect_durable`, `simulate_recall`, `retire_durable`, `update_durable`, and `complete_pass` — each adapted from the v0 surgeon for v1's simpler schema.
 - **Recall simulation without telemetry.** The `simulate_recall` tool wraps the v1 recall pipeline with a no-op telemetry adapter and optional target-entry exclusion, so the surgeon can test retrieval impact without polluting recall metrics.
 - **Surgeon CLI commands.** `agenr surgeon run`, `agenr surgeon status`, `agenr surgeon history`, and `agenr surgeon actions <run-id>` for running, inspecting, and auditing surgeon passes.
 - **Surgeon status shows evaluation coverage.** `agenr surgeon status` now displays recently evaluated vs new candidates, so you can see how much work remains before running.
@@ -535,7 +551,7 @@ The surgeon retirement pass — an autonomous agent that evaluates and retires s
 
 ### Changed
 
-- **Schema version bumped to 2.** The `surgeon_runs` table is expanded with pass type, status, token/cost tracking, model, dry-run flag, and structured summary fields. A new `surgeon_run_actions` table logs individual surgeon actions with indexed `entry_id` for efficient recently-evaluated queries. Existing databases are migrated automatically via `ALTER TABLE ADD COLUMN`.
+- **Schema version bumped to 2.** The `surgeon_runs` table is expanded with pass type, status, token/cost tracking, model, dry-run flag, and structured summary fields. A new `surgeon_run_actions` table logs individual surgeon actions with indexed `durable_id` for efficient recently-evaluated queries. Existing databases are migrated automatically via `ALTER TABLE ADD COLUMN`.
 - **Protection threshold raised to importance ≥ 9.** Entries with importance 8 are now eligible for surgeon evaluation since many entries default to importance 8 during ingestion.
 - **Setup prompt updated.** The advanced model override prompt now reads "Customize task-specific models?" to reflect the addition of surgeon alongside extraction and dedup overrides.
 

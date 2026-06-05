@@ -1,6 +1,6 @@
 [
   {
-    "entries": [
+    "durables": [
       {
         "type": "fact",
         "subject": "Jim timezone",

@@ -1,6 +1,6 @@
 import type { RecallExecutionTraceSummary } from "../../core/recall/index.js";
 import type { ClaimCentricClaimStatus, ClaimCentricMemoryState } from "../recall/claim-centric.js";
-import type { Entry, Procedure } from "../../core/types.js";
+import type { Durable, Procedure } from "../../core/types.js";
 
 /**
  * High-level category explaining why a turn was suppressed before recall ran.
@@ -170,7 +170,7 @@ export interface BeforeTurnPatchItem {
   /** Stable final rank in the bounded durable-memory set. */
   rank: number;
   /** Hydrated durable entry selected for the active turn. */
-  entry: Entry;
+  entry: Durable;
   /** Source channel for this surfaced item. */
   sourceKind: "turn_recall";
   /** Final ranking score from durable-memory recall. */

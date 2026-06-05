@@ -1,10 +1,10 @@
 import type {
-  ClaimKeyQualityCircuitBreakerKind,
-  ClaimKeyQualityPassSummary,
-  ClaimKeyQualityRepairCounts,
-  ClaimKeyQualityShadowBucket,
-  ClaimKeyQualityShadowBucketSummary,
-} from "../../../../core/surgeon/types.js";
+  ReconcileCircuitBreakerKind,
+  ReconcilePassSummary,
+  ReconcileRepairCounts,
+  ReconcileShadowBucket,
+  ReconcileShadowBucketSummary,
+} from "../../../../core/dreaming/types.js";
 
 /**
  * Recursive deep-partial helper used by scenario expectations.
@@ -17,22 +17,22 @@ export type DeepPartial<T> = T extends readonly (infer U)[]
       }
     : T;
 
-const SUPPORTED_PROPOSAL_SCOPES = ["single_entry", "cluster"] as const;
-const SURGEON_RUN_STATUSES = ["running", "completed", "failed", "aborted", "budget_exhausted", "cost_capped"] as const;
+const SUPPORTED_PROPOSAL_SCOPES = ["single_durable", "cluster"] as const;
+const DREAM_RUN_STATUSES = ["running", "completed", "failed", "aborted", "budget_exhausted", "cost_capped"] as const;
 const CLAIM_KEY_QUALITY_EXECUTION_STYLES = ["autonomous", "targeted"] as const;
 const CLAIM_KEY_QUALITY_SUPPORT_CLASSES = ["trusted_family_grounded_alignment"] as const;
 const CLAIM_KEY_QUALITY_CIRCUIT_BREAKER_KINDS = [
   "claim_key_concentration",
   "entity_prefix_concentration",
   "collision_spike",
-] as const satisfies readonly ClaimKeyQualityCircuitBreakerKind[];
+] as const satisfies readonly ReconcileCircuitBreakerKind[];
 const CLAIM_KEY_QUALITY_SHADOW_BUCKETS = [
   "high_density_grounded_family",
   "large_grounding_diluted_grounded_family",
   "thin_grounded_family_tail",
   "relaxed_one_sibling_stable_slot",
   "other_grounded_family_alignment",
-] as const satisfies readonly ClaimKeyQualityShadowBucket[];
+] as const satisfies readonly ReconcileShadowBucket[];
 
 /**
  * Reads one raw JSON value as a string-keyed object and rejects unexpected fields.
@@ -312,11 +312,7 @@ export function readOptionalEnum<T extends string>(value: unknown, label: string
  * @param filePath - Source scenario path for error messages.
  * @returns Deep-partial summary expectation, null, or undefined.
  */
-export function readOptionalClaimKeyQualitySummary(
-  value: unknown,
-  label: string,
-  filePath: string,
-): DeepPartial<ClaimKeyQualityPassSummary> | null | undefined {
+export function readOptionalClaimKeyQualitySummary(value: unknown, label: string, filePath: string): DeepPartial<ReconcilePassSummary> | null | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -356,19 +352,19 @@ export function readOptionalClaimKeyQualitySummary(
 }
 
 /**
- * Reads one optional surgeon run status enum.
+ * Reads one optional dreaming run status enum.
  *
  * @param value - Raw field value.
  * @param label - Human-readable field label.
  * @param filePath - Source scenario path for error messages.
- * @returns Parsed surgeon run status when present.
+ * @returns Parsed dreaming run status when present.
  */
-export function readOptionalSurgeonRunStatus(value: unknown, label: string, filePath: string): (typeof SURGEON_RUN_STATUSES)[number] | undefined {
-  return readOptionalEnum(value, label, filePath, SURGEON_RUN_STATUSES);
+export function readOptionalDreamRunStatus(value: unknown, label: string, filePath: string): (typeof DREAM_RUN_STATUSES)[number] | undefined {
+  return readOptionalEnum(value, label, filePath, DREAM_RUN_STATUSES);
 }
 
 /**
- * Reads one supported surgeon proposal scope.
+ * Reads one supported dreaming proposal scope.
  *
  * @param value - Raw field value.
  * @param label - Human-readable field label.
@@ -387,8 +383,8 @@ export function readProposalScope(value: unknown, label: string, filePath: strin
  * @param filePath - Source scenario path for error messages.
  * @returns Deep-partial working-set expectation.
  */
-function readClaimKeyWorkingSet(value: unknown, label: string, filePath: string): DeepPartial<ClaimKeyQualityPassSummary["workingSet"]> {
-  const workingSetKeys = new Set(["includeInactive", "project", "type", "claimKeyPrefix", "entryIds"]);
+function readClaimKeyWorkingSet(value: unknown, label: string, filePath: string): DeepPartial<ReconcilePassSummary["workingSet"]> {
+  const workingSetKeys = new Set(["includeInactive", "project", "type", "claimKeyPrefix", "durableIds"]);
   const record = readObject(value, label, filePath, workingSetKeys);
 
   return {
@@ -396,7 +392,7 @@ function readClaimKeyWorkingSet(value: unknown, label: string, filePath: string)
     ...(record.project !== undefined ? { project: readNullableString(record.project, `${label}.project`, filePath) } : {}),
     ...(record.type !== undefined ? { type: readNullableString(record.type, `${label}.type`, filePath) } : {}),
     ...(record.claimKeyPrefix !== undefined ? { claimKeyPrefix: readNullableString(record.claimKeyPrefix, `${label}.claimKeyPrefix`, filePath) } : {}),
-    ...(record.entryIds !== undefined ? { entryIds: readRequiredStringArray(record.entryIds, `${label}.entryIds`, filePath) } : {}),
+    ...(record.durableIds !== undefined ? { durableIds: readRequiredStringArray(record.durableIds, `${label}.durableIds`, filePath) } : {}),
   };
 }
 
@@ -408,10 +404,10 @@ function readClaimKeyWorkingSet(value: unknown, label: string, filePath: string)
  * @param filePath - Source scenario path for error messages.
  * @returns Deep-partial health-snapshot expectation.
  */
-function readClaimKeyHealthSnapshot(value: unknown, label: string, filePath: string): DeepPartial<ClaimKeyQualityPassSummary["before"]> {
+function readClaimKeyHealthSnapshot(value: unknown, label: string, filePath: string): DeepPartial<ReconcilePassSummary["before"]> {
   const snapshotKeys = new Set([
-    "totalEntries",
-    "activeEntries",
+    "totalDurables",
+    "activeDurables",
     "coverageCount",
     "coveragePct",
     "missingCount",
@@ -426,8 +422,8 @@ function readClaimKeyHealthSnapshot(value: unknown, label: string, filePath: str
   const record = readObject(value, label, filePath, snapshotKeys);
 
   return {
-    ...(record.totalEntries !== undefined ? { totalEntries: readRequiredInteger(record.totalEntries, `${label}.totalEntries`, filePath) } : {}),
-    ...(record.activeEntries !== undefined ? { activeEntries: readRequiredInteger(record.activeEntries, `${label}.activeEntries`, filePath) } : {}),
+    ...(record.totalDurables !== undefined ? { totalDurables: readRequiredInteger(record.totalDurables, `${label}.totalDurables`, filePath) } : {}),
+    ...(record.activeDurables !== undefined ? { activeDurables: readRequiredInteger(record.activeDurables, `${label}.activeDurables`, filePath) } : {}),
     ...(record.coverageCount !== undefined ? { coverageCount: readRequiredInteger(record.coverageCount, `${label}.coverageCount`, filePath) } : {}),
     ...(record.coveragePct !== undefined ? { coveragePct: readRequiredNumber(record.coveragePct, `${label}.coveragePct`, filePath) } : {}),
     ...(record.missingCount !== undefined ? { missingCount: readRequiredInteger(record.missingCount, `${label}.missingCount`, filePath) } : {}),
@@ -467,7 +463,7 @@ function readClaimKeyHealthSnapshot(value: unknown, label: string, filePath: str
  * @param filePath - Source scenario path for error messages.
  * @returns Deep-partial repair-count expectation.
  */
-function readClaimKeyRepairCounts(value: unknown, label: string, filePath: string): DeepPartial<ClaimKeyQualityRepairCounts> {
+function readClaimKeyRepairCounts(value: unknown, label: string, filePath: string): DeepPartial<ReconcileRepairCounts> {
   const countKeys = new Set([
     "identifiedNormalizations",
     "appliedNormalizations",
@@ -481,6 +477,7 @@ function readClaimKeyRepairCounts(value: unknown, label: string, filePath: strin
     "skippedNoClaim",
     "skippedLowConfidence",
     "skippedCollision",
+    "flaggedAmbiguousProposals",
     "skippedAmbiguous",
   ]);
   const record = readObject(value, label, filePath, countKeys);
@@ -526,7 +523,14 @@ function readClaimKeyRepairCounts(value: unknown, label: string, filePath: strin
       ? { skippedLowConfidence: readRequiredInteger(record.skippedLowConfidence, `${label}.skippedLowConfidence`, filePath) }
       : {}),
     ...(record.skippedCollision !== undefined ? { skippedCollision: readRequiredInteger(record.skippedCollision, `${label}.skippedCollision`, filePath) } : {}),
-    ...(record.skippedAmbiguous !== undefined ? { skippedAmbiguous: readRequiredInteger(record.skippedAmbiguous, `${label}.skippedAmbiguous`, filePath) } : {}),
+    ...(record.flaggedAmbiguousProposals !== undefined
+      ? {
+          flaggedAmbiguousProposals: readRequiredInteger(record.flaggedAmbiguousProposals, `${label}.flaggedAmbiguousProposals`, filePath),
+        }
+      : {}),
+    ...(record.skippedAmbiguous !== undefined
+      ? { flaggedAmbiguousProposals: readRequiredInteger(record.skippedAmbiguous, `${label}.skippedAmbiguous`, filePath) }
+      : {}),
   };
 }
 
@@ -542,7 +546,7 @@ function readShadowSiblingSlotResonance(
   value: unknown,
   label: string,
   filePath: string,
-): DeepPartial<NonNullable<ClaimKeyQualityPassSummary["shadowSiblingSlotResonance"]>> {
+): DeepPartial<NonNullable<ReconcilePassSummary["shadowSiblingSlotResonance"]>> {
   const shadowKeys = new Set([
     "rule",
     "thresholdOnlyCandidateCount",
@@ -591,11 +595,7 @@ function readShadowSiblingSlotResonance(
  * @param filePath - Source scenario path for error messages.
  * @returns Deep-partial shadow-rule expectation.
  */
-function readShadowRule(
-  value: unknown,
-  label: string,
-  filePath: string,
-): DeepPartial<NonNullable<ClaimKeyQualityPassSummary["shadowSiblingSlotResonance"]>["rule"]> {
+function readShadowRule(value: unknown, label: string, filePath: string): DeepPartial<NonNullable<ReconcilePassSummary["shadowSiblingSlotResonance"]>["rule"]> {
   const ruleKeys = new Set(["supportClass", "minFamilyReuseCount", "minGroundedRatio", "minConfidence", "requiresSiblingSlotResonance"]);
   const record = readObject(value, label, filePath, ruleKeys);
 
@@ -624,7 +624,7 @@ function readShadowRule(
  * @param filePath - Source scenario path for error messages.
  * @returns Deep-partial shadow-bucket expectations.
  */
-function readShadowBuckets(value: unknown, label: string, filePath: string): DeepPartial<ClaimKeyQualityShadowBucketSummary[]> {
+function readShadowBuckets(value: unknown, label: string, filePath: string): DeepPartial<ReconcileShadowBucketSummary[]> {
   if (!Array.isArray(value)) {
     throw new Error(`Invalid scenario ${filePath}: ${label} must be an array.`);
   }
@@ -640,7 +640,7 @@ function readShadowBuckets(value: unknown, label: string, filePath: string): Dee
  * @param filePath - Source scenario path for error messages.
  * @returns Deep-partial shadow-bucket expectation.
  */
-function readShadowBucket(value: unknown, label: string, filePath: string): DeepPartial<ClaimKeyQualityShadowBucketSummary> {
+function readShadowBucket(value: unknown, label: string, filePath: string): DeepPartial<ReconcileShadowBucketSummary> {
   const bucketKeys = new Set(["bucket", "candidateCount", "resonanceApplicableCount", "resonanceFiredCount", "shadowQualifiedCount"]);
   const record = readObject(value, label, filePath, bucketKeys);
 
@@ -669,7 +669,7 @@ function readShadowBucket(value: unknown, label: string, filePath: string): Deep
  * @param filePath - Source scenario path for error messages.
  * @returns Deep-partial circuit-breaker expectation.
  */
-function readCircuitBreaker(value: unknown, label: string, filePath: string): DeepPartial<NonNullable<ClaimKeyQualityPassSummary["circuitBreaker"]>> {
+function readCircuitBreaker(value: unknown, label: string, filePath: string): DeepPartial<NonNullable<ReconcilePassSummary["circuitBreaker"]>> {
   const circuitBreakerKeys = new Set(["kind", "message"]);
   const record = readObject(value, label, filePath, circuitBreakerKeys);
 

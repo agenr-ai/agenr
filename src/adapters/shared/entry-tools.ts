@@ -1,4 +1,4 @@
-import { ENTRY_TYPES, EXPIRY_LEVELS, type EntryType, type Expiry } from "../../core/types.js";
+import { DURABLE_KINDS, EXPIRY_LEVELS, type DurableKind, type Expiry } from "../../core/types.js";
 import { formatErrorMessage } from "./errors.js";
 import { truncate } from "./memory-tool-format.js";
 import { readBooleanParam } from "./resolve-target.js";
@@ -25,7 +25,7 @@ const UPDATE_EXPIRY_DESCRIPTION = `${EXPIRY_DESCRIPTION} Accepted values: ${EXPI
 /**
  * Supported recall-mode values accepted by host memory tools.
  */
-const RECALL_MODES = ["auto", "entries", "episodes", "procedures"] as const;
+const RECALL_MODES = ["auto", "durables", "episodes", "procedures"] as const;
 
 export { ENTRY_TYPE_DESCRIPTION, EXPIRY_DESCRIPTION, RECALL_MODES, UPDATE_EXPIRY_DESCRIPTION };
 
@@ -67,8 +67,8 @@ export function parseExpiry(value: string | undefined): Expiry | undefined {
  * @param values - Candidate entry-type strings.
  * @returns Validated entry types.
  */
-export function parseEntryTypes(values: string[] | undefined): EntryType[] {
-  return normalizeStringArray(values).map((value) => parseEntryType(value));
+export function parseDurableKinds(values: string[] | undefined): DurableKind[] {
+  return normalizeStringArray(values).map((value) => parseDurableKind(value));
 }
 
 /**
@@ -77,9 +77,9 @@ export function parseEntryTypes(values: string[] | undefined): EntryType[] {
  * @param value - Candidate entry type.
  * @returns Validated entry type.
  */
-export function parseEntryType(value: string): EntryType {
-  if (ENTRY_TYPES.includes(value as EntryType)) {
-    return value as EntryType;
+export function parseDurableKind(value: string): DurableKind {
+  if (DURABLE_KINDS.includes(value as DurableKind)) {
+    return value as DurableKind;
   }
 
   throw new Error(`Unsupported entry type "${value}".`);

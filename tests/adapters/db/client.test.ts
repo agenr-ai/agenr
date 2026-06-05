@@ -10,7 +10,7 @@ import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/clien
 import { createRecallAdapter } from "../../../src/adapters/db/recall-adapter.js";
 import { computeProcedureRevisionHash, computeProcedureSourceHash } from "../../../src/core/procedures/hashing.js";
 import { composeProcedureRecallText } from "../../../src/core/procedures/recall-text.js";
-import type { Entry, Procedure } from "../../../src/core/types.js";
+import type { Durable, Procedure } from "../../../src/core/types.js";
 import { closeTestDatabases, removeTestPath } from "../../helpers/temp-paths.js";
 
 describe("createDatabase", () => {
@@ -39,9 +39,9 @@ describe("createDatabase", () => {
       content: "File URL database paths create their parent directories.",
     });
 
-    await database.insertEntry(entry, createEmbedding(0, 1), "file-url-hash");
+    await database.insertDurable(entry, createEmbedding(0, 1), "file-url-hash");
 
-    expect(await database.getEntry(entry.id)).toMatchObject({
+    expect(await database.getDurable(entry.id)).toMatchObject({
       id: entry.id,
       subject: "file URL database",
     });
@@ -62,9 +62,9 @@ describe("createDatabase", () => {
         content: "Relative file URL database paths create their parent directories.",
       });
 
-      await database.insertEntry(entry, createEmbedding(0, 1), "relative-file-url-hash");
+      await database.insertDurable(entry, createEmbedding(0, 1), "relative-file-url-hash");
 
-      expect(await database.getEntry(entry.id)).toMatchObject({
+      expect(await database.getDurable(entry.id)).toMatchObject({
         id: entry.id,
         subject: "relative file URL database",
       });
@@ -81,9 +81,9 @@ describe("createDatabase", () => {
       tags: ["arch", "decision"],
     });
 
-    await database.insertEntry(entry, createEmbedding(0, 1), "hash-a");
+    await database.insertDurable(entry, createEmbedding(0, 1), "hash-a");
 
-    const stored = await database.getEntry(entry.id);
+    const stored = await database.getDurable(entry.id);
 
     expect(stored).not.toBeNull();
     expect(stored?.id).toBe(entry.id);
@@ -107,9 +107,9 @@ describe("createDatabase", () => {
       claim_support_mode: "explicit",
     });
 
-    await expect(database.insertEntry(entry, createEmbedding(0, 1), "claim-lifecycle-hash")).resolves.toBe(entry.id);
+    await expect(database.insertDurable(entry, createEmbedding(0, 1), "claim-lifecycle-hash")).resolves.toBe(entry.id);
 
-    const stored = await database.getEntry(entry.id);
+    const stored = await database.getDurable(entry.id);
 
     expect(stored).toMatchObject({
       id: entry.id,
@@ -130,7 +130,7 @@ describe("createDatabase", () => {
     const database = await createTestDatabase();
     const entry = createEntry();
 
-    await database.insertEntry(entry, createEmbedding(0, 1), "hash-existing");
+    await database.insertDurable(entry, createEmbedding(0, 1), "hash-existing");
 
     const hashes = Array.from({ length: 205 }, (_, index) => `hash-${index}`);
     hashes[17] = "hash-existing";
@@ -145,7 +145,7 @@ describe("createDatabase", () => {
       norm_content_hash: "norm-existing",
     });
 
-    await database.insertEntry(entry, createEmbedding(0, 1), "hash-existing");
+    await database.insertDurable(entry, createEmbedding(0, 1), "hash-existing");
 
     const hashes = Array.from({ length: 205 }, (_, index) => `norm-${index}`);
     hashes[23] = "norm-existing";
@@ -160,8 +160,8 @@ describe("createDatabase", () => {
     const left = createEntry({ subject: "vector left" });
     const right = createEntry({ subject: "vector right" });
 
-    await database.insertEntry(left, createEmbedding(0, 1), "vector-left");
-    await database.insertEntry(right, createEmbedding(1, 1), "vector-right");
+    await database.insertDurable(left, createEmbedding(0, 1), "vector-left");
+    await database.insertDurable(right, createEmbedding(1, 1), "vector-right");
 
     try {
       const results = await adapter.vectorSearch({
@@ -184,7 +184,7 @@ describe("createDatabase", () => {
       content: "Batch write operations avoid the v0 pressure bottleneck.",
     });
 
-    await database.insertEntry(entry, createEmbedding(0, 1), "fts-hash");
+    await database.insertDurable(entry, createEmbedding(0, 1), "fts-hash");
 
     const results = await adapter.ftsSearch({ text: "pressure bottleneck", limit: 5 });
 
@@ -200,9 +200,9 @@ describe("createDatabase", () => {
     });
 
     await database.prepareForBulkWrites();
-    await database.insertEntry(entry, createEmbedding(0, 1), "bulk-insert-hash");
+    await database.insertDurable(entry, createEmbedding(0, 1), "bulk-insert-hash");
 
-    expect(await database.getEntry(entry.id)).not.toBeNull();
+    expect(await database.getDurable(entry.id)).not.toBeNull();
     expect(await adapter.ftsSearch({ text: "rebuild FTS", limit: 5 })).toEqual([]);
 
     await database.finalizeBulkWrites();
@@ -219,9 +219,9 @@ describe("createDatabase", () => {
     });
 
     await database.prepareForBulkWrites();
-    await expect(database.insertEntry(entry, createEmbedding(0, 1), "vector-drop-hash")).resolves.toBe(entry.id);
+    await expect(database.insertDurable(entry, createEmbedding(0, 1), "vector-drop-hash")).resolves.toBe(entry.id);
 
-    const stored = await database.getEntry(entry.id);
+    const stored = await database.getDurable(entry.id);
     expect(stored?.embedding?.[0]).toBeCloseTo(1);
 
     await database.finalizeBulkWrites();
@@ -236,10 +236,10 @@ describe("createDatabase", () => {
       norm_content_hash: "retired-norm",
     });
 
-    await database.insertEntry(entry, createEmbedding(0, 1), "retired-hash");
-    await database.retireEntry(entry.id, "superseded");
+    await database.insertDurable(entry, createEmbedding(0, 1), "retired-hash");
+    await database.retireDurable(entry.id, "superseded");
 
-    expect(await database.getEntry(entry.id)).toBeNull();
+    expect(await database.getDurable(entry.id)).toBeNull();
     expect(await database.findExistingHashes(["retired-hash"])).toEqual(new Set());
     expect(await database.findExistingNormHashes(["retired-norm"])).toEqual(new Set());
     expect(await adapter.ftsSearch({ text: "disappear", limit: 5 })).toEqual([]);
@@ -249,12 +249,12 @@ describe("createDatabase", () => {
     const database = await createTestDatabase();
     const entry = createEntry({ importance: 4, expiry: "temporary" });
 
-    await database.insertEntry(entry, createEmbedding(0, 1), "update-hash");
-    const updated = await database.updateEntry(entry.id, {
+    await database.insertDurable(entry, createEmbedding(0, 1), "update-hash");
+    const updated = await database.updateDurable(entry.id, {
       importance: 9,
       expiry: "permanent",
     });
-    const stored = await database.getEntry(entry.id);
+    const stored = await database.getDurable(entry.id);
 
     expect(updated).toBe(true);
     expect(stored?.importance).toBe(9);
@@ -273,9 +273,9 @@ describe("createDatabase", () => {
       claim_key: "agenr/default_model",
     });
 
-    await database.insertEntry(entry, createEmbedding(0, 1), "update-claim-hash");
-    await database.insertEntry(sibling, createEmbedding(1, 1), "sibling-claim-hash");
-    const updated = await database.updateEntry(entry.id, {
+    await database.insertDurable(entry, createEmbedding(0, 1), "update-claim-hash");
+    await database.insertDurable(sibling, createEmbedding(1, 1), "sibling-claim-hash");
+    const updated = await database.updateDurable(entry.id, {
       claim_key: "jim/home_city",
       claim_key_raw: " Jim / Home City ",
       claim_key_status: "trusted",
@@ -289,8 +289,8 @@ describe("createDatabase", () => {
       valid_from: "2026-03-01T00:00:00.000Z",
       valid_to: "2026-03-15T00:00:00.000Z",
     });
-    const stored = await database.getEntry(entry.id);
-    const claimMatches = await database.findActiveEntriesByClaimKey("jim/home_city");
+    const stored = await database.getDurable(entry.id);
+    const claimMatches = await database.findActiveDurablesByClaimKey("jim/home_city");
     const claimPrefixes = await database.getDistinctClaimKeyPrefixes();
     const claimKeyExamples = await database.getClaimKeyExamples?.();
 
@@ -327,23 +327,23 @@ describe("createDatabase", () => {
       claim_support_mode: "explicit",
     });
 
-    await database.insertEntry(entry, createEmbedding(0, 1), "replace-lifecycle-hash");
-    const updated = await database.updateEntry(entry.id, {
+    await database.insertDurable(entry, createEmbedding(0, 1), "replace-lifecycle-hash");
+    const updated = await database.updateDurable(entry.id, {
       claim_key: "jim/home_city",
       claim_key_raw: "Jim / Home City",
       claim_key_status: "trusted",
-      claim_key_source: "surgeon_compaction",
+      claim_key_source: "dreaming_reconcile",
       claim_key_confidence: 0.99,
       claim_key_rationale: 'Canonical normalization preserves the slot while rewriting "Jim / Home City".',
     });
-    const stored = await database.getEntry(entry.id);
+    const stored = await database.getDurable(entry.id);
 
     expect(updated).toBe(true);
     expect(stored).toMatchObject({
       claim_key: "jim/home_city",
       claim_key_raw: "Jim / Home City",
       claim_key_status: "trusted",
-      claim_key_source: "surgeon_compaction",
+      claim_key_source: "dreaming_reconcile",
       claim_key_confidence: 0.99,
       claim_key_rationale: 'Canonical normalization preserves the slot while rewriting "Jim / Home City".',
       claim_support_source_kind: undefined,
@@ -357,10 +357,10 @@ describe("createDatabase", () => {
     const database = await createTestDatabase();
     const entry = createEntry();
 
-    await database.insertEntry(entry, createEmbedding(0, 1), "invalid-status-hash");
+    await database.insertDurable(entry, createEmbedding(0, 1), "invalid-status-hash");
 
     await expect(
-      database.updateEntry(entry.id, {
+      database.updateDurable(entry.id, {
         claim_key: "jim/home_city",
         claim_key_status: "legacy" as Entry["claim_key_status"],
         claim_key_source: "manual",
@@ -374,10 +374,10 @@ describe("createDatabase", () => {
     const database = await createTestDatabase();
     const entry = createEntry();
 
-    await database.insertEntry(entry, createEmbedding(0, 1), "invalid-source-hash");
+    await database.insertDurable(entry, createEmbedding(0, 1), "invalid-source-hash");
 
     await expect(
-      database.updateEntry(entry.id, {
+      database.updateDurable(entry.id, {
         claim_key: "jim/home_city",
         claim_key_status: "trusted",
         claim_key_source: "handwritten" as Entry["claim_key_source"],
@@ -391,10 +391,10 @@ describe("createDatabase", () => {
     const database = await createTestDatabase();
     const entry = createEntry();
 
-    await database.insertEntry(entry, createEmbedding(0, 1), "invalid-support-mode-hash");
+    await database.insertDurable(entry, createEmbedding(0, 1), "invalid-support-mode-hash");
 
     await expect(
-      database.updateEntry(entry.id, {
+      database.updateDurable(entry.id, {
         claim_key: "jim/home_city",
         claim_key_status: "trusted",
         claim_key_source: "manual",
@@ -409,10 +409,10 @@ describe("createDatabase", () => {
     const database = await createTestDatabase();
     const entry = createEntry();
 
-    await database.insertEntry(entry, createEmbedding(0, 1), "invalid-confidence-hash");
+    await database.insertDurable(entry, createEmbedding(0, 1), "invalid-confidence-hash");
 
     await expect(
-      database.updateEntry(entry.id, {
+      database.updateDurable(entry.id, {
         claim_key: "jim/home_city",
         claim_key_status: "trusted",
         claim_key_source: "manual",
@@ -426,10 +426,10 @@ describe("createDatabase", () => {
     const database = await createTestDatabase();
     const entry = createEntry();
 
-    await database.insertEntry(entry, createEmbedding(0, 1), "partial-lifecycle-hash");
+    await database.insertDurable(entry, createEmbedding(0, 1), "partial-lifecycle-hash");
 
     await expect(
-      database.updateEntry(entry.id, {
+      database.updateDurable(entry.id, {
         claim_key: "jim/home_city",
       }),
     ).rejects.toThrow(/complete lifecycle payload/i);
@@ -439,35 +439,35 @@ describe("createDatabase", () => {
     const database = await createTestDatabase();
     const entry = createEntry({ importance: 4 });
 
-    await database.insertEntry(entry, createEmbedding(0, 1), "importance-only-hash");
+    await database.insertDurable(entry, createEmbedding(0, 1), "importance-only-hash");
 
-    await expect(database.updateEntry(entry.id, { importance: 8 })).resolves.toBe(true);
-    expect((await database.getEntry(entry.id))?.importance).toBe(8);
+    await expect(database.updateDurable(entry.id, { importance: 8 })).resolves.toBe(true);
+    expect((await database.getDurable(entry.id))?.importance).toBe(8);
   });
 
   it("supports expiry-only direct updates without lifecycle fields", async () => {
     const database = await createTestDatabase();
     const entry = createEntry({ expiry: "temporary" });
 
-    await database.insertEntry(entry, createEmbedding(0, 1), "expiry-only-hash");
+    await database.insertDurable(entry, createEmbedding(0, 1), "expiry-only-hash");
 
-    await expect(database.updateEntry(entry.id, { expiry: "core" })).resolves.toBe(true);
-    expect((await database.getEntry(entry.id))?.expiry).toBe("core");
+    await expect(database.updateDurable(entry.id, { expiry: "core" })).resolves.toBe(true);
+    expect((await database.getDurable(entry.id))?.expiry).toBe("core");
   });
 
   it("supports validity-only direct updates without lifecycle fields", async () => {
     const database = await createTestDatabase();
     const entry = createEntry();
 
-    await database.insertEntry(entry, createEmbedding(0, 1), "validity-only-hash");
+    await database.insertDurable(entry, createEmbedding(0, 1), "validity-only-hash");
 
     await expect(
-      database.updateEntry(entry.id, {
+      database.updateDurable(entry.id, {
         valid_from: "2026-03-01T00:00:00.000Z",
         valid_to: "2026-03-31T00:00:00.000Z",
       }),
     ).resolves.toBe(true);
-    expect(await database.getEntry(entry.id)).toMatchObject({
+    expect(await database.getDurable(entry.id)).toMatchObject({
       valid_from: "2026-03-01T00:00:00.000Z",
       valid_to: "2026-03-31T00:00:00.000Z",
     });
@@ -477,10 +477,10 @@ describe("createDatabase", () => {
     const database = await createTestDatabase();
     const entry = createEntry();
 
-    await database.insertEntry(entry, createEmbedding(0, 1), "invalid-validity-range-hash");
+    await database.insertDurable(entry, createEmbedding(0, 1), "invalid-validity-range-hash");
 
     await expect(
-      database.updateEntry(entry.id, {
+      database.updateDurable(entry.id, {
         valid_from: "2026-04-01T00:00:00.000Z",
         valid_to: "2026-03-01T00:00:00.000Z",
       }),
@@ -494,10 +494,10 @@ describe("createDatabase", () => {
       valid_to: "2026-03-31T00:00:00.000Z",
     });
 
-    await database.insertEntry(entry, createEmbedding(0, 1), "existing-validity-range-hash");
+    await database.insertDurable(entry, createEmbedding(0, 1), "existing-validity-range-hash");
 
     await expect(
-      database.updateEntry(entry.id, {
+      database.updateDurable(entry.id, {
         valid_from: "2026-04-15T00:00:00.000Z",
       }),
     ).rejects.toThrow("valid_from must be earlier than valid_to.");
@@ -517,27 +517,27 @@ describe("createDatabase", () => {
       claim_key: "jim/home_city",
     });
 
-    await database.insertEntry(original, createEmbedding(0, 1), "supersede-old-hash");
-    await database.insertEntry(replacement, createEmbedding(1, 1), "supersede-new-hash");
+    await database.insertDurable(original, createEmbedding(0, 1), "supersede-old-hash");
+    await database.insertDurable(replacement, createEmbedding(1, 1), "supersede-new-hash");
 
-    const superseded = await database.supersedeEntry(original.id, replacement.id, "update");
+    const superseded = await database.supersedeDurable(original.id, replacement.id, "update");
     const row = await database.execute({
       sql: `
         SELECT superseded_by, supersession_kind
-        FROM entries
+        FROM durables
         WHERE id = ?
       `,
       args: [original.id],
     });
-    const activeClaimMatches = await database.findActiveEntriesByClaimKey("jim/home_city");
+    const activeClaimMatches = await database.findActiveDurablesByClaimKey("jim/home_city");
 
     expect(superseded).toBe(true);
     expect(row.rows[0]).toMatchObject({
       superseded_by: replacement.id,
       supersession_kind: "update",
     });
-    expect(await database.getEntry(original.id)).toBeNull();
-    expect(await database.getEntry(replacement.id)).not.toBeNull();
+    expect(await database.getDurable(original.id)).toBeNull();
+    expect(await database.getDurable(replacement.id)).not.toBeNull();
     expect(activeClaimMatches.map((entry) => entry.id)).toEqual([replacement.id]);
     expect((await adapter.ftsSearch({ text: "Austin", limit: 5 })).map((result) => result.entry.id)).not.toContain(original.id);
 
@@ -557,14 +557,14 @@ describe("createDatabase", () => {
     const adapter = createRecallAdapter(database, createEmbeddingPort());
     const entry = createEntry();
 
-    await database.insertEntry(entry, createEmbedding(0, 1), "recall-hash");
+    await database.insertDurable(entry, createEmbedding(0, 1), "recall-hash");
     await adapter.recordRecallEvents({
       entryIds: [entry.id],
       query: "hexagonal",
       sessionKey: "session-1",
     });
 
-    const stored = await database.getEntry(entry.id);
+    const stored = await database.getDurable(entry.id);
 
     expect(stored?.recall_count).toBe(1);
     expect(stored?.last_recalled_at).toBeTruthy();
@@ -587,12 +587,12 @@ describe("createDatabase", () => {
 
     await expect(
       database.withTransaction(async (tx) => {
-        await tx.insertEntry(entry, createEmbedding(0, 1), "rollback-hash");
+        await tx.insertDurable(entry, createEmbedding(0, 1), "rollback-hash");
         throw new Error("rollback please");
       }),
     ).rejects.toThrow("rollback please");
 
-    expect(await database.getEntry(entry.id)).toBeNull();
+    expect(await database.getDurable(entry.id)).toBeNull();
   });
 
   it("round-trips tags as a JSON array", async () => {
@@ -601,9 +601,9 @@ describe("createDatabase", () => {
       tags: ["arch", "decision", "batch-write"],
     });
 
-    await database.insertEntry(entry, createEmbedding(0, 1), "tags-hash");
+    await database.insertDurable(entry, createEmbedding(0, 1), "tags-hash");
 
-    const stored = await database.getEntry(entry.id);
+    const stored = await database.getDurable(entry.id);
 
     expect(stored?.tags).toEqual(["arch", "decision", "batch-write"]);
   });
@@ -1061,7 +1061,7 @@ describe("createDatabase", () => {
   }
 });
 
-function createEntry(overrides: Partial<Entry> = {}): Entry {
+function createEntry(overrides: Partial<Durable> = {}): Durable {
   const now = new Date().toISOString();
   return {
     id: overrides.id ?? randomUUID(),

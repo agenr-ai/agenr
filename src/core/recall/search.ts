@@ -29,7 +29,7 @@ import {
   type RecallRankingPolicy,
   type RecallRrfTrace,
 } from "./trace.js";
-import type { EntryFilters, FtsCandidate, RecallCandidateEntry, RecallInput, RecallOutput, RecallRankingProfile, VectorCandidate } from "./types.js";
+import type { DurableFilters, FtsCandidate, RecallCandidateDurable, RecallInput, RecallOutput, RecallRankingProfile, VectorCandidate } from "./types.js";
 
 const HISTORICAL_NEIGHBORHOOD_FAMILIES: readonly NeighborhoodFamily[] = ["supersession_chain", "claim_key_sibling", "topic_family"];
 
@@ -100,7 +100,7 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
   const aroundDate = query.around !== undefined ? parseAroundDate(query.around) : inferAroundDate(text);
   const since = query.since ? parseRelativeDate(query.since) : null;
   const until = query.until ? parseRelativeDate(query.until) : null;
-  const filters = buildEntryFilters(query.types, query.tags, since, until);
+  const filters = buildDurableFilters(query.types, query.tags, since, until);
   const trace = options.trace ?? createNoopRecallTraceSink();
   const slotPolicyConfig = options.slotPolicyConfig;
   const summary = buildRecallTraceSummary({
@@ -298,7 +298,7 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
  * @returns Mutable summary object populated during recall execution.
  */
 function buildRecallTraceSummary(params: {
-  filters: EntryFilters | undefined;
+  filters: DurableFilters | undefined;
   limit: number;
   threshold: number;
   budget: number | null;
@@ -760,7 +760,7 @@ function applySeededEntryRerank(candidates: RankedCandidate[], trace: RecallNeig
  * @returns Normalized recency score in the 0-1 range.
  */
 function resolveRecencyScore(
-  entry: RecallCandidateEntry,
+  entry: RecallCandidateDurable,
   params: {
     asOfDate: Date | null;
     aroundDate: Date | null;
@@ -794,7 +794,7 @@ function resolveRecencyScore(
  * @param asOfDate - Explicit reference point requested by the caller.
  * @returns Normalized temporal fit score in the 0-1 range.
  */
-function resolveAsOfScore(entry: RecallCandidateEntry, asOfDate: Date): number {
+function resolveAsOfScore(entry: RecallCandidateDurable, asOfDate: Date): number {
   const validFrom = parseTimestamp(entry.valid_from);
   const validTo = parseTimestamp(entry.valid_to);
   if (validFrom || validTo) {
@@ -899,8 +899,8 @@ function applyHistoricalLineageBoosts(
  * @returns Additive historical bonus and any trust-aware suppression facts.
  */
 function resolveHistoricalLineageBonus(
-  entry: RecallCandidateEntry,
-  entries: RecallCandidateEntry[],
+  entry: RecallCandidateDurable,
+  entries: RecallCandidateDurable[],
   scoresById: ReadonlyMap<string, number>,
   candidateScore: number,
   aroundDate: Date | null,
@@ -993,7 +993,7 @@ function shapeHistoricalLineageBonus(base: number, candidateScore: number, succe
  * @param entry - Candidate under evaluation.
  * @returns True when the entry looks like a current-state peer.
  */
-function isPotentialCurrentPeer(entry: RecallCandidateEntry): boolean {
+function isPotentialCurrentPeer(entry: RecallCandidateDurable): boolean {
   return !entry.retired && entry.superseded_by === undefined;
 }
 
@@ -1006,9 +1006,9 @@ function isPotentialCurrentPeer(entry: RecallCandidateEntry): boolean {
  * @returns Historical peer relation, or null when the pair is unrelated.
  */
 function resolveHistoricalPeerRelation(
-  left: RecallCandidateEntry,
-  right: RecallCandidateEntry,
-  entries: RecallCandidateEntry[],
+  left: RecallCandidateDurable,
+  right: RecallCandidateDurable,
+  entries: RecallCandidateDurable[],
   slotPolicyConfig?: RecallExecutionOptions["slotPolicyConfig"],
 ): "claim_key" | "topic" | "tentative_claim_key_suppressed" | null {
   if (left.claim_key && right.claim_key && left.claim_key === right.claim_key) {
@@ -1032,8 +1032,8 @@ function resolveHistoricalPeerRelation(
  * @returns True when the entry may use claim-key lineage for boosting.
  */
 function canUseClaimKeyLineage(
-  entry: RecallCandidateEntry,
-  entries: RecallCandidateEntry[],
+  entry: RecallCandidateDurable,
+  entries: RecallCandidateDurable[],
   slotPolicyConfig?: RecallExecutionOptions["slotPolicyConfig"],
 ): boolean {
   if (!entry.claim_key) {
@@ -1058,7 +1058,7 @@ function canUseClaimKeyLineage(
  * @param claimKey - Claim-key slot identity under inspection.
  * @returns True when at least one sibling for the slot is explicitly trusted.
  */
-function hasTrustedClaimKeyEvidence(entries: RecallCandidateEntry[], claimKey: string): boolean {
+function hasTrustedClaimKeyEvidence(entries: RecallCandidateDurable[], claimKey: string): boolean {
   return entries.some((entry) => entry.claim_key === claimKey && entry.claim_key_status === "trusted");
 }
 
@@ -1069,7 +1069,7 @@ function hasTrustedClaimKeyEvidence(entries: RecallCandidateEntry[], claimKey: s
  * @param right - Right candidate.
  * @returns True when the subjects share enough topical overlap.
  */
-function sharesHistoricalTopic(left: RecallCandidateEntry, right: RecallCandidateEntry): boolean {
+function sharesHistoricalTopic(left: RecallCandidateDurable, right: RecallCandidateDurable): boolean {
   const leftTokens = tokenize(left.subject);
   const rightTokens = tokenize(right.subject);
   if (leftTokens.length === 0 || rightTokens.length === 0) {
@@ -1246,7 +1246,7 @@ async function applyEntryCrossEncoderRerank(
  * context to decide relevance without burning tokens on metadata the
  * classifier does not need.
  */
-function buildCrossEncoderPassageText(entry: RecallCandidateEntry): string {
+function buildCrossEncoderPassageText(entry: RecallCandidateDurable): string {
   const subject = entry.subject.trim();
   const content = entry.content.trim();
   if (subject.length === 0) {
@@ -1415,7 +1415,7 @@ function compareCandidatesForTrustedSlotRank(left: RankedCandidate, right: Ranke
  * @param trustedActiveClaimKeys - Claim-key slots that already have a trusted active sibling.
  * @returns True when a trust penalty should be applied.
  */
-function shouldPenalizeTentativeCurrentSibling(entry: RecallCandidateEntry, trustedActiveClaimKeys: Set<string>): boolean {
+function shouldPenalizeTentativeCurrentSibling(entry: RecallCandidateDurable, trustedActiveClaimKeys: Set<string>): boolean {
   return isPotentialCurrentPeer(entry) && entry.claim_key !== undefined && entry.claim_key_status !== "trusted" && trustedActiveClaimKeys.has(entry.claim_key);
 }
 
@@ -1484,7 +1484,7 @@ function hasSufficientReturnEvidence(candidate: RankedCandidate, query: RecallIn
  * @param queryText - Raw recall query text.
  * @returns True when the candidate matches at least one grounded query token.
  */
-function hasGroundedLexicalSupport(entry: RecallCandidateEntry, queryText: string): boolean {
+function hasGroundedLexicalSupport(entry: RecallCandidateDurable, queryText: string): boolean {
   const groundingTokens = getGroundingTokens(queryText);
   if (groundingTokens.length === 0) {
     return false;
@@ -1517,7 +1517,7 @@ function isWeaklyGroundedReminderQuery(queryText: string): boolean {
  * @param queryShape - Structured entity-attribute query metadata.
  * @returns True when the candidate provides strong enough structured evidence.
  */
-function hasEntityAttributeEvidence(entry: RecallCandidateEntry, queryShape: RecallInput["queryShape"]): boolean {
+function hasEntityAttributeEvidence(entry: RecallCandidateDurable, queryShape: RecallInput["queryShape"]): boolean {
   if (queryShape?.kind !== "entity_attribute") {
     return false;
   }
@@ -1659,8 +1659,8 @@ function mergeCandidates(
  * @param until - Optional upper created-at bound.
  * @returns Adapter filter payload, or undefined when no filters are active.
  */
-function buildEntryFilters(types: RecallInput["types"], tags: RecallInput["tags"], since: Date | null, until: Date | null): EntryFilters | undefined {
-  const filters: EntryFilters = {};
+function buildDurableFilters(types: RecallInput["types"], tags: RecallInput["tags"], since: Date | null, until: Date | null): DurableFilters | undefined {
+  const filters: DurableFilters = {};
 
   if (types && types.length > 0) {
     filters.types = types;
@@ -1874,7 +1874,7 @@ function canonicalizeRecallToken(token: string): string {
  * @returns Grounding phrase and coverage facts for shortlist sorting.
  */
 function computeGroundingSupport(
-  entry: RecallCandidateEntry,
+  entry: RecallCandidateDurable,
   groundingTokens: readonly string[],
 ): {
   phraseMatches: number;
@@ -1959,7 +1959,7 @@ function hasCanonicalConsecutivePhrase(haystack: readonly string[], needle: read
  * @param entry - Recall result entry.
  * @returns Approximate token count for the entry payload.
  */
-function estimateTokens(entry: RecallCandidateEntry): number {
+function estimateTokens(entry: RecallCandidateDurable): number {
   return (entry.subject.length + entry.content.length) / 4;
 }
 
@@ -2039,7 +2039,7 @@ function elapsedMs(startedAt: number): number {
  * Candidate shape after vector and FTS admission paths are merged.
  */
 interface MergedCandidate {
-  entry: RecallCandidateEntry;
+  entry: RecallCandidateDurable;
   vectorSim?: number;
 }
 
@@ -2047,7 +2047,7 @@ interface MergedCandidate {
  * Ranked candidate shape before the final full-entry hydration step.
  */
 interface RankedCandidate {
-  entry: RecallCandidateEntry;
+  entry: RecallCandidateDurable;
   score: number;
   scores: RecallOutput["scores"];
 }

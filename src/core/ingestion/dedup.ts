@@ -1,6 +1,6 @@
 import type { EmbeddingPort, LlmPort } from "../ports.js";
 import { composeEmbeddingText } from "../store/embedding-text.js";
-import type { StoreEntryInput } from "../types.js";
+import type { StoreDurableInput } from "../types.js";
 
 const DEFAULT_SIMILARITY_THRESHOLD = 0.75;
 const DEFAULT_DEDUP_CONCURRENCY = 10;
@@ -82,7 +82,7 @@ export interface DedupClusterDetail {
  */
 export interface DedupResult {
   /** Entries that survived dedup, preserved in original input order. */
-  survivors: StoreEntryInput[];
+  survivors: StoreDurableInput[];
   /** Original input indices aligned with `survivors` and `embeddings`. */
   survivorIndices: number[];
   /** Precomputed embeddings aligned with `survivors`. */
@@ -144,7 +144,7 @@ interface ArbitrationTask {
  * @param options - Optional clustering threshold and skip behavior.
  * @returns Surviving entries plus aligned embeddings and debug metadata.
  */
-export async function dedupBatch(entries: StoreEntryInput[], llm: LlmPort, embedding: EmbeddingPort, options: DedupOptions = {}): Promise<DedupResult> {
+export async function dedupBatch(entries: StoreDurableInput[], llm: LlmPort, embedding: EmbeddingPort, options: DedupOptions = {}): Promise<DedupResult> {
   const similarityThreshold = options.similarityThreshold ?? DEFAULT_SIMILARITY_THRESHOLD;
   const concurrency = normalizeDedupConcurrency(options.concurrency);
   if (entries.length === 0) {
@@ -174,7 +174,7 @@ export async function dedupBatch(entries: StoreEntryInput[], llm: LlmPort, embed
   }
 
   const clusters = clusterBySimilarity(embeddings, similarityThreshold);
-  const survivorByIndex = new Map<number, StoreEntryInput>();
+  const survivorByIndex = new Map<number, StoreDurableInput>();
   const clusterDetails: DedupClusterDetail[] = [];
   const warnings: string[] = [];
   const arbitrationTasks: ArbitrationTask[] = [];
@@ -233,7 +233,7 @@ export async function dedupBatch(entries: StoreEntryInput[], llm: LlmPort, embed
   }
 
   const survivorIndices: number[] = [];
-  const survivors: StoreEntryInput[] = [];
+  const survivors: StoreDurableInput[] = [];
   const survivorEmbeddings: number[][] = [];
 
   for (const [index] of entries.entries()) {
@@ -326,7 +326,7 @@ async function runBoundedArbitrations<TTask, TResult>(
 async function arbitrateCluster(
   clusterIndex: number,
   cluster: number[],
-  entries: StoreEntryInput[],
+  entries: StoreDurableInput[],
   llm: LlmPort,
   maxSimilarity: number,
 ): Promise<ArbitrationResult> {
@@ -374,7 +374,7 @@ async function arbitrateCluster(
 }
 
 /** Builds a no-op dedup result when arbitration is skipped. */
-function buildPassthroughResult(entries: StoreEntryInput[], embeddings: number[][], similarityThreshold: number): DedupResult {
+function buildPassthroughResult(entries: StoreDurableInput[], embeddings: number[][], similarityThreshold: number): DedupResult {
   return {
     survivors: [...entries],
     survivorIndices: entries.map((_, index) => index),
@@ -520,7 +520,7 @@ function buildDedupSystemPrompt(): string {
 }
 
 /** Builds the user prompt describing one similarity cluster. */
-function buildDedupUserPrompt(cluster: number[], entries: StoreEntryInput[]): string {
+function buildDedupUserPrompt(cluster: number[], entries: StoreDurableInput[]): string {
   const lines = [`Cluster of ${cluster.length} similar entries:`];
 
   for (const [localIndex, entryIndex] of cluster.entries()) {
@@ -587,7 +587,7 @@ function normalizeDedupDecision(decision: DedupDecision, clusterSize: number): N
 }
 
 /** Applies merged cluster content to the kept survivor entry. */
-function mergeClusterEntry(cluster: number[], keptIndex: number, mergedContent: string, entries: StoreEntryInput[]): StoreEntryInput {
+function mergeClusterEntry(cluster: number[], keptIndex: number, mergedContent: string, entries: StoreDurableInput[]): StoreDurableInput {
   const keptEntry = entries[keptIndex];
   if (!keptEntry) {
     throw new Error(`Cannot merge cluster entry ${keptIndex}: entry not found.`);

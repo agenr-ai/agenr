@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import type { EmbeddingPort } from "../../../core/ports.js";
 import { composeEmbeddingText } from "../../../core/store/embedding-text.js";
-import type { Entry, Expiry } from "../../../core/types.js";
+import type { Durable, Expiry } from "../../../core/types.js";
 import type { RecallEvalFixtureEntry, RecallEvalProvisionedEntrySummary } from "./contracts.js";
 import type { RecallEvalFixtureStore } from "./ports.js";
 
@@ -35,7 +35,7 @@ export interface RecallEvalProvisioningResult {
 /** Prepared direct-seed fixture ready for isolated database insertion. */
 interface PreparedFixture {
   fixtureIndex: number;
-  entry: Entry;
+  entry: Durable;
   contentHash: string;
   embeddingText: string;
 }
@@ -90,7 +90,7 @@ export async function provisionRecallEvalFixtures(params: {
 
   await params.store.withTransaction(async (store) => {
     for (const [index, fixture] of preparedBatch.insertionOrder.entries()) {
-      await store.insertEntry(fixture.entry, embeddings[index] ?? [], fixture.contentHash);
+      await store.insertDurable(fixture.entry, embeddings[index] ?? [], fixture.contentHash);
     }
   });
 
@@ -143,7 +143,7 @@ function prepareFixtures(caseId: string, fixtures: RecallEvalFixtureEntry[], pro
 }
 
 /** Builds the canonical entry row used for direct isolated fixture seeding. */
-function buildEntry(fixture: RecallEvalFixtureEntry, id: string, provisionedAt: string): Entry {
+function buildEntry(fixture: RecallEvalFixtureEntry, id: string, provisionedAt: string): Durable {
   const createdAt = fixture.created_at ?? provisionedAt;
   const updatedAt = fixture.updated_at ?? createdAt;
 
@@ -180,7 +180,7 @@ function buildEntry(fixture: RecallEvalFixtureEntry, id: string, provisionedAt: 
 }
 
 /** Captures the exact seeded state that existed before recall telemetry mutations. */
-function summarizePreparedFixture(entry: Entry): RecallEvalProvisionedEntrySummary {
+function summarizePreparedFixture(entry: Durable): RecallEvalProvisionedEntrySummary {
   return {
     id: entry.id,
     created_at: entry.created_at,

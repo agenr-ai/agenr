@@ -2,16 +2,16 @@ import type { ResultSet, Row } from "@libsql/client";
 
 import { parseClaimKeyStatus } from "../../core/claim-key-lifecycle.js";
 import { buildLexicalPlan, type LexicalSearchTier } from "../../core/recall/lexical.js";
-import type { EntryNeighborhoodRequest, NeighborhoodFamily } from "../../core/recall/neighborhood.js";
-import type { EntryFilters, FtsCandidate, RecallCandidateEntry } from "../../core/recall/types.js";
+import type { DurableNeighborhoodRequest, NeighborhoodFamily } from "../../core/recall/neighborhood.js";
+import type { DurableFilters, FtsCandidate, RecallCandidateDurable } from "../../core/recall/types.js";
 import type { EmbeddingPort, RecallPorts } from "../../core/ports.js";
-import type { Entry } from "../../core/types.js";
+import type { Durable } from "../../core/types.js";
 import { recordRecallEvent, type SqlExecutor } from "./queries.js";
 import {
-  buildActiveEntryClause,
+  buildActiveDurableClause,
   cosineSimilarity,
-  ENTRY_SELECT_COLUMNS,
-  mapEntryRow,
+  DURABLE_SELECT_COLUMNS,
+  mapDurableRow,
   readBoolean,
   readEmbedding,
   readNumber,
@@ -77,8 +77,8 @@ class LibsqlRecallAdapter implements RecallPorts {
   public async vectorSearch(params: {
     embedding: number[];
     limit: number;
-    filters?: EntryFilters;
-  }): Promise<Array<{ entry: RecallCandidateEntry; vectorSim: number }>> {
+    filters?: DurableFilters;
+  }): Promise<Array<{ entry: RecallCandidateDurable; vectorSim: number }>> {
     if (params.limit <= 0 || params.embedding.length === 0) {
       return [];
     }
@@ -96,9 +96,9 @@ class LibsqlRecallAdapter implements RecallPorts {
         sql: `
           SELECT
             ${RECALL_CANDIDATE_SELECT_COLUMNS}
-          FROM vector_top_k('idx_entries_embedding', vector32(?), ?) AS v
-          JOIN entries AS e ON e.rowid = v.id
-          WHERE ${buildActiveEntryClause("e")}
+          FROM vector_top_k('idx_durables_embedding', vector32(?), ?) AS v
+          JOIN durables AS e ON e.rowid = v.id
+          WHERE ${buildActiveDurableClause("e")}
             ${filters.sql}
           LIMIT ?
         `,
@@ -119,7 +119,7 @@ class LibsqlRecallAdapter implements RecallPorts {
   }
 
   /** Finds ranking-time FTS candidates using the exact -> AND -> OR cascade. */
-  public async ftsSearch(params: { text: string; limit: number; filters?: EntryFilters }): Promise<FtsCandidate[]> {
+  public async ftsSearch(params: { text: string; limit: number; filters?: DurableFilters }): Promise<FtsCandidate[]> {
     if (params.limit <= 0) {
       return [];
     }
@@ -140,13 +140,13 @@ class LibsqlRecallAdapter implements RecallPorts {
           sql: `
             SELECT
               ${RECALL_CANDIDATE_SELECT_COLUMNS},
-              bm25(entries_fts, 1.0, 2.0) AS rank
-            FROM entries_fts
-            JOIN entries AS e ON e.rowid = entries_fts.rowid
-            WHERE entries_fts MATCH ?
-              AND ${buildActiveEntryClause("e")}
+              bm25(durables_fts, 1.0, 2.0) AS rank
+            FROM durables_fts
+            JOIN durables AS e ON e.rowid = durables_fts.rowid
+            WHERE durables_fts MATCH ?
+              AND ${buildActiveDurableClause("e")}
               ${filters.sql}
-            ORDER BY bm25(entries_fts, 1.0, 2.0)
+            ORDER BY bm25(durables_fts, 1.0, 2.0)
             LIMIT ?
           `,
           args: [query, ...filters.args, params.limit],
@@ -184,7 +184,7 @@ class LibsqlRecallAdapter implements RecallPorts {
    * `includeRetired` is applied as a hard gate so the default ranking
    * profile never pulls retired rows into its candidate pool.
    */
-  public async expandNeighborhood(request: EntryNeighborhoodRequest): Promise<RecallCandidateEntry[]> {
+  public async expandNeighborhood(request: DurableNeighborhoodRequest): Promise<RecallCandidateDurable[]> {
     const normalizedIds = normalizeStrings(request.seedIds);
     if (normalizedIds.length === 0) {
       return [];
@@ -205,7 +205,7 @@ class LibsqlRecallAdapter implements RecallPorts {
       sql: `
         WITH seed AS (
           SELECT id, subject, claim_key, superseded_by
-          FROM entries
+          FROM durables
           WHERE id IN (${placeholders})
         ),
         seed_subjects AS (
@@ -227,7 +227,7 @@ class LibsqlRecallAdapter implements RecallPorts {
           SELECT
             ${RECALL_CANDIDATE_SELECT_COLUMNS},
             ${priorityExpression} AS family_priority
-          FROM entries AS e
+          FROM durables AS e
           WHERE e.id NOT IN (SELECT id FROM seed)
             ${retiredGate}
             AND (${membershipExpression})
@@ -244,7 +244,7 @@ class LibsqlRecallAdapter implements RecallPorts {
   }
 
   /** Hydrates full entries for the final ranked result set. */
-  public async hydrateEntries(ids: string[]): Promise<Entry[]> {
+  public async hydrateEntries(ids: string[]): Promise<Durable[]> {
     const normalizedIds = normalizeStrings(ids);
     if (normalizedIds.length === 0) {
       return [];
@@ -254,14 +254,14 @@ class LibsqlRecallAdapter implements RecallPorts {
     const result = await this.executor.execute({
       sql: `
         SELECT
-          ${ENTRY_SELECT_COLUMNS}
-        FROM entries AS e
+          ${DURABLE_SELECT_COLUMNS}
+        FROM durables AS e
         WHERE e.id IN (${placeholders})
       `,
       args: normalizedIds,
     });
 
-    return result.rows.map((row) => mapEntryRow(row));
+    return result.rows.map((row) => mapDurableRow(row));
   }
 
   /**
@@ -292,7 +292,7 @@ class LibsqlRecallAdapter implements RecallPorts {
  * @param alias - Table alias used in the query.
  * @returns SQL fragment prefixed with `AND` clauses plus the matching args.
  */
-function buildEntryFilterClause(filters: EntryFilters | undefined, alias: string): { sql: string; args: Array<string | number> } {
+function buildEntryFilterClause(filters: DurableFilters | undefined, alias: string): { sql: string; args: Array<string | number> } {
   if (!filters) {
     return { sql: "", args: [] };
   }
@@ -380,7 +380,7 @@ function compileLexicalTier(tier: LexicalSearchTier): string {
  * @param row - Raw libSQL result row.
  * @returns Candidate entry used during ranking.
  */
-function mapRecallCandidateRow(row: Row): RecallCandidateEntry {
+function mapRecallCandidateRow(row: Row): RecallCandidateDurable {
   const expiry = readRequiredString(row, "expiry");
 
   return {
@@ -388,7 +388,7 @@ function mapRecallCandidateRow(row: Row): RecallCandidateEntry {
     subject: readRequiredString(row, "subject"),
     content: readRequiredString(row, "content"),
     importance: readNumber(row, "importance", 0),
-    expiry: expiry as RecallCandidateEntry["expiry"],
+    expiry: expiry as RecallCandidateDurable["expiry"],
     embedding: readEmbedding(row, "embedding"),
     superseded_by: readOptionalString(row, "superseded_by"),
     claim_key: readOptionalString(row, "claim_key"),
@@ -402,7 +402,7 @@ function mapRecallCandidateRow(row: Row): RecallCandidateEntry {
 }
 
 /** Reads one optional claim-key status from a recall candidate row. */
-function readOptionalClaimKeyStatus(row: Row): RecallCandidateEntry["claim_key_status"] {
+function readOptionalClaimKeyStatus(row: Row): RecallCandidateDurable["claim_key_status"] {
   const value = readOptionalString(row, "claim_key_status");
   if (value === undefined) {
     return undefined;

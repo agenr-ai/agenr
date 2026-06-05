@@ -5,11 +5,11 @@
  * Adapters implement these interfaces to connect core to infrastructure.
  */
 
-import type { EntryUpdateInput, Episode, EpisodeSource, Entry, Procedure } from "./types.js";
+import type { DurableUpdateInput, Episode, EpisodeSource, Durable, Procedure } from "./types.js";
 import type { ClaimKeyEntityPrefixStats } from "./claim-key-entity-family.js";
 import type { EpisodeInput, EpisodeUpsertResult, TemporalWindow } from "./episode/types.js";
-import type { EntryNeighborhoodRequest } from "./recall/neighborhood.js";
-import type { EntryFilters, FtsCandidate, RecallCandidateEntry, VectorCandidate } from "./recall/types.js";
+import type { DurableNeighborhoodRequest } from "./recall/neighborhood.js";
+import type { DurableFilters, FtsCandidate, RecallCandidateDurable, VectorCandidate } from "./recall/types.js";
 
 // ── Database ─────────────────────────────────────────────────────────
 
@@ -18,7 +18,7 @@ import type { EntryFilters, FtsCandidate, RecallCandidateEntry, VectorCandidate 
  */
 export interface DatabasePort {
   /** Insert a new entry with its embedding. */
-  insertEntry(entry: Entry, embedding: number[], contentHash: string): Promise<string>;
+  insertDurable(entry: Durable, embedding: number[], contentHash: string): Promise<string>;
 
   /** Drop expensive indexes and triggers before a bulk write phase begins. */
   prepareForBulkWrites(): Promise<void>;
@@ -27,10 +27,10 @@ export interface DatabasePort {
   finalizeBulkWrites(): Promise<void>;
 
   /** Get entries by IDs. */
-  getEntries(ids: string[]): Promise<Entry[]>;
+  getDurables(ids: string[]): Promise<Durable[]>;
 
   /** Get a single entry by ID. */
-  getEntry(id: string): Promise<Entry | null>;
+  getDurable(id: string): Promise<Durable | null>;
 
   /** Check if content hashes already exist. Returns the set of existing hashes. */
   findExistingHashes(hashes: string[]): Promise<Set<string>>;
@@ -39,13 +39,13 @@ export interface DatabasePort {
   findExistingNormHashes(hashes: string[]): Promise<Set<string>>;
 
   /** Mark an entry as retired. */
-  retireEntry(id: string, reason?: string): Promise<boolean>;
+  retireDurable(id: string, reason?: string): Promise<boolean>;
 
   /** Supersede an active entry, linking it to the new entry that replaces it. */
-  supersedeEntry(oldId: string, newId: string, kind?: string, reason?: string): Promise<boolean>;
+  supersedeDurable(oldId: string, newId: string, kind?: string, reason?: string): Promise<boolean>;
 
   /** Find active entries with the given claim key. */
-  findActiveEntriesByClaimKey(claimKey: string): Promise<Entry[]>;
+  findActiveDurablesByClaimKey(claimKey: string): Promise<Durable[]>;
 
   /** Get distinct entity prefixes from existing claim keys. */
   getDistinctClaimKeyPrefixes(): Promise<string[]>;
@@ -57,7 +57,7 @@ export interface DatabasePort {
   getClaimKeyEntityPrefixStats?(): Promise<ClaimKeyEntityPrefixStats[]>;
 
   /** Update entry fields (importance, expiry, and temporal metadata). */
-  updateEntry(id: string, fields: EntryUpdateInput): Promise<boolean>;
+  updateDurable(id: string, fields: DurableUpdateInput): Promise<boolean>;
 
   /** Check if a file has been ingested (by path + hash). */
   getIngestLogEntry(filePath: string): Promise<{ fileHash: string; ingestedAt: string } | null>;
@@ -151,10 +151,10 @@ export interface RecallPorts {
   embed(text: string): Promise<number[]>;
 
   /** Search vector candidates with adapter-level filtering applied. */
-  vectorSearch(params: { embedding: number[]; limit: number; filters?: EntryFilters }): Promise<VectorCandidate[]>;
+  vectorSearch(params: { embedding: number[]; limit: number; filters?: DurableFilters }): Promise<VectorCandidate[]>;
 
   /** Search FTS candidates with adapter-level filtering applied. */
-  ftsSearch(params: { text: string; limit: number; filters?: EntryFilters }): Promise<FtsCandidate[]>;
+  ftsSearch(params: { text: string; limit: number; filters?: DurableFilters }): Promise<FtsCandidate[]>;
 
   /**
    * Expand a typed neighborhood of entries around the provided seed IDs.
@@ -165,10 +165,10 @@ export interface RecallPorts {
    * The default profile passes `includeRetired: false`; historical-state
    * passes `includeRetired: true` with a wider family set.
    */
-  expandNeighborhood?(request: EntryNeighborhoodRequest): Promise<RecallCandidateEntry[]>;
+  expandNeighborhood?(request: DurableNeighborhoodRequest): Promise<RecallCandidateDurable[]>;
 
   /** Hydrate fully populated entries for the final ranked result set. */
-  hydrateEntries(ids: string[]): Promise<Entry[]>;
+  hydrateEntries(ids: string[]): Promise<Durable[]>;
 
   /** Persist recall events for the returned entry set. */
   recordRecallEvents(params: { entryIds: string[]; query: string; sessionKey?: string }): Promise<void>;

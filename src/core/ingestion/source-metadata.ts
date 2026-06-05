@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import type { ParsedTranscript, StoreEntryInput } from "../types.js";
+import type { ParsedTranscript, StoreDurableInput } from "../types.js";
 
 const SNAPSHOT_STYLE_SOURCE_FILE_PATTERN = /\.jsonl\.(?:reset|deleted)\./iu;
 const IGNORED_PROJECT_DIRECTORY_NAMES = new Set(["", ".", "..", "users", "user", "home", "tmp", "var"]);
@@ -59,7 +59,7 @@ export function resolveTranscriptUserId(transcript: ParsedTranscript, entryUserI
  */
 export function resolveTranscriptProject(
   transcript: ParsedTranscript,
-  entry: Pick<StoreEntryInput, "project" | "subject" | "content" | "tags" | "source_context">,
+  entry: Pick<StoreDurableInput, "project" | "subject" | "content" | "tags" | "source_context">,
 ): string | undefined {
   const explicitProject = normalizeOptionalString(entry.project) ?? normalizeOptionalString(transcript.metadata.project);
   if (explicitProject) {
@@ -90,7 +90,7 @@ function deriveWorkingDirectoryProject(workingDirectory?: string): string | unde
 }
 
 /** Returns whether one entry visibly references the candidate project identifier. */
-function entryContainsProjectSignal(entry: Pick<StoreEntryInput, "subject" | "content" | "tags" | "source_context">, project: string): boolean {
+function entryContainsProjectSignal(entry: Pick<StoreDurableInput, "subject" | "content" | "tags" | "source_context">, project: string): boolean {
   const projectTokens = project.split("_").filter((token) => token.length > 0);
   if (projectTokens.length === 0) {
     return false;

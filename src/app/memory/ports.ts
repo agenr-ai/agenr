@@ -1,5 +1,5 @@
 import type { ClaimSlotPolicy } from "../../core/claim-slot-policy.js";
-import type { Entry } from "../../core/types.js";
+import type { Durable } from "../../core/types.js";
 
 /**
  * Recent recall event metadata returned by memory trace surfaces.
@@ -21,16 +21,16 @@ export interface ClaimFamily {
   /** Human-readable explanation of how the slot policy was chosen. */
   slotPolicyReason?: string;
   /** Family rows ordered oldest-first for lineage inspection. */
-  entries: Entry[];
+  entries: Durable[];
 }
 
 /**
  * Minimal provenance view available from the current v1 schema.
  */
 export interface EntryTrace {
-  entry: Entry;
-  supersededBy?: Entry;
-  supersedes: Entry[];
+  entry: Durable;
+  supersededBy?: Durable;
+  supersedes: Durable[];
   claimFamily?: ClaimFamily;
   recallEvents: EntryRecallEvent[];
 }
@@ -54,14 +54,14 @@ export interface MemoryRepository {
    * @param subject - Free-form subject text to resolve.
    * @returns Matching entry, or `null` when no match exists.
    */
-  findEntryBySubject(subject: string): Promise<Entry | null>;
+  findEntryBySubject(subject: string): Promise<Durable | null>;
 
   /**
    * Finds the most recently created entry from any state.
    *
    * @returns Newest entry, or `null` when none exist.
    */
-  findMostRecentEntry(): Promise<Entry | null>;
+  findMostRecentEntry(): Promise<Durable | null>;
 
   /**
    * Loads the current trace view for one entry.

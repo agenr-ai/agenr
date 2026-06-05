@@ -1,0 +1,61 @@
+{
+  "id": "claim-keys.dreaming.malformed-key-normalized",
+  "kind": "dreaming",
+  "description": "A malformed noncanonical key is normalized safely in place.",
+  "tags": ["claim-keys", "dreaming", "normalize", "trusted"],
+  "sandbox": {
+    "reset": true,
+    "preserveOnFailure": true
+  },
+  "setup": {
+    "seedEntries": [
+      {
+        "id": "normalize-1",
+        "type": "fact",
+        "subject": "Home city",
+        "content": "Jim lives in Denver, Colorado.",
+        "importance": 6,
+        "expiry": "permanent",
+        "claim_key": " Jim / Home City ",
+        "created_at": "2026-04-01T10:00:00.000Z",
+        "updated_at": "2026-04-01T10:00:00.000Z"
+      }
+    ]
+  },
+  "input": {
+    "pass": "claim_key_quality",
+    "dreamingOptions": {
+      "apply": true
+    }
+  },
+  "expect": {
+    "rows": [
+      {
+        "match": {
+          "id": "normalize-1"
+        },
+        "assert": {
+          "claim_key": "jim/home_city",
+          "claim_key_raw": "Jim / Home City",
+          "claim_key_status": "trusted",
+          "claim_key_source": "dreaming_reconcile"
+        }
+      }
+    ],
+    "rowCount": {
+      "durables": 1,
+      "activeDurables": 1,
+      "entriesWithClaimKey": 1,
+      "proposals": 0
+    },
+    "dreamingSummary": {
+      "status": "completed",
+      "summary": {
+        "counts": {
+          "identifiedNormalizations": 1,
+          "appliedNormalizations": 1
+        }
+      }
+    }
+  }
+}

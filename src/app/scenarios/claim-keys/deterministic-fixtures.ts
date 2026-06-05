@@ -52,7 +52,7 @@ export function createFixtureIngestionLlm(responses: ClaimKeyScenarioExtractionF
     },
     async completeJson<T>(_systemPrompt: string, _userMessage: string): Promise<T> {
       const next = readFixtureResponse(responses, usage);
-      return next as T;
+      return { durables: next.entries } as T;
     },
   };
 }

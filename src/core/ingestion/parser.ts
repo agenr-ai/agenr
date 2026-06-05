@@ -1,4 +1,4 @@
-import type { Expiry, StoreEntryInput } from "../types.js";
+import type { Expiry, StoreDurableInput } from "../types.js";
 import { describeClaimKeyNormalizationFailure, normalizeClaimKey } from "../claim-key.js";
 
 const IMPORTANCE_TIER_MAP: Record<string, number> = {
@@ -7,7 +7,7 @@ const IMPORTANCE_TIER_MAP: Record<string, number> = {
   low: 4,
 };
 
-const TYPE_ALIAS_MAP: Record<string, StoreEntryInput["type"]> = {
+const TYPE_ALIAS_MAP: Record<string, StoreDurableInput["type"]> = {
   fact: "fact",
   facts: "fact",
   decision: "decision",
@@ -52,7 +52,7 @@ const BLOCKED_SUBJECTS = new Set([
  * Parsed extraction response with accepted entries and validation warnings.
  */
 export interface ExtractionResponse {
-  entries: StoreEntryInput[];
+  entries: StoreDurableInput[];
   warnings: string[];
 }
 
@@ -79,15 +79,15 @@ export function parseExtractionResponse(raw: unknown): ExtractionResponse {
     };
   }
 
-  if (!Array.isArray(payload.entries)) {
+  if (!Array.isArray(payload.durables)) {
     return {
       entries: [],
-      warnings: ['Extraction response must have an "entries" array.'],
+      warnings: ['Extraction response must have a "durables" array.'],
     };
   }
 
-  const entries: StoreEntryInput[] = [];
-  for (const [index, value] of payload.entries.entries()) {
+  const entries: StoreDurableInput[] = [];
+  for (const [index, value] of payload.durables.entries()) {
     const entry = parseEntry(value, index, warnings);
     if (entry) {
       entries.push(entry);
@@ -118,7 +118,7 @@ function coerceResponseObject(raw: unknown): Record<string, unknown> | null {
 }
 
 /** Parses and validates one candidate extracted entry. */
-function parseEntry(value: unknown, index: number, warnings: string[]): StoreEntryInput | null {
+function parseEntry(value: unknown, index: number, warnings: string[]): StoreDurableInput | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     warnings.push(`Dropped entry ${index + 1}: entry must be an object.`);
     return null;
@@ -177,7 +177,7 @@ function parseEntry(value: unknown, index: number, warnings: string[]): StoreEnt
 }
 
 /** Maps raw type values into supported store entry types. */
-function coerceType(value: unknown): StoreEntryInput["type"] | null {
+function coerceType(value: unknown): StoreDurableInput["type"] | null {
   if (typeof value !== "string") {
     return null;
   }

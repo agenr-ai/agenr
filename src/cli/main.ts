@@ -8,7 +8,7 @@ import { registerInitCommand } from "./commands/init/index.js";
 import { registerRecallCommand } from "./commands/recall.js";
 import { registerScenariosCommand } from "./commands/scenarios.js";
 import { registerSetupCommand } from "./commands/setup.js";
-import { registerSurgeonCommand } from "./commands/surgeon.js";
+import { registerDreamingCommand } from "./commands/dreaming.js";
 import { registerTraceCommand } from "./commands/trace.js";
 
 /**
@@ -31,7 +31,7 @@ export function createProgram(): Command {
   registerScenariosCommand(program);
   registerSetupCommand(program);
   registerInitCommand(program);
-  registerSurgeonCommand(program);
+  registerDreamingCommand(program);
   registerTraceCommand(program);
 
   // Commands will be registered here as modules are built:

@@ -4,9 +4,9 @@
 
 ## What is agenr?
 
-Memory infrastructure for AI agents. The current system stores durable entries, generates episodic session summaries, syncs repo-authored procedural memory, runs hybrid entry recall plus time-aware episode recall, exposes live OpenClaw and Skeln host plugins, maintains corpus health through surgeon, and keeps a narrow internal recall-eval HTTP seam for `agenr-evals`.
+Memory infrastructure for AI agents. The current system stores durables, generates episodic session summaries, syncs repo-authored procedural memory, runs hybrid durable recall plus time-aware episode recall, exposes live OpenClaw and Skeln host plugins, maintains corpus health through dreaming, and keeps a narrow internal recall-eval HTTP seam for `agenr-evals`.
 
-Claim-key lifecycle management is a first-class part of the product. Durable memory, surgeon maintenance, and the repo-local claim-key scenario harness all depend on it.
+Claim-key lifecycle management is a first-class part of the product. Durable memory, dreaming maintenance, and the repo-local claim-key scenario harness all depend on it.
 
 ## Read This First
 
@@ -19,8 +19,8 @@ When you need subsystem detail, use the docs that already own it:
 - Recall and unified recall: [`docs/RECALL.md`](./docs/RECALL.md)
 - Episodic memory model: [`docs/EPISODES.md`](./docs/EPISODES.md)
 - Procedural memory model and sync pipeline: [`docs/PROCEDURES.md`](./docs/PROCEDURES.md)
-- Store pipeline and direct write paths: [`docs/STORE.md`](./docs/STORE.md)
-- Surgeon runtime, passes, and safety model: [`docs/SURGEON.md`](./docs/SURGEON.md)
+- Durable store pipeline and direct write paths: [`docs/DURABLES.md`](./docs/DURABLES.md)
+- Dreaming runtime, tiers, and safety model: [`docs/DREAMING.md`](./docs/DREAMING.md)
 - OpenClaw integration and plugin behavior: [`docs/OPENCLAW-PLUGIN.md`](./docs/OPENCLAW-PLUGIN.md)
 - Skeln integration and plugin behavior: [`docs/SKELN-PLUGIN.md`](./docs/SKELN-PLUGIN.md)
 - Internal recall-eval seam: [`docs/EVALS.md`](./docs/EVALS.md)
@@ -31,13 +31,13 @@ If this file and the code disagree, the code wins. If this file and one of the d
 
 - TypeScript, ESM, Node.js 24+
 - libsql/SQLite for storage (`@libsql/client`)
-- libsql vector indexes for entry and episode embeddings when supported
+- libsql vector indexes for durable and episode embeddings when supported
 - OpenAI-compatible embeddings via `text-embedding-3-small` (1024 dims)
 - `commander` for CLI argument parsing
 - `@clack/prompts` for interactive CLI flows
 - `chalk` for CLI output
 - `openclaw` for the production host integration
-- `@earendil-works/pi-agent-core` and `@earendil-works/pi-ai` for surgeon runtime loops
+- `@earendil-works/pi-agent-core` and `@earendil-works/pi-ai` for later dreaming LLM stages
 - pnpm (not npm/yarn)
 - vitest for tests, tsup for builds, eslint + prettier for validation
 
@@ -61,11 +61,11 @@ The architecture details live in [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md
 Do not re-derive subsystem behavior from memory. Start from the owning doc:
 
 - Durable ingest and transcript extraction behavior: [`docs/INGEST.md`](./docs/INGEST.md)
-- Claim-key-aware store pipeline details: [`docs/STORE.md`](./docs/STORE.md)
-- Entry recall, episode recall, unified routing, and telemetry: [`docs/RECALL.md`](./docs/RECALL.md)
+- Claim-key-aware store pipeline details: [`docs/DURABLES.md`](./docs/DURABLES.md)
+- Durable recall, episode recall, unified routing, and telemetry: [`docs/RECALL.md`](./docs/RECALL.md)
 - Episode lifecycle and historical-memory semantics: [`docs/EPISODES.md`](./docs/EPISODES.md)
 - Procedure authoring, storage, and sync semantics: [`docs/PROCEDURES.md`](./docs/PROCEDURES.md)
-- Surgeon passes, presets, safety guards, and runtime flow: [`docs/SURGEON.md`](./docs/SURGEON.md)
+- Dreaming tiers, scan/reconcile/apply flow, and runtime guards: [`docs/DREAMING.md`](./docs/DREAMING.md)
 - OpenClaw hooks, tools, prompt injection, continuity, and memory runtime behavior: [`docs/OPENCLAW-PLUGIN.md`](./docs/OPENCLAW-PLUGIN.md)
 - Eval transport boundaries and non-goals: [`docs/EVALS.md`](./docs/EVALS.md)
 
@@ -109,18 +109,14 @@ The detailed command behavior lives in the subsystem docs above. Current CLI ent
 agenr init
 agenr setup
 agenr ingest <path>
-agenr ingest entries <path>
+agenr ingest durables <path>
 agenr ingest episodes [path]
 agenr ingest procedures [path]
 agenr recall <query>
 agenr trace
-agenr surgeon run
-agenr surgeon status
-agenr surgeon history
-agenr surgeon backlog
-agenr surgeon actions <runId>
-agenr surgeon proposals <runId>
-agenr surgeon review <proposalId>
+agenr dream run
+agenr dream status
+agenr dream history
 agenr scenarios list
 agenr scenarios run
 agenr db reset

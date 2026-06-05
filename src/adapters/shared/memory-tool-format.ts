@@ -1,5 +1,5 @@
 import type { UnifiedRecallResult } from "../../app/recall/index.js";
-import type { Entry } from "../../core/types.js";
+import type { Durable } from "../../core/types.js";
 import type { RecallToolParams, StoreToolParams } from "./memory-tools.js";
 
 const DEFAULT_RECALL_LIMIT = 10;
@@ -266,7 +266,7 @@ export function buildRecallToolDetails(result: UnifiedRecallResult, extraDetails
  * @param entry - Stored agenr entry.
  * @returns Full entry text with metadata header.
  */
-export function formatFetchedEntryText(entry: Entry): string {
+export function formatFetchedEntryText(entry: Durable): string {
   const metadata = [
     `Entry ${entry.id}`,
     `subject=${entry.subject}`,
@@ -282,7 +282,7 @@ export function formatFetchedEntryText(entry: Entry): string {
 }
 
 /** Builds shared structured details for a successful fetch result. */
-export function buildFetchToolDetails(entry: Entry, extraDetails: Record<string, unknown> = {}): Record<string, unknown> {
+export function buildFetchToolDetails(entry: Durable, extraDetails: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     status: "ok",
     entryId: entry.id,

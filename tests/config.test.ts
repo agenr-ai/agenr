@@ -12,12 +12,10 @@ import {
   DEFAULT_CLAIM_EXTRACTION_CONCURRENCY,
   DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD,
   DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES,
-  DEFAULT_SURGEON_CONTEXT_LIMIT,
-  DEFAULT_SURGEON_COST_CAP,
-  DEFAULT_SURGEON_DAILY_COST_CAP,
-  DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE,
-  DEFAULT_SURGEON_RETIREMENT_PROTECT_RECALLED_DAYS,
-  DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS,
+  DEFAULT_DREAMING_CONTEXT_LIMIT_TOKENS,
+  DEFAULT_DREAMING_DAILY_COST_CAP,
+  DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE,
+  DEFAULT_DREAMING_PRUNE_PROTECT_RECALLED_DAYS,
   readConfig,
   resolveClaimExtractionConfig,
   resolveConfigPath,
@@ -64,16 +62,30 @@ describe("writeConfig", () => {
         eligibleTypes: [...DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES],
         concurrency: DEFAULT_CLAIM_EXTRACTION_CONCURRENCY,
       },
-      surgeon: {
-        costCap: DEFAULT_SURGEON_COST_CAP,
-        dailyCostCap: DEFAULT_SURGEON_DAILY_COST_CAP,
-        contextLimit: DEFAULT_SURGEON_CONTEXT_LIMIT,
-        passes: {
-          retirement: {
-            protectRecalledDays: DEFAULT_SURGEON_RETIREMENT_PROTECT_RECALLED_DAYS,
-            protectMinImportance: DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE,
-            skipRecentlyEvaluatedDays: DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS,
+      dreaming: {
+        dailyCostCap: DEFAULT_DREAMING_DAILY_COST_CAP,
+        contextLimitTokens: DEFAULT_DREAMING_CONTEXT_LIMIT_TOKENS,
+        tiers: {
+          light: { enabled: true },
+          standard: { enabled: true },
+          deep: { enabled: true, intervalHours: 168 },
+        },
+        stages: {
+          extract: {
+            maxSessionsPerRun: 8,
+            maxChunksPerSession: 12,
+            contextLookup: { enabled: true, maxNeighborsPerCandidate: 5 },
           },
+          project: { maxProfileDurables: 8 },
+          prune: {
+            protectRecalledDays: DEFAULT_DREAMING_PRUNE_PROTECT_RECALLED_DAYS,
+            protectMinImportance: DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE,
+          },
+        },
+        triggers: {
+          postSessionLightDream: true,
+          importanceThreshold: 25,
+          minIntervalMinutes: 30,
         },
       },
       features: DEFAULT_AGENR_FEATURE_FLAGS,
@@ -84,7 +96,7 @@ describe("writeConfig", () => {
     expect(raw).toContain('\n  "provider": "openai"');
     expect(raw).not.toContain('"apiPort"');
     expect(raw).not.toContain('"claimExtraction"');
-    expect(raw).not.toContain('"surgeon"');
+    expect(raw).not.toContain('"dreaming"');
     expect(raw.endsWith("\n")).toBe(true);
   });
 

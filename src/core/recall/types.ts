@@ -1,4 +1,4 @@
-import type { Entry, EntryType } from "../types.js";
+import type { Durable, DurableKind } from "../types.js";
 
 /**
  * Internal ranking profiles that adjust recall scoring for specific query intents.
@@ -30,7 +30,7 @@ export interface RecallInput {
   limit?: number;
   threshold?: number;
   budget?: number;
-  types?: EntryType[];
+  types?: DurableKind[];
   tags?: string[];
   since?: string;
   until?: string;
@@ -53,7 +53,7 @@ export interface RecallInput {
  * in the composite score directly now that RRF owns the fused signal.
  */
 export interface RecallOutput {
-  entry: Entry;
+  entry: Durable;
   score: number;
   scores: {
     /** Fused reciprocal rank fusion score used as the composite relevance signal. */
@@ -84,8 +84,8 @@ export interface RecallOutput {
 /**
  * Minimal entry fields needed during recall scoring before final hydration.
  */
-export type RecallCandidateEntry = Pick<
-  Entry,
+export type RecallCandidateDurable = Pick<
+  Durable,
   | "id"
   | "subject"
   | "content"
@@ -106,7 +106,7 @@ export type RecallCandidateEntry = Pick<
  * A candidate returned from vector search with ranking-time entry data.
  */
 export interface VectorCandidate {
-  entry: RecallCandidateEntry;
+  entry: RecallCandidateDurable;
   vectorSim: number;
 }
 
@@ -119,7 +119,7 @@ export interface VectorCandidate {
  * final composite score.
  */
 export interface FtsCandidate {
-  entry: RecallCandidateEntry;
+  entry: RecallCandidateDurable;
   rank: number;
   tier: "exact" | "all_tokens" | "any_tokens";
 }
@@ -127,8 +127,8 @@ export interface FtsCandidate {
 /**
  * Filters that the core recall pipeline can push down into adapter queries.
  */
-export interface EntryFilters {
-  types?: EntryType[];
+export interface DurableFilters {
+  types?: DurableKind[];
   tags?: string[];
   since?: Date;
   until?: Date;

@@ -1,5 +1,5 @@
 import type { EmbeddingPort, EpisodeDatabasePort, ProcedureDatabasePort, RecallPorts } from "../../../core/ports.js";
-import type { Entry, Procedure } from "../../../core/types.js";
+import type { Durable, Procedure } from "../../../core/types.js";
 import type { RecallEvalSnapshotMetadata } from "./contracts.js";
 
 /**
@@ -14,7 +14,7 @@ export interface RecallEvalFixtureStore {
    * @param contentHash - Stable content hash for the seeded row.
    * @returns Persisted entry ID.
    */
-  insertEntry(entry: Entry, embedding: number[], contentHash: string): Promise<string>;
+  insertDurable(entry: Durable, embedding: number[], contentHash: string): Promise<string>;
 
   /**
    * Inserts one exact fixture procedure into isolated eval storage.

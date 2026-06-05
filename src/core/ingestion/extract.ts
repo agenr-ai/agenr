@@ -1,5 +1,5 @@
 import type { LlmPort } from "../ports.js";
-import type { ParsedTranscript, StoreEntryInput, TranscriptChunk, TranscriptMessage } from "../types.js";
+import type { ParsedTranscript, StoreDurableInput, TranscriptChunk, TranscriptMessage } from "../types.js";
 import { parseExtractionResponse } from "./parser.js";
 import { buildChunkPrompt, buildExtractionSystemPrompt } from "./prompts.js";
 
@@ -34,7 +34,7 @@ export interface ExtractionOptions {
  * Aggregate extraction outcome across a parsed transcript.
  */
 export interface ExtractionResult {
-  entries: StoreEntryInput[];
+  entries: StoreDurableInput[];
   chunks: number;
   successfulChunks: number;
   failedChunks: number;
@@ -120,7 +120,7 @@ export async function extractFromTranscript(
     ? [buildChunk(transcript.messages, 0, transcript.messages.length - 1, 0)]
     : chunkTranscript(transcript.messages, DEFAULT_MAX_TOKENS_PER_CHUNK);
   const systemPrompt = buildExtractionSystemPrompt({ wholeFile, extractionContext: options.extractionContext });
-  const entries: StoreEntryInput[] = [];
+  const entries: StoreDurableInput[] = [];
   const warnings: string[] = [];
   const chunkDetails: ExtractionResult["chunkDetails"] = [];
   const previouslyExtracted: PreviouslyExtractedSubject[] = [];
@@ -298,7 +298,7 @@ function renderTranscriptMessage(message: TranscriptMessage): string {
 }
 
 /** Converts an extracted entry into the duplicate-suppression summary form. */
-function toPreviouslyExtractedSubject(entry: StoreEntryInput): PreviouslyExtractedSubject {
+function toPreviouslyExtractedSubject(entry: StoreDurableInput): PreviouslyExtractedSubject {
   return {
     type: entry.type,
     subject: entry.subject,

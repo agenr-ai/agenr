@@ -8,7 +8,7 @@ import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/clien
 import { createRecallAdapter } from "../../../src/adapters/db/recall-adapter.js";
 import type { EmbeddingPort } from "../../../src/core/ports.js";
 import { composeEmbeddingText } from "../../../src/core/store/embedding-text.js";
-import type { Entry } from "../../../src/core/types.js";
+import type { Durable } from "../../../src/core/types.js";
 import { closeTestDatabases, removeTestPath } from "../../helpers/temp-paths.js";
 import { recall } from "../../../src/core/recall/search.js";
 import { createNoopRecallTraceSink, type RecallExecutionTraceSummary } from "../../../src/core/recall/trace.js";
@@ -394,7 +394,7 @@ describe("recall concurrency", () => {
         created_at: TEST_NOW.toISOString(),
       });
       const embedding = hashToVector(composeEmbeddingText(entry), 1024);
-      await tx.insertEntry(entry, embedding, hashText(`concurrent:${entry.id}`));
+      await tx.insertDurable(entry, embedding, hashText(`concurrent:${entry.id}`));
       writeStarted.resolve();
       await finishWrite.promise;
     });
@@ -600,9 +600,9 @@ async function seedEntries(database: SqlDatabase): Promise<SeedMetadata> {
  * @param entry - Seed entry to persist.
  * @returns Promise that resolves after the insert finishes.
  */
-async function insertSeedEntry(database: SqlDatabase, entry: Entry): Promise<void> {
+async function insertSeedEntry(database: SqlDatabase, entry: Durable): Promise<void> {
   const embedding = hashToVector(composeEmbeddingText(entry), 1024);
-  await database.insertEntry(entry, embedding, hashText(`${entry.id}:${entry.subject}`));
+  await database.insertDurable(entry, embedding, hashText(`${entry.id}:${entry.subject}`));
 }
 
 /**
@@ -622,7 +622,7 @@ function createMockEmbeddingPort(): EmbeddingPort {
  * @param overrides - Field overrides for the seed entry.
  * @returns Fully populated entry object.
  */
-function buildEntry(overrides: Partial<Entry>): Entry {
+function buildEntry(overrides: Partial<Durable>): Durable {
   const createdAt = overrides.created_at ?? TEST_NOW.toISOString();
   const updatedAt = overrides.updated_at ?? createdAt;
 
@@ -721,9 +721,9 @@ function emptySeedMetadata(): SeedMetadata {
 function projectRecallResults(results: Awaited<ReturnType<typeof recall>>): Array<{
   subject: string;
   content: string;
-  type: Entry["type"];
+  type: Durable["type"];
   importance: number;
-  expiry: Entry["expiry"];
+  expiry: Durable["expiry"];
   tags: string[];
   created_at: string;
   score: number;

@@ -5,7 +5,7 @@ import { parseExtractionResponse } from "../../../src/core/ingestion/parser.js";
 describe("parseExtractionResponse", () => {
   it("parses a valid extraction response", () => {
     const result = parseExtractionResponse({
-      entries: [
+      durables: [
         {
           type: "fact",
           subject: "agenr knowledge database",
@@ -39,7 +39,7 @@ describe("parseExtractionResponse", () => {
 
   it("preserves optional metadata fields when extraction output already includes them", () => {
     const result = parseExtractionResponse({
-      entries: [
+      durables: [
         {
           type: "decision",
           subject: "project policy",
@@ -71,7 +71,7 @@ describe("parseExtractionResponse", () => {
   });
 
   it("returns an empty array for an empty entries list", () => {
-    expect(parseExtractionResponse({ entries: [] })).toEqual({
+    expect(parseExtractionResponse({ durables: [] })).toEqual({
       entries: [],
       warnings: [],
     });
@@ -79,7 +79,7 @@ describe("parseExtractionResponse", () => {
 
   it("coerces uppercase type aliases and maps legacy event labels to milestone", () => {
     const result = parseExtractionResponse({
-      entries: [
+      durables: [
         {
           type: "FACT",
           subject: "jim martin dietary preference",
@@ -109,7 +109,7 @@ describe("parseExtractionResponse", () => {
 
   it("rejects removed task aliases", () => {
     const result = parseExtractionResponse({
-      entries: [
+      durables: [
         {
           type: "task",
           subject: "semantic dedup follow-up",
@@ -126,7 +126,7 @@ describe("parseExtractionResponse", () => {
 
   it("maps importance tiers to numbers", () => {
     const result = parseExtractionResponse({
-      entries: [
+      durables: [
         {
           type: "fact",
           subject: "high signal",
@@ -156,7 +156,7 @@ describe("parseExtractionResponse", () => {
 
   it("defaults unrecognized importance strings to 6 and preserves valid numeric values", () => {
     const result = parseExtractionResponse({
-      entries: [
+      durables: [
         {
           type: "fact",
           subject: "fallback importance",
@@ -179,7 +179,7 @@ describe("parseExtractionResponse", () => {
 
   it("coerces expiry aliases", () => {
     const result = parseExtractionResponse({
-      entries: [
+      durables: [
         {
           type: "fact",
           subject: "permanent memory",
@@ -202,7 +202,7 @@ describe("parseExtractionResponse", () => {
 
   it('rejects "core" expiry from extraction and falls back to temporary', () => {
     const result = parseExtractionResponse({
-      entries: [
+      durables: [
         {
           type: "fact",
           subject: "reserved expiry",
@@ -219,7 +219,7 @@ describe("parseExtractionResponse", () => {
 
   it("rejects blocked subjects with a warning", () => {
     const result = parseExtractionResponse({
-      entries: [
+      durables: [
         {
           type: "fact",
           subject: "user",
@@ -236,7 +236,7 @@ describe("parseExtractionResponse", () => {
 
   it("rejects empty content", () => {
     const result = parseExtractionResponse({
-      entries: [
+      durables: [
         {
           type: "fact",
           subject: "empty content",
@@ -253,7 +253,7 @@ describe("parseExtractionResponse", () => {
 
   it("rejects short content", () => {
     const result = parseExtractionResponse({
-      entries: [
+      durables: [
         {
           type: "fact",
           subject: "short content",
@@ -270,7 +270,7 @@ describe("parseExtractionResponse", () => {
 
   it("normalizes tags to lowercase and caps them at four", () => {
     const result = parseExtractionResponse({
-      entries: [
+      durables: [
         {
           type: "fact",
           subject: "tag normalization",
@@ -287,7 +287,7 @@ describe("parseExtractionResponse", () => {
 
   it("passes valid entries through while warning on invalid entries in the same batch", () => {
     const result = parseExtractionResponse({
-      entries: [
+      durables: [
         {
           type: "fact",
           subject: "valid entry",
@@ -311,7 +311,7 @@ describe("parseExtractionResponse", () => {
 
   it("drops malformed claim keys while keeping the entry", () => {
     const result = parseExtractionResponse({
-      entries: [
+      durables: [
         {
           type: "fact",
           subject: "malformed claim key",

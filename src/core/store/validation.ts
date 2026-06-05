@@ -7,7 +7,7 @@ import {
   parseClaimSupportMode,
 } from "../claim-key-lifecycle.js";
 import { validateTemporalValidityRange } from "../temporal-validity.js";
-import { ENTRY_TYPES, EXPIRY_LEVELS, type Expiry, type StoreEntryInput } from "../types.js";
+import { DURABLE_KINDS, EXPIRY_LEVELS, type Expiry, type StoreDurableInput } from "../types.js";
 import { describeClaimKeyNormalizationFailure, normalizeClaimKey } from "../claim-key.js";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -16,7 +16,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
  * Result of validating a batch of store inputs.
  */
 export interface ValidationResult {
-  valid: StoreEntryInput[];
+  valid: StoreDurableInput[];
   rejected: number;
   errors: string[];
   warnings: string[];
@@ -27,7 +27,7 @@ export interface ValidationResult {
  */
 export interface IndexedValidEntry {
   inputIndex: number;
-  input: StoreEntryInput;
+  input: StoreDurableInput;
 }
 
 /**
@@ -47,7 +47,7 @@ export interface IndexedValidationResult {
  * @param inputs - Candidate entries to validate.
  * @returns Accepted entries plus aggregate rejection metadata.
  */
-export function validateEntries(inputs: StoreEntryInput[]): ValidationResult {
+export function validateEntries(inputs: StoreDurableInput[]): ValidationResult {
   const validation = validateEntriesWithIndexes(inputs);
 
   return {
@@ -64,7 +64,7 @@ export function validateEntries(inputs: StoreEntryInput[]): ValidationResult {
  * @param inputs - Candidate entries to validate.
  * @returns Accepted entries, rejected indexes, and validation errors.
  */
-export function validateEntriesWithIndexes(inputs: StoreEntryInput[]): IndexedValidationResult {
+export function validateEntriesWithIndexes(inputs: StoreDurableInput[]): IndexedValidationResult {
   const valid: IndexedValidEntry[] = [];
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -74,7 +74,7 @@ export function validateEntriesWithIndexes(inputs: StoreEntryInput[]): IndexedVa
     const subject = normalizeString(input.subject);
     const content = normalizeString(input.content);
 
-    if (!ENTRY_TYPES.includes(input.type)) {
+    if (!DURABLE_KINDS.includes(input.type)) {
       errors.push(`Entry ${index} has an invalid type.`);
       rejectedInputIndexes.push(index);
       continue;
@@ -261,7 +261,7 @@ function normalizeClaimSupportObservedAt(value: string, index: number, warnings:
 }
 
 /** Validates one optional claim-key lifecycle status. */
-function normalizeClaimKeyStatus(value: StoreEntryInput["claim_key_status"], index: number, warnings: string[]): StoreEntryInput["claim_key_status"] {
+function normalizeClaimKeyStatus(value: StoreDurableInput["claim_key_status"], index: number, warnings: string[]): StoreDurableInput["claim_key_status"] {
   const parsed = parseClaimKeyStatus(value);
   if (parsed) {
     return parsed;
@@ -275,7 +275,7 @@ function normalizeClaimKeyStatus(value: StoreEntryInput["claim_key_status"], ind
 }
 
 /** Validates one optional claim-key lifecycle source. */
-function normalizeClaimKeySource(value: StoreEntryInput["claim_key_source"], index: number, warnings: string[]): StoreEntryInput["claim_key_source"] {
+function normalizeClaimKeySource(value: StoreDurableInput["claim_key_source"], index: number, warnings: string[]): StoreDurableInput["claim_key_source"] {
   const parsed = parseClaimKeySource(value);
   if (parsed) {
     return parsed;
@@ -290,10 +290,10 @@ function normalizeClaimKeySource(value: StoreEntryInput["claim_key_source"], ind
 
 /** Validates one optional claim-key lifecycle confidence. */
 function normalizeClaimKeyConfidence(
-  value: StoreEntryInput["claim_key_confidence"],
+  value: StoreDurableInput["claim_key_confidence"],
   index: number,
   warnings: string[],
-): StoreEntryInput["claim_key_confidence"] {
+): StoreDurableInput["claim_key_confidence"] {
   if (value === undefined) {
     return undefined;
   }
@@ -308,7 +308,7 @@ function normalizeClaimKeyConfidence(
 }
 
 /** Validates one optional claim-support provenance mode. */
-function normalizeClaimSupportMode(value: StoreEntryInput["claim_support_mode"], index: number, warnings: string[]): StoreEntryInput["claim_support_mode"] {
+function normalizeClaimSupportMode(value: StoreDurableInput["claim_support_mode"], index: number, warnings: string[]): StoreDurableInput["claim_support_mode"] {
   const parsed = parseClaimSupportMode(value);
   if (parsed) {
     return parsed;

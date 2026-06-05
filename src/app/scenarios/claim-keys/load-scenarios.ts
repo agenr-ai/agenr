@@ -3,11 +3,11 @@ import path from "node:path";
 
 import type { ClaimKeyScenario } from "./types.js";
 import { readExpectations } from "./validation/expectations.js";
-import { readIngestInput, readSandboxConfig, readScenarioKind, readScenarioRoot, readSetup, readStoreInput, readSurgeonInput } from "./validation/input.js";
+import { readDreamingInput, readIngestInput, readSandboxConfig, readScenarioKind, readScenarioRoot, readSetup, readStoreInput } from "./validation/input.js";
 import { getDefaultClaimKeyScenarioRoot } from "./validation/scenario-root.js";
 import { readOptionalNotes, readOptionalString, readOptionalStringArray, readRequiredString } from "./validation/shared.js";
 
-const SUPPORTED_KINDS = ["ingest", "store", "surgeon"] as const;
+const SUPPORTED_KINDS = ["ingest", "store", "dreaming"] as const;
 
 /**
  * Returns the default repo-local claim-key scenario root.
@@ -20,7 +20,7 @@ export { getDefaultClaimKeyScenarioRoot } from "./validation/scenario-root.js";
 /**
  * Discovers, parses, and validates all claim-key scenario files under one root.
  *
- * @param rootDir - Root directory containing `ingest`, `store`, and `surgeon` subdirectories.
+ * @param rootDir - Root directory containing `ingest`, `store`, and `dreaming` subdirectories.
  * @returns Sorted loaded scenarios ready for listing or execution.
  */
 export async function loadClaimKeyScenarios(rootDir = getDefaultClaimKeyScenarioRoot()): Promise<ClaimKeyScenario[]> {
@@ -89,11 +89,11 @@ export function validateClaimKeyScenario(input: unknown, filePath: string, rootD
         kind,
         input: readStoreInput(record.input, filePath, rootDir),
       };
-    case "surgeon":
+    case "dreaming":
       return {
         ...base,
         kind,
-        input: readSurgeonInput(record.input, filePath, rootDir),
+        input: readDreamingInput(record.input, filePath, rootDir),
       };
   }
 }

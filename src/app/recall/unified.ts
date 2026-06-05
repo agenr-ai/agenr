@@ -101,15 +101,15 @@ export interface UnifiedRecallDeps {
  * Runs unified recall across semantic entries and episodic memory using routing rules.
  *
  * @param input - Agent-facing recall request.
- * @param deps - Episode database, entry recall ports, and embedding availability facts.
+ * @param deps - Episode database, durable recall ports, and embedding availability facts.
  * @returns Structured recall response with routing metadata and separate result sections.
  */
 export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedRecallDeps): Promise<UnifiedRecallResult> {
   const now = deps.now ?? new Date();
   const requested = normalizeMode(input.mode);
   const parsedTimeWindow = parseTemporalWindow(input.text, now);
-  const hasEntryFilters = hasEntryScopedFilters(input);
-  const topicAnchor = hasTopicAnchor(input.text, hasEntryFilters);
+  const hasDurableFilters = hasEntryScopedFilters(input);
+  const topicAnchor = hasTopicAnchor(input.text, hasDurableFilters);
   const entityAttributeQuery = detectEntityAttributeQuery(input.text);
   const historicalStatePattern = detectHistoricalStatePattern(input.text);
   const proceduralPattern = detectProceduralPattern(input.text);
@@ -128,7 +128,7 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
     requested,
     text: input.text,
     parsedTimeWindow: parsedTimeWindow !== null,
-    hasEntryFilters,
+    hasDurableFilters,
   });
   const notices: string[] = [];
   const episodePlan = routing.queried.includes("episodes")
@@ -183,7 +183,7 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
     parsedTimeWindow,
     routing,
   });
-  if (routing.queried.includes("entries") && entries.kind === "skipped") {
+  if (routing.queried.includes("durables") && entries.kind === "skipped") {
     notices.push(entries.notice);
   }
   if (entries.kind === "results") {
@@ -235,16 +235,21 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
  * @param params - Recall mode, query text, and detected signals.
  * @returns Stable routing metadata reported to the caller.
  */
-export function routeRecall(params: { requested: UnifiedRecallMode; text: string; parsedTimeWindow: boolean; hasEntryFilters: boolean }): UnifiedRecallRouting {
+export function routeRecall(params: {
+  requested: UnifiedRecallMode;
+  text: string;
+  parsedTimeWindow: boolean;
+  hasDurableFilters: boolean;
+}): UnifiedRecallRouting {
   const lower = params.text.trim().toLowerCase();
   const factual = /^(when did|when was|what decision|what preference|what(?:'s| is) the default|which version|what threshold)\b/.test(lower);
   const narrative = /\b(what happened|what were we doing|what was going on|summarize|catch me up)\b/.test(lower);
   const entityAttributeQuery = detectEntityAttributeQuery(params.text);
   const historicalState = detectHistoricalStatePattern(params.text) !== undefined;
   const procedural = detectProceduralPattern(params.text) !== undefined;
-  const topicAnchor = hasTopicAnchor(params.text, params.hasEntryFilters);
+  const topicAnchor = hasTopicAnchor(params.text, params.hasDurableFilters);
 
-  if (params.requested === "entries") {
+  if (params.requested === "durables") {
     return {
       requested: params.requested,
       detectedIntent: entityAttributeQuery
@@ -256,8 +261,8 @@ export function routeRecall(params: { requested: UnifiedRecallMode; text: string
             : params.parsedTimeWindow
               ? "mixed"
               : "factual",
-      queried: ["entries"],
-      reason: "Explicit mode=entries override.",
+      queried: ["durables"],
+      reason: "Explicit mode=durables override.",
     };
   }
 
@@ -285,8 +290,8 @@ export function routeRecall(params: { requested: UnifiedRecallMode; text: string
     return {
       requested: params.requested,
       detectedIntent: "entity_attribute",
-      queried: ["entries"],
-      reason: "The query asks for a specific entity attribute, so precision-first entry recall was used.",
+      queried: ["durables"],
+      reason: "The query asks for a specific entity attribute, so precision-first durable recall was used.",
     };
   }
 
@@ -294,7 +299,7 @@ export function routeRecall(params: { requested: UnifiedRecallMode; text: string
     return {
       requested: params.requested,
       detectedIntent: "historical_state",
-      queried: procedural ? ["procedures", "entries", "episodes"] : ["entries", "episodes"],
+      queried: procedural ? ["procedures", "durables", "episodes"] : ["durables", "episodes"],
       reason: params.parsedTimeWindow
         ? procedural
           ? "The query asks for steps around a previous state or transition and includes a supported time expression, so procedures, entries, and episodes were queried."
@@ -309,7 +314,7 @@ export function routeRecall(params: { requested: UnifiedRecallMode; text: string
     return {
       requested: params.requested,
       detectedIntent: "mixed",
-      queried: procedural ? ["procedures", "entries", "episodes"] : ["entries", "episodes"],
+      queried: procedural ? ["procedures", "durables", "episodes"] : ["durables", "episodes"],
       reason: procedural
         ? "The query combines a procedural ask with factual and time-based signals, so procedures, entries, and episodes were queried."
         : "The query combines a factual phrase with a supported time expression, so both entries and episodes were queried.",
@@ -320,7 +325,7 @@ export function routeRecall(params: { requested: UnifiedRecallMode; text: string
     return {
       requested: params.requested,
       detectedIntent: "mixed",
-      queried: ["procedures", "episodes", "entries"],
+      queried: ["procedures", "episodes", "durables"],
       reason:
         "The query asks for steps, includes a supported time expression, and names a topic anchor, so procedures were queried first with supporting episodes and entries.",
     };
@@ -339,7 +344,7 @@ export function routeRecall(params: { requested: UnifiedRecallMode; text: string
     return {
       requested: params.requested,
       detectedIntent: "mixed",
-      queried: ["procedures", "entries"],
+      queried: ["procedures", "durables"],
       reason: "The query asks for steps and includes a topic anchor, so procedures were queried first with supporting entries.",
     };
   }
@@ -357,8 +362,8 @@ export function routeRecall(params: { requested: UnifiedRecallMode; text: string
     return {
       requested: params.requested,
       detectedIntent: "factual",
-      queried: ["entries"],
-      reason: "The query looks like an exact fact lookup, so entry recall was used.",
+      queried: ["durables"],
+      reason: "The query looks like an exact fact lookup, so durable recall was used.",
     };
   }
 
@@ -366,7 +371,7 @@ export function routeRecall(params: { requested: UnifiedRecallMode; text: string
     return {
       requested: params.requested,
       detectedIntent: "mixed",
-      queried: ["episodes", "entries"],
+      queried: ["episodes", "durables"],
       reason: "The query combines narrative time-based recall with a topic anchor, so both episodes and entries were queried.",
     };
   }
@@ -384,7 +389,7 @@ export function routeRecall(params: { requested: UnifiedRecallMode; text: string
     return {
       requested: params.requested,
       detectedIntent: "mixed",
-      queried: ["episodes", "entries"],
+      queried: ["episodes", "durables"],
       reason: "The query contains both a supported time expression and a topic anchor, so both episodes and entries were queried.",
     };
   }
@@ -392,10 +397,10 @@ export function routeRecall(params: { requested: UnifiedRecallMode; text: string
   return {
     requested: params.requested,
     detectedIntent: "factual",
-    queried: ["entries"],
+    queried: ["durables"],
     reason: params.parsedTimeWindow
-      ? "The query did not clearly ask for narrative recall, so entry recall was used."
-      : "No supported episode time window was detected, so entry recall was used.",
+      ? "The query did not clearly ask for narrative recall, so durable recall was used."
+      : "No supported episode time window was detected, so durable recall was used.",
   };
 }
 
@@ -562,7 +567,7 @@ function resolveProcedureCrossEncoderOptions(
 }
 
 /**
- * Executes entry recall when the router selected it and embeddings are available.
+ * Executes durable recall when the router selected it and embeddings are available.
  *
  * @param params - Recall inputs, dependencies, parsed time window, and routing result.
  * @returns Entry results, a skip notice, or an error for explicit entry mode failures.
@@ -583,7 +588,7 @@ async function maybeRunEntryRecall(params: {
       notice: string;
     }
 > {
-  if (!params.routing.queried.includes("entries")) {
+  if (!params.routing.queried.includes("durables")) {
     return {
       kind: "results",
       results: [],
@@ -633,7 +638,7 @@ function composeRecallTrace(upstream: RecallTraceSink | undefined, onSummary: (s
  *
  * @param input - Unified recall request.
  * @param parsedTimeWindow - Optional resolved episode-style time window.
- * @returns Core entry recall input.
+ * @returns Core durable recall input.
  */
 function buildEntryRecallInput(
   input: UnifiedRecallInput,
@@ -880,11 +885,11 @@ function normalizeEntityAttributeText(text: string): string {
  * @returns Normalized recall mode.
  */
 function normalizeMode(value: UnifiedRecallMode | undefined): UnifiedRecallMode {
-  return value === "entries" || value === "episodes" || value === "procedures" ? value : "auto";
+  return value === "durables" || value === "episodes" || value === "procedures" ? value : "auto";
 }
 
 /**
- * Returns whether the request uses filters that only affect entry recall in phase 4.
+ * Returns whether the request uses filters that only affect durable recall in phase 4.
  *
  * @param input - Unified recall input.
  * @returns True when entry-only filters were supplied.
@@ -907,12 +912,12 @@ function hasNonEmptyArray<TValue>(value: TValue[] | undefined): boolean {
  * Detects whether a query includes a topic anchor that benefits from semantic episode search.
  *
  * @param text - Raw user query.
- * @param hasEntryFilters - Whether entry-scoped filters were supplied.
+ * @param hasDurableFilters - Whether entry-scoped filters were supplied.
  * @returns True when the query carries topical anchor text.
  */
-function hasTopicAnchor(text: string, hasEntryFilters: boolean): boolean {
+function hasTopicAnchor(text: string, hasDurableFilters: boolean): boolean {
   const lower = text.trim().toLowerCase();
-  return hasEntryFilters || /\b(about|regarding|with)\b/.test(lower) || /\bon\s+[a-z][a-z0-9_-]{1,}\b/.test(lower);
+  return hasDurableFilters || /\b(about|regarding|with)\b/.test(lower) || /\bon\s+[a-z][a-z0-9_-]{1,}\b/.test(lower);
 }
 
 /**

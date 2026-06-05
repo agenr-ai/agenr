@@ -6,7 +6,7 @@ import {
   detectClaimKeySingletonAliasCandidatesFromStats,
   summarizeClaimKeyEntityPrefixStats,
 } from "../../src/core/claim-key-entity-family.js";
-import type { Entry } from "../../src/core/types.js";
+import type { Durable } from "../../src/core/types.js";
 
 describe("detectClaimKeyEntityFamilyCandidates", () => {
   it("detects strong short-name and full-name style family splits when structural grounding is repeated", () => {
@@ -287,7 +287,7 @@ describe("detectClaimKeySingletonAliasCandidates", () => {
   });
 });
 
-function buildEntry(overrides: Partial<Entry> & Pick<Entry, "id" | "subject" | "claim_key">): Entry {
+function buildEntry(overrides: Partial<Durable> & Pick<Durable, "id" | "subject" | "claim_key">): Durable {
   return {
     id: overrides.id,
     type: overrides.type ?? "fact",

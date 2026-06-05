@@ -1,11 +1,11 @@
-import type { ClaimKeyQualityPassSummary, SurgeonRunProposal, SurgeonRunStatus } from "../../../core/surgeon/types.js";
-import type { Entry, StoreEntryInput, StoreResult } from "../../../core/types.js";
+import type { ReconcilePassSummary, DreamRunProposal, DreamRunStatus } from "../../../core/dreaming/types.js";
+import type { Durable, StoreDurableInput, StoreResult } from "../../../core/types.js";
 import type { DeepPartial } from "./validation/shared.js";
 
 /**
  * Supported claim-key scenario kinds.
  */
-export type ClaimKeyScenarioKind = "ingest" | "store" | "surgeon";
+export type ClaimKeyScenarioKind = "ingest" | "store" | "dreaming";
 
 /**
  * Optional sandbox controls for one scenario file.
@@ -22,7 +22,7 @@ export interface ClaimKeyScenarioSandboxConfig {
  */
 export interface ClaimKeyScenarioSeedEntry extends Partial<
   Pick<
-    Entry,
+    Durable,
     | "id"
     | "type"
     | "subject"
@@ -54,9 +54,9 @@ export interface ClaimKeyScenarioSeedEntry extends Partial<
     | "updated_at"
   >
 > {
-  type: Entry["type"];
-  subject: Entry["subject"];
-  content: Entry["content"];
+  type: Durable["type"];
+  subject: Durable["subject"];
+  content: Durable["content"];
 }
 
 /**
@@ -106,30 +106,30 @@ export interface ClaimKeyScenarioStoreOptions {
  * Store scenario input payload.
  */
 export interface ClaimKeyStoreScenarioInput {
-  entries: StoreEntryInput[];
+  entries: StoreDurableInput[];
   storeOptions?: ClaimKeyScenarioStoreOptions;
   modelFixtures?: ClaimKeyScenarioModelFixtures;
 }
 
 /**
- * Narrow surgeon options supported by the scenario runner.
+ * Narrow dreaming options supported by the scenario runner.
  */
-export interface ClaimKeyScenarioSurgeonOptions {
+export interface ClaimKeyScenarioDreamingOptions {
   apply?: boolean;
   verbose?: boolean;
   project?: string | null;
-  entryIds?: string[];
+  durableIds?: string[];
   claimKeyPrefix?: string;
   type?: string;
   includeInactive?: boolean;
 }
 
 /**
- * Surgeon scenario input payload.
+ * Dreaming scenario input payload.
  */
-export interface ClaimKeySurgeonScenarioInput {
+export interface ClaimKeyDreamingScenarioInput {
   pass: "claim_key_quality";
-  surgeonOptions?: ClaimKeyScenarioSurgeonOptions;
+  dreamingOptions?: ClaimKeyScenarioDreamingOptions;
   modelFixtures?: ClaimKeyScenarioModelFixtures;
 }
 
@@ -187,7 +187,7 @@ export interface ClaimKeyScenarioProposalMatch {
  */
 export interface ClaimKeyScenarioProposalAssert {
   issueKind?: string;
-  scope?: SurgeonRunProposal["scope"];
+  scope?: DreamRunProposal["scope"];
   source?: string;
   eligibleForApply?: boolean;
   confidence?: number | null;
@@ -213,8 +213,8 @@ export interface ClaimKeyScenarioWarningExpectation {
  * Row-count expectations supported in v1.
  */
 export interface ClaimKeyScenarioRowCountExpectation {
-  entries?: number;
-  activeEntries?: number;
+  durables?: number;
+  activeDurables?: number;
   entriesWithClaimKey?: number;
   proposals?: number;
 }
@@ -222,9 +222,9 @@ export interface ClaimKeyScenarioRowCountExpectation {
 /**
  * Surgeon summary assertion shape supported by the runner.
  */
-export interface ClaimKeyScenarioSurgeonSummaryExpectation {
-  status?: SurgeonRunStatus;
-  summary?: DeepPartial<ClaimKeyQualityPassSummary> | null;
+export interface ClaimKeyScenarioDreamingSummaryExpectation {
+  status?: DreamRunStatus;
+  summary?: DeepPartial<ReconcilePassSummary> | null;
 }
 
 /**
@@ -236,7 +236,7 @@ export interface ClaimKeyScenarioExpectations {
   rowCount?: ClaimKeyScenarioRowCountExpectation;
   proposals?: ClaimKeyScenarioProposalExpectation[];
   storeResult?: Partial<StoreResult> | null;
-  surgeonSummary?: ClaimKeyScenarioSurgeonSummaryExpectation | null;
+  dreamingSummary?: ClaimKeyScenarioDreamingSummaryExpectation | null;
 }
 
 /**
@@ -269,8 +269,8 @@ export type ClaimKeyScenario =
     }
   | {
       id: string;
-      kind: "surgeon";
-      input: ClaimKeySurgeonScenarioInput;
+      kind: "dreaming";
+      input: ClaimKeyDreamingScenarioInput;
       expect: ClaimKeyScenarioExpectations;
       filePath: string;
       description?: string;
@@ -309,8 +309,8 @@ export interface ClaimKeyScenarioAssertionResult {
  * Aggregated row counts captured after one scenario run.
  */
 export interface ClaimKeyScenarioRowCounts {
-  entries: number;
-  activeEntries: number;
+  durables: number;
+  activeDurables: number;
   entriesWithClaimKey: number;
   proposals: number;
 }
@@ -323,8 +323,8 @@ export interface ClaimKeyScenarioProposalSnapshot {
   runId: string;
   groupId: string;
   issueKind: string;
-  scope: SurgeonRunProposal["scope"];
-  entryIds: string[];
+  scope: DreamRunProposal["scope"];
+  durableIds: string[];
   currentClaimKeys: string[];
   proposedClaimKeys: string[];
   rationale: string;
@@ -337,11 +337,11 @@ export interface ClaimKeyScenarioProposalSnapshot {
 /**
  * Structured surgeon summary snapshot used by artifacts and assertions.
  */
-export interface ClaimKeyScenarioSurgeonSummarySnapshot {
+export interface ClaimKeyScenarioDreamingSummarySnapshot {
   runId: string;
-  status: SurgeonRunStatus;
+  status: DreamRunStatus;
   passType: string;
-  summary: ClaimKeyQualityPassSummary | null;
+  summary: ReconcilePassSummary | null;
 }
 
 /**
@@ -349,11 +349,11 @@ export interface ClaimKeyScenarioSurgeonSummarySnapshot {
  */
 export interface ClaimKeyScenarioActualState {
   warnings: string[];
-  rows: Entry[];
+  rows: Durable[];
   rowCount: ClaimKeyScenarioRowCounts;
   proposals: ClaimKeyScenarioProposalSnapshot[];
   storeResult: StoreResult | null;
-  surgeonSummary: ClaimKeyScenarioSurgeonSummarySnapshot | null;
+  dreamingSummary: ClaimKeyScenarioDreamingSummarySnapshot | null;
   executionError?: string;
 }
 
