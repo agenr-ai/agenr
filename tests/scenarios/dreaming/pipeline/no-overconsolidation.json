@@ -1,0 +1,54 @@
+{
+  "id": "no-overconsolidation",
+  "description": "restated known facts are dropped and distinct durables are never collapsed into one",
+  "now": "2026-04-10T12:00:00.000Z",
+  "contextLookupEnabled": true,
+  "seedDurables": [
+    {
+      "id": "pref-coffee",
+      "subject": "Coffee preference",
+      "content": "The user drinks their coffee black with no sugar.",
+      "type": "preference",
+      "claim_key": "user/coffee_preference"
+    },
+    {
+      "id": "pref-editor",
+      "subject": "Editor preference",
+      "content": "The user's preferred editor is Neovim.",
+      "type": "preference",
+      "claim_key": "user/editor_preference"
+    }
+  ],
+  "episodes": [
+    {
+      "id": "ep-mixed-preferences",
+      "summary": "The user reconfirmed they drink their coffee black with no sugar, kept using Neovim, and added that they prefer tabs over spaces for indentation."
+    }
+  ],
+  "extraction": {
+    "minedDurables": [
+      {
+        "type": "preference",
+        "subject": "Coffee preference",
+        "content": "The user drinks their coffee black with no sugar.",
+        "claim_key": "user/coffee_preference"
+      },
+      {
+        "type": "preference",
+        "subject": "Indentation preference",
+        "content": "The user prefers tabs over spaces for indentation.",
+        "claim_key": "user/indentation_preference"
+      }
+    ]
+  },
+  "expect": {
+    "durablesInserted": 1,
+    "revisionsApplied": 0,
+    "activeByClaimKey": [
+      { "claimKey": "user/coffee_preference", "expectCount": 1 },
+      { "claimKey": "user/editor_preference", "expectCount": 1 },
+      { "claimKey": "user/indentation_preference", "expectCount": 1, "contentIncludes": "tabs over spaces" }
+    ],
+    "stillActiveIds": ["pref-coffee", "pref-editor"]
+  }
+}

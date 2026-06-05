@@ -1,8 +1,7 @@
+import { USER_ABORT_ERROR } from "../../abort.js";
 import type { ClaimKeyCircuitBreakerTrip } from "../types.js";
 import type { ReconcilePassContext } from "../pass-context.js";
 import { evaluateCircuitBreaker, recordAppliedRepair, recordCollision } from "./circuit-breaker.js";
-
-const USER_ABORT_ERROR = "Run aborted by user (SIGINT).";
 
 /**
  * Marks the pass as aborted when the run signal has been cancelled.

@@ -17,7 +17,7 @@ vi.mock("../../../../src/adapters/openclaw/llm/openclaw-llm-client.js", () => ({
 import { createDatabase, type SqlDatabase } from "../../../../src/adapters/db/client.js";
 import { createMemoryRepository } from "../../../../src/adapters/db/memory-repository.js";
 import { createSessionStartRepository } from "../../../../src/adapters/db/session-start-repository.js";
-import { writeOpenClawPredecessorEpisode } from "../../../../src/adapters/openclaw/episode/episode-writer.js";
+import { writeOpenClawCurrentSessionEpisode, writeOpenClawPredecessorEpisode } from "../../../../src/adapters/openclaw/episode/episode-writer.js";
 import { createNoopAgenrDebugSink } from "../../../../src/adapters/openclaw/debug/index.js";
 import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../../src/adapters/openclaw/types.js";
 import type { EmbeddingPort, LlmPort, RecallPorts } from "../../../../src/core/ports.js";
@@ -138,6 +138,43 @@ describe("writeOpenClawPredecessorEpisode", () => {
           `[agenr] session-start predecessor episode write written for session=current-session key=agent:main:tui-current predecessor=${sessionFile} episode=`,
         ),
       ]),
+    );
+  });
+
+  it("writes the current session episode at session end", async () => {
+    const database = await createTestDatabase(databases, tempPaths);
+    const sessionFile = await writeStandardSession(tempPaths, "current-session-end");
+    const logger = createLogger();
+    const episodeRunner = createRunner({
+      text: JSON.stringify({
+        summary: "We wrote the current session episode at session end so dreaming has fresh evidence before the next session starts.",
+        tags: ["session-end", "episodic-memory"],
+        activityLevel: "substantial",
+        project: "agenr",
+      }),
+    });
+
+    await writeOpenClawCurrentSessionEpisode({
+      ctx: {
+        agentId: "main",
+        sessionId: "current-session-end",
+        sessionKey: "agent:main:tui-current",
+      },
+      current: {
+        sessionId: "current-session-end",
+        sessionFile,
+      },
+      services: createServices(database, episodeRunner),
+      logger,
+    });
+
+    const stored = await database.getEpisodeBySourceId("openclaw", "current-session-end");
+    expect(stored).not.toBeNull();
+    expect(stored?.sourceRef).toBe(sessionFile);
+    expect(stored?.surface).toBe("tui");
+    expect(episodeRunner).toHaveBeenCalledTimes(1);
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([`[agenr] session-end episode write triggered for session=current-session-end key=agent:main:tui-current file=${sessionFile}`]),
     );
   });
 

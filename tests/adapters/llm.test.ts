@@ -169,6 +169,27 @@ describe("resolveModel", () => {
     });
   });
 
+  it("returns the dreaming override when set", () => {
+    expect(
+      resolveModel(
+        {
+          provider: "openai",
+          model: "gpt-5.4",
+          dreaming: {
+            model: {
+              provider: "anthropic",
+              model: "claude-sonnet-4-6",
+            },
+          },
+        },
+        "dreaming",
+      ),
+    ).toEqual({
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+    });
+  });
+
   it("falls back from claim extraction to the extraction override", () => {
     expect(
       resolveModel(
@@ -217,6 +238,10 @@ describe("resolveModel", () => {
       modelId: "gpt-5.4-mini",
     });
     expect(resolveModel(undefined, "claim")).toEqual({
+      provider: "openai",
+      modelId: "gpt-5.4-mini",
+    });
+    expect(resolveModel(undefined, "dreaming")).toEqual({
       provider: "openai",
       modelId: "gpt-5.4-mini",
     });

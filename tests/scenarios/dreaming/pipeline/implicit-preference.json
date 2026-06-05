@@ -1,0 +1,38 @@
+{
+  "id": "implicit-preference",
+  "description": "extract mines an implicit preference from episode evidence into a new durable",
+  "now": "2026-04-10T12:00:00.000Z",
+  "seedDurables": [
+    {
+      "id": "seed-standup",
+      "subject": "Standup cadence",
+      "content": "The team holds standups every weekday at 9am in the shared channel.",
+      "type": "fact",
+      "claim_key": "team/standup_cadence"
+    }
+  ],
+  "episodes": [
+    {
+      "id": "ep-coffee-preference",
+      "summary": "During the morning standup the user mentioned, almost in passing, that they always take oat milk in their coffee and never dairy."
+    }
+  ],
+  "extraction": {
+    "minedDurables": [
+      {
+        "type": "preference",
+        "subject": "Coffee preference",
+        "content": "The user prefers oat milk in their coffee and avoids dairy.",
+        "claim_key": "user/coffee_preference"
+      }
+    ]
+  },
+  "expect": {
+    "durablesInserted": 1,
+    "revisionsApplied": 0,
+    "activeByClaimKey": [
+      { "claimKey": "user/coffee_preference", "expectCount": 1, "contentIncludes": "oat milk" },
+      { "claimKey": "team/standup_cadence", "expectCount": 1 }
+    ]
+  }
+}

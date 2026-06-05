@@ -5,6 +5,7 @@ import { coerceAgenrOpenClawPluginConfig, createAgenrOpenClawPluginConfigSchema,
 import { buildAgenrMemoryPromptSection } from "./format/prompt-section.js";
 import { handleAgenrAfterToolCall } from "./hooks/after-tool-call.js";
 import { handleAgenrBeforePromptBuild } from "./hooks/before-prompt-build.js";
+import { handleAgenrSessionEnd } from "./hooks/session-end.js";
 import { formatErrorMessage } from "./logging.js";
 import { buildAgenrMemoryFlushPlan } from "./memory/flush-plan.js";
 import { createAgenrMemoryRuntime } from "./memory/runtime.js";
@@ -65,7 +66,11 @@ export default definePluginEntry({
       });
     });
     api.on("session_end", (event) => {
-      midSessionTracker.clear(event.sessionId, event.sessionKey);
+      void handleAgenrSessionEnd(event, {
+        logger: api.logger,
+        servicesPromise,
+        midSessionTracker,
+      });
     });
 
     api.on("gateway_stop", async () => {

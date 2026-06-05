@@ -1,0 +1,41 @@
+{
+  "id": "point-in-time-recall",
+  "description": "current-state recall returns the new belief while historical recall still recovers the superseded one",
+  "now": "2026-04-01T00:00:00.000Z",
+  "seedDurables": [
+    {
+      "id": "loc-berlin",
+      "subject": "Home city",
+      "content": "The user is currently living in Berlin, Germany.",
+      "type": "fact",
+      "claim_key": "user/home_city",
+      "claim_key_status": "trusted",
+      "valid_from": "2026-03-01T00:00:00.000Z",
+      "created_at": "2026-03-01T00:00:00.000Z"
+    },
+    {
+      "id": "loc-lisbon",
+      "subject": "Home city",
+      "content": "The user is currently living in Lisbon, Portugal.",
+      "type": "fact",
+      "claim_key": "user/home_city",
+      "claim_key_status": "trusted",
+      "valid_from": "2026-01-01T00:00:00.000Z",
+      "valid_to": "2026-03-01T00:00:00.000Z",
+      "superseded_by": "loc-berlin",
+      "created_at": "2026-01-01T00:00:00.000Z"
+    }
+  ],
+  "recall": [
+    {
+      "query": "Where is the user living now",
+      "expectTopContentIncludes": "Berlin",
+      "expectExcludesContentIncludes": ["Lisbon"]
+    },
+    {
+      "query": "Where was the user living",
+      "rankingProfile": "historical_state",
+      "expectIncludesContentIncludes": ["Lisbon"]
+    }
+  ]
+}

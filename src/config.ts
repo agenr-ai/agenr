@@ -54,6 +54,8 @@ export interface ResolveConfigPathOptions {
   configPath?: string;
   /** Database path used to infer an adjacent `config.json` when available. */
   dbPath?: string;
+  /** Environment map used for config and database path overrides. */
+  env?: NodeJS.ProcessEnv;
 }
 
 const DEFAULT_CONFIG_DIR = path.join(os.homedir(), ".agenr");
@@ -104,8 +106,8 @@ export {
  *
  * @returns Absolute path to the configuration directory.
  */
-export function resolveConfigDir(): string {
-  return process.env.AGENR_CONFIG_DIR ?? DEFAULT_CONFIG_DIR;
+export function resolveConfigDir(env: NodeJS.ProcessEnv = process.env): string {
+  return env.AGENR_CONFIG_DIR ?? DEFAULT_CONFIG_DIR;
 }
 
 /**
@@ -121,7 +123,8 @@ export function resolveConfigDir(): string {
  * @returns Absolute path to the config file.
  */
 export function resolveConfigPath(options: ResolveConfigPathOptions = {}): string {
-  const envConfigPath = normalizeOptionalString(process.env.AGENR_CONFIG_PATH);
+  const env = options.env ?? process.env;
+  const envConfigPath = normalizeOptionalString(env.AGENR_CONFIG_PATH);
   if (envConfigPath) {
     return envConfigPath;
   }
@@ -136,7 +139,7 @@ export function resolveConfigPath(options: ResolveConfigPathOptions = {}): strin
     return adjacentConfigPath;
   }
 
-  return path.join(resolveConfigDir(), "config.json");
+  return path.join(resolveConfigDir(env), "config.json");
 }
 
 /**
@@ -145,8 +148,8 @@ export function resolveConfigPath(options: ResolveConfigPathOptions = {}): strin
  * @param config - Optional loaded or partial configuration values.
  * @returns Absolute or configured SQLite database path.
  */
-export function resolveDbPath(config?: AgenrConfigInput | ResolvedAgenrConfig): string {
-  return normalizeOptionalString(process.env.AGENR_DB_PATH) ?? normalizeOptionalString(config?.dbPath) ?? resolvePersistedDefaultDbPath();
+export function resolveDbPath(config?: AgenrConfigInput | ResolvedAgenrConfig, env: NodeJS.ProcessEnv = process.env): string {
+  return normalizeOptionalString(env.AGENR_DB_PATH) ?? normalizeOptionalString(config?.dbPath) ?? resolvePersistedDefaultDbPath(env);
 }
 
 /**
@@ -177,9 +180,7 @@ export function resolveClaimExtractionConfig(config?: AgenrConfigInput | Resolve
     {
       ...(config?.claimExtraction ? { claimExtraction: config.claimExtraction as AgenrClaimExtractionConfig } : {}),
     },
-    {
-      defaultDbPath: resolvePersistedDefaultDbPath(),
-    },
+    { defaultDbPath: resolvePersistedDefaultDbPath() },
   );
 
   if (!parsed.ok) {
@@ -307,13 +308,14 @@ function normalizeOptionalString(value?: string): string | undefined {
 }
 
 /** Resolves the default persisted database path before env overrides apply. */
-function resolvePersistedDefaultDbPath(): string {
-  return path.join(resolveConfigDir(), DEFAULT_DB_NAME);
+function resolvePersistedDefaultDbPath(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(resolveConfigDir(env), DEFAULT_DB_NAME);
 }
 
 /** Resolves the runtime default database path with env and caller overrides applied. */
 function resolveReadDefaultDbPath(options: ResolveConfigPathOptions): string {
-  return normalizeOptionalString(process.env.AGENR_DB_PATH) ?? normalizeOptionalString(options.dbPath) ?? resolvePersistedDefaultDbPath();
+  const env = options.env ?? process.env;
+  return normalizeOptionalString(env.AGENR_DB_PATH) ?? normalizeOptionalString(options.dbPath) ?? resolvePersistedDefaultDbPath(env);
 }
 
 /** Formats config-validation issues into one stable error string. */

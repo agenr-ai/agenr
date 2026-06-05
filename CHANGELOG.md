@@ -11,7 +11,12 @@
 ### Added
 
 - **Dreaming Milestone 1 skeleton.** Scan, deterministic reconcile, and apply stages with `dream_runs`, `dream_run_actions`, `dream_proposals`, `dream_state`, and `profile_snapshots` persistence.
-- **Docs:** `docs/DURABLES.md`, `docs/DREAMING.md` (stub). `docs/STORE.md` and `docs/SURGEON.md` removed.
+- **Dreaming Milestone 2 injection hardening.** Bi-temporal as-of valid-time filtering shared by session-start, before-turn, and default recall, plus injection-filtering and directive-abstention scenario fixtures and regression tests that prove expired or not-yet-valid durables never auto-inject.
+- **Dreaming Milestone 3 extract and temporalize stages.** The `extract` stage mines durable candidates from episode evidence with content-hash and context-lookup deduplication; the `temporalize` stage revises stale beliefs through supersession (insert successor, close the predecessor valid-time window, link `superseded_by`) without rewriting content in place.
+- **Dreaming proposal review surface.** New `agenr dream actions`, `agenr dream proposals`, `agenr dream backlog`, and `agenr dream review` commands, with backed-up transactional proposal apply.
+- **Session-end episode boundaries.** OpenClaw now writes the current session's episode from its `session_end` hook so dreaming has fresh evidence before the next session starts; the write is best-effort and idempotent by session id. Skeln's shutdown chain writes through the same bounded episode contract.
+- **Dreaming pipeline scenario fixtures.** New fixtures under `tests/scenarios/dreaming/pipeline/` cover implicit-preference capture, trip-lifecycle revision, point-in-time recall, and the no-overconsolidation guard.
+- **Docs:** `docs/DURABLES.md`, `docs/DREAMING.md`. `docs/STORE.md` and `docs/SURGEON.md` removed.
 
 ### Changed
 

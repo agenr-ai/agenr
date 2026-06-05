@@ -62,6 +62,12 @@ export async function preloadSuggestionsForStage(ctx: ReconcilePassContext, dura
     return;
   }
 
+  if (ctx.options.costCapUsd <= 0) {
+    ctx.telemetry.terminalStatus = "cost_capped";
+    ctx.telemetry.terminalError = "Cost cap exhausted before previewing claim-key repairs.";
+    return;
+  }
+
   const workerCount = Math.min(ctx.extraction.previewConcurrency, durables.length);
   let nextIndex = 0;
 
@@ -121,6 +127,13 @@ export async function loadSuggestion(
     return empty;
   }
 
+  if (ctx.options.costCapUsd <= 0) {
+    ctx.telemetry.terminalStatus = "cost_capped";
+    ctx.telemetry.terminalError = "Cost cap exhausted before previewing claim-key repairs.";
+    const empty = createEmptySuggestionRecord();
+    ctx.extraction.suggestionCache.set(durable.id, empty);
+    return empty;
+  }
   const llm = llmOverride ?? getFallbackClaimExtractionLlm(ctx);
   if (!llm) {
     const empty = createEmptySuggestionRecord();
@@ -157,7 +170,7 @@ export async function loadSuggestion(
   ctx.extraction.suggestionCache.set(durable.id, record);
 
   const usage = claimExtractionUsage(ctx.extraction.claimExtractionLlms);
-  if (ctx.telemetry.terminalStatus === "completed" && ctx.options.costCapUsd > 0 && usage.estimatedCostUsd >= ctx.options.costCapUsd) {
+  if (ctx.telemetry.terminalStatus === "completed" && usage.estimatedCostUsd >= ctx.options.costCapUsd) {
     ctx.telemetry.terminalStatus = "cost_capped";
     ctx.telemetry.terminalError = `Cost cap exceeded while previewing claim-key repairs at ${usage.estimatedCostUsd.toFixed(4)} USD.`;
   }

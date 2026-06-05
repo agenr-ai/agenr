@@ -2,6 +2,8 @@
  * Core dreaming domain types.
  */
 
+import type { DurableKind, Expiry } from "../types.js";
+
 /** Ordered list of supported dreaming run tiers. */
 export const DREAM_TIERS = ["light", "standard", "deep"] as const;
 
@@ -144,6 +146,59 @@ export interface DreamEvidenceRef {
   observedAt?: string;
 }
 
+/**
+ * Disposition assigned to one durable candidate by the extract context-lookup step.
+ *
+ * - `new` - no existing durable covers this claim, so it can become a fresh row.
+ * - `refines` - an active durable already covers this claim with different content,
+ *   so the candidate feeds temporalize as a supersession revision.
+ * - `known` - an active durable already covers this claim with equivalent content,
+ *   so the candidate is skipped to avoid redundant writes and embeddings.
+ */
+export type DreamCandidateDisposition = "new" | "refines" | "known";
+
+/** Trust signal carried by an extracted durable candidate. */
+export type DreamCandidateTrust = "tentative" | "trusted";
+
+/**
+ * Durable candidate mined from evidence by the extract stage.
+ *
+ * Candidates never write rows directly. Downstream stages decide whether to
+ * insert a new durable, supersede an existing one, or skip the candidate.
+ */
+export interface DreamCandidate {
+  id: string;
+  type: DurableKind;
+  subject: string;
+  content: string;
+  importance: number;
+  expiry: Expiry;
+  tags: string[];
+  claimKey: string | null;
+  trust: DreamCandidateTrust;
+  disposition: DreamCandidateDisposition;
+  /** Active durable this candidate refines, when disposition is `refines` or `known`. */
+  refinesDurableId: string | null;
+  evidenceRefs: DreamEvidenceRef[];
+}
+
+/** Structured summary of one extract stage execution. */
+export interface DreamExtractSummary {
+  episodesScanned: number;
+  candidatesEmitted: number;
+  newCandidates: number;
+  refineCandidates: number;
+  knownCandidates: number;
+  durablesInserted: number;
+}
+
+/** Structured summary of one temporalize stage execution. */
+export interface DreamTemporalizeSummary {
+  revisionsIdentified: number;
+  revisionsApplied: number;
+  revisionsSkipped: number;
+}
+
 /** Scan delta describing unsynthesized evidence since the last successful run. */
 export interface DreamScanSummary {
   episodesSinceLastRun: number;
@@ -163,5 +218,7 @@ export interface DreamCompletionSummary {
   observations: string[];
   recommendations: string[];
   scan?: DreamScanSummary;
+  extract?: DreamExtractSummary;
   reconcile?: ReconcilePassSummary;
+  temporalize?: DreamTemporalizeSummary;
 }

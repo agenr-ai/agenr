@@ -1,8 +1,17 @@
 import { InvalidArgumentError, Option, type Command } from "commander";
 
-import { loadDreamHistoryRuntime, loadDreamStatusRuntime, runDreamRuntime, type DreamRuntimeOptions } from "../../app/dreaming/runtime.js";
-import { DREAM_TIERS, type DreamTier } from "../../core/dreaming/types.js";
-import { normalizeOptionalString, parsePositiveInteger } from "../shared/parse.js";
+import {
+  loadDreamActionsRuntime,
+  loadDreamBacklogRuntime,
+  loadDreamHistoryRuntime,
+  loadDreamProposalsRuntime,
+  loadDreamStatusRuntime,
+  reviewDreamProposalRuntime,
+  runDreamRuntime,
+  type DreamRuntimeOptions,
+} from "../../app/dreaming/runtime.js";
+import { DREAM_TIERS, type DreamProposalReviewStatus, type DreamTier } from "../../core/dreaming/types.js";
+import { normalizeOptionalString, parseNonNegativeInteger, parsePositiveInteger } from "../shared/parse.js";
 
 /** Parsed commander options for `agenr dream run`. */
 interface DreamRunCommandOptions {
@@ -16,6 +25,22 @@ interface DreamRunCommandOptions {
 /** Parsed commander options for `agenr dream history`. */
 interface DreamHistoryCommandOptions {
   limit?: number;
+}
+
+/** Parsed commander options for `agenr dream backlog`. */
+interface DreamBacklogCommandOptions {
+  state?: DreamProposalReviewStatus | "all";
+  issueKind?: string;
+  eligibleOnly?: boolean;
+  durableId?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/** Parsed commander options for `agenr dream review`. */
+interface DreamReviewCommandOptions {
+  decision?: "apply" | "reject";
+  reason?: string;
 }
 
 /**
@@ -83,6 +108,88 @@ export function registerDreamingCommand(program: Command): void {
         process.stderr.write(`Dream history failed: ${formatUnknownError(error)}\n`);
       }
     });
+
+  dreamCommand
+    .command("actions <runId>")
+    .description("Show actions recorded for a dreaming run")
+    .option("--json", "Emit machine-readable JSON output")
+    .action(async (runId: string, options: { json?: boolean }) => {
+      try {
+        const actions = await loadDreamActionsRuntime({ runId, env: process.env });
+        process.stdout.write(options.json ? `${JSON.stringify(actions, null, 2)}\n` : renderActions(runId, actions));
+      } catch (error) {
+        process.exitCode = 1;
+        process.stderr.write(`Dream actions failed: ${formatUnknownError(error)}\n`);
+      }
+    });
+
+  dreamCommand
+    .command("proposals <runId>")
+    .description("Show proposals recorded for a dreaming run")
+    .option("--json", "Emit machine-readable JSON output")
+    .action(async (runId: string, options: { json?: boolean }) => {
+      try {
+        const proposals = await loadDreamProposalsRuntime({ runId, env: process.env });
+        process.stdout.write(options.json ? `${JSON.stringify(proposals, null, 2)}\n` : renderProposals(runId, proposals));
+      } catch (error) {
+        process.exitCode = 1;
+        process.stderr.write(`Dream proposals failed: ${formatUnknownError(error)}\n`);
+      }
+    });
+
+  dreamCommand
+    .command("backlog")
+    .description("Show the dreaming proposal backlog across runs")
+    .addOption(new Option("--state <state>", "Proposal state filter").choices(["open", "applied", "rejected", "all"]).default("open"))
+    .option("--issue-kind <kind>", "Only proposals for one issue kind")
+    .option("--eligible-only", "Only proposals that are already safe to apply")
+    .option("--durable-id <id>", "Only proposals that mention one durable ID")
+    .addOption(new Option("--limit <n>", "Maximum number of proposals to show").argParser(parsePositiveInteger).default(20))
+    .addOption(new Option("--offset <n>", "Rows to skip before listing results").argParser(parseNonNegativeInteger).default(0))
+    .option("--json", "Emit machine-readable JSON output")
+    .action(async (options: DreamBacklogCommandOptions & { json?: boolean }) => {
+      try {
+        const backlog = await loadDreamBacklogRuntime({
+          state: options.state,
+          issueKind: normalizeOptionalString(options.issueKind),
+          eligibleOnly: options.eligibleOnly === true,
+          durableId: normalizeOptionalString(options.durableId),
+          limit: options.limit,
+          offset: options.offset,
+          env: process.env,
+        });
+        process.stdout.write(options.json ? `${JSON.stringify(backlog, null, 2)}\n` : renderBacklog(backlog));
+      } catch (error) {
+        process.exitCode = 1;
+        process.stderr.write(`Dream backlog failed: ${formatUnknownError(error)}\n`);
+      }
+    });
+
+  dreamCommand
+    .command("review <proposalId>")
+    .description("Apply or reject one open dreaming proposal")
+    .addOption(new Option("--decision <decision>", "Review decision").choices(["apply", "reject"]).makeOptionMandatory(true))
+    .option("--reason <text>", "Why this review decision was taken")
+    .option("--json", "Emit machine-readable JSON output")
+    .action(async (proposalId: string, options: DreamReviewCommandOptions & { json?: boolean }) => {
+      try {
+        const reason = normalizeOptionalString(options.reason);
+        if (!reason) {
+          throw new InvalidArgumentError("Review reason is required.");
+        }
+
+        const result = await reviewDreamProposalRuntime({
+          proposalId,
+          decision: options.decision ?? "reject",
+          reason,
+          env: process.env,
+        });
+        process.stdout.write(options.json ? `${JSON.stringify(result, null, 2)}\n` : renderProposalReviewResult(result));
+      } catch (error) {
+        process.exitCode = 1;
+        process.stderr.write(`Dream review failed: ${formatUnknownError(error)}\n`);
+      }
+    });
 }
 
 function normalizeDreamRunCommand(options: DreamRunCommandOptions): Omit<DreamRuntimeOptions, "dbPath" | "env" | "onProgress" | "logger" | "signal"> {
@@ -138,6 +245,80 @@ function renderHistory(history: Awaited<ReturnType<typeof loadDreamHistoryRuntim
 
   return history
     .map((run) => `${run.startedAt}  ${run.id}  tier=${run.tier}  status=${run.status}  dryRun=${run.dryRun}`)
+    .join("\n")
+    .concat("\n");
+}
+
+function renderActions(runId: string, actions: Awaited<ReturnType<typeof loadDreamActionsRuntime>>): string {
+  if (actions.length === 0) {
+    return `No dreaming actions recorded for run ${runId}.\n`;
+  }
+
+  const lines = [`Dream actions ${runId}`];
+  for (const action of actions) {
+    lines.push(`  ${action.createdAt}  ${action.actionType}  durables=${action.durableIds.join(", ") || "(none)"}`);
+    lines.push(`    ${action.reasoning}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function renderProposals(runId: string, proposals: Awaited<ReturnType<typeof loadDreamProposalsRuntime>>): string {
+  if (proposals.length === 0) {
+    return `No dreaming proposals recorded for run ${runId}.\n`;
+  }
+
+  const lines = [`Dream proposals ${runId}`];
+  for (const proposal of proposals) {
+    const eligible = proposal.eligibleForApply ? "eligible" : "not eligible";
+    lines.push(
+      `  ${proposal.id}  ${proposal.issueKind}  scope=${proposal.scope}  confidence=${proposal.confidence.toFixed(2)}  ${eligible}  ${proposal.reviewStatus}`,
+    );
+    lines.push(`    durables: ${proposal.durableIds.join(", ") || "(none)"}`);
+    if (proposal.currentClaimKeys.length > 0 || proposal.proposedClaimKeys.length > 0) {
+      lines.push(`    claim keys: ${proposal.currentClaimKeys.join(", ") || "(none)"} -> ${proposal.proposedClaimKeys.join(", ") || "(none)"}`);
+    }
+    if (proposal.reviewStatus !== "open") {
+      lines.push(`    reviewed: ${proposal.reviewedAt ?? "n/a"}  applied: ${proposal.appliedActionCount}`);
+      if (proposal.reviewReason) {
+        lines.push(`    reason: ${proposal.reviewReason}`);
+      }
+    }
+    lines.push(`    ${proposal.rationale}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function renderBacklog(backlog: Awaited<ReturnType<typeof loadDreamBacklogRuntime>>): string {
+  if (backlog.length === 0) {
+    return "No dreaming proposals matched the current filters.\n";
+  }
+
+  const lines = ["Dream backlog"];
+  for (const item of backlog) {
+    const eligible = item.proposal.eligibleForApply ? "eligible" : "not eligible";
+    lines.push(
+      `  ${item.proposal.issueKind}  scope=${item.proposal.scope}  confidence=${item.proposal.confidence.toFixed(2)}  ${eligible}  ${item.proposal.reviewStatus}`,
+    );
+    lines.push(`    ${item.proposal.id}  ${item.proposal.createdAt}`);
+    lines.push(`    run: ${item.runPassType} ${item.runStatus} (${item.runDryRun ? "dry-run" : "apply"}) ${item.runStartedAt}`);
+    lines.push(`    durables: ${item.proposal.durableIds.join(", ") || "(none)"}`);
+    if (item.proposal.proposedClaimKeys.length > 0) {
+      lines.push(`    proposed: ${item.proposal.proposedClaimKeys.join(", ")}`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function renderProposalReviewResult(result: Awaited<ReturnType<typeof reviewDreamProposalRuntime>>): string {
+  return [
+    `Proposal review ${result.proposal.id}`,
+    `  status: ${result.proposal.reviewStatus}`,
+    `  reviewed: ${result.proposal.reviewedAt ?? "n/a"}`,
+    `  actions applied: ${result.proposal.appliedActionCount}`,
+    `  durables: ${result.updatedDurableIds.join(", ") || "(none)"}`,
+    `  backup: ${result.backupPath ?? "none"}`,
+    `  reason: ${result.proposal.reviewReason ?? "n/a"}`,
+  ]
     .join("\n")
     .concat("\n");
 }

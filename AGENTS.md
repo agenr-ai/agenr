@@ -117,6 +117,10 @@ agenr trace
 agenr dream run
 agenr dream status
 agenr dream history
+agenr dream actions <runId>
+agenr dream proposals <runId>
+agenr dream backlog
+agenr dream review <proposalId>
 agenr scenarios list
 agenr scenarios run
 agenr db reset

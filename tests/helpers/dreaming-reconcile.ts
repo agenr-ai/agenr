@@ -3,11 +3,46 @@ import { createDreamPort } from "../../src/adapters/db/dreaming-port.js";
 import type { DreamProgressEvent } from "../../src/app/dreaming/progress.js";
 import { initSchema } from "../../src/adapters/db/schema.js";
 import type { AgenrConfig } from "../../src/config.js";
-import type { LlmPort } from "../../src/core/ports.js";
+import type { CostMeteredLlm } from "../../src/app/dreaming/ports.js";
+import type { EmbeddingPort, LlmPort } from "../../src/core/ports.js";
 import type { Durable } from "../../src/core/types.js";
 import { runDream } from "../../src/app/dreaming/service.js";
 
 export const TEST_NOW = new Date("2026-04-04T15:00:00.000Z");
+
+/** Embedding dimension matching the durables `F32_BLOB(1024)` column. */
+const TEST_EMBEDDING_DIMENSIONS = 1024;
+
+/**
+ * Builds a deterministic embedding port for dreaming tests.
+ *
+ * Returns a stable pseudo-random unit-ish vector per text so inserts populate
+ * the vector column without any network call. Values are derived from the text
+ * so identical content yields identical vectors.
+ *
+ * @returns Embedding port producing deterministic 1024-dim vectors.
+ */
+export function createDeterministicEmbedding(): EmbeddingPort {
+  return {
+    embed: async (texts: string[]): Promise<number[][]> => texts.map((text) => deterministicVector(text)),
+  };
+}
+
+/** Derives a stable 1024-dim vector from a seed string. */
+function deterministicVector(seed: string): number[] {
+  let hash = 2166136261;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash ^= seed.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  const vector = new Array<number>(TEST_EMBEDDING_DIMENSIONS);
+  for (let index = 0; index < TEST_EMBEDDING_DIMENSIONS; index += 1) {
+    hash = Math.imul(hash ^ (hash >>> 15), 2246822519);
+    vector[index] = ((hash >>> 0) % 1000) / 1000;
+  }
+  return vector;
+}
 
 export async function runClaimKeyPass(
   client: Client,
@@ -15,7 +50,7 @@ export async function runClaimKeyPass(
     apply?: boolean;
     verbose?: boolean;
     config?: AgenrConfig | null;
-    createClaimExtractionLlm?: () => LlmPort & { metadata?: { usage?: { inputTokens?: number; outputTokens?: number; totalCost?: number } } };
+    createClaimExtractionLlm?: () => CostMeteredLlm;
     reportProgress?: (event: DreamProgressEvent) => void;
     includeShadowTelemetry?: boolean;
   } = {},

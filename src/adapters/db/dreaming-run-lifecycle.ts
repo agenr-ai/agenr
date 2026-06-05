@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { DreamCompletionSummary, DreamRunStatus } from "../../core/dreaming/types.js";
+import type { DreamCompletionSummary, DreamProposalReviewStatus, DreamRunStatus } from "../../core/dreaming/types.js";
 import type { DreamTier } from "../../core/dreaming/domain/pass-types.js";
 import { readNumber } from "./row-mapping.js";
 import type { SqlExecutor } from "./queries.js";
@@ -143,6 +143,45 @@ export async function updateDreamState(
     `,
     args,
   });
+}
+
+/**
+ * Persists one operator review decision for an open dreaming proposal.
+ *
+ * @param executor - SQL executor used for the update.
+ * @param input - Review outcome plus audit metadata.
+ * @returns True when an open proposal row was updated.
+ */
+export async function reviewDreamProposal(
+  executor: SqlExecutor,
+  input: {
+    proposalId: string;
+    status: Exclude<DreamProposalReviewStatus, "open">;
+    reason: string;
+    reviewedAt?: string;
+    appliedActionCount?: number;
+  },
+): Promise<boolean> {
+  const result = await executor.execute({
+    sql: `
+      UPDATE dream_proposals
+      SET review_status = ?,
+          reviewed_at = ?,
+          review_reason = ?,
+          applied_action_count = ?
+      WHERE id = ?
+        AND review_status = 'open'
+    `,
+    args: [
+      input.status,
+      normalizeTimestamp(input.reviewedAt) ?? new Date().toISOString(),
+      normalizeOptionalString(input.reason),
+      normalizeInteger(input.appliedActionCount ?? 0),
+      input.proposalId.trim(),
+    ],
+  });
+
+  return result.rowsAffected > 0;
 }
 
 /**

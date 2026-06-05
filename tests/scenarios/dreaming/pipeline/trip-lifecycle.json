@@ -1,0 +1,46 @@
+{
+  "id": "trip-lifecycle",
+  "description": "temporalize supersedes a prior location belief without rewriting it in place",
+  "now": "2026-04-10T12:00:00.000Z",
+  "contextLookupEnabled": true,
+  "seedDurables": [
+    {
+      "id": "loc-lisbon",
+      "subject": "Home city",
+      "content": "The user is currently living in Lisbon, Portugal.",
+      "type": "fact",
+      "claim_key": "user/home_city",
+      "claim_key_status": "trusted",
+      "valid_from": "2026-01-01T00:00:00.000Z",
+      "created_at": "2026-01-01T00:00:00.000Z"
+    }
+  ],
+  "episodes": [
+    {
+      "id": "ep-relocation",
+      "summary": "The user explained they finished the contract abroad and have now moved back home to Berlin, Germany for good."
+    }
+  ],
+  "extraction": {
+    "minedDurables": [
+      {
+        "type": "fact",
+        "subject": "Home city",
+        "content": "The user is currently living in Berlin, Germany.",
+        "claim_key": "user/home_city"
+      }
+    ]
+  },
+  "expect": {
+    "durablesInserted": 0,
+    "revisionsApplied": 1,
+    "activeByClaimKey": [{ "claimKey": "user/home_city", "expectCount": 1, "contentIncludes": "Berlin" }],
+    "superseded": [
+      {
+        "predecessorId": "loc-lisbon",
+        "successorContentIncludes": "Berlin",
+        "predecessorValidTo": "2026-04-10T12:00:00.000Z"
+      }
+    ]
+  }
+}

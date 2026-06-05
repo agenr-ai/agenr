@@ -1,7 +1,16 @@
 /**
  * Supported dreaming action identifiers.
  */
-export type DreamActionType = "retire" | "merge" | "log_conflict" | "resolve_conflict" | "update_durable" | "flag_review" | "skip";
+export type DreamActionType =
+  | "retire"
+  | "merge"
+  | "log_conflict"
+  | "resolve_conflict"
+  | "update_durable"
+  | "insert_durable"
+  | "supersede_durable"
+  | "flag_review"
+  | "skip";
 
 /**
  * Snapshot of top recall results before or after a dreaming action.

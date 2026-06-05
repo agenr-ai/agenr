@@ -17,8 +17,15 @@ import {
 } from "./dreaming-run-shared.js";
 
 export type { DreamProposalBacklogRow, DreamRun, PersistedDreamProposalInput };
-export { createDreamRun, completeDreamRun, getDailyDreamCost, updateDreamState } from "./dreaming-run-lifecycle.js";
-export { getDreamRunActions, getDreamRunHistory, getDreamRunProposals, getLastDreamRun, listDreamProposalBacklog } from "./dreaming-run-read.js";
+export { createDreamRun, completeDreamRun, getDailyDreamCost, reviewDreamProposal, updateDreamState } from "./dreaming-run-lifecycle.js";
+export {
+  getDreamProposal,
+  getDreamRunActions,
+  getDreamRunHistory,
+  getDreamRunProposals,
+  getLastDreamRun,
+  listDreamProposalBacklog,
+} from "./dreaming-run-read.js";
 
 /**
  * Inserts one dreaming action audit row.

@@ -13,19 +13,24 @@ import type { AgenrOpenClawHookContext, AgenrOpenClawHost, AgenrOpenClawServices
 import { OPENCLAW_EPISODE_GENERATOR_VERSION } from "./episode-summary-prompt.js";
 
 /**
- * Predecessor episode facts passed from the continuity resolver into the
- * background episode writer.
+ * Stable session facts passed into the background episode writer.
  */
-export interface OpenClawPredecessorEpisodeTarget {
+export interface OpenClawEpisodeTarget {
   /**
-   * Stable predecessor session UUID.
+   * Stable session UUID.
    */
   sessionId: string;
   /**
-   * Absolute predecessor transcript path.
+   * Absolute transcript path for the session.
    */
   sessionFile: string;
 }
+
+/**
+ * Predecessor episode facts passed from the continuity resolver into the
+ * background episode writer.
+ */
+export type OpenClawPredecessorEpisodeTarget = OpenClawEpisodeTarget;
 
 /**
  * Best-effort background write for one predecessor OpenClaw session.
@@ -43,14 +48,74 @@ export async function writeOpenClawPredecessorEpisode(params: {
   logger: PluginLogger;
 }): Promise<void> {
   const sessionContext = formatSessionContext(params.ctx.sessionId, params.ctx.sessionKey);
-  const writeStartedAtMs = Date.now();
   if (!params.predecessor) {
     params.logger.info(`[agenr] session-start predecessor episode write skipped for ${sessionContext} reason=no_predecessor`);
     return;
   }
-  const predecessor = params.predecessor;
 
-  params.logger.info(`[agenr] session-start predecessor episode write triggered for ${sessionContext} predecessor=${predecessor.sessionFile}`);
+  await writeOpenClawSessionEpisode({
+    ctx: params.ctx,
+    target: params.predecessor,
+    services: params.services,
+    logger: params.logger,
+    actionLabel: "session-start predecessor episode write",
+    fileField: "predecessor",
+    shortCountField: "cleanedMessages",
+    embeddingSkipLogContext: `[agenr] session-start predecessor episode embedding skipped for ${sessionContext} predecessor=${params.predecessor.sessionFile}`,
+  });
+}
+
+/**
+ * Best-effort background write for the current OpenClaw session at session end.
+ *
+ * Writing at session end removes the predecessor-only consolidation lag so the
+ * just-finished session becomes dreaming evidence before the next session
+ * starts. The write is idempotent with the predecessor backstop because both
+ * paths upsert by the same `(source, sourceId)` identity.
+ *
+ * @param params - Hook context, current-session facts, shared services, and logger.
+ * @returns Promise that resolves after the background episode attempt finishes.
+ */
+export async function writeOpenClawCurrentSessionEpisode(params: {
+  ctx: AgenrOpenClawHookContext;
+  current: OpenClawEpisodeTarget;
+  services: AgenrOpenClawServices;
+  logger: PluginLogger;
+}): Promise<void> {
+  const sessionContext = formatSessionContext(params.ctx.sessionId, params.ctx.sessionKey);
+  await writeOpenClawSessionEpisode({
+    ctx: params.ctx,
+    target: params.current,
+    services: params.services,
+    logger: params.logger,
+    actionLabel: "session-end episode write",
+    fileField: "file",
+    shortCountField: "materialTurns",
+    embeddingSkipLogContext: `[agenr] session-end episode embedding skipped for ${sessionContext} file=${params.current.sessionFile}`,
+  });
+}
+
+/**
+ * Runs one bounded OpenClaw episode write for a resolved session target.
+ *
+ * @param params - Session target, labels, shared services, and logger.
+ * @returns Promise that resolves after the bounded episode attempt finishes.
+ */
+async function writeOpenClawSessionEpisode(params: {
+  ctx: AgenrOpenClawHookContext;
+  target: OpenClawEpisodeTarget;
+  services: AgenrOpenClawServices;
+  logger: PluginLogger;
+  actionLabel: string;
+  fileField: "file" | "predecessor";
+  shortCountField: "materialTurns" | "cleanedMessages";
+  embeddingSkipLogContext: string;
+}): Promise<void> {
+  const sessionContext = formatSessionContext(params.ctx.sessionId, params.ctx.sessionKey);
+  const writeStartedAtMs = Date.now();
+  const target = params.target;
+
+  params.logger.info(`[agenr] ${params.actionLabel} triggered for ${sessionContext} ${params.fileField}=${target.sessionFile}`);
 
   const episodeModelRef = resolveOpenClawEpisodeModelRef(params.services.openClaw, params.ctx.agentId, params.services.pluginConfig.episodeModel);
   const episodeModel = episodeModelRef ?? "default";
@@ -83,17 +148,17 @@ export async function writeOpenClawPredecessorEpisode(params: {
   );
 
   await writeBoundedSingleTranscriptEpisode({
-    filePath: predecessor.sessionFile,
+    filePath: target.sessionFile,
     context: sessionContext,
-    actionLabel: "session-start predecessor episode write",
+    actionLabel: params.actionLabel,
     logger: params.logger,
     summaryDeadlineMs,
-    fileField: "predecessor",
-    shortCountField: "cleanedMessages",
+    fileField: params.fileField,
+    shortCountField: params.shortCountField,
     failureModelRef: episodeModel,
     unexpectedFailureLevel: "info",
     ports: {
-      files: createSingleTranscriptDiscoveryPort(predecessor.sessionFile),
+      files: createSingleTranscriptDiscoveryPort(target.sessionFile),
       transcript: openClawTranscriptParser,
       episodes: params.services.episodes,
       createSummaryLlm: () => summaryLlm,
@@ -104,14 +169,14 @@ export async function writeOpenClawPredecessorEpisode(params: {
           embeddingAvailable: params.services.embeddingStatus.available,
           deadlineMs: summaryDeadlineMs,
           logger: params.logger,
-          logContext: `[agenr] session-start predecessor episode embedding skipped for ${sessionContext} predecessor=${predecessor.sessionFile}`,
+          logContext: params.embeddingSkipLogContext,
         }),
     },
     ingestOptions: {
       genVersion: OPENCLAW_EPISODE_GENERATOR_VERSION,
       skipActiveSessionCheck: true,
       candidateOverrides: {
-        sessionId: predecessor.sessionId,
+        sessionId: target.sessionId,
         agentId: trimOptionalString(params.ctx.agentId) ?? null,
         surface: resolveSessionSurface(params.ctx) ?? null,
         metadataSource: "registry",

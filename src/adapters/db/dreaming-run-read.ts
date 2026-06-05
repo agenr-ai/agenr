@@ -130,6 +130,45 @@ export async function getDreamRunProposals(executor: SqlExecutor, runId: string)
 }
 
 /**
+ * Loads one dreaming proposal by its stable identifier.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param proposalId - Proposal identifier to resolve.
+ * @returns Proposal payload, or null when missing.
+ */
+export async function getDreamProposal(executor: SqlExecutor, proposalId: string): Promise<DreamRunProposal | null> {
+  const result = await executor.execute({
+    sql: `
+      SELECT
+        id,
+        run_id,
+        group_id,
+        issue_kind,
+        scope,
+        durable_ids,
+        current_claim_keys,
+        proposed_claim_keys,
+        rationale,
+        confidence,
+        source,
+        eligible_for_apply,
+        review_status,
+        reviewed_at,
+        review_reason,
+        applied_action_count,
+        created_at
+      FROM dream_proposals
+      WHERE id = ?
+      LIMIT 1
+    `,
+    args: [proposalId.trim()],
+  });
+
+  const row = result.rows[0];
+  return row ? mapProposalRow(row) : null;
+}
+
+/**
  * Lists proposal backlog rows across runs using review-state filters.
  *
  * @param executor - SQL executor used for the lookup.

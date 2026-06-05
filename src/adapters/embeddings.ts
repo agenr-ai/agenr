@@ -83,6 +83,30 @@ export function resolveEmbeddingModel(config?: AgenrConfig): string {
 export { composeEmbeddingText };
 export { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL };
 
+/**
+ * Wraps an embedding-client factory so the underlying client is constructed
+ * only on the first non-empty embed call.
+ *
+ * This lets callers thread an embedding port into flows that may never embed
+ * (for example dreaming dry runs) without forcing credential resolution up
+ * front. Embedding an empty batch never constructs the client.
+ *
+ * @param createClient - Factory that builds the concrete embedding client.
+ * @returns Embedding port that defers client construction until first use.
+ */
+export function createLazyEmbeddingClient(createClient: () => EmbeddingPort): EmbeddingPort {
+  let cached: EmbeddingPort | null = null;
+  return {
+    embed: async (texts: string[]): Promise<number[][]> => {
+      if (texts.length === 0) {
+        return [];
+      }
+      cached ??= createClient();
+      return cached.embed(texts);
+    },
+  };
+}
+
 /** Embeds a list of texts in bounded concurrent batches. */
 async function embedTexts(texts: string[], apiKey: string, model: string): Promise<number[][]> {
   if (texts.length === 0) {

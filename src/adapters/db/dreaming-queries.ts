@@ -1,5 +1,5 @@
 import type { Durable } from "../../core/types.js";
-import type { DreamHealthStats } from "../../app/dreaming/ports.js";
+import type { DreamEpisodeEvidence, DreamHealthStats } from "../../app/dreaming/ports.js";
 import { buildActiveDurableClause, DURABLE_SELECT_COLUMNS, mapDurableRow, readNumber, readOptionalString, readRequiredString } from "./row-mapping.js";
 import type { SqlExecutor } from "./queries.js";
 
@@ -203,6 +203,64 @@ export async function listReconcileDurables(
   });
 
   return result.rows.map((row) => mapDurableRow(row));
+}
+
+/**
+ * Lists recent episode narrative evidence newer than a timestamp.
+ *
+ * Episodes are first-class dreaming evidence: the extract stage mines durable
+ * candidates from their summaries. Rows are ordered oldest-first so candidate
+ * provenance follows the natural session timeline.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param since - ISO timestamp lower bound (exclusive of older rows).
+ * @param options - Optional project filter and row cap.
+ * @returns Active episode evidence rows ordered oldest-first.
+ */
+export async function listEpisodeEvidenceSince(
+  executor: SqlExecutor,
+  since: string,
+  options: { project?: string; limit?: number } = {},
+): Promise<DreamEpisodeEvidence[]> {
+  const args: Array<string | number> = [since];
+  let projectClause = "";
+  const project = options.project?.trim();
+  if (project) {
+    projectClause = " AND project = ?";
+    args.push(project);
+  }
+
+  const limit = Number.isFinite(options.limit) && (options.limit ?? 0) > 0 ? Math.floor(options.limit!) : 50;
+  args.push(limit);
+
+  const result = await executor.execute({
+    sql: `
+      SELECT
+        id,
+        summary,
+        started_at,
+        ended_at,
+        source_id,
+        project
+      FROM episodes
+      WHERE created_at >= ?
+        AND retired = 0
+        AND superseded_by IS NULL
+        ${projectClause}
+      ORDER BY started_at ASC, id ASC
+      LIMIT ?
+    `,
+    args,
+  });
+
+  return result.rows.map((row) => ({
+    id: readRequiredString(row, "id"),
+    summary: readRequiredString(row, "summary"),
+    startedAt: readRequiredString(row, "started_at"),
+    endedAt: readOptionalString(row, "ended_at") ?? null,
+    sessionId: readOptionalString(row, "source_id") ?? null,
+    project: readOptionalString(row, "project") ?? null,
+  }));
 }
 
 /**

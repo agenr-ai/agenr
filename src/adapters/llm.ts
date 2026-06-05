@@ -209,7 +209,7 @@ export function createLlmClient(provider: string, modelId: string, options: Crea
 /**
  * Pipeline stages that can carry per-stage model overrides.
  */
-export type LlmStage = "extraction" | "dedup" | "episode" | "claim" | "cross_encoder";
+export type LlmStage = "extraction" | "dedup" | "episode" | "claim" | "dreaming" | "cross_encoder";
 
 /**
  * Resolves the provider and model configured for a pipeline stage.
@@ -238,6 +238,8 @@ function resolveStageOverride(config: AgenrConfig | undefined, stage: LlmStage):
       return config?.episodeModel;
     case "claim":
       return config?.claimExtraction?.model ?? config?.extractionModel;
+    case "dreaming":
+      return config?.dreaming?.model;
     case "cross_encoder":
       return config?.crossEncoderModel;
   }
@@ -340,6 +342,7 @@ function defaultModelForStage(stage: LlmStage): string {
     case "extraction":
     case "episode":
     case "claim":
+    case "dreaming":
       return "gpt-5.4-mini";
     case "dedup":
     case "cross_encoder":

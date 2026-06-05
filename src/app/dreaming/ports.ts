@@ -1,7 +1,32 @@
 import type { DreamRunAction } from "../../core/dreaming/domain/action-types.js";
 import type { DreamTier } from "../../core/dreaming/types.js";
 import type { DreamCompletionSummary, DreamProposalReviewStatus, DreamRunProposal, DreamRunStatus } from "../../core/dreaming/types.js";
+import type { LlmPort } from "../../core/ports.js";
 import type { Durable, DurableUpdateInput } from "../../core/types.js";
+
+/** Token and cost accounting emitted by the cost-metered LLM wrappers used by dreaming. */
+export interface DreamLlmUsageMetadata {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalCost?: number;
+}
+
+/** LLM port augmented with the cost-accounting metadata dreaming stages read to enforce budgets. */
+export type CostMeteredLlm = LlmPort & {
+  metadata?: { usage?: DreamLlmUsageMetadata };
+};
+
+/**
+ * Narrative evidence row surfaced to the extract stage from one episode.
+ */
+export interface DreamEpisodeEvidence {
+  id: string;
+  summary: string;
+  startedAt: string;
+  endedAt: string | null;
+  sessionId: string | null;
+  project: string | null;
+}
 
 /**
  * Persisted dreaming run metadata returned by history and status queries.
@@ -121,8 +146,17 @@ export interface DreamPort {
   getRunHistory(limit?: number): Promise<DreamRunRecord[]>;
   getRunActions(runId: string): Promise<DreamRunAction[]>;
   getRunProposals(runId: string): Promise<DreamRunProposal[]>;
+  getProposal(proposalId: string): Promise<DreamRunProposal | null>;
+  reviewProposal(input: {
+    proposalId: string;
+    status: Exclude<DreamProposalReviewStatus, "open">;
+    reason: string;
+    reviewedAt?: string;
+    appliedActionCount?: number;
+  }): Promise<boolean>;
   listProposalBacklog(query?: DreamProposalBacklogQuery): Promise<DreamProposalBacklogItem[]>;
   getHealthStats(now?: Date): Promise<DreamHealthStats>;
+  getDurable(durableId: string): Promise<Durable | null>;
   updateDurable(
     durableId: string,
     fields: DurableUpdateInput,
@@ -137,9 +171,25 @@ export interface DreamPort {
     durableIds?: string[];
     includeInactive?: boolean;
   }): Promise<Durable[]>;
+  /** Reads recent episode narrative evidence newer than one timestamp. */
+  listEpisodeEvidenceSince(since: string, options?: { project?: string; limit?: number }): Promise<DreamEpisodeEvidence[]>;
+  /** Loads active durables that share one canonical claim key (context-lookup). */
+  findActiveDurablesByClaimKey(claimKey: string): Promise<Durable[]>;
+  /** Returns the subset of normalized content hashes that already exist among active durables. */
+  findExistingNormContentHashes(hashes: string[]): Promise<Set<string>>;
+  /** Inserts one new durable row written by the extract or temporalize stages. */
+  insertDurable(durable: Durable, embedding: number[], contentHash: string): Promise<string>;
+  /** Links one active durable to the newer durable that supersedes it. */
+  supersedeDurable(oldDurableId: string, newDurableId: string, kind?: string, reason?: string): Promise<boolean>;
   logRunProposal(proposal: DreamRunProposal): Promise<void>;
   countEpisodesSince(since: string, project?: string): Promise<number>;
   countIngestFilesSince(since: string): Promise<number>;
   countDurablesCreatedSince(since: string, project?: string): Promise<number>;
   updateDreamState(input: { lastSuccessfulRunAt?: string; unsynthesizedImportanceSum?: number; updatedAt: string }): Promise<void>;
+  /**
+   * Runs a callback inside a single write transaction so a group of related
+   * dreaming writes either all commit or all roll back. The callback receives a
+   * port bound to the transaction; nested executors fall back to running inline.
+   */
+  withTransaction<T>(fn: (tx: DreamPort) => Promise<T>): Promise<T>;
 }

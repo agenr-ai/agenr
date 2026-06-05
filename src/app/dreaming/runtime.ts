@@ -1,9 +1,12 @@
 import { createDatabase } from "../../adapters/db/client.js";
 import { createDreamPort } from "../../adapters/db/dreaming-port.js";
+import { createEmbeddingClient, createLazyEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
+import { createLlmClient, resolveLlmCredentials, resolveModel } from "../../adapters/llm.js";
 import { readConfig, type ResolvedAgenrConfig } from "../../config.js";
 import type { DreamRunAction } from "../../core/dreaming/domain/action-types.js";
 import type { DreamRunProposal } from "../../core/dreaming/types.js";
 import type { Logger } from "../../logger.js";
+import { applyProposalToDurables, loadActiveProposalDurables } from "./proposal-review.js";
 import type { DreamHealthStats, DreamProposalBacklogItem, DreamProposalBacklogQuery, DreamRunRecord } from "./ports.js";
 import type { DreamPort } from "./ports.js";
 import type { DreamProgressReporter } from "./progress.js";
@@ -27,11 +30,18 @@ export interface DreamRuntimeOptions extends DreamRunOptions {
  */
 export async function runDreamRuntime(input: DreamRuntimeOptions): Promise<DreamRunResult> {
   const runtime = loadRuntimeConfig(input);
+  // Construction is deferred until the first insert so dry runs never need a credential.
+  const embedding = createLazyEmbeddingClient(() => createEmbeddingClient(resolveEmbeddingApiKey(runtime.config), resolveEmbeddingModel(runtime.config)));
+  const createExtractLlm = createConfiguredLlmFactory(runtime.config, input.env, "dreaming");
+  const createClaimExtractionLlm = createConfiguredLlmFactory(runtime.config, input.env, "claim");
   return withDreamPort(runtime.dbPath, async (port) =>
     runDream(input, {
       port,
       dbPath: runtime.dbPath,
       config: runtime.config,
+      createExtractLlm,
+      createClaimExtractionLlm,
+      embedding,
       backupDb: backupDatabaseFile,
       reportProgress: input.onProgress,
       logger: input.logger,
@@ -104,6 +114,106 @@ export async function loadDreamBacklogRuntime(
 }
 
 /**
+ * Result of one dreaming proposal review decision.
+ */
+export interface DreamProposalReviewResult {
+  proposal: DreamRunProposal;
+  updatedDurableIds: string[];
+  backupPath: string | null;
+}
+
+/**
+ * Applies or rejects one open dreaming proposal using the claim-key mutation path.
+ *
+ * @param input - Runtime input with the target proposal, decision, and review reason.
+ * @returns Final proposal state plus any affected durable IDs and backup path.
+ */
+export async function reviewDreamProposalRuntime(input: {
+  proposalId: string;
+  decision: "apply" | "reject";
+  reason: string;
+  dbPath?: string;
+  env?: NodeJS.ProcessEnv;
+}): Promise<DreamProposalReviewResult> {
+  const runtime = loadRuntimeConfig(input);
+  const database = await createDatabase(runtime.dbPath);
+  const port = createDreamPort(database);
+
+  try {
+    const proposal = await port.getProposal(input.proposalId);
+    if (!proposal) {
+      throw new Error(`Proposal not found: ${input.proposalId}.`);
+    }
+    if (proposal.reviewStatus !== "open") {
+      throw new Error(`Proposal ${proposal.id} was already reviewed as ${proposal.reviewStatus}.`);
+    }
+
+    const reviewReason = input.reason.trim();
+    if (reviewReason.length === 0) {
+      throw new Error("Review reason is required.");
+    }
+
+    const reviewedAt = new Date().toISOString();
+    const backupPath = input.decision === "apply" && runtime.dbPath !== ":memory:" ? await backupDatabaseFile(runtime.dbPath) : null;
+    const updatedDurableIds: string[] = [];
+
+    await database.execute("BEGIN IMMEDIATE");
+    try {
+      if (input.decision === "apply") {
+        const { activeDurables, inactiveDurableIds } = await loadActiveProposalDurables(proposal, (durableId) => port.getDurable(durableId));
+        if (inactiveDurableIds.length > 0) {
+          throw new Error(`Proposal ${proposal.id} can no longer update missing or inactive durable ${inactiveDurableIds[0]}.`);
+        }
+        const applied = await applyProposalToDurables(
+          {
+            proposal,
+            activeDurables,
+            reviewReason,
+            reviewedAt,
+            actionReviewStatus: "applied",
+            requireAllUpdates: true,
+          },
+          {
+            updateDurable: (durableId, fields) => port.updateDurable(durableId, fields),
+            logRunAction: (action) => port.logRunAction(action),
+          },
+        );
+        updatedDurableIds.push(...applied.updatedDurableIds);
+      }
+
+      const reviewed = await port.reviewProposal({
+        proposalId: proposal.id,
+        status: input.decision === "apply" ? "applied" : "rejected",
+        reason: reviewReason,
+        reviewedAt,
+        appliedActionCount: input.decision === "apply" ? 1 : 0,
+      });
+      if (!reviewed) {
+        throw new Error(`Proposal ${proposal.id} could not be marked ${input.decision} because it is no longer open.`);
+      }
+
+      await database.execute("COMMIT");
+    } catch (error) {
+      await database.execute("ROLLBACK").catch(() => undefined);
+      throw error;
+    }
+
+    const reviewedProposal = await port.getProposal(proposal.id);
+    if (!reviewedProposal) {
+      throw new Error(`Proposal ${proposal.id} disappeared after review.`);
+    }
+
+    return {
+      proposal: reviewedProposal,
+      updatedDurableIds,
+      backupPath,
+    };
+  } finally {
+    await database.close();
+  }
+}
+
+/**
  * Opens one database session and exposes the dreaming port to a callback.
  *
  * @param dbPath - Database path to open.
@@ -122,14 +232,30 @@ async function withDreamPort<T>(dbPath: string, fn: (port: DreamPort) => Promise
 }
 
 function loadRuntimeConfig(input: { dbPath?: string; env?: NodeJS.ProcessEnv }): { dbPath: string; config: ResolvedAgenrConfig } {
-  const previousConfigPath = input.env?.AGENR_CONFIG_PATH;
-  if (input.env) {
-    delete input.env.AGENR_CONFIG_PATH;
-  }
-  const config = readConfig({ dbPath: input.dbPath });
-  if (input.env && previousConfigPath) {
-    input.env.AGENR_CONFIG_PATH = previousConfigPath;
-  }
-  const dbPath = input.dbPath ?? config.dbPath;
+  const dbPathOverride = normalizeOptionalString(input.dbPath) ?? normalizeOptionalString(input.env?.AGENR_DB_PATH);
+  const configPathOverride = normalizeOptionalString(input.env?.AGENR_CONFIG_PATH);
+  const config = readConfig({
+    ...(input.env ? { env: input.env } : {}),
+    ...(configPathOverride ? { configPath: configPathOverride } : {}),
+    ...(dbPathOverride ? { dbPath: dbPathOverride } : {}),
+  });
+  const dbPath = dbPathOverride ?? config.dbPath;
   return { dbPath, config };
+}
+
+function createConfiguredLlmFactory(
+  config: ResolvedAgenrConfig,
+  env: NodeJS.ProcessEnv | undefined,
+  stage: "dreaming" | "claim",
+): () => ReturnType<typeof createLlmClient> {
+  return () => {
+    const { provider, modelId } = resolveModel(config, stage);
+    const credentials = resolveLlmCredentials(config, provider, env ?? process.env);
+    return createLlmClient(provider, modelId, { apiKey: credentials.apiKey });
+  };
+}
+
+function normalizeOptionalString(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
 }

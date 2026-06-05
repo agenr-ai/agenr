@@ -1,10 +1,9 @@
 import type { AgenrConfig } from "../../../../config.js";
 import type { DreamCompletionSummary, DreamRunStatus } from "../../../../core/dreaming/types.js";
 import type { ClaimExtractionPreviewOutcome, ClaimExtractionResult } from "../../../../core/store/claim-extraction.js";
-import type { LlmPort } from "../../../../core/ports.js";
 import type { DreamTier } from "../../../../core/dreaming/domain/pass-types.js";
 import type { DreamProgressReporter } from "../../progress.js";
-import type { DreamPort } from "../../ports.js";
+import type { CostMeteredLlm, DreamPort } from "../../ports.js";
 
 /**
  * Claim-key reconcile selection and execution options for one dreaming run.
@@ -33,7 +32,7 @@ export interface ReconcileRunOptions {
 export interface ReconcileRunDeps {
   port: DreamPort;
   config: AgenrConfig | null;
-  createClaimExtractionLlm?: () => LlmPort & { metadata?: { usage?: { inputTokens?: number; outputTokens?: number; totalCost?: number } } };
+  createClaimExtractionLlm?: () => CostMeteredLlm;
 }
 
 /**
@@ -57,15 +56,7 @@ export interface DurableSuggestionRecord {
   previewOutcome: ClaimExtractionPreviewOutcome | null;
 }
 
-export type ClaimExtractionPreviewLlm = LlmPort & {
-  metadata?: {
-    usage?: {
-      inputTokens?: number;
-      outputTokens?: number;
-      totalCost?: number;
-    };
-  };
-};
+export type ClaimExtractionPreviewLlm = CostMeteredLlm;
 
 export interface ReconcileSelection {
   includeInactive: boolean;
