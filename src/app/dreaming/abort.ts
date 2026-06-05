@@ -7,10 +7,12 @@
  */
 
 /** Canonical error thrown when a dreaming run is cancelled via its abort signal. */
-export const USER_ABORT_ERROR = "Run aborted by user (SIGINT).";
+const USER_ABORT_ERROR = "Run aborted by user (SIGINT).";
 
 /** Canonical run summary recorded when a dreaming run is aborted by the user. */
-export const USER_ABORT_SUMMARY = "Run aborted by user.";
+const USER_ABORT_SUMMARY = "Run aborted by user.";
+
+export { USER_ABORT_ERROR, USER_ABORT_SUMMARY };
 
 /**
  * Throws the canonical abort error when the provided signal is aborted.

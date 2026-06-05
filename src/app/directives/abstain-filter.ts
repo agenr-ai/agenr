@@ -57,8 +57,10 @@ export interface AbstainSuppression {
  * open. Directive rows are still withheld, but blocked-topic suppression could
  * not run, so operators can see that abstention ran in a degraded mode.
  */
-export const ABSTAIN_DIRECTIVE_LOOKUP_FAILED_NOTICE =
+const ABSTAIN_DIRECTIVE_LOOKUP_FAILED_NOTICE =
   "Memory-directive lookup failed; blocked-topic suppression was skipped this pass and only directive rows were withheld.";
+
+export { ABSTAIN_DIRECTIVE_LOOKUP_FAILED_NOTICE };
 
 /**
  * Result of applying the abstain filter to a candidate list.
@@ -190,6 +192,7 @@ export async function applyAbstainDirectivesForInjection<T extends AbstainFilter
   return result.kept;
 }
 
+/** Returns whether a directive can be injected into the prompt surface. */
 function isAllowedDirectiveInjectionItem(item: AbstainFilterItem): boolean {
   return item.sourceKind === "directive" && isProactiveDirectiveDurable(item.entry);
 }

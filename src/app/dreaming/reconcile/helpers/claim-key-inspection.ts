@@ -4,6 +4,7 @@ import type { Durable } from "../../../../core/types.js";
 import { PROJECT_METADATA_ENTITY_ALIASES, USER_METADATA_ENTITY_ALIASES } from "../constants.js";
 import { normalizeMetadataEntity } from "./utils.js";
 
+/** Categorized inspection result for an existing durable claim key. */
 export type ExistingClaimKeyInspection =
   | { kind: "missing" }
   | { kind: "ok"; inspection: ClaimKeyInspection }
@@ -11,6 +12,7 @@ export type ExistingClaimKeyInspection =
   | { kind: "noncanonical"; inspection: ClaimKeyInspection; normalized: NonNullable<ClaimKeyInspection["normalized"]> }
   | { kind: "suspect"; inspection: ClaimKeyInspection };
 
+/** Inspects the current durable claim key and classifies repair needs. */
 export function inspectExistingClaimKey(durable: Durable): ExistingClaimKeyInspection {
   const rawClaimKey = durable.claim_key?.trim();
   if (!rawClaimKey) {
@@ -37,6 +39,7 @@ export function inspectExistingClaimKey(durable: Durable): ExistingClaimKeyInspe
   return { kind: "ok", inspection };
 }
 
+/** Resolves a metadata-grounded repair for generic user or project entity prefixes. */
 export function resolveExplicitMetadataRepair(durable: Durable, inspection: ClaimKeyInspection): string | null {
   const normalized = inspection.normalized;
   if (!normalized) {
@@ -58,10 +61,12 @@ export function resolveExplicitMetadataRepair(durable: Durable, inspection: Clai
   return null;
 }
 
+/** Resolves a metadata-grounded backfill candidate for one proposed claim key. */
 export function resolveMetadataBackfillClaimKey(durable: Durable, claimKey: string): string | null {
   return resolveExplicitMetadataRepair(durable, inspectClaimKey(claimKey));
 }
 
+/** Formats claim-key suspicion reasons for proposal rationales. */
 export function describeSuspicionList(inspection: ClaimKeyInspection): string {
   if (!inspection.normalized || inspection.suspectReasons.length === 0) {
     return "it is low-trust";

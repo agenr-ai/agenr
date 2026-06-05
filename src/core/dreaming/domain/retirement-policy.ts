@@ -8,7 +8,7 @@ const STATUS_ARTIFACT_SUBJECT_HINTS = ["session handoff", "status update", "prog
 /**
  * Action types that suppress same-run retirement reconsideration.
  */
-const SURGEON_RETIREMENT_SAME_RUN_SUPPRESSION_ACTION_TYPES: Array<Extract<DreamRunAction["actionType"], "skip" | "retire" | "update_durable">> = [
+const DREAM_PRUNE_SAME_RUN_SUPPRESSION_ACTION_TYPES: Array<Extract<DreamRunAction["actionType"], "skip" | "retire" | "update_durable">> = [
   "skip",
   "retire",
   "update_durable",
@@ -17,13 +17,13 @@ const SURGEON_RETIREMENT_SAME_RUN_SUPPRESSION_ACTION_TYPES: Array<Extract<DreamR
 /**
  * Action types that mark a candidate as recently evaluated for later retirement runs.
  */
-const SURGEON_RETIREMENT_RECENT_EVALUATION_ACTION_TYPES: Array<Extract<DreamRunAction["actionType"], "skip" | "retire" | "update_durable">> = [
+const DREAM_PRUNE_RECENT_EVALUATION_ACTION_TYPES: Array<Extract<DreamRunAction["actionType"], "skip" | "retire" | "update_durable">> = [
   "skip",
   "retire",
   "update_durable",
 ];
 
-export { SURGEON_RETIREMENT_RECENT_EVALUATION_ACTION_TYPES, SURGEON_RETIREMENT_SAME_RUN_SUPPRESSION_ACTION_TYPES };
+export { DREAM_PRUNE_RECENT_EVALUATION_ACTION_TYPES, DREAM_PRUNE_SAME_RUN_SUPPRESSION_ACTION_TYPES };
 
 /**
  * Minimal candidate fields used by retirement selection policy.

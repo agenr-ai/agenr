@@ -1,14 +1,28 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 
-import { DEFAULT_DREAMING_DAILY_COST_CAP, DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS, type AgenrConfig } from "../../config.js";
+import {
+  DEFAULT_DREAMING_DAILY_COST_CAP,
+  DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS,
+  DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE,
+  DEFAULT_DREAMING_PRUNE_PROTECT_RECALLED_DAYS,
+  type AgenrConfig,
+} from "../../config.js";
 import type { EmbeddingPort } from "../../core/ports.js";
 import type { Logger } from "../../logger.js";
-import type { DreamCompletionSummary, DreamProjectSummary, DreamRunStatus, DreamTier } from "../../core/dreaming/types.js";
+import type {
+  DreamCompletionSummary,
+  DreamEfficiencySummary,
+  DreamProjectSummary,
+  DreamPruneSummary,
+  DreamRunStatus,
+  DreamTier,
+} from "../../core/dreaming/types.js";
 import { resolveLocalFilesystemPath } from "../../filesystem-path.js";
 import { throwIfAborted, USER_ABORT_ERROR } from "./abort.js";
 import { applyExtractedDurables, runExtractStage } from "./extract.js";
 import { emitDreamProgress, type DreamProgressReporter } from "./progress.js";
+import { runPruneStage } from "./prune.js";
 import { runProjectStage } from "./project.js";
 import type { CostMeteredLlm, DreamPort } from "./ports.js";
 import { runReconcilePass } from "./reconcile/index.js";
@@ -128,6 +142,8 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
   let reconcileSummary: DreamCompletionSummary["reconcile"];
   let temporalizeSummary: DreamCompletionSummary["temporalize"];
   let projectSummary: DreamProjectSummary | undefined;
+  let pruneSummary: DreamPruneSummary | undefined;
+  let efficiencySummary: DreamEfficiencySummary | undefined;
   let durablesSkipped: DreamCompletionSummary["durables_skipped"] = [];
   let observations: string[] = [];
   let recommendations: string[] = [];
@@ -139,13 +155,15 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
   let durablesRetired = 0;
 
   try {
-    const scan = await runDreamScan({ project: options.project, now }, { port: deps.port });
+    const fullBacklog = options.tier === "deep";
+    const scan = await runDreamScan({ project: options.project, fullBacklog, now }, { port: deps.port });
     scanSummary = scan;
 
     const extract = await runExtractStage(
       {
         now,
         ...(options.project ? { project: options.project } : {}),
+        fullBacklog,
         maxEpisodes: extractStages.maxEpisodes,
         contextLookupEnabled: extractStages.contextLookupEnabled,
         costCapUsd: remainingDailyBudgetUsd,
@@ -237,6 +255,34 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
       applied: activeProfileSnapshot !== null,
     };
 
+    if (shouldRunPruneStage(options.tier)) {
+      const pruneConfig = resolvePruneStageConfig(deps.config);
+      pruneSummary = await runPruneStage(
+        {
+          runId,
+          apply: options.apply,
+          now,
+          ...(options.project ? { project: options.project } : {}),
+          protectedDurableIds: projectStage.snapshot ? [...projectStage.snapshot.durableIds, ...projectStage.snapshot.directiveIds] : [],
+          protectRecalledDays: pruneConfig.protectRecalledDays,
+          protectMinImportance: pruneConfig.protectMinImportance,
+        },
+        { port: deps.port },
+      );
+      actionsTaken += pruneSummary.durablesRetired;
+      actionsSkipped += pruneSummary.candidatesProtected + (options.apply ? 0 : pruneSummary.candidatesRetirable);
+      durablesRetired += pruneSummary.durablesRetired;
+    }
+
+    efficiencySummary = buildEfficiencySummary({
+      scan,
+      estimatedCostUsd,
+      synthesizedDurableMutations: extractSummary.durablesInserted + temporalizeSummary.revisionsApplied + (pruneSummary?.durablesRetired ?? 0),
+      profileDurableCount: projectSummary.profileDurableCount,
+      directiveCount: projectSummary.directiveCount,
+      fullBacklog,
+    });
+
     const completionSummary: DreamCompletionSummary = {
       actions_taken: actionsTaken,
       durables_skipped: durablesSkipped,
@@ -247,6 +293,8 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
       reconcile: reconcileSummary,
       temporalize: temporalizeSummary,
       project: projectSummary,
+      ...(pruneSummary ? { prune: pruneSummary } : {}),
+      efficiency: efficiencySummary,
     };
 
     const runCompletion = {
@@ -261,7 +309,7 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
       error: reconcile.error,
     };
     const dreamStateUpdate = {
-      unsynthesizedImportanceSum: scan.unsynthesizedImportanceSum,
+      unsynthesizedImportanceSum: status === "completed" ? 0 : scan.unsynthesizedImportanceSum,
       ...(status === "completed" ? { lastSuccessfulRunAt: now().toISOString() } : {}),
       ...(activeProfileSnapshot ? { activeProfileSnapshotId: activeProfileSnapshot.id } : {}),
       updatedAt: now().toISOString(),
@@ -306,6 +354,8 @@ export async function runDream(options: DreamRunOptions, deps: DreamWorkflowDeps
       ...(reconcileSummary ? { reconcile: reconcileSummary } : {}),
       ...(temporalizeSummary ? { temporalize: temporalizeSummary } : {}),
       ...(projectSummary ? { project: projectSummary } : {}),
+      ...(pruneSummary ? { prune: pruneSummary } : {}),
+      ...(efficiencySummary ? { efficiency: efficiencySummary } : {}),
     };
     await deps.port.completeRun(runId, {
       status,
@@ -332,6 +382,63 @@ function resolveProjectStageConfig(config: AgenrConfig | null): { maxProfileDura
   return {
     maxProfileDurables: config?.dreaming?.stages?.project?.maxProfileDurables,
   };
+}
+
+/**
+ * Resolves prune-stage protection settings from config.
+ *
+ * @param config - Resolved or partial agenr config, or null.
+ * @returns Effective prune protection thresholds.
+ */
+function resolvePruneStageConfig(config: AgenrConfig | null): { protectRecalledDays: number; protectMinImportance: number } {
+  const prune = config?.dreaming?.stages?.prune;
+  return {
+    protectRecalledDays:
+      typeof prune?.protectRecalledDays === "number" && prune.protectRecalledDays >= 0
+        ? prune.protectRecalledDays
+        : DEFAULT_DREAMING_PRUNE_PROTECT_RECALLED_DAYS,
+    protectMinImportance:
+      typeof prune?.protectMinImportance === "number" && prune.protectMinImportance >= 0
+        ? prune.protectMinImportance
+        : DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE,
+  };
+}
+
+/** Returns whether a dreaming tier includes the prune stage. */
+function shouldRunPruneStage(tier: DreamTier): boolean {
+  return tier === "standard" || tier === "deep";
+}
+
+/** Builds efficiency telemetry for one completed dreaming run. */
+function buildEfficiencySummary(input: {
+  scan: NonNullable<DreamCompletionSummary["scan"]>;
+  estimatedCostUsd: number;
+  synthesizedDurableMutations: number;
+  profileDurableCount: number;
+  directiveCount: number;
+  fullBacklog: boolean;
+}): DreamEfficiencySummary {
+  const evidenceItemsRead = input.scan.episodesSinceLastRun + input.scan.ingestFilesSinceLastRun + input.scan.durablesCreatedSinceLastRun;
+  const profileInjectionTokenEstimate = estimateProfileInjectionTokens(input.profileDurableCount, input.directiveCount);
+  return {
+    evidenceItemsRead,
+    synthesizedDurableMutations: input.synthesizedDurableMutations,
+    costPerSynthesizedDurableUsd: input.synthesizedDurableMutations > 0 ? roundCost(input.estimatedCostUsd / input.synthesizedDurableMutations) : null,
+    profileInjectionTokenEstimate,
+    recomputeRatio: evidenceItemsRead === 0 ? 0 : input.fullBacklog ? 1 : 0,
+  };
+}
+
+/** Estimates prompt tokens needed for profile and directive injection. */
+function estimateProfileInjectionTokens(profileDurableCount: number, directiveCount: number): number {
+  const durableTokenEstimate = 36;
+  const directiveTokenEstimate = 24;
+  return profileDurableCount * durableTokenEstimate + directiveCount * directiveTokenEstimate;
+}
+
+/** Rounds cost telemetry to the persisted precision. */
+function roundCost(value: number): number {
+  return Number(value.toFixed(6));
 }
 
 /**
@@ -397,6 +504,7 @@ function resolveDreamEmbedding(embedding: EmbeddingPort | undefined): EmbeddingP
   };
 }
 
+/** Copies a SQLite sidecar file when it exists. */
 async function copySidecarIfPresent(sourcePath: string, targetPath: string): Promise<void> {
   try {
     await copyFile(sourcePath, targetPath);
@@ -409,6 +517,7 @@ async function copySidecarIfPresent(sourcePath: string, targetPath: string): Pro
   }
 }
 
+/** Loads a best-effort action count for a partially completed dream run. */
 async function loadPartialRunActions(port: DreamPort, runId: string): Promise<number> {
   try {
     return (await port.getRunActions(runId)).length;
@@ -417,6 +526,7 @@ async function loadPartialRunActions(port: DreamPort, runId: string): Promise<nu
   }
 }
 
+/** Returns whether an error represents a missing filesystem path. */
 function isMissingFileError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }

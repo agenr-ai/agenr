@@ -14,6 +14,7 @@ import { applyClaimKeyRepair } from "../pass-apply-handlers.js";
 import type { ReconcilePassContext } from "../pass-context.js";
 import type { EntityFamilyConvergenceAudit } from "../types.js";
 
+/** Projected durable rewrite for one entity-family convergence decision. */
 interface EntityFamilyRewrite {
   durable: Durable;
   targetClaimKey: string;
@@ -21,6 +22,7 @@ interface EntityFamilyRewrite {
   attribute: string;
 }
 
+/** Decision selected for one entity-family convergence candidate. */
 type EntityFamilyDecision =
   | {
       kind: "propose_unresolved";
@@ -53,6 +55,7 @@ export async function processEntityFamilyConvergenceCandidate(ctx: ReconcilePass
   await executeEntityFamilyDecision(ctx, candidate, decision);
 }
 
+/** Evaluates whether an entity-family candidate should be proposed or applied. */
 function evaluateEntityFamilyDecision(ctx: ReconcilePassContext, candidate: ClaimKeyEntityFamilyCandidate): EntityFamilyDecision {
   const audit = buildEntityFamilyConvergenceAudit(candidate);
   const canonicalEntityPrefix = candidate.canonicalEntityPrefix;
@@ -107,6 +110,7 @@ function evaluateEntityFamilyDecision(ctx: ReconcilePassContext, candidate: Clai
   };
 }
 
+/** Executes a previously evaluated entity-family convergence decision. */
 async function executeEntityFamilyDecision(ctx: ReconcilePassContext, candidate: ClaimKeyEntityFamilyCandidate, decision: EntityFamilyDecision): Promise<void> {
   switch (decision.kind) {
     case "propose_unresolved": {

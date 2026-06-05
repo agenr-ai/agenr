@@ -223,6 +223,7 @@ export function registerDreamingCommand(program: Command): void {
     });
 }
 
+/** Normalizes CLI options for the dream run command. */
 function normalizeDreamRunCommand(options: DreamRunCommandOptions): Omit<DreamRuntimeOptions, "dbPath" | "env" | "onProgress" | "logger" | "signal"> {
   const tier = options.tier ?? "standard";
   if (!DREAM_TIERS.includes(tier)) {
@@ -238,6 +239,7 @@ function normalizeDreamRunCommand(options: DreamRunCommandOptions): Omit<DreamRu
   };
 }
 
+/** Renders the human-readable result for a dream run. */
 function renderRunResult(result: Awaited<ReturnType<typeof runDreamRuntime>>, applied: boolean): string {
   const mode = applied ? "apply" : "dry-run";
   return [
@@ -254,6 +256,7 @@ function renderRunResult(result: Awaited<ReturnType<typeof runDreamRuntime>>, ap
     .concat("\n");
 }
 
+/** Renders the human-readable dreaming status summary. */
 function renderStatus(status: Awaited<ReturnType<typeof loadDreamStatusRuntime>>): string {
   const lines = [
     "Dream status",
@@ -269,6 +272,7 @@ function renderStatus(status: Awaited<ReturnType<typeof loadDreamStatusRuntime>>
   return `${lines.join("\n")}\n`;
 }
 
+/** Renders the human-readable dreaming run history. */
 function renderHistory(history: Awaited<ReturnType<typeof loadDreamHistoryRuntime>>): string {
   if (history.length === 0) {
     return "No dreaming runs recorded.\n";
@@ -280,6 +284,7 @@ function renderHistory(history: Awaited<ReturnType<typeof loadDreamHistoryRuntim
     .concat("\n");
 }
 
+/** Renders the active dreaming profile snapshot. */
 function renderProfile(profile: Awaited<ReturnType<typeof loadDreamProfileRuntime>>): string {
   if (!profile.snapshot) {
     return "No active dream profile snapshot.\n";
@@ -301,6 +306,7 @@ function renderProfile(profile: Awaited<ReturnType<typeof loadDreamProfileRuntim
   return `${lines.join("\n")}\n`;
 }
 
+/** Renders the compact dreaming summary view. */
 function renderSummary(summary: Awaited<ReturnType<typeof loadDreamSummaryRuntime>>): string {
   if (!summary.snapshot) {
     return ["Dream summary", "  active profile: none", `  active durables: ${summary.health.total}`, `  open proposals: ${summary.openProposalCount}`]
@@ -337,6 +343,7 @@ function renderSummary(summary: Awaited<ReturnType<typeof loadDreamSummaryRuntim
   return `${lines.join("\n")}\n`;
 }
 
+/** Renders durable rows with the provided indentation prefix. */
 function renderDurableList(durables: Durable[], prefix: string): string[] {
   if (durables.length === 0) {
     return [`${prefix}(none)`];
@@ -348,6 +355,7 @@ function renderDurableList(durables: Durable[], prefix: string): string[] {
   });
 }
 
+/** Renders directive durable rows with the provided indentation prefix. */
 function renderDirectiveList(durables: Durable[], prefix: string): string[] {
   if (durables.length === 0) {
     return [`${prefix}(none)`];
@@ -359,6 +367,7 @@ function renderDirectiveList(durables: Durable[], prefix: string): string[] {
   );
 }
 
+/** Groups durables by claim-key family for summary rendering. */
 function groupDurablesByClaimFamily(durables: Durable[]): Map<string, Durable[]> {
   const grouped = new Map<string, Durable[]>();
   for (const durable of durables) {
@@ -369,6 +378,7 @@ function groupDurablesByClaimFamily(durables: Durable[]): Map<string, Durable[]>
   return grouped;
 }
 
+/** Resolves the display claim-key family for one durable. */
 function claimFamily(durable: Durable): string {
   const claimKey = durable.claim_key?.trim();
   if (!claimKey) {
@@ -379,6 +389,7 @@ function claimFamily(durable: Durable): string {
   return parts.length > 1 ? parts.slice(0, -1).join("/") : claimKey;
 }
 
+/** Formats a profile snapshot age for CLI output. */
 function formatSnapshotAge(createdAt: string): string {
   const createdMs = Date.parse(createdAt);
   if (!Number.isFinite(createdMs)) {
@@ -395,6 +406,7 @@ function formatSnapshotAge(createdAt: string): string {
   return remainingMinutes === 0 ? `${ageHours}h` : `${ageHours}h ${remainingMinutes}m`;
 }
 
+/** Renders the action log for one dreaming run. */
 function renderActions(runId: string, actions: Awaited<ReturnType<typeof loadDreamActionsRuntime>>): string {
   if (actions.length === 0) {
     return `No dreaming actions recorded for run ${runId}.\n`;
@@ -408,6 +420,7 @@ function renderActions(runId: string, actions: Awaited<ReturnType<typeof loadDre
   return `${lines.join("\n")}\n`;
 }
 
+/** Renders proposals emitted by one dreaming run. */
 function renderProposals(runId: string, proposals: Awaited<ReturnType<typeof loadDreamProposalsRuntime>>): string {
   if (proposals.length === 0) {
     return `No dreaming proposals recorded for run ${runId}.\n`;
@@ -434,6 +447,7 @@ function renderProposals(runId: string, proposals: Awaited<ReturnType<typeof loa
   return `${lines.join("\n")}\n`;
 }
 
+/** Renders the open dreaming proposal backlog. */
 function renderBacklog(backlog: Awaited<ReturnType<typeof loadDreamBacklogRuntime>>): string {
   if (backlog.length === 0) {
     return "No dreaming proposals matched the current filters.\n";
@@ -455,6 +469,7 @@ function renderBacklog(backlog: Awaited<ReturnType<typeof loadDreamBacklogRuntim
   return `${lines.join("\n")}\n`;
 }
 
+/** Renders the result of reviewing a dreaming proposal. */
 function renderProposalReviewResult(result: Awaited<ReturnType<typeof reviewDreamProposalRuntime>>): string {
   return [
     `Proposal review ${result.proposal.id}`,
@@ -469,6 +484,7 @@ function renderProposalReviewResult(result: Awaited<ReturnType<typeof reviewDrea
     .concat("\n");
 }
 
+/** Formats unknown command errors for stderr output. */
 function formatUnknownError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

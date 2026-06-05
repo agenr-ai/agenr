@@ -2,6 +2,7 @@ import type { ReconcileRepairCounts } from "../../../../core/dreaming/types.js";
 import { SHADOW_BUCKET_ORDER } from "../constants.js";
 import type { DurableSuggestionRecord, EntityFamilyConvergenceDecisionStats, MissingBackfillDecisionStats, SiblingSlotResonanceShadowStats } from "../types.js";
 
+/** Creates empty missing-key backfill decision counters. */
 export function createEmptyMissingBackfillDecisionStats(): MissingBackfillDecisionStats {
   return {
     autoAppliedTrustedGroupReuse: 0,
@@ -22,6 +23,7 @@ export function createEmptyMissingBackfillDecisionStats(): MissingBackfillDecisi
   };
 }
 
+/** Creates empty sibling-slot resonance shadow counters. */
 export function createEmptySiblingSlotResonanceShadowStats(): SiblingSlotResonanceShadowStats {
   return {
     thresholdOnlyCandidateCount: 0,
@@ -44,6 +46,7 @@ export function createEmptySiblingSlotResonanceShadowStats(): SiblingSlotResonan
   };
 }
 
+/** Creates empty entity-family convergence decision counters. */
 export function createEmptyEntityFamilyConvergenceDecisionStats(): EntityFamilyConvergenceDecisionStats {
   return {
     appliedClusters: 0,
@@ -52,6 +55,7 @@ export function createEmptyEntityFamilyConvergenceDecisionStats(): EntityFamilyC
   };
 }
 
+/** Creates empty reconcile repair counters. */
 export function createEmptyRepairCounts(): ReconcileRepairCounts {
   return {
     identifiedNormalizations: 0,
@@ -70,6 +74,7 @@ export function createEmptyRepairCounts(): ReconcileRepairCounts {
   };
 }
 
+/** Creates an empty claim-extraction suggestion record. */
 export function createEmptySuggestionRecord(): DurableSuggestionRecord {
   return {
     suggestion: null,
@@ -78,6 +83,7 @@ export function createEmptySuggestionRecord(): DurableSuggestionRecord {
   };
 }
 
+/** Clones reconcile repair counters for progress emission. */
 export function cloneRepairCounts(counts: ReconcileRepairCounts): ReconcileRepairCounts {
   return {
     identifiedNormalizations: counts.identifiedNormalizations,

@@ -10,6 +10,7 @@ import {
 import { cloneRepairCounts } from "./helpers/stats.js";
 import { elapsedMs, normalizeOptionalNonNegativeCount } from "./helpers/utils.js";
 
+/** Mutable progress counters for the active reconcile stage. */
 interface ReconcileStageProgressState {
   stage: ReconcileProgressStage;
   total: number;
@@ -24,6 +25,7 @@ interface ReconcileStageProgressState {
   lastReportedAtMs: number;
 }
 
+/** Emits progress updates for claim-key reconcile health and stage work. */
 export interface ReconcileProgressTracker {
   emitHealthSnapshot(snapshot: ClaimKeyHealthSnapshot): void;
   startStage(
@@ -39,6 +41,7 @@ export interface ReconcileProgressTracker {
   advanceStage(count?: number): void;
 }
 
+/** Creates the progress tracker used by one reconcile pass. */
 export function createReconcileProgressTracker(input: {
   tier: DreamTier;
   apply: boolean;
@@ -149,6 +152,7 @@ export function createReconcileProgressTracker(input: {
     },
   };
 
+  /** Emits one progress event for the active reconcile stage. */
   function emitStageEvent(status: "started" | "preview_progress" | "progress" | "completed", nowMs = Date.now()): void {
     if (!activeStage) {
       return;

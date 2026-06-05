@@ -1,6 +1,7 @@
 import { DEFAULT_CLAIM_EXTRACTION_CONCURRENCY } from "../../../../config.js";
 import type { ClaimExtractionPreviewLlm } from "../types.js";
 
+/** Sums token and cost usage across claim-extraction preview LLM instances. */
 export function claimExtractionUsage(llms: ClaimExtractionPreviewLlm[]): {
   inputTokens: number;
   outputTokens: number;
@@ -22,6 +23,7 @@ export function claimExtractionUsage(llms: ClaimExtractionPreviewLlm[]): {
   );
 }
 
+/** Resolves configured claim-extraction concurrency with the default fallback. */
 export function resolveClaimExtractionConcurrency(config: { concurrency?: number }): number {
   const concurrency = config.concurrency;
   const normalized = typeof concurrency === "number" ? Math.trunc(concurrency) : Number.NaN;

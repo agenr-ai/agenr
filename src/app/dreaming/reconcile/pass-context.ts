@@ -180,6 +180,7 @@ export async function createReconcilePassContext(options: ReconcileRunOptions, d
   };
 }
 
+/** Returns accumulated claim-extraction usage for a reconcile pass context. */
 export function getClaimExtractionUsage(ctx: ReconcilePassContext): ReturnType<typeof claimExtractionUsage> {
   return claimExtractionUsage(ctx.extraction.claimExtractionLlms);
 }

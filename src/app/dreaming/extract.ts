@@ -26,6 +26,7 @@ export interface DreamExtractUsage {
 export interface DreamExtractOptions {
   now(): Date;
   project?: string;
+  fullBacklog?: boolean;
   maxEpisodes: number;
   contextLookupEnabled: boolean;
   /** Remaining LLM budget for the run; mining stops once it is exhausted. */
@@ -83,7 +84,7 @@ export async function runExtractStage(options: DreamExtractOptions, deps: DreamE
     return { status: "completed", candidates: [], summary: emptySummary, usage: emptyUsage, warnings: [] };
   }
 
-  const since = await resolveExtractSince(deps.port);
+  const since = await resolveExtractSince(deps.port, options.fullBacklog === true);
   const episodes = await deps.port.listEpisodeEvidenceSince(since, {
     ...(options.project ? { project: options.project } : {}),
     limit: options.maxEpisodes,
@@ -351,7 +352,11 @@ export function buildDurableFromCandidate(
 }
 
 /** Resolves the evidence lower bound from the last completed dreaming run. */
-async function resolveExtractSince(port: DreamPort): Promise<string> {
+async function resolveExtractSince(port: DreamPort, fullBacklog: boolean): Promise<string> {
+  if (fullBacklog) {
+    return "1970-01-01T00:00:00.000Z";
+  }
+
   const lastRun = await port.getLastRun();
   const lastSuccessfulAt = lastRun?.status === "completed" ? lastRun.completedAt : null;
   return lastSuccessfulAt ?? "1970-01-01T00:00:00.000Z";

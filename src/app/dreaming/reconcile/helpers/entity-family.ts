@@ -4,6 +4,7 @@ import type { Durable } from "../../../../core/types.js";
 import type { EntityFamilyConvergenceAudit } from "../types.js";
 import { normalizeStringArray } from "./utils.js";
 
+/** Builds persisted audit data for an entity-family convergence candidate. */
 export function buildEntityFamilyConvergenceAudit(candidate: ClaimKeyEntityFamilyCandidate): EntityFamilyConvergenceAudit {
   return {
     competingEntityPrefixes: [...candidate.entityPrefixes],
@@ -23,6 +24,7 @@ export function buildEntityFamilyConvergenceAudit(candidate: ClaimKeyEntityFamil
   };
 }
 
+/** Flattens pairwise entity-family evidence into a de-duplicated evidence list. */
 export function flattenEntityFamilyEvidence(pairSupport: ClaimKeyEntityFamilyPairSupport[]): ClaimKeyEntityFamilyEvidence[] {
   const evidenceByKey = new Map<string, ClaimKeyEntityFamilyEvidence>();
 
@@ -91,6 +93,7 @@ export function resolveEntityFamilyTargetClaimKey(durable: Durable, canonicalEnt
   return `${canonicalEntityPrefix}/${claimKeyInspection.normalized.attribute}`;
 }
 
+/** Rewrites claim keys from competing entity prefixes onto the canonical prefix. */
 export function mapEntityFamilyClaimKeys(claimKeys: string[], entityPrefixes: string[], canonicalEntityPrefix: string): string[] {
   const entityPrefixSet = new Set(entityPrefixes);
   return normalizeStringArray(
@@ -105,6 +108,7 @@ export function mapEntityFamilyClaimKeys(claimKeys: string[], entityPrefixes: st
   );
 }
 
+/** Builds human-readable rationale text for an entity-family convergence candidate. */
 export function buildEntityFamilyConvergenceRationale(candidate: ClaimKeyEntityFamilyCandidate): string {
   const evidenceText = flattenEntityFamilyEvidence(candidate.pairSupport)
     .map((evidence) => evidence.detail)

@@ -8,6 +8,7 @@ import {
 import type { MissingBackfillShadowAudit, MissingBackfillSupportEvaluation, SiblingSlotResonanceShadowStats } from "../types.js";
 import { normalizeStringArray } from "./utils.js";
 
+/** Builds summary telemetry for the sibling-slot resonance shadow rule. */
 export function buildSiblingSlotResonanceShadowSummary(stats: SiblingSlotResonanceShadowStats): ReconcilePassSummary["shadowSiblingSlotResonance"] {
   if (stats.thresholdOnlyCandidateCount === 0) {
     return null;
@@ -42,6 +43,7 @@ export function buildSiblingSlotResonanceShadowSummary(stats: SiblingSlotResonan
   };
 }
 
+/** Classifies a below-threshold supported backfill into a shadow telemetry bucket. */
 export function resolveThresholdOnlyShadowBucket(support: MissingBackfillSupportEvaluation): ReconcileShadowBucket | null {
   if (support.relaxedStableSlotFamilyGate) {
     return "relaxed_one_sibling_stable_slot";
@@ -63,6 +65,7 @@ export function resolveThresholdOnlyShadowBucket(support: MissingBackfillSupport
   return "other_grounded_family_alignment";
 }
 
+/** Builds shadow telemetry for a missing-key candidate blocked only by threshold. */
 export function buildMissingBackfillShadowAudit(input: {
   support: MissingBackfillSupportEvaluation;
   confidence: number;
@@ -89,6 +92,7 @@ export function buildMissingBackfillShadowAudit(input: {
   };
 }
 
+/** Records sibling-slot resonance shadow counters for one threshold-only candidate. */
 export function recordSiblingSlotResonanceShadowCandidate(
   stats: SiblingSlotResonanceShadowStats,
   claimKey: string,

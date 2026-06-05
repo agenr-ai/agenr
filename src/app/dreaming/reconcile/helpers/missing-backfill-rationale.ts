@@ -2,6 +2,7 @@ import type { ClaimKeyCompactnessEvaluation } from "../../../../core/claim-key-s
 import { HIGH_CONFIDENCE_BACKFILL_THRESHOLD, type MissingBackfillPromotionClass, type MissingBackfillPromotionLane } from "../constants.js";
 import type { MissingBackfillSupportEvaluation } from "../types.js";
 
+/** Shared rationale input for missing-key backfill proposal and apply text. */
 interface MissingBackfillRationaleBase {
   originalClaimKey: string;
   targetClaimKey: string;
@@ -10,6 +11,7 @@ interface MissingBackfillRationaleBase {
   compactness: ClaimKeyCompactnessEvaluation;
 }
 
+/** Rationale input for a missing-key backfill proposal below auto-apply. */
 interface MissingBackfillProposalRationaleInput extends MissingBackfillRationaleBase {
   autoApplyThreshold: number;
   promotionLane: MissingBackfillPromotionLane;
@@ -17,24 +19,29 @@ interface MissingBackfillProposalRationaleInput extends MissingBackfillRationale
   support: MissingBackfillSupportEvaluation;
 }
 
+/** Rationale input for an auto-applied missing-key backfill. */
 interface MissingBackfillApplyRationaleInput extends MissingBackfillRationaleBase {
   promotionLane: MissingBackfillPromotionLane;
   source: string;
   support: MissingBackfillSupportEvaluation;
 }
 
+/** Formats claim-extraction confidence for rationale text. */
 function formatConfidence(confidence: number): string {
   return confidence.toFixed(2);
 }
 
+/** Returns whether metadata rewrote the preview claim key. */
 function hasMetadataGrounding(input: MissingBackfillRationaleBase): boolean {
   return input.metadataBackfillClaimKey !== null && input.originalClaimKey !== input.targetClaimKey;
 }
 
+/** Returns whether compact canonicalization rewrote the preview claim key. */
 function hasCompactionRewrite(input: MissingBackfillRationaleBase): boolean {
   return Boolean(input.compactness.compactedFrom && input.compactness.compactedFrom !== input.targetClaimKey);
 }
 
+/** Formats trailing compaction rationale for proposal text. */
 function formatCompactionSuffix(input: MissingBackfillRationaleBase): string {
   if (!hasCompactionRewrite(input)) {
     return "";
@@ -43,6 +50,7 @@ function formatCompactionSuffix(input: MissingBackfillRationaleBase): string {
   return ` The candidate was compacted from "${input.compactness.compactedFrom}" to "${input.targetClaimKey}" because ${input.compactness.compactionReason}.`;
 }
 
+/** Formats inline compaction rationale for threshold explanation text. */
 function formatInlineCompactionClause(input: MissingBackfillRationaleBase): string {
   if (!hasCompactionRewrite(input)) {
     return "";
@@ -51,6 +59,7 @@ function formatInlineCompactionClause(input: MissingBackfillRationaleBase): stri
   return ` after safely compacting "${input.compactness.compactedFrom}" to "${input.targetClaimKey}" because ${input.compactness.compactionReason}`;
 }
 
+/** Formats trailing compaction rationale for auto-apply text. */
 function formatApplyCompactionSuffix(input: MissingBackfillRationaleBase): string {
   if (!hasCompactionRewrite(input)) {
     return "";
@@ -59,6 +68,7 @@ function formatApplyCompactionSuffix(input: MissingBackfillRationaleBase): strin
   return ` The candidate was compacted from "${input.compactness.compactedFrom}" because ${input.compactness.compactionReason}.`;
 }
 
+/** Formats the leading sentence for missing-key backfill rationale text. */
 function formatPreviewLead(input: MissingBackfillRationaleBase): string {
   if (hasMetadataGrounding(input)) {
     return (
@@ -162,6 +172,7 @@ export function buildMissingBackfillApplyRationale(input: MissingBackfillApplyRa
   );
 }
 
+/** Formats a missing-key promotion class for human-readable rationale text. */
 export function describeMissingBackfillPromotionClass(promotionClass: MissingBackfillPromotionClass): string {
   switch (promotionClass) {
     case "trusted_exact_reuse_grounded":

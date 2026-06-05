@@ -152,26 +152,26 @@ Compatibility policy:
 
 The CLI surface is still intentionally compact, but it now covers setup, recall, ingest, and corpus maintenance.
 
-| Command                          | What it does                                                                                                             |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | -------- | ------ |
-| `agenr init`                     | Interactive first-run wizard: auth, model selection, OpenClaw detection, plugin install, and optional initial ingestion. |
-| `agenr setup`                    | Configure auth, model defaults, embeddings, and the agenr database path.                                                 |
-| `agenr recall <query>`           | Run the hybrid recall pipeline with optional temporal and type/tag filters.                                              |
-| `agenr trace`                    | Inspect one entry's provenance and claim-family lineage by id, subject, or `--last`.                                     |
-| `agenr ingest <path>`            | Default durable-entry ingest shorthand. Equivalent to `agenr ingest durables <path>`.                                    |
-| `agenr ingest durables <path>`   | Bulk-ingest one file or directory of OpenClaw transcript files into durable knowledge entries.                           |
-| `agenr ingest episodes [path]`   | Backfill episodic summaries from OpenClaw session transcripts, including rotated `.reset.*` and `.deleted.*` files.      |
-| `agenr ingest procedures [path]` | Sync repo-authored YAML procedures into procedural-memory revisions stored in the knowledge database.                    |
-| `agenr dream run`                | Execute a dreaming maintenance run. Dry-run by default; add `--apply` to mutate the corpus. Use `--tier light            | standard | deep`. |
-| `agenr dream status`             | Show corpus health, claim-key lifecycle counts, and the latest dreaming run summary.                                     |
-| `agenr dream history`            | Show recent dreaming runs.                                                                                               |
-| `agenr scenarios list`           | List repo-local claim-key sandbox scenarios.                                                                             |
-| `agenr scenarios run`            | Run one or more claim-key sandbox scenarios.                                                                             |
-| `agenr db reset`                 | Delete and recreate the knowledge database.                                                                              |
+| Command                          | What it does                                                                                                                           |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `agenr init`                     | Interactive first-run wizard: auth, model selection, OpenClaw detection, plugin install, and optional initial ingestion.               |
+| `agenr setup`                    | Configure auth, model defaults, embeddings, and the agenr database path.                                                               |
+| `agenr recall <query>`           | Run the hybrid recall pipeline with optional temporal and type/tag filters.                                                            |
+| `agenr trace`                    | Inspect one entry's provenance and claim-family lineage by id, subject, or `--last`.                                                   |
+| `agenr ingest <path>`            | Default durable-entry ingest shorthand. Equivalent to `agenr ingest durables <path>`.                                                  |
+| `agenr ingest durables <path>`   | Bulk-ingest one file or directory of OpenClaw transcript files into durable knowledge entries.                                         |
+| `agenr ingest episodes [path]`   | Backfill episodic summaries from OpenClaw session transcripts, including rotated `.reset.*` and `.deleted.*` files.                    |
+| `agenr ingest procedures [path]` | Sync repo-authored YAML procedures into procedural-memory revisions stored in the knowledge database.                                  |
+| `agenr dream run`                | Execute a dreaming maintenance run. Dry-run by default; add `--apply` to mutate the corpus. Use `--tier light`, `standard`, or `deep`. |
+| `agenr dream status`             | Show corpus health, claim-key lifecycle counts, and the latest dreaming run summary.                                                   |
+| `agenr dream history`            | Show recent dreaming runs.                                                                                                             |
+| `agenr scenarios list`           | List repo-local claim-key sandbox scenarios.                                                                                           |
+| `agenr scenarios run`            | Run one or more claim-key sandbox scenarios.                                                                                           |
+| `agenr db reset`                 | Delete and recreate the knowledge database.                                                                                            |
 
-The OpenClaw plugin also gives the agent five tools directly inside the runtime: `agenr_store`, `agenr_recall`, `agenr_retire`, `agenr_update`, and `agenr_trace`.
+The OpenClaw plugin gives the agent six tools directly inside the runtime: `agenr_store`, `agenr_recall`, `agenr_fetch`, `agenr_retire`, `agenr_update`, and `agenr_trace`.
 
-The Skeln plugin exposes seven tools: `agenr_store`, `agenr_recall`, `agenr_update`, `agenr_work`, `get_goal`, `create_goal`, and `update_goal`. It does not expose `agenr_retire` or `agenr_trace`.
+The Skeln plugin exposes eight tools: `agenr_store`, `agenr_recall`, `agenr_fetch`, `agenr_update`, `agenr_work`, `get_goal`, `create_goal`, and `update_goal`. It does not expose `agenr_retire` or `agenr_trace`.
 
 Examples:
 

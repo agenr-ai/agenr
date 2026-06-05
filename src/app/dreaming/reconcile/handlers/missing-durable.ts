@@ -41,6 +41,7 @@ export async function processMissingDurable(ctx: ReconcilePassContext, item: Ins
   await executeMissingDurablePreviewDecision(ctx, durable, decision);
 }
 
+/** Applies or proposes trusted-group reuse for a durable with a missing claim key. */
 async function executeTrustedGroupReuse(
   ctx: ReconcilePassContext,
   durable: Durable,

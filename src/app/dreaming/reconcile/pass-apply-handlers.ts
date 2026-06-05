@@ -133,6 +133,7 @@ export async function applyClaimKeyRepair(
   return updateResult;
 }
 
+/** Refreshes claim-key inspection maps and tallies after a durable changes. */
 function refreshClaimKeyInspectionState(ctx: ReconcilePassContext, durableId: string, scope: "projected" | "actual"): void {
   const durable = scope === "projected" ? ctx.workingSet.durablesById.get(durableId) : ctx.workingSet.actualDurablesById.get(durableId);
   const inspectionById = scope === "projected" ? ctx.workingSet.projectedInspectionById : ctx.workingSet.actualInspectionById;

@@ -1,6 +1,6 @@
 {
   "name": "@agenr/skeln-plugin",
-  "version": "3.3.0",
+  "version": "4.0.0",
   "description": "agenr memory plugin for Skeln",
   "type": "module",
   "types": "./dist/index.d.ts",

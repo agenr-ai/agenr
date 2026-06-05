@@ -1,5 +1,6 @@
 import type { ExtensionContext } from "../skeln-types.js";
 
+import { maybeRunLightDream } from "../../../app/dreaming/background-triggers.js";
 import { formatErrorMessage } from "../../shared/errors.js";
 import type { SkelnSessionShutdownEvent } from "../hooks/session-memory.js";
 import type { createAgenrSkelnServices } from "../runtime.js";
@@ -88,4 +89,29 @@ async function writeScopedSkelnShutdownEpisode(
   }
 
   await writeSkelnShutdownEpisode({ target, services, logger });
+  await runSkelnPostSessionLightDream(services, logger);
+}
+
+/** Runs the Skeln post-session light dream trigger when configured. */
+async function runSkelnPostSessionLightDream(
+  services: Awaited<ReturnType<typeof createAgenrSkelnServices>>,
+  logger?: Pick<Console, "info" | "warn">,
+): Promise<void> {
+  const log = logger ?? console;
+  try {
+    const result = await maybeRunLightDream(
+      { trigger: "post_session" },
+      {
+        port: services.dreaming,
+        config: services.agenrConfig,
+        embedding: services.embedding,
+        ...(services.claimExtraction ? { createClaimExtractionLlm: () => services.claimExtraction!.llm } : {}),
+      },
+    );
+    if (result.status === "ran") {
+      log.info(`[agenr] skeln shutdown light dream completed run=${result.result.runId}`);
+    }
+  } catch (error) {
+    log.warn(`[agenr] skeln shutdown light dream failed: ${formatErrorMessage(error)}`);
+  }
 }

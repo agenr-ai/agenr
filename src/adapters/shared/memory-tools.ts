@@ -596,6 +596,7 @@ function failedOutcome(text: string, details: Record<string, unknown>): MemoryTo
   return { text, details, failed: true };
 }
 
+/** Parses a directive polarity string from memory-tool input. */
 function parseDirectivePolarityParam(value: string | undefined): StoreToolParams["polarity"] {
   if (value === undefined) {
     return undefined;
@@ -608,6 +609,7 @@ function parseDirectivePolarityParam(value: string | undefined): StoreToolParams
   throw new Error(`Unsupported directive polarity "${value}".`);
 }
 
+/** Parses a directive trigger string from memory-tool input. */
 function parseDirectiveTriggerParam(value: string | undefined): StoreToolParams["trigger"] {
   if (value === undefined) {
     return undefined;

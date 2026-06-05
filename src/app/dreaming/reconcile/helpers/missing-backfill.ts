@@ -7,7 +7,6 @@ import {
   PROPOSAL_CONFIDENCE_THRESHOLD,
   STRUCTURED_AUTO_APPLY_BACKFILL_THRESHOLD,
   SUPPORTED_PROPOSAL_CONFIDENCE_THRESHOLD,
-  type MissingBackfillPromotionLane,
 } from "../constants.js";
 import type {
   DurableSuggestionRecord,
@@ -38,6 +37,7 @@ export interface MissingBackfillResolvedPreview {
   metadataBackfillClaimKey: string | null;
 }
 
+/** Builds a compact diagnostic for one skipped missing-key preview. */
 export function buildMissingBackfillSkipDiagnostic(
   durable: Durable,
   suggestionRecord: DurableSuggestionRecord,
@@ -61,6 +61,7 @@ export function buildMissingBackfillSkipDiagnostic(
   };
 }
 
+/** Formats a skipped missing-key diagnostic for pass recommendations. */
 export function formatMissingBackfillSkipDiagnostic(diagnostic: MissingBackfillSkipDiagnostic): string {
   const parts = [
     `missing_claim_key:${diagnostic.outcome}`,
@@ -73,6 +74,7 @@ export function formatMissingBackfillSkipDiagnostic(diagnostic: MissingBackfillS
   return parts.join(" ");
 }
 
+/** Resolves the promotion lane and auto-apply threshold for one backfill candidate. */
 export function resolveMissingBackfillPromotionPolicy(input: {
   previewPath: ClaimExtractionResult["path"];
   metadataRepaired: boolean;
@@ -113,6 +115,7 @@ export function resolveMissingBackfillPromotionPolicy(input: {
   };
 }
 
+/** Resolves the proposal threshold for one missing-key backfill candidate. */
 export function resolveMissingBackfillProposalThreshold(input: {
   previewPath: ClaimExtractionResult["path"];
   metadataRepaired: boolean;
@@ -125,6 +128,7 @@ export function resolveMissingBackfillProposalThreshold(input: {
   return PROPOSAL_CONFIDENCE_THRESHOLD;
 }
 
+/** Returns the reason a missing-key backfill cannot be auto-applied. */
 export function resolveMissingBackfillAutoApplyBlocker(input: {
   trusted: boolean;
   compactness: ClaimKeyCompactnessEvaluation;
@@ -146,6 +150,7 @@ export function resolveMissingBackfillAutoApplyBlocker(input: {
   return null;
 }
 
+/** Records counters for grounded-family and relaxed stable-slot promotion decisions. */
 export function recordGroundedFamilyPromotionDecision(
   stats: MissingBackfillDecisionStats,
   support: MissingBackfillSupportEvaluation,

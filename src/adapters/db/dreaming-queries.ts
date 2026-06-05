@@ -345,6 +345,38 @@ export async function countDurablesCreatedSince(executor: SqlExecutor, since: st
   return row ? readNumber(row, "total", 0) : 0;
 }
 
+/**
+ * Sums active durable importance created since a timestamp.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param since - ISO timestamp lower bound.
+ * @param project - Optional project filter.
+ * @returns Sum of matching durable importance values.
+ */
+export async function sumDurableImportanceCreatedSince(executor: SqlExecutor, since: string, project?: string): Promise<number> {
+  const args: Array<string> = [since];
+  let projectClause = "";
+  if (project?.trim()) {
+    projectClause = " AND project = ?";
+    args.push(project.trim());
+  }
+
+  const result = await executor.execute({
+    sql: `
+      SELECT COALESCE(SUM(COALESCE(importance, 0)), 0) AS total
+      FROM durables
+      WHERE created_at >= ?
+        AND ${buildActiveDurableClause("durables")}
+        ${projectClause}
+    `,
+    args,
+  });
+
+  const row = result.rows[0];
+  return row ? readNumber(row, "total", 0) : 0;
+}
+
+/** Builds a SQLite JSON tag containment predicate for one table alias. */
 function buildTagContainsClause(alias: string): string {
   return `EXISTS (
     SELECT 1
@@ -358,11 +390,13 @@ function buildTagContainsClause(alias: string): string {
   )`;
 }
 
+/** Normalizes an optional query filter string. */
 function normalizeOptionalString(value: string | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : null;
 }
 
+/** Normalizes query filter string arrays by trimming blanks. */
 function normalizeStringArray(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter((value) => value.length > 0))].sort();
 }

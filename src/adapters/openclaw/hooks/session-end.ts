@@ -1,5 +1,6 @@
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
+import { maybeRunLightDream } from "../../../app/dreaming/background-triggers.js";
 import { writeOpenClawCurrentSessionEpisode } from "../episode/episode-writer.js";
 import { formatErrorMessage, formatSessionContext } from "../logging.js";
 import { resolveOpenClawCurrentSessionTarget } from "../session/continuity/current-session-resolver.js";
@@ -50,7 +51,30 @@ export async function handleAgenrSessionEnd(
     }
 
     await writeOpenClawCurrentSessionEpisode({ ctx, current: target, services, logger: params.logger });
+    await runOpenClawPostSessionLightDream(services, params.logger, sessionContext);
   } catch (error) {
     params.logger.warn(`[agenr] session-end episode write failed for ${sessionContext}: ${formatErrorMessage(error)}`);
+  }
+}
+
+/** Runs the OpenClaw post-session light dream trigger when configured. */
+async function runOpenClawPostSessionLightDream(services: AgenrOpenClawServices, logger: PluginLogger, sessionContext: string): Promise<void> {
+  try {
+    const result = await maybeRunLightDream(
+      { trigger: "post_session" },
+      {
+        port: services.dreaming,
+        config: services.agenrConfig,
+        embedding: services.embedding,
+        ...(services.claimExtraction ? { createClaimExtractionLlm: () => services.claimExtraction!.llm } : {}),
+      },
+    );
+    if (result.status === "ran") {
+      logger.info(`[agenr] session-end light dream completed for ${sessionContext} run=${result.result.runId}`);
+    } else {
+      logger.debug?.(`[agenr] session-end light dream skipped for ${sessionContext} reason=${result.reason}`);
+    }
+  } catch (error) {
+    logger.warn(`[agenr] session-end light dream failed for ${sessionContext}: ${formatErrorMessage(error)}`);
   }
 }

@@ -25,8 +25,10 @@ import { canContinueReconcilePass, runReconcileStage } from "./pass-stage-runner
 import type { ReconcileRunDeps, ReconcileRunOptions, ReconcileRunResult } from "./types.js";
 import type { ReconcilePassContext } from "./pass-context.js";
 
+/** Runnable unit for one ordered reconcile stage. */
 type ReconcileStageRunner = (ctx: ReconcilePassContext) => Promise<void>;
 
+/** Definition for a reconcile stage that processes inspected durables. */
 interface InspectedDurableStageDef {
   stage: ReconcileProgressStage;
   items: InspectedDurable[];
@@ -125,6 +127,7 @@ export async function runReconcilePass(options: ReconcileRunOptions, deps: Recon
   };
 }
 
+/** Builds the ordered reconcile stage runner list from durable partitions. */
 function buildReconcileStageRunners(partitions: ReconcileDurablePartitions): ReconcileStageRunner[] {
   const durableStageDefs: InspectedDurableStageDef[] = [
     {
@@ -170,6 +173,7 @@ function buildReconcileStageRunners(partitions: ReconcileDurablePartitions): Rec
   ];
 }
 
+/** Builds a runner for a durable-inspection stage with optional preview preload. */
 function buildInspectedDurableStageRunner(def: InspectedDurableStageDef): ReconcileStageRunner {
   return (ctx) => {
     const preloadEnabled = shouldPreloadSuggestions(ctx);

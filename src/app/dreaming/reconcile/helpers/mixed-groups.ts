@@ -2,6 +2,7 @@ import { isTrustedClaimKeyForCleanup } from "../../../../core/claim-key.js";
 import type { Durable } from "../../../../core/types.js";
 import { normalizeStringArray } from "./utils.js";
 
+/** Finds subject/type groups that contain mixed or missing claim keys. */
 export function findMixedKeyGroups(
   durables: Durable[],
   coveredClaimKeys: ReadonlySet<string> = new Set<string>(),
@@ -53,6 +54,7 @@ export function findMixedKeyGroups(
     .sort((left, right) => left.groupKey.localeCompare(right.groupKey));
 }
 
+/** Builds proposal rationale for a mixed subject/type claim-key group. */
 export function buildMixedGroupRationale(group: { groupKey: string; durables: Durable[]; proposedClaimKey: string | null }): string {
   const currentClaimKeys = normalizeStringArray(group.durables.flatMap((durable) => (durable.claim_key ? [durable.claim_key] : [])));
   if (group.proposedClaimKey) {

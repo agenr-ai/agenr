@@ -18,6 +18,7 @@ export type ReconcileIssueKind =
   | "entity_family_convergence"
   | "mixed_claim_key_group";
 
+/** Snapshot of durable claim-key lifecycle fields before a projected mutation. */
 export interface ClaimKeyLifecycleSnapshot {
   claimKey: Durable["claim_key"];
   claimKeyRaw: Durable["claim_key_raw"];
@@ -27,6 +28,7 @@ export interface ClaimKeyLifecycleSnapshot {
   claimKeyRationale: Durable["claim_key_rationale"];
 }
 
+/** Input required to apply one claim-key reconcile update. */
 export interface ClaimKeyUpdateInput {
   issueKind: ReconcileIssueKind;
   oldClaimKey: string | null;
@@ -41,6 +43,7 @@ export interface ClaimKeyUpdateInput {
   entityFamilyAudit?: EntityFamilyConvergenceAudit;
 }
 
+/** Optional audit metadata attached to one reconcile proposal. */
 export interface ProposalAuditInput {
   autoApplyBlocker?: string | null;
   compactness?: ClaimKeyCompactnessEvaluation;
@@ -52,6 +55,7 @@ export interface ProposalAuditInput {
   proposalLifecycle?: ProposalClaimKeyLifecycleMetadata;
 }
 
+/** Audit metadata for one claim-key reconcile update that was applied. */
 export interface AppliedClaimKeyActionInput {
   issueKind: ReconcileIssueKind;
   oldClaimKey: string | null;

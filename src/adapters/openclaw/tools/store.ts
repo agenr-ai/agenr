@@ -1,8 +1,10 @@
 import type { AnyAgentTool } from "openclaw/plugin-sdk/agent-runtime";
 import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sdk/core";
 
+import { maybeRunLightDream } from "../../../app/dreaming/background-triggers.js";
 import { STORE_TOOL_PARAMETERS, parseStoreToolParams, runStoreMemoryTool, sanitizeStoreToolParams } from "../../shared/memory-tools.js";
 import type { AgenrOpenClawServices } from "../types.js";
+import { formatErrorMessage } from "../logging.js";
 import { OPENCLAW_PARAM_READER, logToolCall, logToolFailure, toOpenClawToolResult, toolFailureResult } from "./shared.js";
 
 /**
@@ -26,18 +28,45 @@ export function createAgenrStoreTool(ctx: OpenClawPluginToolContext, servicesPro
         logToolCall(logger, "agenr_store", ctx, `store 1 entry subject=${JSON.stringify(params.subject)} type=${params.type}`, sanitizeStoreToolParams(params));
 
         const services = await servicesPromise;
-        return toOpenClawToolResult(
-          await runStoreMemoryTool(params, services, {
-            session: ctx,
-            sourcePrefix: "openclaw-session",
-            defaultSourceContext: "Stored via agenr_store from OpenClaw.",
-            onWarning: (warning) => logger.warn(`[agenr] tool=agenr_store session=${ctx.sessionId ?? "unknown"} warning: ${warning}`),
-          }),
-        );
+        const outcome = await runStoreMemoryTool(params, services, {
+          session: ctx,
+          sourcePrefix: "openclaw-session",
+          defaultSourceContext: "Stored via agenr_store from OpenClaw.",
+          onWarning: (warning) => logger.warn(`[agenr] tool=agenr_store session=${ctx.sessionId ?? "unknown"} warning: ${warning}`),
+        });
+        triggerOpenClawImportanceLightDream(services, logger, outcome.details.status);
+        return toOpenClawToolResult(outcome);
       } catch (error) {
         logToolFailure(logger, "agenr_store", ctx, error);
         return toolFailureResult(error);
       }
     },
   };
+}
+
+/** Triggers an OpenClaw light dream after an important store result. */
+function triggerOpenClawImportanceLightDream(services: AgenrOpenClawServices, logger: PluginLogger, status: unknown): void {
+  if (status !== "stored") {
+    return;
+  }
+
+  void maybeRunLightDream(
+    { trigger: "importance" },
+    {
+      port: services.dreaming,
+      config: services.agenrConfig,
+      embedding: services.embedding,
+      ...(services.claimExtraction ? { createClaimExtractionLlm: () => services.claimExtraction!.llm } : {}),
+    },
+  )
+    .then((result) => {
+      if (result.status === "ran") {
+        logger.info(`[agenr] importance light dream completed run=${result.result.runId}`);
+      } else {
+        logger.debug?.(`[agenr] importance light dream skipped reason=${result.reason}`);
+      }
+    })
+    .catch((error: unknown) => {
+      logger.warn(`[agenr] importance light dream failed: ${formatErrorMessage(error)}`);
+    });
 }

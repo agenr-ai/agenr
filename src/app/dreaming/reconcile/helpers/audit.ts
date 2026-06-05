@@ -10,6 +10,7 @@ import type {
   ProposalAuditInput,
 } from "../types.js";
 
+/** Builds audit fields that explain missing-key support evidence. */
 export function buildMissingBackfillSupportAuditDetails(support?: MissingBackfillSupportEvaluation): Record<string, unknown> {
   if (!support?.supportedProposal) {
     return support?.autoApplyClass
@@ -53,6 +54,7 @@ export function buildMissingBackfillSupportAuditDetails(support?: MissingBackfil
   };
 }
 
+/** Builds audit details for an applied claim-key reconcile action. */
 export function buildAppliedClaimKeyActionDetails(input: AppliedClaimKeyActionInput): Record<string, unknown> {
   return {
     issue_kind: input.issueKind,
@@ -72,6 +74,7 @@ export function buildAppliedClaimKeyActionDetails(input: AppliedClaimKeyActionIn
   };
 }
 
+/** Builds audit details for a staged claim-key reconcile proposal. */
 export function buildProposalClaimKeyActionDetails(proposal: DreamRunProposal, audit?: ProposalAuditInput): Record<string, unknown> {
   return {
     proposal_id: proposal.id,
@@ -99,6 +102,7 @@ export function buildProposalClaimKeyActionDetails(proposal: DreamRunProposal, a
   };
 }
 
+/** Builds audit fields for shadow-only missing-key qualification. */
 export function buildMissingBackfillShadowAuditDetails(shadow?: MissingBackfillShadowAudit): Record<string, unknown> {
   if (!shadow) {
     return {};
@@ -110,6 +114,7 @@ export function buildMissingBackfillShadowAuditDetails(shadow?: MissingBackfillS
   };
 }
 
+/** Builds audit fields for claim-key compact canonicalization. */
 export function buildClaimKeyCompactionAuditDetails(compactness?: ClaimKeyCompactnessEvaluation): Record<string, unknown> {
   return compactness?.compactedFrom
     ? {
@@ -119,6 +124,7 @@ export function buildClaimKeyCompactionAuditDetails(compactness?: ClaimKeyCompac
     : {};
 }
 
+/** Builds audit fields for entity-family convergence decisions. */
 export function buildEntityFamilyAuditDetails(entityFamilyAudit?: EntityFamilyConvergenceAudit): Record<string, unknown> {
   return entityFamilyAudit
     ? {

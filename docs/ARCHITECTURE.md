@@ -234,6 +234,7 @@ This subsystem records:
 - dry-run versus apply mode
 - action audit trails
 - unresolved structural proposals for later inspection
+- active profile snapshot pointers and accumulated unsynthesized importance
 
 ## 6. Storage architecture
 
@@ -519,13 +520,17 @@ The dreaming subsystem spans:
 - `src/adapters/db/dreaming-run-log.ts`
 - `src/adapters/db/schema/dreaming.ts`
 
-Milestone 1 implements a pipeline-first skeleton:
+The dreaming pipeline includes:
 
 - `scan` loads active durables and claim-key counters for the requested scope
+- `extract` mines durable candidates from recent episode evidence
 - `reconcile` runs deterministic claim-key quality maintenance
+- `temporalize` revises stale beliefs through supersession
+- `project` builds a bounded session-start profile snapshot
+- `prune` retires protected, low-signal residue on `standard` and `deep`
 - `apply` persists accepted mutations when `--apply` is set
 
-Later milestones add prune and host triggers.
+OpenClaw and Skeln host hooks can launch bounded `light` runs after session-end episode writes or after accumulated durable importance crosses the configured threshold.
 
 Runtime safeguards include:
 

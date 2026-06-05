@@ -15,6 +15,7 @@ vi.mock("../../../../src/adapters/openclaw/llm/openclaw-llm-client.js", () => ({
 }));
 
 import { createDatabase, type SqlDatabase } from "../../../../src/adapters/db/client.js";
+import { createDreamPort } from "../../../../src/adapters/db/dreaming-port.js";
 import { createMemoryRepository } from "../../../../src/adapters/db/memory-repository.js";
 import { createSessionStartRepository } from "../../../../src/adapters/db/session-start-repository.js";
 import { writeOpenClawCurrentSessionEpisode, writeOpenClawPredecessorEpisode } from "../../../../src/adapters/openclaw/episode/episode-writer.js";
@@ -647,6 +648,7 @@ function createServices(
     episodes: database,
     procedures: database,
     memory: createMemoryRepository(database),
+    dreaming: createDreamPort(database),
     sessionStart: {
       repository: createSessionStartRepository(database),
       recall,

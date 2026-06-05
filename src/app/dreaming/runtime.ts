@@ -274,6 +274,7 @@ async function withDreamPort<T>(dbPath: string, fn: (port: DreamPort) => Promise
   }
 }
 
+/** Loads the active profile snapshot and its durable contents. */
 async function loadDreamProfileView(port: DreamPort): Promise<DreamProfileRuntimeView> {
   const snapshot = await port.getActiveProfileSnapshot();
   if (!snapshot) {
@@ -292,6 +293,7 @@ async function loadDreamProfileView(port: DreamPort): Promise<DreamProfileRuntim
   };
 }
 
+/** Loads resolved runtime config and applies command/environment db overrides. */
 function loadRuntimeConfig(input: { dbPath?: string; env?: NodeJS.ProcessEnv }): { dbPath: string; config: ResolvedAgenrConfig } {
   const dbPathOverride = normalizeOptionalString(input.dbPath) ?? normalizeOptionalString(input.env?.AGENR_DB_PATH);
   const configPathOverride = normalizeOptionalString(input.env?.AGENR_CONFIG_PATH);
@@ -304,6 +306,7 @@ function loadRuntimeConfig(input: { dbPath?: string; env?: NodeJS.ProcessEnv }):
   return { dbPath, config };
 }
 
+/** Creates an LLM client factory for the configured dreaming or claim stage model. */
 function createConfiguredLlmFactory(
   config: ResolvedAgenrConfig,
   env: NodeJS.ProcessEnv | undefined,
@@ -316,6 +319,7 @@ function createConfiguredLlmFactory(
   };
 }
 
+/** Normalizes an optional runtime string override. */
 function normalizeOptionalString(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;

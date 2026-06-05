@@ -8,6 +8,7 @@ import {
 } from "../constants.js";
 import type { ClaimKeyCircuitBreakerState, ClaimKeyCircuitBreakerTrip } from "../types.js";
 
+/** Creates empty circuit-breaker counters for one reconcile pass. */
 export function createCircuitBreakerState(): ClaimKeyCircuitBreakerState {
   return {
     totalAutoMutations: 0,
@@ -17,10 +18,12 @@ export function createCircuitBreakerState(): ClaimKeyCircuitBreakerState {
   };
 }
 
+/** Records one collision that blocked an automatic reconcile repair. */
 export function recordCollision(state: ClaimKeyCircuitBreakerState): void {
   state.blockedCollisions += 1;
 }
 
+/** Records one applied repair and returns a circuit-breaker trip when limits are exceeded. */
 export function recordAppliedRepair(state: ClaimKeyCircuitBreakerState, claimKey: string): ClaimKeyCircuitBreakerTrip | null {
   state.totalAutoMutations += 1;
   state.appliedByClaimKey.set(claimKey, (state.appliedByClaimKey.get(claimKey) ?? 0) + 1);
@@ -29,6 +32,7 @@ export function recordAppliedRepair(state: ClaimKeyCircuitBreakerState, claimKey
   return evaluateCircuitBreaker(state);
 }
 
+/** Evaluates whether reconcile auto-repairs have converged into an unsafe pattern. */
 export function evaluateCircuitBreaker(state: ClaimKeyCircuitBreakerState): ClaimKeyCircuitBreakerTrip | null {
   const largestClaimKeyCluster = maxCounterValue(state.appliedByClaimKey);
   if (
@@ -70,6 +74,7 @@ export function evaluateCircuitBreaker(state: ClaimKeyCircuitBreakerState): Clai
   return null;
 }
 
+/** Returns the largest value in a string-keyed counter map. */
 function maxCounterValue(counter: Map<string, number>): number {
   let max = 0;
   for (const value of counter.values()) {
@@ -79,6 +84,7 @@ function maxCounterValue(counter: Map<string, number>): number {
   return max;
 }
 
+/** Returns the key with the largest value in a string-keyed counter map. */
 function maxCounterKey(counter: Map<string, number>): string | null {
   let bestKey: string | null = null;
   let bestValue = -1;

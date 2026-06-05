@@ -30,6 +30,7 @@ import { appendCrossTypeCollisionRationaleSuffix, persistReconcileProposal } fro
 import { buildMissingBackfillShadowAudit, recordSiblingSlotResonanceShadowCandidate } from "./shadow-resonance.js";
 import { evaluateMissingBackfillSupport } from "./suggestions.js";
 
+/** Deterministic next action selected from one missing-key preview. */
 type MissingDurablePreviewDecision =
   | { kind: "skip_no_claim"; suggestionRecord: DurableSuggestionRecord }
   | { kind: "skip_low_confidence"; suggestionRecord: DurableSuggestionRecord; targetClaimKey: string }
@@ -249,6 +250,7 @@ export async function executeMissingDurablePreviewDecision(
   }
 }
 
+/** Persists a missing-key backfill proposal and records proposal counters. */
 async function persistMissingBackfillProposal(
   ctx: ReconcilePassContext,
   durable: Durable,

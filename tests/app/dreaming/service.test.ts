@@ -81,11 +81,13 @@ function createDreamPortDouble(overrides: Partial<DreamPort> = {}): DreamPort {
     supersedeDurable: vi.fn(async () => true),
     getDurable: vi.fn(async () => null),
     getDurables: vi.fn(async () => []),
+    retireDurable: vi.fn(async () => false),
     updateDurable: vi.fn(async () => false),
     logRunProposal: vi.fn(async () => undefined),
     countEpisodesSince: vi.fn(async () => 0),
     countIngestFilesSince: vi.fn(async () => 0),
     countDurablesCreatedSince: vi.fn(async () => 0),
+    sumDurableImportanceCreatedSince: vi.fn(async () => 0),
     updateDreamState: vi.fn(async () => undefined),
     createProfileSnapshot: vi.fn(async () => undefined),
     getActiveProfileSnapshot: vi.fn(async () => null),
@@ -369,6 +371,69 @@ describe("runDream", () => {
 
     const persisted = await client.execute("SELECT COUNT(*) AS count FROM profile_snapshots");
     expect(Number(persisted.rows[0]?.count)).toBe(0);
+  });
+
+  it("runs prune after projection while protecting the projected profile bundle", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+
+    for (let index = 0; index < 8; index += 1) {
+      await insertDurable(client, {
+        id: `core-${index}`,
+        subject: `Core durable ${index}`,
+        content: `Core durable ${index} should remain in the profile bundle.`,
+        type: "fact",
+        expiry: "core",
+        importance: 9,
+        claim_key: `user/core_${index}`,
+        claim_key_status: "trusted",
+      });
+    }
+    await insertDurable(client, {
+      id: "temporary-low",
+      subject: "Temporary low signal",
+      content: "Temporary low signal session artifact.",
+      type: "fact",
+      expiry: "temporary",
+      importance: 2,
+      claim_key: "user/temp_artifact",
+      claim_key_status: "tentative",
+    });
+
+    const result = await runDream(
+      {
+        tier: "standard",
+        apply: true,
+        verbose: false,
+        json: false,
+        skipBackup: true,
+      },
+      {
+        port,
+        config: null,
+        now: () => new Date("2026-04-04T15:00:00.000Z"),
+      },
+    );
+
+    expect(result.completionSummary?.prune).toMatchObject({
+      candidatesIdentified: 1,
+      candidatesRetirable: 1,
+      durablesRetired: 1,
+      dryRun: false,
+    });
+    expect(result.completionSummary?.efficiency).toMatchObject({
+      synthesizedDurableMutations: 1,
+      profileInjectionTokenEstimate: 8 * 36,
+      recomputeRatio: 0,
+    });
+
+    const retired = await client.execute({ sql: `SELECT retired, retired_reason FROM durables WHERE id = ?`, args: ["temporary-low"] });
+    expect(Number(retired.rows[0]?.retired)).toBe(1);
+    expect(retired.rows[0]?.retired_reason).toBe("Dream prune retired a temporary durable after synthesis.");
+
+    const activeProfile = await port.getActiveProfileSnapshot();
+    expect(activeProfile?.durableIds).not.toContain("temporary-low");
+    expect(activeProfile?.durableIds).toHaveLength(8);
   });
 
   it("records partial apply results when a later stage fails", async () => {

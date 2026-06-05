@@ -5,13 +5,17 @@
 import type { DirectivePolarity, DirectiveTrigger, DurableKind, Expiry } from "../types.js";
 
 /** Ordered list of supported dreaming run tiers. */
-export const DREAM_TIERS = ["light", "standard", "deep"] as const;
+const DREAM_TIERS = ["light", "standard", "deep"] as const;
+
+export { DREAM_TIERS };
 
 /** Union of supported dreaming run tiers. */
 export type DreamTier = (typeof DREAM_TIERS)[number];
 
 /** Ordered list of supported dreaming pipeline stages. */
-export const DREAM_STAGES = ["scan", "extract", "reconcile", "temporalize", "project", "prune", "apply"] as const;
+const DREAM_STAGES = ["scan", "extract", "reconcile", "temporalize", "project", "prune", "apply"] as const;
+
+export { DREAM_STAGES };
 
 /** Union of supported dreaming pipeline stages. */
 export type DreamStage = (typeof DREAM_STAGES)[number];
@@ -209,6 +213,25 @@ export interface DreamProjectSummary {
   applied: boolean;
 }
 
+/** Structured summary of one deterministic prune stage execution. */
+export interface DreamPruneSummary {
+  durablesScanned: number;
+  candidatesIdentified: number;
+  candidatesProtected: number;
+  candidatesRetirable: number;
+  durablesRetired: number;
+  dryRun: boolean;
+}
+
+/** Compute-efficiency counters emitted for eval scoreboard reporting. */
+export interface DreamEfficiencySummary {
+  evidenceItemsRead: number;
+  synthesizedDurableMutations: number;
+  costPerSynthesizedDurableUsd: number | null;
+  profileInjectionTokenEstimate: number;
+  recomputeRatio: number;
+}
+
 /** Scan delta describing unsynthesized evidence since the last successful run. */
 export interface DreamScanSummary {
   episodesSinceLastRun: number;
@@ -232,4 +255,6 @@ export interface DreamCompletionSummary {
   reconcile?: ReconcilePassSummary;
   temporalize?: DreamTemporalizeSummary;
   project?: DreamProjectSummary;
+  prune?: DreamPruneSummary;
+  efficiency?: DreamEfficiencySummary;
 }

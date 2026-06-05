@@ -2,6 +2,7 @@ import type { ClaimSlotPolicy, ClaimSlotPolicyConfig } from "../../core/claim-sl
 import type { DatabasePort, EmbeddingPort, EpisodeDatabasePort, LlmPort, ProcedureDatabasePort, RecallPorts } from "../../core/ports.js";
 import type { ClaimExtractionConfig } from "../../core/store/claim-extraction.js";
 import type { BeforeTurnDeps } from "../before-turn/index.js";
+import type { DreamPort } from "../dreaming/ports.js";
 import type { MemoryRepository } from "../memory/ports.js";
 import type { SessionMemoryRepository } from "../session-memory/index.js";
 import type { SessionStartDeps } from "../session-start/index.js";
@@ -118,6 +119,7 @@ export interface PluginMemoryRuntimeServices {
   episodes: EpisodeDatabasePort;
   procedures: ProcedureDatabasePort;
   memory: MemoryRepository;
+  dreaming: DreamPort;
   workingMemoryRepository?: WorkingMemoryRepository;
   sessionMemoryRepository?: SessionMemoryRepository;
   sessionStart: SessionStartDeps;

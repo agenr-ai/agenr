@@ -2,6 +2,7 @@ import type { CrossEncoderPort, EmbeddingPort } from "../../core/ports.js";
 import type { AgenrConfig } from "../../config.js";
 import { createOpenAICrossEncoder, resolveCrossEncoderApiKey } from "../cross-encoder/openai-cross-encoder.js";
 import { createDatabase } from "../db/client.js";
+import { createDreamPort } from "../db/dreaming-port.js";
 import { listActiveAbstainDirectives, listActiveSessionStartProactiveDirectives } from "../db/directives-repository.js";
 import { createMemoryRepository } from "../db/memory-repository.js";
 import { createSessionMemoryRepository } from "../db/session-memory-repository.js";
@@ -58,6 +59,7 @@ export async function createPluginMemoryRuntime(input: CreatePluginMemoryRuntime
     memory: createMemoryRepository(database, {
       claimSlotPolicyConfig: slotPolicies,
     }),
+    dreaming: createDreamPort(database),
     workingMemoryRepository: createWorkingMemoryRepository(database),
     sessionMemoryRepository: createSessionMemoryRepository(database),
     sessionStart: {

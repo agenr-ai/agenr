@@ -4,6 +4,7 @@ import { inspectClaimKey } from "../../../../core/claim-key.js";
 import type { Durable } from "../../../../core/types.js";
 import type { DurableSuggestionRecord, MissingBackfillSupportEvaluation, TrustedCleanupHintSeed } from "../types.js";
 
+/** Evaluates support evidence for a missing-key backfill candidate. */
 export function evaluateMissingBackfillSupport(
   durable: Durable,
   targetClaimKey: string,
@@ -35,6 +36,7 @@ export function evaluateMissingBackfillSupport(
   };
 }
 
+/** Classifies why a missing-key preview did not produce an accepted suggestion. */
 export function resolveMissingBackfillNullOutcome(suggestionRecord: DurableSuggestionRecord): "no_claim" | "malformed_output" | "rejected_candidate" {
   if (suggestionRecord.previewOutcome?.outcome === "no_claim") {
     return "no_claim";

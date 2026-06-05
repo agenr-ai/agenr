@@ -171,6 +171,7 @@ export interface DreamPort {
   getHealthStats(now?: Date): Promise<DreamHealthStats>;
   getDurable(durableId: string): Promise<Durable | null>;
   getDurables(durableIds: string[]): Promise<Durable[]>;
+  retireDurable(durableId: string, reason?: string): Promise<boolean>;
   updateDurable(
     durableId: string,
     fields: DurableUpdateInput,
@@ -199,6 +200,7 @@ export interface DreamPort {
   countEpisodesSince(since: string, project?: string): Promise<number>;
   countIngestFilesSince(since: string): Promise<number>;
   countDurablesCreatedSince(since: string, project?: string): Promise<number>;
+  sumDurableImportanceCreatedSince(since: string, project?: string): Promise<number>;
   createProfileSnapshot(snapshot: DreamProfileSnapshot): Promise<void>;
   getActiveProfileSnapshot(): Promise<DreamProfileSnapshot | null>;
   updateDreamState(input: {

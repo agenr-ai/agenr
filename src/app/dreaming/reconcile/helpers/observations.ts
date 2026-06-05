@@ -9,6 +9,7 @@ import type { ReconcilePassContext } from "../pass-context.js";
 import type { EntityFamilyConvergenceDecisionStats, MissingBackfillDecisionStats, SiblingSlotResonanceShadowStats } from "../types.js";
 import { describeShadowBucket } from "./utils.js";
 
+/** Builds a completion observation for entity-family convergence decisions. */
 export function buildEntityFamilyConvergenceObservation(stats: EntityFamilyConvergenceDecisionStats): string | null {
   if (stats.appliedClusters === 0 && stats.proposedClusters === 0) {
     return null;
@@ -21,6 +22,7 @@ export function buildEntityFamilyConvergenceObservation(stats: EntityFamilyConve
   );
 }
 
+/** Builds a completion observation for missing-key backfill decisions. */
 export function buildMissingDecisionObservation(stats: MissingBackfillDecisionStats): string | null {
   const autoAppliedParts = [
     stats.autoAppliedTrustedGroupReuse > 0 ? `${stats.autoAppliedTrustedGroupReuse} trusted-group reuses` : null,
@@ -41,6 +43,7 @@ export function buildMissingDecisionObservation(stats: MissingBackfillDecisionSt
   return `Missing-key decisions used ${autoAppliedParts.join(", ") || "no auto-applies"} and ${proposalParts.join(", ") || "no proposals"} after structural reuse checks.`;
 }
 
+/** Builds a completion observation for grounded-family promotion decisions. */
 export function buildGroundedFamilyPromotionObservation(stats: MissingBackfillDecisionStats): string | null {
   const observations = [
     stats.autoAppliedGroundedFamilyPromotion > 0 || stats.proposedGroundedFamilyPromotion > 0
@@ -58,6 +61,7 @@ export function buildGroundedFamilyPromotionObservation(stats: MissingBackfillDe
   return observations.join(" ");
 }
 
+/** Builds a completion observation for sibling-slot resonance shadow telemetry. */
 export function buildSiblingSlotResonanceObservation(stats: SiblingSlotResonanceShadowStats): string | null {
   if (stats.thresholdOnlyCandidateCount === 0) {
     return null;
@@ -75,6 +79,7 @@ export function buildSiblingSlotResonanceObservation(stats: SiblingSlotResonance
   );
 }
 
+/** Builds a completion observation for candidates that the shadow rule would qualify. */
 export function buildSiblingSlotResonanceShadowRuleObservation(stats: SiblingSlotResonanceShadowStats): string | null {
   if (stats.thresholdOnlyCandidateCount === 0) {
     return null;
@@ -94,6 +99,7 @@ export function buildSiblingSlotResonanceShadowRuleObservation(stats: SiblingSlo
   );
 }
 
+/** Builds a completion observation for compact canonicalization decisions. */
 export function buildMissingCompactionObservation(stats: MissingBackfillDecisionStats): string | null {
   if (stats.autoAppliedCompactedCandidate === 0 && stats.proposedCompactedCandidate === 0) {
     return null;

@@ -5,8 +5,12 @@ import { isDreamTier, type DreamTier } from "../../core/dreaming/domain/pass-typ
 import type { DreamCompletionSummary, DreamProposalReviewStatus, DreamRunProposal, DreamRunStatus } from "../../core/dreaming/types.js";
 import { readBoolean, readNumber, readOptionalString, readRequiredString } from "./row-mapping.js";
 
-export const DREAM_RUN_STATUSES = ["running", "completed", "failed", "aborted", "budget_exhausted", "cost_capped", "no_work", "stalled"] as const;
-export const DREAM_PROPOSAL_REVIEW_STATUSES = ["open", "applied", "rejected"] as const;
+/** Persisted status values accepted for dreaming runs. */
+const DREAM_RUN_STATUSES = ["running", "completed", "failed", "aborted", "budget_exhausted", "cost_capped", "no_work", "stalled"] as const;
+/** Persisted review status values accepted for dreaming proposals. */
+const DREAM_PROPOSAL_REVIEW_STATUSES = ["open", "applied", "rejected"] as const;
+
+export { DREAM_PROPOSAL_REVIEW_STATUSES, DREAM_RUN_STATUSES };
 
 /**
  * Persisted dreaming run metadata row.
@@ -126,6 +130,7 @@ export function mapProposalRow(row: Row): DreamRunProposal {
   };
 }
 
+/** Parses a stored dreaming tier, preserving the historical standard default. */
 export function parseStoredDreamTier(value: string | undefined): DreamTier {
   if (value === undefined) {
     return "standard";
@@ -138,6 +143,7 @@ export function parseStoredDreamTier(value: string | undefined): DreamTier {
   throw new Error(`Invalid dreaming pass type ${JSON.stringify(value)} in dream_runs.tier.`);
 }
 
+/** Parses a stored dreaming run status, preserving the historical running default. */
 export function parseStoredDreamRunStatus(value: string | undefined): DreamRunStatus {
   if (value === undefined) {
     return "running";
@@ -150,6 +156,7 @@ export function parseStoredDreamRunStatus(value: string | undefined): DreamRunSt
   throw new Error(`Invalid dreaming run status ${JSON.stringify(value)} in dream_runs.status.`);
 }
 
+/** Parses a stored proposal review status, preserving the historical open default. */
 export function parseStoredDreamProposalReviewStatus(value: string | undefined): DreamProposalReviewStatus {
   if (value === undefined) {
     return "open";
@@ -162,14 +169,17 @@ export function parseStoredDreamProposalReviewStatus(value: string | undefined):
   throw new Error(`Invalid dreaming proposal review status ${JSON.stringify(value)} in dream_proposals.review_status.`);
 }
 
+/** Normalizes durable ids for persistence by trimming blanks and removing duplicates. */
 export function normalizeDurableIds(durableIds: string[]): string[] {
   return Array.from(new Set(durableIds.map((durableId) => durableId.trim()).filter((durableId) => durableId.length > 0)));
 }
 
+/** Normalizes persisted string arrays by trimming blanks and removing duplicates. */
 export function normalizeStringArray(values: string[]): string[] {
   return Array.from(new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)));
 }
 
+/** Converts an optional persisted string into a non-empty string or null. */
 export function normalizeOptionalString(value: string | undefined): string | null {
   if (value === undefined) {
     return null;
@@ -179,10 +189,12 @@ export function normalizeOptionalString(value: string | undefined): string | nul
   return trimmed.length > 0 ? trimmed : null;
 }
 
+/** Normalizes an optional persisted timestamp string. */
 export function normalizeTimestamp(value: string | undefined): string | null {
   return normalizeOptionalString(value);
 }
 
+/** Normalizes persisted integer counters to finite non-negative values. */
 export function normalizeInteger(value: number): number {
   if (!Number.isFinite(value)) {
     return 0;
@@ -191,6 +203,7 @@ export function normalizeInteger(value: number): number {
   return Math.max(0, Math.trunc(value));
 }
 
+/** Normalizes persisted numeric counters to finite non-negative values. */
 export function normalizeNumber(value: number): number {
   if (!Number.isFinite(value)) {
     return 0;
@@ -199,6 +212,7 @@ export function normalizeNumber(value: number): number {
   return Math.max(0, value);
 }
 
+/** Parses an optional JSON string with a typed fallback. */
 function parseJsonValue<T>(raw: string | undefined, fallback: T): T {
   if (!raw || raw.trim().length === 0) {
     return fallback;
@@ -212,6 +226,7 @@ function parseJsonValue<T>(raw: string | undefined, fallback: T): T {
   }
 }
 
+/** Parses an optional JSON object field. */
 function parseJsonRecord(raw: string | undefined): Record<string, unknown> | null {
   const parsed = parseJsonValue<unknown>(raw, null);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -221,6 +236,7 @@ function parseJsonRecord(raw: string | undefined): Record<string, unknown> | nul
   return parsed as Record<string, unknown>;
 }
 
+/** Parses a JSON array field, retaining only string entries. */
 export function parseJsonStringArray(raw: string | undefined): string[] {
   const parsed = parseJsonValue<unknown>(raw, []);
   if (!Array.isArray(parsed)) {

@@ -1,5 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "../skeln-types.js";
 
+import { maybeRunLightDream } from "../../../app/dreaming/background-triggers.js";
+import { formatErrorMessage } from "../../shared/errors.js";
 import { STORE_TOOL_PARAMETERS, parseStoreToolParams, runStoreMemoryTool } from "../../shared/memory-tools.js";
 import type { AgenrSkelnServices } from "../runtime.js";
 import type { AgenrSkelnSessionScope } from "../types.js";
@@ -27,18 +29,43 @@ export function registerAgenrSkelnStoreTool(
       try {
         const params = parseStoreToolParams(rawParams, SKELN_PARAM_READER);
         const [services, scope] = await Promise.all([servicesPromise, resolveScope(context)]);
-        return toSkelnToolResult(
-          await runStoreMemoryTool(params, services, {
-            session: scope,
-            sourcePrefix: "skeln-session",
-            defaultSourceContext: "Stored via agenr_store from Skeln.",
-            extraDetails: { sessionKey: scope.sessionKey },
-            onWarning: (warning) => console.warn(`[agenr] tool=agenr_store session=${scope.sessionId} warning: ${warning}`),
-          }),
-        );
+        const outcome = await runStoreMemoryTool(params, services, {
+          session: scope,
+          sourcePrefix: "skeln-session",
+          defaultSourceContext: "Stored via agenr_store from Skeln.",
+          extraDetails: { sessionKey: scope.sessionKey },
+          onWarning: (warning) => console.warn(`[agenr] tool=agenr_store session=${scope.sessionId} warning: ${warning}`),
+        });
+        triggerSkelnImportanceLightDream(services, outcome.details.status);
+        return toSkelnToolResult(outcome);
       } catch (error) {
         return toolFailureResult(error);
       }
     },
   });
+}
+
+/** Triggers a Skeln light dream after an important store result. */
+function triggerSkelnImportanceLightDream(services: AgenrSkelnServices, status: unknown): void {
+  if (status !== "stored") {
+    return;
+  }
+
+  void maybeRunLightDream(
+    { trigger: "importance" },
+    {
+      port: services.dreaming,
+      config: services.agenrConfig,
+      embedding: services.embedding,
+      ...(services.claimExtraction ? { createClaimExtractionLlm: () => services.claimExtraction!.llm } : {}),
+    },
+  )
+    .then((result) => {
+      if (result.status === "ran") {
+        console.info(`[agenr] skeln importance light dream completed run=${result.result.runId}`);
+      }
+    })
+    .catch((error: unknown) => {
+      console.warn(`[agenr] skeln importance light dream failed: ${formatErrorMessage(error)}`);
+    });
 }

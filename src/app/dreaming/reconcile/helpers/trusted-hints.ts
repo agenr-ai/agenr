@@ -9,6 +9,7 @@ import { MAX_CLEANUP_CLAIM_KEY_HINTS, MAX_CLEANUP_ENTITY_HINTS } from "../consta
 import type { TrustedCleanupHintDurable, TrustedCleanupHintSeed } from "../types.js";
 import { countSetOverlap, normalizeStringArray } from "./utils.js";
 
+/** Builds global trusted claim-key hints from the reconcile working set. */
 export function buildTrustedCleanupHintSeed(durables: Durable[]): TrustedCleanupHintSeed {
   const sharedSeed = buildSharedTrustedClaimKeySupportSeed(durables);
   const claimKeyExamples = normalizeStringArray(sharedSeed.entries.map((durable) => durable.claimKey)).slice(0, MAX_CLEANUP_CLAIM_KEY_HINTS);
@@ -24,6 +25,7 @@ export function buildTrustedCleanupHintSeed(durables: Durable[]): TrustedCleanup
   };
 }
 
+/** Builds durable-specific claim-extraction hints ranked by local relevance. */
 export function buildCleanupHintsForDurable(baseHints: TrustedCleanupHintSeed, durable: Durable): ClaimExtractionHints {
   const rankedDurables = baseHints.durables
     .map((trustedDurable) => ({
@@ -62,6 +64,7 @@ export function buildCleanupHintsForDurable(baseHints: TrustedCleanupHintSeed, d
   };
 }
 
+/** Scores how relevant one trusted durable is as a cleanup hint for another durable. */
 export function scoreTrustedHintRelevance(durable: Durable, trustedDurable: TrustedCleanupHintDurable): number {
   const durableTagSet = new Set(normalizeSharedGroundingTags(durable.tags));
   const durableSourceTokens = new Set(tokenizeSharedGroundingText(durable.source_context));

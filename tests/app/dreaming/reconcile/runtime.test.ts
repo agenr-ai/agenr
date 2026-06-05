@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Client } from "@libsql/client";
 import { createTestClient, insertDurable, MockClaimLlm, runClaimKeyPass } from "../../../helpers/dreaming-reconcile.js";
 
-import { getLastDreamRun, getDreamRunActions, getDreamRunProposals } from "../../../../src/adapters/db/dreaming-run-log.js";
+import { getLastDreamRun } from "../../../../src/adapters/db/dreaming-run-log.js";
 
 describe("reconcile dreaming pass - runtime", () => {
   const clients: Client[] = [];

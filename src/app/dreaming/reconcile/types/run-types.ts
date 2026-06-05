@@ -50,14 +50,17 @@ export interface ReconcileRunResult {
   };
 }
 
+/** Cached claim-extraction preview state for one durable. */
 export interface DurableSuggestionRecord {
   suggestion: ClaimExtractionResult | null;
   warnings: string[];
   previewOutcome: ClaimExtractionPreviewOutcome | null;
 }
 
+/** Cost-metered LLM instance used for claim-extraction previews. */
 export type ClaimExtractionPreviewLlm = CostMeteredLlm;
 
+/** Normalized durable selection filters for one reconcile pass. */
 export interface ReconcileSelection {
   includeInactive: boolean;
   project: string | null;

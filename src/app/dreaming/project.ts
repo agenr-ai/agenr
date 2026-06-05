@@ -81,10 +81,12 @@ export function normalizeMaxProfileDurables(value: number | undefined): number {
   return Math.min(MAX_PROFILE_DURABLES, Math.max(MIN_PROFILE_DURABLES, Math.trunc(value)));
 }
 
+/** Returns whether a durable is active and valid at the profile snapshot time. */
 function isCurrentDurable(durable: Durable, asOfMs: number): boolean {
   return !durable.retired && !durable.superseded_by && isWithinValidityWindow(durable.valid_from, durable.valid_to, asOfMs);
 }
 
+/** Sorts profile durables by expiry, importance, quality, and recency. */
 function compareProfileDurables(left: Durable, right: Durable): number {
   const expiryDelta = profileExpiryRank(right) - profileExpiryRank(left);
   if (expiryDelta !== 0) {
@@ -104,6 +106,7 @@ function compareProfileDurables(left: Durable, right: Durable): number {
   return right.created_at.localeCompare(left.created_at) || left.id.localeCompare(right.id);
 }
 
+/** Sorts directive durables by polarity, importance, and recency. */
 function compareDirectiveDurables(left: Durable, right: Durable): number {
   const leftMetadata = parseDirectiveMetadata(left);
   const rightMetadata = parseDirectiveMetadata(right);
@@ -120,6 +123,7 @@ function compareDirectiveDurables(left: Durable, right: Durable): number {
   return right.created_at.localeCompare(left.created_at) || left.id.localeCompare(right.id);
 }
 
+/** Ranks profile expiry values for profile selection ordering. */
 function profileExpiryRank(durable: Durable): number {
   if (durable.expiry === "core") {
     return 3;
@@ -130,10 +134,12 @@ function profileExpiryRank(durable: Durable): number {
   return 1;
 }
 
+/** Ranks directive polarity values for directive selection ordering. */
 function directivePolarityRank(polarity: Durable["directive_polarity"] | undefined): number {
   return polarity === "proactive" ? 2 : 1;
 }
 
+/** Builds a stable content hash for profile and directive snapshot inputs. */
 function buildProfileContentHash(profileDurables: Durable[], directiveDurables: Durable[]): string {
   const payload = {
     profile: profileDurables.map(toHashableDurable),
@@ -142,6 +148,7 @@ function buildProfileContentHash(profileDurables: Durable[], directiveDurables: 
   return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
+/** Projects one durable into the fields that affect profile snapshot identity. */
 function toHashableDurable(durable: Durable): Record<string, string | number | undefined> {
   return {
     id: durable.id,

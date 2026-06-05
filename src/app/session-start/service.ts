@@ -319,6 +319,7 @@ function normalizePolicy(policy: SessionStartPolicy | undefined): Required<Sessi
   };
 }
 
+/** Filters session-start entries to those valid at the current time. */
 function filterCurrentEntries(entries: Durable[], nowMs: number): Durable[] {
   return entries.filter((entry) => isWithinValidityWindow(entry.valid_from, entry.valid_to, nowMs));
 }

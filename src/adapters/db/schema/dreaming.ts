@@ -1,5 +1,5 @@
-/** SQL statement that stores dreaming run metadata. */
-export const CREATE_DREAM_RUNS_TABLE_SQL = `
+/** Creates the core dreaming run, action, proposal, and progress tables. */
+const CREATE_DREAM_RUNS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS dream_runs (
     id TEXT PRIMARY KEY,
     tier TEXT NOT NULL DEFAULT 'standard',
@@ -109,8 +109,8 @@ const CREATE_DREAM_PROPOSALS_OPEN_ISSUE_INDEX_SQL = `
   ON dream_proposals(review_status, group_id, issue_kind)
 `;
 
-/** SQL statement that stores dreaming cursors and profile state. */
-export const CREATE_DREAM_STATE_TABLE_SQL = `
+/** Creates the persisted dreaming state table. */
+const CREATE_DREAM_STATE_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS dream_state (
     id TEXT PRIMARY KEY DEFAULT 'default',
     last_successful_run_at TEXT,
@@ -121,8 +121,8 @@ export const CREATE_DREAM_STATE_TABLE_SQL = `
   )
 `;
 
-/** SQL statement that stores profile snapshot bundles. */
-export const CREATE_PROFILE_SNAPSHOTS_TABLE_SQL = `
+/** Creates the profile snapshot table used by projected memory views. */
+const CREATE_PROFILE_SNAPSHOTS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS profile_snapshots (
     id TEXT PRIMARY KEY,
     durable_ids TEXT NOT NULL DEFAULT '[]',
@@ -140,8 +140,8 @@ const CREATE_PROFILE_SNAPSHOTS_CREATED_AT_INDEX_SQL = `
   ON profile_snapshots(created_at)
 `;
 
-/** Dream run and action DDL applied during init. */
-export const DREAMING_CORE_SCHEMA_STATEMENTS = [
+/** Schema statements required for core dreaming run persistence. */
+const DREAMING_CORE_SCHEMA_STATEMENTS = [
   CREATE_DREAM_RUNS_TABLE_SQL,
   CREATE_DREAM_RUN_ACTIONS_TABLE_SQL,
   CREATE_DREAM_RUN_ACTIONS_RUN_ID_INDEX_SQL,
@@ -149,8 +149,8 @@ export const DREAMING_CORE_SCHEMA_STATEMENTS = [
   CREATE_DREAM_RUN_ACTIONS_CREATED_AT_INDEX_SQL,
 ] as const;
 
-/** Dream proposal and state DDL applied during init. */
-export const DREAMING_EXTENDED_SCHEMA_STATEMENTS = [
+/** Schema statements required for extended dreaming state persistence. */
+const DREAMING_EXTENDED_SCHEMA_STATEMENTS = [
   CREATE_DREAM_PROPOSALS_TABLE_SQL,
   CREATE_DREAM_PROPOSALS_RUN_ID_INDEX_SQL,
   CREATE_DREAM_PROPOSALS_GROUP_ID_INDEX_SQL,
@@ -162,5 +162,14 @@ export const DREAMING_EXTENDED_SCHEMA_STATEMENTS = [
   CREATE_PROFILE_SNAPSHOTS_CREATED_AT_INDEX_SQL,
 ] as const;
 
-/** Full dreaming DDL applied during init. */
-export const DREAMING_SCHEMA_STATEMENTS = [...DREAMING_CORE_SCHEMA_STATEMENTS, ...DREAMING_EXTENDED_SCHEMA_STATEMENTS] as const;
+/** Ordered dreaming schema statements applied during database initialization. */
+const DREAMING_SCHEMA_STATEMENTS = [...DREAMING_CORE_SCHEMA_STATEMENTS, ...DREAMING_EXTENDED_SCHEMA_STATEMENTS] as const;
+
+export {
+  CREATE_DREAM_RUNS_TABLE_SQL,
+  CREATE_DREAM_STATE_TABLE_SQL,
+  CREATE_PROFILE_SNAPSHOTS_TABLE_SQL,
+  DREAMING_CORE_SCHEMA_STATEMENTS,
+  DREAMING_EXTENDED_SCHEMA_STATEMENTS,
+  DREAMING_SCHEMA_STATEMENTS,
+};

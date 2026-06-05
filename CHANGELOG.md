@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [4.0.0] - 2026-06-05
 
 ### Breaking
 
@@ -16,11 +16,14 @@
 - **Dreaming proposal review surface.** New `agenr dream actions`, `agenr dream proposals`, `agenr dream backlog`, and `agenr dream review` commands, with backed-up transactional proposal apply.
 - **Session-end episode boundaries.** OpenClaw now writes the current session's episode from its `session_end` hook so dreaming has fresh evidence before the next session starts; the write is best-effort and idempotent by session id. Skeln's shutdown chain writes through the same bounded episode contract.
 - **Dreaming pipeline scenario fixtures.** New fixtures under `tests/scenarios/dreaming/pipeline/` cover implicit-preference capture, trip-lifecycle revision, point-in-time recall, and the no-overconsolidation guard.
+- **Dreaming Milestone 5 release path.** The `prune` stage now retires protected low-signal durables on `standard` and `deep` runs, background `light` runs fire after host session-end episode writes, successful `agenr_store` calls can trigger `light` runs when accumulated durable importance crosses the configured threshold, and completion summaries include compute-efficiency counters for the eval scoreboard.
 - **Docs:** `docs/DURABLES.md`, `docs/DREAMING.md`. `docs/STORE.md` and `docs/SURGEON.md` removed.
 
 ### Changed
 
 - **Claim-key scenario harness** now supports `dreaming` scenarios instead of `surgeon` scenarios.
+- **Dreaming `deep` tier** now reads the full evidence backlog instead of only the incremental cursor.
+- **Dreaming config parsing** now accepts and persists non-default `tiers`, `stages.extract`, `stages.project`, and `triggers` settings.
 - **AGENTS.md, ARCHITECTURE.md, README.md, DEBUGGING.md, and VS Code launch configs** updated for the durable/dreaming nomenclature.
 
 ## [3.3.0] - 2026-06-02

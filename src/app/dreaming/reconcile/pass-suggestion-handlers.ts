@@ -199,6 +199,7 @@ export async function loadSuggestionIfContinuing(
   return record;
 }
 
+/** Returns the shared fallback claim-extraction LLM for serial preview work. */
 function getFallbackClaimExtractionLlm(ctx: ReconcilePassContext): ClaimExtractionPreviewLlm | null {
   if (ctx.extraction.fallbackClaimExtractionLlm !== undefined) {
     return ctx.extraction.fallbackClaimExtractionLlm;
@@ -208,6 +209,7 @@ function getFallbackClaimExtractionLlm(ctx: ReconcilePassContext): ClaimExtracti
   return ctx.extraction.fallbackClaimExtractionLlm;
 }
 
+/** Creates and tracks one claim-extraction LLM instance for usage accounting. */
 function createTrackedClaimExtractionLlm(ctx: ReconcilePassContext): ClaimExtractionPreviewLlm | null {
   const llm = ctx.deps.createClaimExtractionLlm ? ctx.deps.createClaimExtractionLlm() : null;
   if (llm && !ctx.extraction.claimExtractionLlms.includes(llm)) {

@@ -10,6 +10,7 @@ import type { DurableSuggestionRecord, EntityFamilyConvergenceAudit, TrustedGrou
 import type { MissingBackfillResolvedPreview } from "./missing-backfill.js";
 import { normalizeStringArray } from "./utils.js";
 
+/** Creates a reconcile proposal with normalized key arrays and open review state. */
 export function createProposal(input: Omit<DreamRunProposal, "id" | "reviewStatus" | "reviewedAt" | "reviewReason" | "appliedActionCount">): DreamRunProposal {
   return {
     id: randomUUID(),

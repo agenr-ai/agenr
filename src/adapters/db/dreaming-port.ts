@@ -1,5 +1,14 @@
 import type { DreamPort } from "../../app/dreaming/ports.js";
-import { findActiveDurablesByClaimKey, findExistingNormHashes, getDurable, getDurables, insertDurable, supersedeDurable, updateDurable } from "./queries.js";
+import {
+  findActiveDurablesByClaimKey,
+  findExistingNormHashes,
+  getDurable,
+  getDurables,
+  insertDurable,
+  retireDurable,
+  supersedeDurable,
+  updateDurable,
+} from "./queries.js";
 import {
   completeDreamRun,
   createProfileSnapshot,
@@ -24,6 +33,7 @@ import {
   getDreamHealthStats,
   listEpisodeEvidenceSince,
   listReconcileDurables,
+  sumDurableImportanceCreatedSince,
 } from "./dreaming-queries.js";
 import type { SqlExecutor } from "./queries.js";
 
@@ -57,10 +67,12 @@ export function createDreamPort(executor: SqlExecutor): DreamPort {
     supersedeDurable: async (oldDurableId, newDurableId, kind, reason) => supersedeDurable(executor, oldDurableId, newDurableId, kind, reason),
     getDurable: async (durableId) => getDurable(executor, durableId),
     getDurables: async (durableIds) => getDurables(executor, durableIds),
+    retireDurable: async (durableId, reason) => retireDurable(executor, durableId, reason),
     updateDurable: async (durableId, fields, options) => updateDurable(executor, durableId, fields, options),
     countEpisodesSince: async (since, project) => countEpisodesSince(executor, since, project),
     countIngestFilesSince: async (since) => countIngestFilesSince(executor, since),
     countDurablesCreatedSince: async (since, project) => countDurablesCreatedSince(executor, since, project),
+    sumDurableImportanceCreatedSince: async (since, project) => sumDurableImportanceCreatedSince(executor, since, project),
     updateDreamState: async (input) => updateDreamState(executor, input),
     createProfileSnapshot: async (snapshot) => createProfileSnapshot(executor, snapshot),
     withTransaction: async (fn) => runInDreamTransaction(executor, fn),

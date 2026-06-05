@@ -170,6 +170,7 @@ export async function logDreamProposal(executor: SqlExecutor, proposal: Persiste
   });
 }
 
+/** Verifies that all durable ids referenced by a dreaming record exist. */
 async function assertDurablesExist(executor: SqlExecutor, durableIds: string[]): Promise<void> {
   if (durableIds.length === 0) {
     return;
@@ -186,6 +187,7 @@ async function assertDurablesExist(executor: SqlExecutor, durableIds: string[]):
   }
 }
 
+/** Finds an existing open proposal for the same issue and durable set. */
 async function findOpenProposalIssue(
   executor: SqlExecutor,
   input: {

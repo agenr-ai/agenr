@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createDatabase, type SqlDatabase } from "../../../../src/adapters/db/client.js";
+import { createDreamPort } from "../../../../src/adapters/db/dreaming-port.js";
 import { createMemoryRepository } from "../../../../src/adapters/db/memory-repository.js";
 import { createSessionStartRepository } from "../../../../src/adapters/db/session-start-repository.js";
 import { createAgenrDebugSink } from "../../../../src/adapters/openclaw/debug/index.js";
@@ -232,6 +233,7 @@ function createTestServices(
     episodes: database,
     procedures: database,
     memory: createMemoryRepository(database),
+    dreaming: createDreamPort(database),
     sessionStart: {
       repository: createSessionStartRepository(database),
       recall: options.recall,

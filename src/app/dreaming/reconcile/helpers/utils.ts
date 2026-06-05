@@ -1,15 +1,18 @@
 import type { ReconcileShadowBucket } from "../../../../core/dreaming/types.js";
 import { normalizeClaimKeySegment } from "../../../../core/claim-key.js";
 
+/** Normalizes an optional string into a non-empty string or null. */
 export function normalizeOptionalString(value: string | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
 }
 
+/** Normalizes a string array by trimming blanks and removing duplicates. */
 export function normalizeStringArray(values: string[]): string[] {
   return Array.from(new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)));
 }
 
+/** Normalizes an optional count into a finite non-negative integer. */
 export function normalizeOptionalNonNegativeCount(value: number | undefined): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return 0;
@@ -18,10 +21,12 @@ export function normalizeOptionalNonNegativeCount(value: number | undefined): nu
   return Math.max(0, Math.floor(value));
 }
 
+/** Computes non-negative elapsed milliseconds between two timestamps. */
 export function elapsedMs(startedAtMs: number, nowMs = Date.now()): number {
   return Math.max(0, nowMs - startedAtMs);
 }
 
+/** Counts how many values from an iterable are present in a set. */
 export function countSetOverlap(left: Set<string>, right: Iterable<string>): number {
   let count = 0;
   for (const value of right) {
@@ -33,6 +38,7 @@ export function countSetOverlap(left: Set<string>, right: Iterable<string>): num
   return count;
 }
 
+/** Normalizes a metadata-derived entity prefix for claim-key repair. */
 export function normalizeMetadataEntity(value: string | undefined): string | null {
   const normalized = value ? normalizeClaimKeySegment(value) : "";
   if (normalized.length === 0 || !/[a-z]/u.test(normalized)) {
@@ -42,6 +48,7 @@ export function normalizeMetadataEntity(value: string | undefined): string | nul
   return normalized;
 }
 
+/** Formats a shadow telemetry bucket for completion observations. */
 export function describeShadowBucket(bucket: ReconcileShadowBucket): string {
   switch (bucket) {
     case "high_density_grounded_family":

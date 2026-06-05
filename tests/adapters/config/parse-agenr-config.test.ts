@@ -127,6 +127,91 @@ describe("parseAgenrConfig", () => {
     );
   });
 
+  it("parses dreaming tier, stage, and trigger overrides", () => {
+    const result = parseAgenrConfig(
+      {
+        dreaming: {
+          tiers: {
+            light: { enabled: false },
+            deep: { intervalHours: 48 },
+          },
+          stages: {
+            extract: {
+              maxSessionsPerRun: 3,
+              maxChunksPerSession: 5,
+              contextLookup: {
+                enabled: false,
+                maxNeighborsPerCandidate: 2,
+              },
+            },
+            project: { maxProfileDurables: 4 },
+            prune: { protectRecalledDays: 3, protectMinImportance: 8 },
+          },
+          triggers: {
+            postSessionLightDream: false,
+            importanceThreshold: 12,
+            minIntervalMinutes: 5,
+          },
+        },
+      },
+      { defaultDbPath: DEFAULT_DB_PATH },
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      value: expect.objectContaining({
+        dreaming: expect.objectContaining({
+          tiers: {
+            light: { enabled: false },
+            standard: { enabled: true },
+            deep: { enabled: true, intervalHours: 48 },
+          },
+          stages: {
+            extract: {
+              maxSessionsPerRun: 3,
+              maxChunksPerSession: 5,
+              contextLookup: { enabled: false, maxNeighborsPerCandidate: 2 },
+            },
+            project: { maxProfileDurables: 4 },
+            prune: { protectRecalledDays: 3, protectMinImportance: 8 },
+          },
+          triggers: {
+            postSessionLightDream: false,
+            importanceThreshold: 12,
+            minIntervalMinutes: 5,
+          },
+        }),
+      }),
+    });
+
+    if (!result.ok) {
+      throw new Error("Expected config parse to succeed.");
+    }
+    expect(toAgenrConfigInput(result.value).dreaming).toEqual({
+      tiers: {
+        light: { enabled: false },
+        deep: { intervalHours: 48 },
+      },
+      stages: {
+        extract: {
+          maxSessionsPerRun: 3,
+          maxChunksPerSession: 5,
+          contextLookup: {
+            enabled: false,
+            maxNeighborsPerCandidate: 2,
+          },
+        },
+        project: { maxProfileDurables: 4 },
+        prune: { protectRecalledDays: 3, protectMinImportance: 8 },
+      },
+      triggers: {
+        postSessionLightDream: false,
+        importanceThreshold: 12,
+        minIntervalMinutes: 5,
+      },
+    });
+  });
+
   it("parses feature flags as default-off sparse rollout controls", () => {
     const result = parseAgenrConfig(
       {
