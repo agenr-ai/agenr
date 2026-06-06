@@ -1,4 +1,6 @@
 import type { ClaimKeySource, ClaimKeyStatus, ClaimSupportMode, DurableKind, Expiry, ProcedureSource, ProcedureStep } from "../../../core/types.js";
+import type { DirectivePolarity, DirectiveTrigger } from "../../../core/types.js";
+import { parseDirectivePolarity, parseDirectiveTrigger } from "../../../core/directives/model.js";
 import { CLAIM_KEY_SOURCES, CLAIM_KEY_STATUSES, CLAIM_SUPPORT_MODES, DURABLE_KINDS, EXPIRY_LEVELS } from "../../../core/types.js";
 import { normalizeProcedureDefinition } from "../../../core/procedures/normalization.js";
 import type { ValidationIssue } from "../../shared/validation.js";
@@ -13,7 +15,9 @@ import {
   pushUnexpectedFields,
 } from "../../shared/validation.js";
 
-const SANDBOX_REQUEST_KEYS = new Set<string>(["root", "preserve", "corpusSeed"]);
+const SANDBOX_REQUEST_KEYS = new Set<string>(["root", "preserve", "corpusSeed", "ablationArm", "now", "profileSnapshot"]);
+const PROFILE_SNAPSHOT_KEYS = new Set<string>(["id", "durableIds", "directiveIds", "asOf", "runId", "createdAt"]);
+const ABLATION_ARMS = ["memory-off", "store-only", "dreaming-on"] as const;
 const CORPUS_SEED_MODES = ["fixture", "snapshot_copy"] as const;
 const FIXTURE_CORPUS_SEED_KEYS = new Set<string>(["mode"]);
 const SNAPSHOT_COPY_CORPUS_SEED_KEYS = new Set<string>(["mode", "snapshotDbPath", "snapshotId", "snapshotLabel", "allowTelemetryWrites"]);
@@ -44,6 +48,8 @@ const FIXTURE_ENTRY_KEYS = new Set<string>([
   "valid_to",
   "supersession_kind",
   "supersession_reason",
+  "directive_polarity",
+  "directive_trigger",
 ]);
 const FIXTURE_PROCEDURE_KEYS = new Set<string>([
   "id",
@@ -103,6 +109,12 @@ export interface InternalEvalSandboxRequestDto {
   root?: string;
   /** When true, preserves the sandbox on disk for inspection. */
   preserve?: boolean;
+  /** Optional dreaming scoreboard ablation arm. */
+  ablationArm?: (typeof ABLATION_ARMS)[number];
+  /** Optional fixed wall-clock instant for temporal fixtures. */
+  now?: string;
+  /** Optional pre-seeded profile snapshot fixture. */
+  profileSnapshot?: InternalEvalProfileSnapshotDto;
   /**
    * Optional corpus-seed control. When omitted, the sandbox keeps the
    * historical fixture-only behavior. When supplied, selects between
@@ -110,6 +122,22 @@ export interface InternalEvalSandboxRequestDto {
    * every eval seam.
    */
   corpusSeed?: InternalEvalCorpusSeedDto;
+}
+
+/** Adapter-owned normalized profile snapshot fixture DTO. */
+export interface InternalEvalProfileSnapshotDto {
+  /** Optional stable snapshot identifier. */
+  id?: string;
+  /** Ordered durable ids included in the active profile bundle. */
+  durableIds: string[];
+  /** Optional directive ids tracked alongside the profile bundle. */
+  directiveIds?: string[];
+  /** Optional as-of timestamp for the projected bundle. */
+  asOf?: string;
+  /** Optional dreaming run id that produced the snapshot. */
+  runId?: string;
+  /** Optional creation timestamp used for freshness guards. */
+  createdAt?: string;
 }
 
 /**
@@ -168,6 +196,10 @@ export interface InternalEvalFixtureEntryDto {
   supersession_kind?: string;
   /** Optional explicit supersession rationale. */
   supersession_reason?: string;
+  /** Optional directive polarity for directive fixture rows. */
+  directive_polarity?: DirectivePolarity;
+  /** Optional directive trigger for directive fixture rows. */
+  directive_trigger?: DirectiveTrigger;
 }
 
 /**
@@ -267,6 +299,9 @@ export function parseSandbox(value: unknown, issues: ValidationIssue[]): Interna
     root: parseOptionalTrimmedString(sandbox.root, "sandbox.root", issues),
     preserve: parseOptionalBoolean(sandbox.preserve, "sandbox.preserve", issues),
     corpusSeed: parseCorpusSeed(sandbox.corpusSeed, issues),
+    ablationArm: parseOptionalAblationArm(sandbox.ablationArm, "sandbox.ablationArm", issues),
+    now: parseOptionalTimestampString(sandbox.now, "sandbox.now", issues),
+    profileSnapshot: parseProfileSnapshot(sandbox.profileSnapshot, issues),
   };
 }
 
@@ -388,6 +423,9 @@ export function mapSandboxRequestDto(dto: InternalEvalSandboxRequestDto | undefi
     root: dto.root,
     preserve: dto.preserve,
     corpusSeed: dto.corpusSeed,
+    ablationArm: dto.ablationArm,
+    now: dto.now,
+    profileSnapshot: dto.profileSnapshot,
   };
 }
 
@@ -425,6 +463,8 @@ export function mapFixtureEntryDto(dto: InternalEvalFixtureEntryDto): InternalEv
     valid_to: dto.valid_to,
     supersession_kind: dto.supersession_kind,
     supersession_reason: dto.supersession_reason,
+    directive_polarity: dto.directive_polarity,
+    directive_trigger: dto.directive_trigger,
   };
 }
 
@@ -587,7 +627,101 @@ function parseFixtureEntry(value: unknown, index: number, issues: ValidationIssu
     valid_to: parseOptionalTimestampString(fixture.valid_to, `${basePath}.valid_to`, issues),
     supersession_kind: parseOptionalTrimmedString(fixture.supersession_kind, `${basePath}.supersession_kind`, issues),
     supersession_reason: parseOptionalTrimmedString(fixture.supersession_reason, `${basePath}.supersession_reason`, issues),
+    directive_polarity: parseOptionalDirectivePolarity(fixture.directive_polarity, `${basePath}.directive_polarity`, issues),
+    directive_trigger: parseOptionalDirectiveTrigger(fixture.directive_trigger, `${basePath}.directive_trigger`, issues),
   };
+}
+
+/** Parses an optional ablation-arm enum member. */
+function parseOptionalAblationArm(value: unknown, path: string, issues: ValidationIssue[]): InternalEvalSandboxRequestDto["ablationArm"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string" || !ABLATION_ARMS.includes(value as (typeof ABLATION_ARMS)[number])) {
+    pushIssue(issues, path, `Expected one of: ${ABLATION_ARMS.join(", ")}.`);
+    return undefined;
+  }
+
+  return value as (typeof ABLATION_ARMS)[number];
+}
+
+/** Parses an optional profile snapshot fixture object. */
+function parseProfileSnapshot(value: unknown, issues: ValidationIssue[]): InternalEvalProfileSnapshotDto | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const snapshot = parseObject(value, "sandbox.profileSnapshot", issues);
+  if (snapshot === undefined) {
+    return undefined;
+  }
+
+  pushUnexpectedFields(snapshot, PROFILE_SNAPSHOT_KEYS, "sandbox.profileSnapshot", issues);
+
+  const durableIds = parseRequiredStringArray(snapshot.durableIds, "sandbox.profileSnapshot.durableIds", issues);
+  if (durableIds === undefined) {
+    return undefined;
+  }
+
+  return {
+    id: parseOptionalTrimmedString(snapshot.id, "sandbox.profileSnapshot.id", issues),
+    durableIds,
+    directiveIds: parseOptionalStringArray(snapshot.directiveIds, "sandbox.profileSnapshot.directiveIds", issues),
+    asOf: parseOptionalTimestampString(snapshot.asOf, "sandbox.profileSnapshot.asOf", issues),
+    runId: parseOptionalTrimmedString(snapshot.runId, "sandbox.profileSnapshot.runId", issues),
+    createdAt: parseOptionalTimestampString(snapshot.createdAt, "sandbox.profileSnapshot.createdAt", issues),
+  };
+}
+
+/** Parses a required non-empty string array. */
+function parseRequiredStringArray(value: unknown, path: string, issues: ValidationIssue[]): string[] | undefined {
+  if (!Array.isArray(value) || value.length === 0 || value.some((item) => typeof item !== "string" || item.trim().length === 0)) {
+    pushIssue(issues, path, "Expected a non-empty array of strings.");
+    return undefined;
+  }
+
+  return value.map((item) => item.trim());
+}
+
+/** Parses an optional directive polarity enum member. */
+function parseOptionalDirectivePolarity(value: unknown, path: string, issues: ValidationIssue[]): DirectivePolarity | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    pushIssue(issues, path, "Expected a string.");
+    return undefined;
+  }
+
+  const polarity = parseDirectivePolarity(value);
+  if (!polarity) {
+    pushIssue(issues, path, "Expected abstain or proactive.");
+    return undefined;
+  }
+
+  return polarity;
+}
+
+/** Parses an optional directive trigger enum member. */
+function parseOptionalDirectiveTrigger(value: unknown, path: string, issues: ValidationIssue[]): DirectiveTrigger | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    pushIssue(issues, path, "Expected a string.");
+    return undefined;
+  }
+
+  const trigger = parseDirectiveTrigger(value);
+  if (!trigger) {
+    pushIssue(issues, path, "Expected session_start, always, or topic:<term>.");
+    return undefined;
+  }
+
+  return trigger;
 }
 
 /** Parses a single explicit procedure fixture entry. */

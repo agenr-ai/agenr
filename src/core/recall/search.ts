@@ -104,14 +104,15 @@ const GROUNDING_SORT_MAX_SCORE_GAP = 0.03;
  */
 export async function recall(query: RecallInput, ports: RecallPorts, options: RecallExecutionOptions = {}): Promise<RecallOutput[]> {
   const text = query.text.trim();
-  const nowMs = Date.now();
+  const now = options.now ?? new Date();
+  const nowMs = now.getTime();
   const limit = normalizeLimit(query.limit);
   const threshold = normalizeThreshold(query.threshold);
   const budget = normalizeBudget(query.budget);
-  const asOfDate = query.asOf ? parseAroundDate(query.asOf) : null;
-  const aroundDate = query.around !== undefined ? parseAroundDate(query.around) : inferAroundDate(text);
-  const since = query.since ? parseRelativeDate(query.since) : null;
-  const until = query.until ? parseRelativeDate(query.until) : null;
+  const asOfDate = query.asOf ? parseAroundDate(query.asOf, now) : null;
+  const aroundDate = query.around !== undefined ? parseAroundDate(query.around, now) : inferAroundDate(text, now);
+  const since = query.since ? parseRelativeDate(query.since, now) : null;
+  const until = query.until ? parseRelativeDate(query.until, now) : null;
   const filters = buildDurableFilters(query.types, query.tags, since, until, {
     asOfDate,
     nowMs,
@@ -232,6 +233,7 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
           aroundDate,
           aroundRadius: query.aroundRadius,
           rankingProfile: query.rankingProfile,
+          now,
         }),
       ),
       {
@@ -495,6 +497,7 @@ function scoreMergedCandidate(
     aroundDate: Date | null;
     aroundRadius?: number;
     rankingProfile?: RecallRankingProfile;
+    now: Date;
   },
 ): RankedCandidate {
   const vector = candidate.vectorSim ?? cosineSimilarity(candidate.entry.embedding ?? [], queryEmbedding);
@@ -793,6 +796,7 @@ function resolveRecencyScore(
     aroundDate: Date | null;
     aroundRadius?: number;
     rankingProfile?: RecallRankingProfile;
+    now: Date;
   },
 ): number {
   if (params.asOfDate) {
@@ -807,7 +811,7 @@ function resolveRecencyScore(
     return HISTORICAL_STATE_FLAT_RECENCY;
   }
 
-  return recencyScore(entry.created_at, entry.expiry);
+  return recencyScore(entry.created_at, entry.expiry, params.now);
 }
 
 /**
@@ -2012,8 +2016,8 @@ function estimateTokens(entry: RecallCandidateDurable): number {
  * @param value - Raw user-supplied around-date text.
  * @returns Parsed temporal anchor, or null when unsupported.
  */
-function parseAroundDate(value: string): Date | null {
-  return parseRelativeDate(value) ?? inferAroundDate(value);
+function parseAroundDate(value: string, now: Date): Date | null {
+  return parseRelativeDate(value, now) ?? inferAroundDate(value, now);
 }
 
 /**

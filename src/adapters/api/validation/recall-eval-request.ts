@@ -91,6 +91,12 @@ export interface RecallEvalSandboxRequestDto {
   root?: string;
   /** When true, preserves the sandbox on disk for inspection. */
   preserve?: boolean;
+  /** Optional dreaming scoreboard ablation arm. */
+  ablationArm?: RecallEvalSandboxRequest["ablationArm"];
+  /** Optional fixed wall-clock instant for temporal fixtures. */
+  now?: string;
+  /** Optional pre-seeded profile snapshot fixture. */
+  profileSnapshot?: RecallEvalSandboxRequest["profileSnapshot"];
   /** Optional corpus-seed control selecting fixture or snapshot-copy seeding. */
   corpusSeed?: RecallEvalCorpusSeedDto;
 }
@@ -850,6 +856,9 @@ function mapSandboxRequestDto(dto: RecallEvalSandboxRequestDto | undefined): Rec
     root: dto.root,
     preserve: dto.preserve,
     corpusSeed: dto.corpusSeed,
+    ablationArm: dto.ablationArm,
+    now: dto.now,
+    profileSnapshot: dto.profileSnapshot,
   };
 }
 

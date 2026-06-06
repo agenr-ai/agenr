@@ -13,8 +13,8 @@ The current contract is intentionally shaped around production parity rather tha
 These seams are intentionally small:
 
 - one transport host: the internal eval dev server
-- two routes: `POST /internal/evals/recall/run` and `POST /internal/evals/before-turn/run`
-- two eval families: recall and before-turn
+- three routes: `POST /internal/evals/recall/run`, `POST /internal/evals/before-turn/run`, and `POST /internal/evals/session-start/run`
+- three eval families: recall, before-turn, and session-start
 - one case shape per family: one request in, one response out
 - one provisioning mode: exact fixture seeding into an isolated SQLite sandbox
 
@@ -30,11 +30,15 @@ This document describes the code as it exists today.
 - `src/adapters/api/internal-eval-server.ts` - tiny Node HTTP server with the internal eval route set
 - `src/adapters/api/internal-eval-routes.ts` - deterministic route registry for the internal eval server
 - `src/adapters/api/routes/internal-before-turn-eval.ts` - thin `POST /internal/evals/before-turn/run` route and boundary error mapping
+- `src/adapters/api/routes/internal-session-start-eval.ts` - thin `POST /internal/evals/session-start/run` route and boundary error mapping
 - `src/adapters/api/routes/internal-recall-eval.ts` - thin `POST /internal/evals/recall/run` route and boundary error mapping
 - `src/adapters/api/validation/before-turn-eval-request.ts` - strict JSON request validation for before-turn eval cases
 - `src/adapters/api/validation/internal-eval-shared.ts` - shared sandbox and fixture validation helpers
 - `src/app/evals/before-turn/contracts.ts` - stable before-turn request, response, output, and timing types
 - `src/app/evals/before-turn/run-before-turn-eval-case.ts` - top-level app service that sets up the sandbox, provisions fixtures, runs `runBeforeTurn()`, and normalizes the response
+- `src/app/evals/session-start/run-session-start-eval-case.ts` - top-level app service that sets up the sandbox, provisions fixtures, runs `runSessionStart()`, and normalizes the response
+- `src/app/evals/ablation-arm.ts` - dreaming scoreboard arm resolution (`memory-off`, `store-only`, `dreaming-on`)
+- `src/app/evals/provision-profile-snapshot.ts` - pre-seeds active profile snapshots for dreaming-on eval cases
 - `src/app/evals/before-turn/normalize-response.ts` - stable success and error envelope shaping for before-turn evals
 - `src/adapters/api/validation/recall-eval-request.ts` - strict JSON request validation and unexpected-field rejection
 - `src/app/evals/recall/contracts.ts` - stable request, response, diagnostics, timing, sandbox, and execution-path types
@@ -92,11 +96,12 @@ pnpm run build:root
 node dist/internal-eval-server.js
 ```
 
-The local server exposes exactly two routes:
+The local server exposes exactly three routes:
 
 ```txt
 POST /internal/evals/recall/run
 POST /internal/evals/before-turn/run
+POST /internal/evals/session-start/run
 ```
 
 Defaults:
@@ -1013,6 +1018,70 @@ Eval-corpus reminder:
   patterns the corpus does not cover, cross-encoder (and MMR, and RRF)
   defaults can overfit to the corpus. Track this explicitly when
   interpreting aggregate pass rates.
+
+## Dreaming ablation arms (WS1)
+
+Dreaming scoreboard evals compare three provisioning arms across the same logical case set. `agenr-evals` owns manifests, artifacts, and the markdown scoreboard. `agenr` owns arm behavior inside the existing recall, before-turn, and session-start seams.
+
+### Arm semantics
+
+| Arm           | Runtime behavior                                                                                                                                                                                                    | Provisioning                                                                                   |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `memory-off`  | Fully stubbed baseline: recall returns no entries, before-turn abstains with no selected ids, session-start returns no durable memory. No injection surfaces and no dreaming side effects.                          | `sandbox.ablationArm: "memory-off"` from manifest `sharedContext`                              |
+| `store-only`  | Hot-path store semantics with injection hardening on. Temporal validity, supersession filtering, and directive abstention run normally. Profile snapshot projection is **not** applied even when fixture ids exist. | `sandbox.ablationArm: "store-only"`                                                            |
+| `dreaming-on` | Full program state for eval: injection hardening on, directive rows active, optional pre-seeded `profileSnapshot` fixture activated in `dream_state`. Option A only — no live `runDream()` in evals.                | `sandbox.ablationArm: "dreaming-on"` plus optional `sandbox.profileSnapshot` and `sandbox.now` |
+
+Arm controls live on the shared `sandbox` block accepted by all three eval seams:
+
+```json
+{
+  "sandbox": {
+    "ablationArm": "dreaming-on",
+    "now": "2026-03-26T12:00:00.000Z",
+    "profileSnapshot": {
+      "id": "profile-1",
+      "durableIds": ["profile-runtime"],
+      "directiveIds": [],
+      "createdAt": "2026-04-14T10:00:00.000Z"
+    }
+  }
+}
+```
+
+Fixture entries also accept `directive_polarity` and `directive_trigger` so abstain and proactive directive cases seed real directive rows.
+
+### Seam mapping
+
+| Objective suite                  | Eval seam                  | Notes                                                                                                                         |
+| -------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Injection / context              | `before-turn` and `recall` | Temporal validity and directive abstention use `before-turn`; superseded exclusion uses `recall` default path                 |
+| Temporal correctness             | `recall`                   | Pre-seeded successor + superseded predecessor state (Option A); `rankingProfile: "historical_state"` for predecessor recovery |
+| Preference / directive / profile | `session-start`            | Profile-first ordering and proactive directive surfacing; expired-core injection also covered here                            |
+
+Preference/directive/profile cases use the dedicated session-start seam rather than a before-turn proxy.
+
+### Case expectation pattern
+
+`agenr-evals` uses **arm-suffixed case ids** when expectations differ by arm (for example `.memory-off` variants that expect empty `entryIds` or abstention). Manifests select the matching ids per arm. Shared case input is duplicated with stable fixture ids so scoreboard rows align across arms.
+
+Pass/fail policy:
+
+- injection before-turn cases: required ids present in `output.selectedEntryIds`, excluded ids absent
+- injection recall cases: ordered `output.entryIds`
+- session-start cases: ordered `output.selectedEntryIds`; profile cases may also assert `output.sourceKindsByEntryId`
+
+### Operator loop (`agenr-evals`)
+
+From the sibling `agenr-evals` repo with `agenr` eval server running (`pnpm internal:eval-server`):
+
+```bash
+cd ../agenr-evals
+npm run run-ablation dreaming
+```
+
+Artifacts land under `artifacts/runs/dreaming-ablation/<arm>/` per manifest. The command emits a case × arm markdown scoreboard for side-by-side comparison.
+
+See also: [`docs/internal/plans/dreaming-eval-ablation-arms.md`](./internal/plans/dreaming-eval-ablation-arms.md).
 
 ## Good files to read before changing evals
 

@@ -171,6 +171,8 @@ function buildEntry(fixture: RecallEvalFixtureEntry, id: string, provisionedAt: 
     valid_to: fixture.valid_to,
     supersession_kind: fixture.supersession_kind,
     supersession_reason: fixture.supersession_reason,
+    directive_polarity: fixture.directive_polarity,
+    directive_trigger: fixture.directive_trigger,
     retired: fixture.retired ?? false,
     retired_at: fixture.retired_at,
     retired_reason: fixture.retired_reason,

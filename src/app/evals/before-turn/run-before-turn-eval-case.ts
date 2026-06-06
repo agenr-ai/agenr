@@ -1,10 +1,10 @@
-import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../../adapters/embeddings.js";
-import { readConfig } from "../../../config.js";
+import { isMemoryOffArm, resolveAblationConfig, shouldProvisionProfileSnapshot } from "../ablation-arm.js";
+import { createEvalEmbeddingResolver, createUnavailableEmbeddingPort } from "../eval-embedding.js";
+import { parseEvalNow } from "../eval-clock.js";
+import { provisionEvalSandbox } from "../provision-sandbox.js";
 import { runBeforeTurn } from "../../before-turn/index.js";
-import type { CrossEncoderPort, EmbeddingPort } from "../../../core/ports.js";
+import type { CrossEncoderPort } from "../../../core/ports.js";
 import { attachCrossEncoderPort } from "../recall/attach-cross-encoder.js";
-import { provisionRecallEvalFixtures } from "../recall/provision-fixtures.js";
-import { provisionRecallEvalProcedureFixtures } from "../recall/provision-procedure-fixtures.js";
 import { setupRecallEvalSandbox } from "../recall/sandbox.js";
 import { applyTelemetryWriteGate } from "../recall/telemetry-write-gate.js";
 import type { BeforeTurnEvalCaseRequest, BeforeTurnEvalCaseResponse, BeforeTurnEvalCaseTimings } from "./contracts.js";
@@ -41,45 +41,11 @@ export async function runBeforeTurnEvalCase(
 ): Promise<BeforeTurnEvalCaseResponse> {
   const startedAt = Date.now();
   const provisionedAt = new Date(startedAt).toISOString();
+  const ablation = resolveAblationConfig(request.sandbox);
+  const evalNow = parseEvalNow(ablation.now);
+  const embeddingResolver = createEvalEmbeddingResolver();
   let sandbox: Awaited<ReturnType<typeof setupRecallEvalSandbox>> | undefined;
-  let sharedEmbeddingPort: EmbeddingPort | undefined;
-  let sharedEmbeddingError: string | undefined;
   let timings: BeforeTurnEvalCaseTimings | undefined;
-
-  const getEmbeddingSupport = (): {
-    available: boolean;
-    error?: string;
-    port?: EmbeddingPort;
-  } => {
-    if (sharedEmbeddingPort) {
-      return {
-        available: true,
-        port: sharedEmbeddingPort,
-      };
-    }
-
-    if (sharedEmbeddingError) {
-      return {
-        available: false,
-        error: sharedEmbeddingError,
-      };
-    }
-
-    const config = readConfig();
-    try {
-      sharedEmbeddingPort = createEmbeddingClient(resolveEmbeddingApiKey(config), resolveEmbeddingModel(config));
-      return {
-        available: true,
-        port: sharedEmbeddingPort,
-      };
-    } catch (error) {
-      sharedEmbeddingError = error instanceof Error ? error.message : String(error);
-      return {
-        available: false,
-        error: sharedEmbeddingError,
-      };
-    }
-  };
 
   try {
     const sandboxStartedAt = Date.now();
@@ -104,28 +70,18 @@ export async function runBeforeTurnEvalCase(
       });
     }
 
-    if (request.memoryPool.length > 0 || (request.procedurePool?.length ?? 0) > 0) {
+    if (request.memoryPool.length > 0 || (request.procedurePool?.length ?? 0) > 0 || shouldProvisionProfileSnapshot(ablation)) {
       const provisionStartedAt = Date.now();
       try {
-        if (request.memoryPool.length > 0) {
-          const embeddingSupport = getEmbeddingSupport();
-          const embeddingPort = embeddingSupport.port ?? createUnavailableEmbeddingPort(embeddingSupport.error ?? "Embeddings are unavailable.");
-          await provisionRecallEvalFixtures({
-            caseId: request.caseId,
-            memoryPool: request.memoryPool,
-            store: sandbox.fixtureStore,
-            embedding: embeddingPort,
-            provisionedAt,
-          });
-        }
-        if ((request.procedurePool?.length ?? 0) > 0) {
-          await provisionRecallEvalProcedureFixtures({
-            caseId: request.caseId,
-            procedurePool: request.procedurePool ?? [],
-            store: sandbox.fixtureStore,
-            provisionedAt,
-          });
-        }
+        await provisionEvalSandbox({
+          caseId: request.caseId,
+          sandbox,
+          memoryPool: request.memoryPool,
+          procedurePool: request.procedurePool,
+          profileSnapshot: shouldProvisionProfileSnapshot(ablation) ? ablation.profileSnapshot : undefined,
+          embedding: request.memoryPool.length > 0 ? embeddingResolver.portOrUnavailable() : undefined,
+          provisionedAt,
+        });
         timings = {
           ...timings,
           fixtureProvisionMs: elapsedMs(provisionStartedAt),
@@ -149,14 +105,49 @@ export async function runBeforeTurnEvalCase(
 
     const beforeTurnStartedAt = Date.now();
     try {
-      const embeddingSupport = getEmbeddingSupport();
-      const sandboxRecallPorts = sandbox.createRecallPorts(
+      if (isMemoryOffArm(ablation)) {
+        timings = {
+          ...timings,
+          beforeTurnMs: elapsedMs(beforeTurnStartedAt),
+          totalMs: elapsedMs(startedAt),
+        };
+        return buildBeforeTurnEvalSuccessResponse({
+          request,
+          patch: {
+            durableMemory: [],
+            diagnostics: {
+              abstained: true,
+              abstentionReasons: ["memory_off_ablation"],
+              queryVariants: [],
+              recentTurnCount: 0,
+              turnSignalLabels: [],
+              durableRecallUsed: false,
+              durableRecallCandidateCount: 0,
+              procedureRecallUsed: false,
+              procedureCandidateCount: 0,
+              notices: ["memory-off ablation arm stubbed before-turn injection."],
+            },
+          },
+          timings: request.options?.includeTimings === true ? timings : undefined,
+          sandbox,
+        });
+      }
+
+      const activeSandbox = sandbox;
+      if (!activeSandbox) {
+        throw new Error("Before-turn eval sandbox was not initialized.");
+      }
+
+      const embeddingSupport = embeddingResolver.getSupport();
+      const sandboxRecallPorts = activeSandbox.createRecallPorts(
         embeddingSupport.port ?? createUnavailableEmbeddingPort(embeddingSupport.error ?? "Embeddings are unavailable."),
       );
-      const recallPorts = applyTelemetryWriteGate(attachCrossEncoderPort(sandboxRecallPorts, dependencies.crossEncoder), sandbox);
+      const recallPorts = applyTelemetryWriteGate(attachCrossEncoderPort(sandboxRecallPorts, dependencies.crossEncoder), activeSandbox);
       const patch = await runBeforeTurn(request.beforeTurnInput, {
         recall: recallPorts,
-        procedures: sandbox.procedureDatabase,
+        procedures: activeSandbox.procedureDatabase,
+        ...(evalNow ? { now: evalNow } : {}),
+        listActiveAbstainDirectives: () => activeSandbox.listActiveAbstainDirectives(evalNow),
         embedQuery: embeddingSupport.port
           ? async (text: string) => {
               const vectors = await embeddingSupport.port!.embed([text]);
@@ -188,7 +179,7 @@ export async function runBeforeTurnEvalCase(
         patch,
         renderedPatchText,
         timings: request.options?.includeTimings === true ? timings : undefined,
-        sandbox,
+        sandbox: activeSandbox,
       });
     } catch (error) {
       timings = {
@@ -229,15 +220,6 @@ function toErrorDetails(error: unknown): { cause: string } {
 
   return {
     cause: String(error),
-  };
-}
-
-/** Creates an embedding port that fails lazily when embeddings are requested. */
-function createUnavailableEmbeddingPort(message: string): EmbeddingPort {
-  return {
-    async embed(): Promise<number[][]> {
-      throw new Error(message);
-    },
   };
 }
 

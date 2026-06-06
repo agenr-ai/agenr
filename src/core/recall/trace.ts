@@ -345,6 +345,8 @@ export interface RecallExecutionOptions {
   slotPolicyConfig?: ClaimSlotPolicyConfig;
   /** Optional ranking policy overrides, including MMR toggles. */
   rankingPolicy?: RecallRankingPolicy;
+  /** Optional semantic clock used for relative dates, validity, and recency. */
+  now?: Date;
 }
 
 const NOOP_RECALL_TRACE_SINK: RecallTraceSink = {

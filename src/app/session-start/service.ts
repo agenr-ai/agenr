@@ -33,14 +33,15 @@ const DEFAULT_MAX_PROFILE_SNAPSHOT_AGE_HOURS = 48;
  */
 export async function runSessionStart(input: SessionStartInput, deps: SessionStartDeps): Promise<SessionStartPatch> {
   const policy = normalizePolicy(input.policy);
-  const nowMs = Date.now();
+  const now = deps.now ?? new Date();
+  const nowMs = now.getTime();
   const contextSections = buildSessionStartContextSections(input.continuitySummaryText, input.recentSessionText);
-  const profileSnapshot = await deps.repository.getActiveProfileSnapshot(policy.maxProfileSnapshotAgeHours * 60 * 60 * 1000);
+  const profileSnapshot = await deps.repository.getActiveProfileSnapshot(policy.maxProfileSnapshotAgeHours * 60 * 60 * 1000, now);
   const profileEntries = profileSnapshot ? filterCurrentEntries(await deps.repository.listEntriesByIds(profileSnapshot.durableIds), nowMs) : [];
   const profileItems = profileEntries.map((entry) => buildProfilePatchItem(entry, profileSnapshot?.id ?? "unknown", nowMs));
   const proactiveDirectiveEntries = filterCurrentEntries((await deps.listActiveProactiveDirectives?.()) ?? [], nowMs);
   const proactiveDirectiveItems = proactiveDirectiveEntries.map((entry) => buildDirectivePatchItem(entry, nowMs));
-  const coreEntries = await deps.repository.listCoreEntries(policy.maxCoreEntries);
+  const coreEntries = await deps.repository.listCoreEntries(policy.maxCoreEntries, now);
   const coreItems = coreEntries.map((entry) => buildCorePatchItem(entry, nowMs));
   const diagnostics: SessionStartPatchDiagnostics = {
     coreCandidateCount: coreEntries.length,
@@ -147,6 +148,7 @@ async function runArtifactRecallSelection(
           },
         },
         slotPolicyConfig: deps.slotPolicyConfig,
+        ...(deps.now ? { now: deps.now } : {}),
       },
     );
 

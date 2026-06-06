@@ -1,5 +1,7 @@
 import type { EmbeddingPort, EpisodeDatabasePort, ProcedureDatabasePort, RecallPorts } from "../../../core/ports.js";
 import type { Durable, Procedure } from "../../../core/types.js";
+import type { SessionStartRepository } from "../../session-start/index.js";
+import type { EvalProfileSnapshotFixture } from "../ablation-arm.js";
 import type { RecallEvalSnapshotMetadata } from "./contracts.js";
 
 /**
@@ -49,6 +51,30 @@ export interface RecallEvalSandboxContext {
   episodeDatabase: EpisodeDatabasePort;
   /** Procedure database surface backed by the isolated sandbox database. */
   procedureDatabase: ProcedureDatabasePort;
+  /** Feature-scoped repository for session-start selection against the sandbox. */
+  sessionStartRepository: SessionStartRepository;
+  /**
+   * Lists active abstain directives in the sandbox at the supplied semantic clock.
+   *
+   * @param now - Optional reference time for validity filtering.
+   * @returns Active directive durables.
+   */
+  listActiveAbstainDirectives(now?: Date): Promise<Durable[]>;
+  /**
+   * Lists active session-start proactive directives in the sandbox.
+   *
+   * @param now - Optional reference time for validity filtering.
+   * @returns Active proactive directive durables.
+   */
+  listActiveSessionStartProactiveDirectives(now?: Date): Promise<Durable[]>;
+  /**
+   * Activates one profile snapshot fixture in the sandbox dream state.
+   *
+   * @param fixture - Profile snapshot fixture to seed.
+   * @param provisionedAt - Default timestamp for omitted fixture fields.
+   * @returns Activated profile snapshot id.
+   */
+  provisionProfileSnapshot(fixture: EvalProfileSnapshotFixture, provisionedAt: string): Promise<{ snapshotId: string }>;
   /**
    * Snapshot provenance metadata when the sandbox was seeded by copying
    * a corpus snapshot. Omitted for fixture-only sandboxes.

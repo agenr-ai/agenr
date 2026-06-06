@@ -14,6 +14,8 @@ export interface BeforeTurnDeps {
   embedQuery?: (text: string) => Promise<number[]>;
   /** Optional runtime claim-slot-policy overrides used during claim-aware shaping. */
   slotPolicyConfig?: ClaimSlotPolicyConfig;
+  /** Optional semantic clock used for recall validity and recency decisions. */
+  now?: Date;
   /**
    * Optional lookup for active user memory directives.
    *

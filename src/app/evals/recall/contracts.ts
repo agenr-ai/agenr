@@ -9,7 +9,18 @@ import type {
   RecallRankingPolicy,
   RecallRrfTrace,
 } from "../../../core/recall/trace.js";
-import type { ClaimKeySource, ClaimKeyStatus, ClaimSupportMode, DurableKind, Expiry, ProcedureSource, ProcedureStep } from "../../../core/types.js";
+import type {
+  ClaimKeySource,
+  ClaimKeyStatus,
+  ClaimSupportMode,
+  DirectivePolarity,
+  DirectiveTrigger,
+  DurableKind,
+  Expiry,
+  ProcedureSource,
+  ProcedureStep,
+} from "../../../core/types.js";
+import type { AblationArm, EvalProfileSnapshotFixture } from "../ablation-arm.js";
 import type { ClaimSlotPolicy, ClaimSlotPolicyConfig } from "../../../core/claim-slot-policy.js";
 import type {
   ClaimCentricClaimStatus,
@@ -73,6 +84,12 @@ export interface RecallEvalSandboxRequest {
   root?: string;
   /** When true, keep the sandbox on disk after the case completes. */
   preserve?: boolean;
+  /** Optional dreaming scoreboard ablation arm for this case. */
+  ablationArm?: AblationArm;
+  /** Optional fixed wall-clock instant for temporal dreaming fixtures. */
+  now?: string;
+  /** Optional pre-seeded profile snapshot fixture for dreaming-on cases. */
+  profileSnapshot?: EvalProfileSnapshotFixture;
   /**
    * Optional corpus-seed control. When omitted, the sandbox keeps the
    * historical fixture-only behavior. When supplied, selects between
@@ -152,6 +169,10 @@ export interface RecallEvalFixtureEntry {
   supersession_kind?: string;
   /** Optional explicit supersession rationale. */
   supersession_reason?: string;
+  /** Optional directive polarity for directive fixture rows. */
+  directive_polarity?: DirectivePolarity;
+  /** Optional directive trigger for directive fixture rows. */
+  directive_trigger?: DirectiveTrigger;
 }
 
 /**

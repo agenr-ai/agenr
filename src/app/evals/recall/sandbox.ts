@@ -4,7 +4,10 @@ import path from "node:path";
 
 import { createDatabase } from "../../../adapters/db/client.js";
 import { createRecallEvalFixtureStore } from "../../../adapters/db/eval-fixture-store.js";
+import { provisionEvalProfileSnapshot } from "../../../adapters/db/eval-profile-snapshot-store.js";
+import { listActiveAbstainDirectives, listActiveSessionStartProactiveDirectives } from "../../../adapters/db/directives-repository.js";
 import { createRecallAdapter } from "../../../adapters/db/recall-adapter.js";
+import { createSessionStartRepository } from "../../../adapters/db/session-start-repository.js";
 import type { EvalCorpusSeedSnapshotCopy, RecallEvalSandboxRequest, RecallEvalSnapshotMetadata } from "./contracts.js";
 import type { RecallEvalSandboxContext } from "./ports.js";
 
@@ -53,6 +56,10 @@ export async function setupRecallEvalSandbox(request: RecallEvalSandboxRequest |
       fixtureStore: createRecallEvalFixtureStore(openDatabase),
       episodeDatabase: openDatabase,
       procedureDatabase: openDatabase,
+      sessionStartRepository: createSessionStartRepository(openDatabase),
+      listActiveAbstainDirectives: (now) => listActiveAbstainDirectives(openDatabase, now),
+      listActiveSessionStartProactiveDirectives: (now) => listActiveSessionStartProactiveDirectives(openDatabase, now),
+      provisionProfileSnapshot: (fixture, provisionedAt) => provisionEvalProfileSnapshot(openDatabase, fixture, provisionedAt),
       ...(snapshot ? { snapshot } : {}),
       createRecallPorts: (embedding) => createRecallAdapter(openDatabase, embedding),
       cleanup: async (): Promise<void> => {

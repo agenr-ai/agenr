@@ -223,6 +223,26 @@ agenr scenarios run --kind dreaming --preserve --verbose
 
 - Pipeline scenarios under `tests/scenarios/dreaming/pipeline/` seed a real corpus plus episode evidence and run the extract -> apply -> temporalize stages against a deterministic mining LLM. They cover implicit-preference capture, trip-lifecycle revision, point-in-time recall, and the no-overconsolidation guard. Focused Vitest coverage pins project snapshots, profile-first session start, proactive directive surfacing, and directive abstention.
 
+### Ablation scoreboard (`agenr-evals`)
+
+WS1 mirrors the in-repo injection and pipeline fixtures into `agenr-evals` cases and runs them across three ablation arms (`memory-off`, `store-only`, `dreaming-on`) through the recall, before-turn, and session-start HTTP eval seams. Dreaming outputs are pre-seeded into fixtures (Option A); evals do not call live `runDream()`.
+
+Operator sequence:
+
+```bash
+# terminal 1 — agenr eval server
+cd /path/to/agenr
+pnpm internal:eval-server
+
+# terminal 2 — run all arms and emit the markdown scoreboard
+cd /path/to/agenr-evals
+npm run run-ablation dreaming
+```
+
+Per-arm artifacts are written under `agenr-evals/artifacts/runs/dreaming-ablation/<arm>/`. The scoreboard markdown is written beside those runs for case × arm comparison.
+
+Arm contract and seam mapping: [`docs/EVALS.md` § Dreaming ablation arms](./EVALS.md#dreaming-ablation-arms-ws1).
+
 ## Related docs
 
 - Durable write pipeline: [`docs/DURABLES.md`](./DURABLES.md)

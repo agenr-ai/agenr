@@ -24,8 +24,8 @@ const MAX_DIRECTIVES = 50;
  * @param executor - SQL executor used for the lookup.
  * @returns Active memory-directive durables, most recently created first.
  */
-export async function listActiveAbstainDirectives(executor: SqlExecutor): Promise<Durable[]> {
-  const nowIso = new Date().toISOString();
+export async function listActiveAbstainDirectives(executor: SqlExecutor, now = new Date()): Promise<Durable[]> {
+  const nowIso = now.toISOString();
   const result = await executor.execute({
     sql: `
       SELECT
@@ -52,8 +52,8 @@ export async function listActiveAbstainDirectives(executor: SqlExecutor): Promis
  * @param executor - SQL executor used for the lookup.
  * @returns Active proactive directive durables, highest priority first.
  */
-export async function listActiveSessionStartProactiveDirectives(executor: SqlExecutor): Promise<Durable[]> {
-  const nowIso = new Date().toISOString();
+export async function listActiveSessionStartProactiveDirectives(executor: SqlExecutor, now = new Date()): Promise<Durable[]> {
+  const nowIso = now.toISOString();
   const result = await executor.execute({
     sql: `
       SELECT

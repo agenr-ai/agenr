@@ -22,14 +22,14 @@ export interface SessionStartRepository {
    * @param limit - Maximum number of core entries to return.
    * @returns Ordered active core entries.
    */
-  listCoreEntries(limit: number): Promise<Durable[]>;
+  listCoreEntries(limit: number, now?: Date): Promise<Durable[]>;
   /**
    * Loads the active profile snapshot when it is fresh enough.
    *
    * @param maxAgeMs - Maximum snapshot age in milliseconds.
    * @returns Fresh active snapshot, or null.
    */
-  getActiveProfileSnapshot(maxAgeMs: number): Promise<SessionStartProfileSnapshot | null>;
+  getActiveProfileSnapshot(maxAgeMs: number, now?: Date): Promise<SessionStartProfileSnapshot | null>;
   /**
    * Hydrates active durables by id while preserving the caller's id order.
    *
@@ -49,6 +49,8 @@ export interface SessionStartDeps {
   recall: RecallPorts;
   /** Optional runtime claim-slot-policy overrides used during claim-aware shaping. */
   slotPolicyConfig?: ClaimSlotPolicyConfig;
+  /** Optional semantic clock used for validity, freshness, and recall decisions. */
+  now?: Date;
   /**
    * Optional lookup for active user memory directives.
    *

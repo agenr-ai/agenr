@@ -357,6 +357,7 @@ async function runDurableRecallAttempt(
           },
         },
         slotPolicyConfig: deps.slotPolicyConfig,
+        ...(deps.now ? { now: deps.now } : {}),
       },
     );
     const notices = durableRecallTrace?.degraded.notices.length ? [...durableRecallTrace.degraded.notices] : [];

@@ -610,6 +610,7 @@ async function maybeRunEntryRecall(params: {
     kind: "results",
     results: await recall(buildEntryRecallInput(params.input, params.parsedTimeWindow, params.routing), params.deps.recall, {
       ...params.deps.recallOptions,
+      now: params.deps.recallOptions?.now ?? params.deps.now,
       trace,
     }),
     notices,

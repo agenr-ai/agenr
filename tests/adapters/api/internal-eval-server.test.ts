@@ -28,7 +28,7 @@ describe("startInternalEvalServer", () => {
     servers.push(server);
 
     expect(server.baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/u);
-    expect(server.routePaths).toEqual(["/internal/evals/recall/run", "/internal/evals/before-turn/run"]);
+    expect(server.routePaths).toEqual(["/internal/evals/recall/run", "/internal/evals/before-turn/run", "/internal/evals/session-start/run"]);
   });
 
   it("returns 404 for missing routes and 405 for wrong methods on known routes", async () => {
