@@ -58,7 +58,7 @@ export function createFixtureIngestionLlm(responses: ClaimKeyScenarioExtractionF
 }
 
 /**
- * Creates a generic fixture-backed LLM client for claim extraction or surgeon use.
+ * Creates a generic fixture-backed LLM client for claim extraction or dreaming use.
  *
  * @param responses - Ordered typed fixture responses consumed in call order.
  * @returns LLM port with deterministic replay behavior.

@@ -29,7 +29,7 @@ describe("initSchema legacy rejection", () => {
 
     await client.execute("CREATE TABLE surgeon_runs (id TEXT PRIMARY KEY)");
 
-    await expect(initSchema(client)).rejects.toThrow(/legacy surgeon tables are present/i);
+    await expect(initSchema(client)).rejects.toThrow(/legacy tables with prefix "surgeon_" are present/i);
   });
 
   for (const marker of LEGACY_DB_COLUMNS) {

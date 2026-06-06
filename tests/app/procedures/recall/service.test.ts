@@ -81,7 +81,7 @@ describe("runProcedureRecall", () => {
 
   it("falls back to lexical-only ranking when query embeddings fail", async () => {
     const review = createProcedure({
-      procedure_key: "agenr/surgeon-review",
+      procedure_key: "agenr/dream-review",
       title: "Review surgeon proposals",
       goal: "Review one surgeon proposal safely.",
     });

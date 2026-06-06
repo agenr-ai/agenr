@@ -942,7 +942,7 @@ describe("createDatabase", () => {
       embedding: createEmbedding(0, 1),
     });
     const right = createProcedure({
-      procedure_key: "agenr/surgeon-review",
+      procedure_key: "agenr/dream-review",
       title: "Review surgeon proposals",
       embedding: createEmbedding(1, 1),
     });

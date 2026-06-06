@@ -64,7 +64,7 @@ export interface ClaimKeyScenarioSeedEntry extends Partial<
 export interface ClaimKeyScenarioSetup {
   seedEntries?: ClaimKeyScenarioSeedEntry[];
   seedFixtureFile?: string;
-  preRunSurgeon?: unknown;
+  preRunDreaming?: unknown;
 }
 
 /**
@@ -172,7 +172,7 @@ export interface ClaimKeyScenarioRowExpectation {
 }
 
 /**
- * Proposal match predicate used for surgeon proposal assertions.
+ * Proposal match predicate used for dreaming proposal assertions.
  */
 export interface ClaimKeyScenarioProposalMatch {
   id?: string;
@@ -182,7 +182,7 @@ export interface ClaimKeyScenarioProposalMatch {
 }
 
 /**
- * Equality-only surgeon proposal assertions used in v1 scenarios.
+ * Equality-only dreaming proposal assertions used in v1 scenarios.
  */
 export interface ClaimKeyScenarioProposalAssert {
   issueKind?: string;
@@ -219,7 +219,7 @@ export interface ClaimKeyScenarioRowCountExpectation {
 }
 
 /**
- * Surgeon summary assertion shape supported by the runner.
+ * Dreaming summary assertion shape supported by the runner.
  */
 export interface ClaimKeyScenarioDreamingSummaryExpectation {
   status?: DreamRunStatus;
@@ -334,7 +334,7 @@ export interface ClaimKeyScenarioProposalSnapshot {
 }
 
 /**
- * Structured surgeon summary snapshot used by artifacts and assertions.
+ * Structured dreaming summary snapshot used by artifacts and assertions.
  */
 export interface ClaimKeyScenarioDreamingSummarySnapshot {
   runId: string;

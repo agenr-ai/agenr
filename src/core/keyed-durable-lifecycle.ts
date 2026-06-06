@@ -27,7 +27,7 @@ export function hasKeyedDurableLifecycleStatus(entry: KeyedDurableLifecycleSubje
  * @param entry - Durable row or observation carrying claim-key lifecycle fields.
  * @throws Error When a non-empty claim key is missing lifecycle status.
  */
-export function assertKeyedDurableHasLifecycle(entry: KeyedDurableLifecycleSubject): void {
+export function assertKeyedDurableHasLifecycle(entry: KeyedDurableLifecycleSubject): asserts entry is KeyedDurableLifecycleSubject | KeyedDurableWithLifecycle {
   if (!entry.claim_key?.trim()) {
     return;
   }
@@ -50,9 +50,5 @@ export function resolveKeyedDurableLifecycleStatus(entry: KeyedDurableLifecycleS
   }
 
   assertKeyedDurableHasLifecycle(entry);
-  if (!hasKeyedDurableLifecycleStatus(entry)) {
-    throw new Error("Missing claim_key_status for keyed durable.");
-  }
-
-  return entry.claim_key_status;
+  return entry.claim_key_status!;
 }

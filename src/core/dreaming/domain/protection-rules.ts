@@ -3,9 +3,9 @@ import type { Expiry } from "../../types.js";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Lowest importance dreaming may demote a permanent entry to. */
-const SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR = 4;
+const DREAMING_PERMANENT_ENTRY_DEMOTION_FLOOR = 4;
 
-export { SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR };
+export { DREAMING_PERMANENT_ENTRY_DEMOTION_FLOOR };
 
 /**
  * Durable fields used by stale protection guards.
@@ -47,7 +47,7 @@ export function isProtectedFromStaleness(entry: DreamProtectionDurable, config: 
   if (entry.expiry === "permanent") {
     return {
       protected: true,
-      reason: `Durable expiry is permanent. Use update_durable to demote importance instead, but keep importance at or above ${SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR}.`,
+      reason: `Durable expiry is permanent. Use update_durable to demote importance instead, but keep importance at or above ${DREAMING_PERMANENT_ENTRY_DEMOTION_FLOOR}.`,
     };
   }
 

@@ -1,10 +1,8 @@
 import { recall, type RecallExecutionTraceSummary, type RecallOutput } from "../../core/recall/index.js";
-import { normalizeTextForPhraseMatch, textMatchesTopicTrigger } from "../../core/directives/abstain.js";
-import { parseDirectiveMetadata } from "../../core/directives/model.js";
-import { isWithinValidityWindow } from "../../core/temporal-validity.js";
-import type { Durable } from "../../core/types.js";
-
 import { applyAbstainDirectivesForInjection } from "../directives/abstain-filter.js";
+import { formatProjectedProvenance } from "./format-provenance.js";
+import { selectDurablePatchItems } from "./select-patch-items.js";
+import { injectTopicProactiveDirectives } from "./topic-directives.js";
 import { runProcedureRecall } from "../procedures/recall/service.js";
 import { projectClaimCentricRecallEntry } from "../recall/claim-centric.js";
 
@@ -82,7 +80,6 @@ const DEFAULT_HIGH_CONFIDENCE_RECALL_THRESHOLD = 0.97;
 const DEFAULT_PROCEDURE_THRESHOLD = 0.72;
 const DEFAULT_SKIP_TRIVIAL_TURNS = true;
 const DEFAULT_REQUIRE_TURN_SIGNAL = true;
-const TOPIC_PROACTIVE_DIRECTIVE_LOOKUP_FAILED_NOTICE = "Topic proactive directive lookup failed; topic directive surfacing was skipped this pass.";
 const SHORT_TURN_MAX_WORDS = 4;
 const SHORT_TURN_MAX_CHARS = 24;
 const SOCIAL_TURN_RE =
@@ -481,131 +478,6 @@ function buildDurablePatchItem(recalled: RecallOutput, deps: BeforeTurnDeps): Be
     freshnessLabel: projected.freshness.label,
     ...(formatProjectedProvenance(projected.provenance) ? { provenanceSummary: formatProjectedProvenance(projected.provenance) } : {}),
   };
-}
-
-/**
- * Injects proactive topic directives that match the current turn text.
- *
- * @param currentTurnText - Normalized current user turn.
- * @param recalledItems - Ranked durable recall items selected before injection.
- * @param policy - Effective before-turn policy.
- * @param deps - Before-turn dependencies with optional topic-directive lookup.
- * @param diagnostics - Mutable diagnostics sink updated in place.
- * @returns Recall items merged with any matched topic directives.
- */
-async function injectTopicProactiveDirectives(
-  currentTurnText: string,
-  recalledItems: BeforeTurnPatchItem[],
-  policy: Required<BeforeTurnPolicy>,
-  deps: BeforeTurnDeps,
-  diagnostics: BeforeTurnPatchDiagnostics,
-): Promise<BeforeTurnPatchItem[]> {
-  if (!deps.listActiveTopicProactiveDirectives) {
-    return recalledItems;
-  }
-
-  let directiveRows: Durable[];
-  try {
-    directiveRows = await deps.listActiveTopicProactiveDirectives();
-  } catch {
-    diagnostics.notices.push(TOPIC_PROACTIVE_DIRECTIVE_LOOKUP_FAILED_NOTICE);
-    return recalledItems;
-  }
-
-  const now = deps.now ?? new Date();
-  const nowMs = now.getTime();
-  const activeDirectives = filterCurrentEntries(directiveRows, nowMs);
-  diagnostics.topicProactiveDirectiveCandidateCount = activeDirectives.length;
-
-  const normalizedTurn = normalizeTextForPhraseMatch(currentTurnText);
-  const matchedDirectives = activeDirectives.filter((entry) => {
-    const metadata = parseDirectiveMetadata(entry);
-    return metadata?.polarity === "proactive" && metadata.trigger.startsWith("topic:") && textMatchesTopicTrigger(normalizedTurn, metadata.trigger);
-  });
-  diagnostics.topicProactiveDirectiveMatchedCount = matchedDirectives.length;
-  if (matchedDirectives.length === 0) {
-    return recalledItems;
-  }
-
-  const directiveItems = matchedDirectives.map((entry) => buildTopicDirectivePatchItem(entry, deps, policy.highConfidenceRecallThreshold));
-  return mergeTopicDirectivePatchItems(directiveItems, recalledItems, policy, diagnostics);
-}
-
-/**
- * Converts one matched proactive topic directive into a before-turn patch item.
- */
-function buildTopicDirectivePatchItem(entry: Durable, deps: BeforeTurnDeps, score: number): BeforeTurnPatchItem {
-  const metadata = parseDirectiveMetadata(entry);
-  const projected = projectClaimCentricRecallEntry(buildSyntheticRecallOutput(entry, score), {
-    slotPolicyConfig: deps.slotPolicyConfig,
-  });
-
-  return {
-    rank: 0,
-    entry,
-    sourceKind: "directive",
-    score,
-    whySurfaced: {
-      summary: `proactive memory directive; trigger ${metadata?.trigger ?? "topic"}`,
-      reasons: ["proactive memory directive", `trigger ${metadata?.trigger ?? "topic"}`, `importance ${entry.importance}`],
-    },
-    memoryState: projected.memoryState,
-    claimStatus: projected.claimStatus,
-    freshnessLabel: projected.freshness.label,
-    ...(formatProjectedProvenance(projected.provenance) ? { provenanceSummary: formatProjectedProvenance(projected.provenance) } : {}),
-  };
-}
-
-/**
- * Builds one synthetic recall output used for claim-centric directive shaping.
- */
-function buildSyntheticRecallOutput(entry: Durable, score: number): RecallOutput {
-  return {
-    entry,
-    score,
-    scores: {
-      relevance: score,
-      rrf: score,
-      vector: 0,
-      lexical: 0,
-      recency: 1,
-      importance: entry.importance / 10,
-      historicalLineage: 0,
-      neighborhoodBoost: 0,
-      claimKeyTrustPenalty: 0,
-      claimKeyRedundancyPenalty: 0,
-    },
-  };
-}
-
-/**
- * Merges matched topic directives ahead of recall results and reapplies the
- * bounded durable cap.
- */
-function mergeTopicDirectivePatchItems(
-  directiveItems: BeforeTurnPatchItem[],
-  recalledItems: BeforeTurnPatchItem[],
-  policy: Required<BeforeTurnPolicy>,
-  diagnostics: BeforeTurnPatchDiagnostics,
-): BeforeTurnPatchItem[] {
-  const seenEntryIds = new Set<string>();
-  const merged: BeforeTurnPatchItem[] = [];
-
-  for (const item of [...directiveItems, ...recalledItems]) {
-    if (seenEntryIds.has(item.entry.id)) {
-      continue;
-    }
-
-    seenEntryIds.add(item.entry.id);
-    merged.push(item);
-  }
-
-  return selectDurablePatchItems(merged, policy, diagnostics);
-}
-
-/** Filters before-turn directive entries to those valid at the current time. */
-function filterCurrentEntries(entries: Durable[], nowMs: number): Durable[] {
-  return entries.filter((entry) => isWithinValidityWindow(entry.valid_from, entry.valid_to, nowMs));
 }
 
 /**
@@ -1262,36 +1134,6 @@ type TurnSignalInspection = {
  * @param diagnostics - Mutable diagnostics sink updated in place.
  * @returns Final bounded durable set for prompt rendering.
  */
-function selectDurablePatchItems(
-  items: BeforeTurnPatchItem[],
-  policy: Required<BeforeTurnPolicy>,
-  diagnostics: BeforeTurnPatchDiagnostics,
-): BeforeTurnPatchItem[] {
-  if (policy.maxDurableEntries <= 0 || items.length === 0) {
-    return [];
-  }
-
-  const boundedItems = items.slice(0, policy.maxDurableEntries);
-  const expandedLimit = Math.max(policy.maxDurableEntries, policy.maxHighConfidenceDurableEntries);
-  if (expandedLimit <= policy.maxDurableEntries || items.length <= policy.maxDurableEntries) {
-    return boundedItems;
-  }
-
-  const expansionCandidates = items.slice(0, expandedLimit);
-  const canExpand =
-    expansionCandidates.length > policy.maxDurableEntries && expansionCandidates.every((item) => item.score >= policy.highConfidenceRecallThreshold);
-  if (canExpand) {
-    diagnostics.notices.push(`Before-turn durable recall expanded to ${expansionCandidates.length} high-confidence items.`);
-    return expansionCandidates;
-  }
-
-  diagnostics.notices.push(
-    `Before-turn durable recall kept the top ${boundedItems.length} item${
-      boundedItems.length === 1 ? "" : "s"
-    } because additional candidates were not high confidence.`,
-  );
-  return boundedItems;
-}
 
 /**
  * Inspects the current turn for strong proactive-recall signal and obvious
@@ -1470,19 +1312,6 @@ function normalizeRecentTurns(
  * @param provenance - Claim-centric projected provenance metadata.
  * @returns Compact provenance summary, or undefined when none exists.
  */
-function formatProjectedProvenance(provenance: ReturnType<typeof projectClaimCentricRecallEntry>["provenance"]): string | undefined {
-  const parts = [
-    provenance.supersededById ? `superseded_by=${provenance.supersededById}` : undefined,
-    provenance.supersessionKind ? `kind=${provenance.supersessionKind}` : undefined,
-    provenance.supersessionReason ? `reason=${provenance.supersessionReason}` : undefined,
-    provenance.supportSourceKind ? `support=${provenance.supportSourceKind}` : undefined,
-    provenance.supportMode ? `support_mode=${provenance.supportMode}` : undefined,
-    provenance.supportObservedAt ? `observed=${provenance.supportObservedAt}` : undefined,
-    provenance.supportLocator ? `locator=${provenance.supportLocator}` : undefined,
-  ].filter((value): value is string => value !== undefined);
-
-  return parts.length > 0 ? parts.join(" | ") : undefined;
-}
 
 /**
  * Normalizes optional multiline text by trimming blank padding.

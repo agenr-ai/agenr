@@ -127,7 +127,7 @@ export function summarizeIngestClaimKeyHealth(
       continue;
     }
 
-    if (!entry.claim_key_status) {
+    if (!hasKeyedDurableLifecycleStatus(entry)) {
       keyedMissingLifecycleStatus += 1;
       continue;
     }

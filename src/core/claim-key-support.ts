@@ -77,7 +77,7 @@ const STABLE_FAMILY_SLOT_ATTRIBUTE_HEADS = new Set([
 ]);
 
 /**
- * Conservative promotion families reused by ingest and surgeon near-miss handling.
+ * Conservative promotion families reused by ingest and dreaming near-miss handling.
  */
 export type ClaimKeySupportAutoApplyClass =
   | "trusted_exact_reuse_grounded"

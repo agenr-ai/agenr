@@ -298,6 +298,33 @@ describe("canonicalizeAgenrConfigInput", () => {
   });
 });
 
+describe("parseAgenrConfig legacy keys", () => {
+  it("rejects the removed surgeon top-level block with a migration message", () => {
+    const result = parseAgenrConfig(
+      {
+        surgeon: {
+          model: "gpt-5.4-mini",
+        },
+      },
+      { defaultDbPath: DEFAULT_DB_PATH },
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error("Expected config parse to fail.");
+    }
+
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        {
+          path: "surgeon",
+          message: 'Removed field. Rename the top-level "surgeon" block to "dreaming", then delete surgeon.',
+        },
+      ]),
+    );
+  });
+});
+
 describe("toAgenrConfigInput", () => {
   it("strips resolved defaults back to the sparse persisted shape", () => {
     const parsed = parseAgenrConfig(

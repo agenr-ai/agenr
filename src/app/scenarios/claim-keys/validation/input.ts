@@ -27,7 +27,7 @@ import {
 import { readOptionalRelativeFixturePath, readRelativeFixturePath } from "./scenario-root.js";
 
 const ROOT_KEYS = new Set(["id", "kind", "input", "expect", "description", "tags", "sandbox", "setup", "notes"]);
-const SETUP_KEYS = new Set(["seedEntries", "seedFixtureFile", "preRunSurgeon"]);
+const SETUP_KEYS = new Set(["seedEntries", "seedFixtureFile", "preRunDreaming"]);
 const SANDBOX_KEYS = new Set(["reset", "preserveOnFailure", "preserveAlways", "name"]);
 const INGEST_INPUT_KEYS = new Set(["transcriptFile", "ingestOptions", "modelFixtures"]);
 const STORE_INPUT_KEYS = new Set(["durables", "storeOptions", "modelFixtures"]);
@@ -205,8 +205,12 @@ export function readSetup(value: unknown, filePath: string, rootDir: string): Cl
   }
 
   const record = readObject(value, "Scenario setup", filePath, SETUP_KEYS);
-  if (record.preRunSurgeon !== undefined) {
-    throw new Error(`Invalid scenario ${filePath}: setup.preRunSurgeon is not supported in v1.`);
+  if ("preRunSurgeon" in record) {
+    throw new Error(`Invalid scenario ${filePath}: setup.preRunSurgeon was renamed to setup.preRunDreaming.`);
+  }
+
+  if (record.preRunDreaming !== undefined) {
+    throw new Error(`Invalid scenario ${filePath}: setup.preRunDreaming is not supported in v1.`);
   }
 
   const seedEntries = readSeedEntries(record.seedEntries, filePath);

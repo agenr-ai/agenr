@@ -715,7 +715,7 @@ export function buildReconcileProposalClaimKeyAuditDetails(
 /**
  * Resolves the canonical persisted claim-key source for one dreaming reconcile rewrite or proposal.
  *
- * @param source - Surgeon-local provenance label.
+ * @param source - Dreaming-local provenance label.
  * @param compactness - Optional compaction metadata derived during normalization.
  * @returns Canonical stored lifecycle source when one exists.
  */

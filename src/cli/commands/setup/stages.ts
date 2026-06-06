@@ -416,32 +416,32 @@ function hasPersistedClaimExtractionConfig(
 }
 
 /**
- * Builds the persisted surgeon config while avoiding empty nested objects.
+ * Builds the persisted dreaming config while avoiding empty nested objects.
  *
- * @param existingSurgeon - Existing surgeon config values.
- * @param surgeonModel - Selected surgeon model override.
- * @returns Persistable surgeon config, or undefined when empty.
+ * @param existingDreaming - Existing dreaming config values.
+ * @param dreamingModel - Selected dreaming model override.
+ * @returns Persistable dreaming config, or undefined when empty.
  */
 function buildNextDreamingConfig(
-  existingSurgeon: AgenrConfigInput["dreaming"] | undefined,
-  surgeonModel: ModelConfig | undefined,
+  existingDreaming: AgenrConfigInput["dreaming"] | undefined,
+  dreamingModel: ModelConfig | undefined,
 ): AgenrConfigInput["dreaming"] | undefined {
-  if (!existingSurgeon && !surgeonModel) {
+  if (!existingDreaming && !dreamingModel) {
     return undefined;
   }
 
-  const nextSurgeon = {
-    ...(existingSurgeon ?? {}),
-    ...(surgeonModel ? { model: surgeonModel } : { model: undefined }),
+  const nextDreaming = {
+    ...(existingDreaming ?? {}),
+    ...(dreamingModel ? { model: dreamingModel } : { model: undefined }),
   };
 
-  return hasPersistedDreamingConfig(nextSurgeon) ? nextSurgeon : undefined;
+  return hasPersistedDreamingConfig(nextDreaming) ? nextDreaming : undefined;
 }
 
 /**
- * Returns whether the surgeon config contains any persisted values.
+ * Returns whether the dreaming config contains any persisted values.
  *
- * @param config - Candidate surgeon config.
+ * @param config - Candidate dreaming config.
  * @returns True when the config should be persisted.
  */
 function hasPersistedDreamingConfig(config: AgenrConfigInput["dreaming"] | undefined): config is NonNullable<AgenrConfigInput["dreaming"]> {

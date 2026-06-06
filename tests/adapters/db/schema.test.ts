@@ -10,6 +10,7 @@ import {
   initSchema,
   prepareBulkWrites,
 } from "../../../src/adapters/db/schema.js";
+import { REQUIRED_INITIALIZED_TABLES } from "../../../src/adapters/db/schema/canonical-tables.js";
 
 const FTS_REBUILD_SQLS = ["INSERT INTO durables_fts(durables_fts) VALUES ('rebuild')", "INSERT INTO procedures_fts(procedures_fts) VALUES ('rebuild')"];
 
@@ -33,26 +34,9 @@ describe("initSchema", () => {
         SELECT name
         FROM sqlite_master
         WHERE type = 'table'
-          AND name IN (
-            'durables',
-            'durables_fts',
-            'ingest_log',
-            'episodes',
-            'procedures',
-            'procedures_fts',
-            'recall_events',
-            'dream_runs',
-            'dream_run_actions',
-            'dream_proposals',
-            'dream_state',
-            'profile_snapshots',
-            'working_sets',
-            'working_events',
-            'session_lineage_edges',
-            'session_artifacts',
-            '_meta'
-          )
+          AND name IN (${REQUIRED_INITIALIZED_TABLES.map(() => "?").join(", ")})
       `,
+      args: [...REQUIRED_INITIALIZED_TABLES],
     });
     const tableNames = new Set(
       tablesResult.rows.map((row) => {
@@ -61,27 +45,7 @@ describe("initSchema", () => {
       }),
     );
 
-    expect(tableNames).toEqual(
-      new Set([
-        "durables",
-        "durables_fts",
-        "ingest_log",
-        "episodes",
-        "procedures",
-        "procedures_fts",
-        "recall_events",
-        "dream_runs",
-        "dream_run_actions",
-        "dream_proposals",
-        "dream_state",
-        "profile_snapshots",
-        "working_sets",
-        "working_events",
-        "session_lineage_edges",
-        "session_artifacts",
-        "_meta",
-      ]),
-    );
+    expect(tableNames).toEqual(new Set(REQUIRED_INITIALIZED_TABLES));
     expect(await tableColumns(client, "durables")).toEqual([
       "id",
       "type",

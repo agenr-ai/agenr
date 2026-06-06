@@ -1,7 +1,3 @@
-import { REQUIRED_INITIALIZED_TABLES } from "./canonical-tables.js";
-
-export { REQUIRED_INITIALIZED_TABLES };
-
 /** Legacy tables that require database rejection when present. */
 export const LEGACY_DB_TABLES = ["entries"] as const;
 
@@ -29,8 +25,8 @@ export function legacyTableReason(table: string): string {
 }
 
 /** Builds the unsupported-database reason for one legacy table prefix. */
-export function legacyTablePrefixReason(_prefix: string): string {
-  return "legacy surgeon tables are present";
+export function legacyTablePrefixReason(prefix: string): string {
+  return `legacy tables with prefix "${prefix}" are present`;
 }
 
 /** Builds the unsupported-database reason for one legacy column. */

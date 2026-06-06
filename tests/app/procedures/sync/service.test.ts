@@ -31,7 +31,7 @@ describe("procedure sync service", () => {
     const releasePath = "/repo/procedures/agenr-release.yaml";
     const sandboxPath = "/repo/procedures/agenr-sandbox-validation.yaml";
     const openclawPath = "/repo/procedures/agenr-openclaw-local-plugin-check.yaml";
-    const surgeonPath = "/repo/procedures/agenr-surgeon-review.yaml";
+    const dreamReviewPath = "/repo/procedures/agenr-dream-review.yaml";
     const invalidPath = "/repo/procedures/invalid.yaml";
     const releaseYaml = buildProcedureYaml({
       procedureKey: "agenr/release",
@@ -62,7 +62,7 @@ describe("procedure sync service", () => {
       goal: "Verify the local plugin build and gateway tool registration.",
     });
     const surgeonYaml = buildProcedureYaml({
-      procedureKey: "agenr/surgeon-review",
+      procedureKey: "agenr/dream-review",
       title: "Review surgeon proposals and apply or reject them safely",
       goal: "Review one surgeon proposal.",
     });
@@ -75,7 +75,7 @@ describe("procedure sync service", () => {
       [releasePath]: releaseReformattedYaml,
       [sandboxPath]: sandboxYaml,
       [openclawPath]: openclawNewYaml,
-      [surgeonPath]: surgeonYaml,
+      [dreamReviewPath]: surgeonYaml,
       [invalidPath]: "procedure_key: agenr/invalid\nsteps:\n  - nope\n",
     });
     const plan = await prepareProcedureSync("/repo/procedures", {
@@ -123,7 +123,7 @@ describe("procedure sync service", () => {
     const releasePath = "/repo/procedures/agenr-release.yaml";
     const sandboxPath = "/repo/procedures/agenr-sandbox-validation.yaml";
     const openclawPath = "/repo/procedures/agenr-openclaw-local-plugin-check.yaml";
-    const surgeonPath = "/repo/procedures/agenr-surgeon-review.yaml";
+    const dreamReviewPath = "/repo/procedures/agenr-dream-review.yaml";
     const releaseYaml = buildProcedureYaml({
       procedureKey: "agenr/release",
       title: "Release agenr and publish packages",
@@ -153,7 +153,7 @@ describe("procedure sync service", () => {
       goal: "Verify the local plugin build and gateway tool registration.",
     });
     const surgeonYaml = buildProcedureYaml({
-      procedureKey: "agenr/surgeon-review",
+      procedureKey: "agenr/dream-review",
       title: "Review surgeon proposals and apply or reject them safely",
       goal: "Review one surgeon proposal.",
     });
@@ -167,7 +167,7 @@ describe("procedure sync service", () => {
         [releasePath]: releaseReformattedYaml,
         [sandboxPath]: sandboxYaml,
         [openclawPath]: openclawNewYaml,
-        [surgeonPath]: surgeonYaml,
+        [dreamReviewPath]: surgeonYaml,
       }),
       db: database,
     });
@@ -189,12 +189,12 @@ describe("procedure sync service", () => {
     const releaseActive = await database.findActiveProcedureByKey("agenr/release");
     const sandboxActive = await database.findActiveProcedureByKey("agenr/sandbox-validation");
     const openclawActive = await database.findActiveProcedureByKey("agenr/openclaw-local-plugin-check");
-    const surgeonActive = await database.findActiveProcedureByKey("agenr/surgeon-review");
+    const dreamReviewActive = await database.findActiveProcedureByKey("agenr/dream-review");
 
     expect(releaseActive?.id).toBe(releaseStored.id);
     expect(sandboxActive?.id).toBe(sandboxStored.id);
     expect(openclawActive?.id).not.toBe(openclawStored.id);
-    expect(surgeonActive?.id).toBeDefined();
+    expect(dreamReviewActive?.id).toBeDefined();
 
     const releaseRow = await database.execute({
       sql: "SELECT source_hash, updated_at FROM procedures WHERE id = ?",

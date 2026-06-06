@@ -2,7 +2,7 @@ import type { Durable } from "../../../../core/types.js";
 import { persistProposalWhenCrossTypeCollision } from "../helpers/cross-type-collision-outcome.js";
 import { buildTrustedGroupReusePersistInput } from "../helpers/proposal.js";
 import { findTrustedGroupReuseCandidate } from "../helpers/durable.js";
-import { evaluateMissingDurablePreview, executeMissingDurablePreviewDecision } from "../helpers/missing-backfill-decision.js";
+import { evaluateMissingDurablePreview, executeMissingDurablePreviewDecision } from "../helpers/missing-backfill.js";
 import {
   recordMissingBackfillAutoApplyApplied,
   recordMissingBackfillAutoApplyIdentified,
