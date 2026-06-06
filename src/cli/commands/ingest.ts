@@ -145,7 +145,7 @@ function registerIngestEntriesCommand(parent: Command): void {
       );
 
       if (commandInput.dryRun) {
-        clack.log.warn("Dry run mode - no entries will be stored.");
+        clack.log.warn("Dry run mode - no durables will be stored.");
       }
 
       const useVerboseBulkWriteProgress = commandInput.verbose && !commandInput.dryRun;
@@ -604,7 +604,7 @@ function collectTaggedEntries(results: ExtractedFileResult[]): TaggedEntry[] {
 /** Prints the aggregate and optional verbose within-batch dedup summary. */
 function printDedupSummary(dedupResult: DedupResult, taggedEntries: TaggedEntry[], options: IngestCommandOptions, dedupCost: number): void {
   if (taggedEntries.length === 0) {
-    clack.log.step("Dedup: 0 entries extracted, nothing to arbitrate.");
+    clack.log.step("Dedup: 0 durables extracted, nothing to arbitrate.");
     return;
   }
 
@@ -720,7 +720,7 @@ function emptyStoreResult(): StoreResult {
 function progressMessageForIngestStage(event: IngestStageProgressEvent): string {
   switch (event.phase) {
     case "dedup_start":
-      return "Deduplicating entries...";
+      return "Deduplicating durables...";
     case "claim_extraction_start":
       return "Extracting claim keys...";
     case "store_start":
@@ -730,16 +730,16 @@ function progressMessageForIngestStage(event: IngestStageProgressEvent): string 
 
 /** Formats live spinner text for in-phase dedup arbitration progress. */
 function progressMessageForDedup(event: DedupProgressEvent): string {
-  return `Deduplicating entries... ${event.completedClusters}/${event.totalClusters} ${pluralize(event.totalClusters, "cluster")} arbitrated (${event.completedEntries}/${event.totalEntries} entries covered)`;
+  return `Deduplicating durables... ${event.completedClusters}/${event.totalClusters} ${pluralize(event.totalClusters, "cluster")} arbitrated (${event.completedEntries}/${event.totalEntries} durables covered)`;
 }
 
 /** Formats live spinner text for primary and retry claim-extraction progress. */
 function progressMessageForClaimExtraction(event: ClaimExtractionProgressEvent): string {
   switch (event.phase) {
     case "primary":
-      return `Extracting claim keys... ${event.completedEntries}/${event.totalEntries} entries`;
+      return `Extracting claim keys... ${event.completedEntries}/${event.totalEntries} durables`;
     case "retry":
-      return `Retrying unresolved claim keys... ${event.completedEntries}/${event.totalEntries} entries`;
+      return `Retrying unresolved claim keys... ${event.completedEntries}/${event.totalEntries} durables`;
   }
 }
 

@@ -154,10 +154,9 @@ export function formatUnifiedRecallLogSummary(result: UnifiedRecallResult): stri
   const entrySubjects = result.entries.map((entry) => entry.entry.subject.trim()).filter((subject) => subject.length > 0);
   const displayed = entrySubjects.slice(0, RESULT_SUBJECT_LOG_LIMIT).map((subject) => JSON.stringify(truncate(subject, 80)));
   const remaining = entrySubjects.length - RESULT_SUBJECT_LOG_LIMIT;
-  const suffix = displayed.length === 0 ? "" : ` [entry subjects: ${displayed.join(", ")}${remaining > 0 ? `, ... and ${remaining} more` : ""}]`;
-  const entryEpisodeSummary = `${result.episodes.length} episode${result.episodes.length === 1 ? "" : "s"}, ${result.entries.length} entr${
-    result.entries.length === 1 ? "y" : "ies"
-  }`;
+  const suffix = displayed.length === 0 ? "" : ` [durable subjects: ${displayed.join(", ")}${remaining > 0 ? `, ... and ${remaining} more` : ""}]`;
+  const durableLabel = result.entries.length === 1 ? "durable" : "durables";
+  const entryEpisodeSummary = `${result.episodes.length} episode${result.episodes.length === 1 ? "" : "s"}, ${result.entries.length} ${durableLabel}`;
   if (procedureCount === 0 && !result.procedure) {
     return `${entryEpisodeSummary}${suffix}`;
   }

@@ -17,7 +17,7 @@ import type { UnifiedRecallInput, UnifiedRecallMode, UnifiedRecallResult, Unifie
 const EPISODE_FRESHNESS_NOTICE = "Episodes cover consolidated prior sessions only; the most recent completed session may not appear yet.";
 const EPISODE_SEMANTIC_FALLBACK_NOTICE = "Semantic episode search unavailable - showing temporal results only.";
 const EPISODE_SEMANTIC_UNAVAILABLE_NOTICE = "Semantic episode search unavailable - no semantic episode results could be returned.";
-const ENTRY_FILTER_NOTICE = "Type and tag filters were applied to entries only.";
+const ENTRY_FILTER_NOTICE = "Type and tag filters were applied to durables only.";
 const HISTORICAL_STATE_PATTERNS = [
   "what was the previous",
   "what was the earlier",
@@ -302,11 +302,11 @@ export function routeRecall(params: {
       queried: procedural ? ["procedures", "durables", "episodes"] : ["durables", "episodes"],
       reason: params.parsedTimeWindow
         ? procedural
-          ? "The query asks for steps around a previous state or transition and includes a supported time expression, so procedures, entries, and episodes were queried."
-          : "The query asks about a previous state or transition and includes a supported time expression, so both entries and episodes were queried."
+          ? "The query asks for steps around a previous state or transition and includes a supported time expression, so procedures, durables, and episodes were queried."
+          : "The query asks about a previous state or transition and includes a supported time expression, so both durables and episodes were queried."
         : procedural
-          ? "The query asks for steps around a previous state or transition, so procedures, entries, and episodes were queried."
-          : "The query asks about a previous state or transition, so both entries and episodes were queried.",
+          ? "The query asks for steps around a previous state or transition, so procedures, durables, and episodes were queried."
+          : "The query asks about a previous state or transition, so both durables and episodes were queried.",
     };
   }
 
@@ -316,8 +316,8 @@ export function routeRecall(params: {
       detectedIntent: "mixed",
       queried: procedural ? ["procedures", "durables", "episodes"] : ["durables", "episodes"],
       reason: procedural
-        ? "The query combines a procedural ask with factual and time-based signals, so procedures, entries, and episodes were queried."
-        : "The query combines a factual phrase with a supported time expression, so both entries and episodes were queried.",
+        ? "The query combines a procedural ask with factual and time-based signals, so procedures, durables, and episodes were queried."
+        : "The query combines a factual phrase with a supported time expression, so both durables and episodes were queried.",
     };
   }
 
@@ -327,7 +327,7 @@ export function routeRecall(params: {
       detectedIntent: "mixed",
       queried: ["procedures", "episodes", "durables"],
       reason:
-        "The query asks for steps, includes a supported time expression, and names a topic anchor, so procedures were queried first with supporting episodes and entries.",
+        "The query asks for steps, includes a supported time expression, and names a topic anchor, so procedures were queried first with supporting episodes and durables.",
     };
   }
 
@@ -345,7 +345,7 @@ export function routeRecall(params: {
       requested: params.requested,
       detectedIntent: "mixed",
       queried: ["procedures", "durables"],
-      reason: "The query asks for steps and includes a topic anchor, so procedures were queried first with supporting entries.",
+      reason: "The query asks for steps and includes a topic anchor, so procedures were queried first with supporting durables.",
     };
   }
 
@@ -372,7 +372,7 @@ export function routeRecall(params: {
       requested: params.requested,
       detectedIntent: "mixed",
       queried: ["episodes", "durables"],
-      reason: "The query combines narrative time-based recall with a topic anchor, so both episodes and entries were queried.",
+      reason: "The query combines narrative time-based recall with a topic anchor, so both episodes and durables were queried.",
     };
   }
 
@@ -390,7 +390,7 @@ export function routeRecall(params: {
       requested: params.requested,
       detectedIntent: "mixed",
       queried: ["episodes", "durables"],
-      reason: "The query contains both a supported time expression and a topic anchor, so both episodes and entries were queried.",
+      reason: "The query contains both a supported time expression and a topic anchor, so both episodes and durables were queried.",
     };
   }
 

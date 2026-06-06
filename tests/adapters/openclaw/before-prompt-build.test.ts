@@ -150,9 +150,9 @@ describe("handleAgenrBeforePromptBuild", () => {
       expect.arrayContaining([
         "[agenr] session-start recall for session=session-1 key=agent:main:webchat:test",
         "[agenr] session-start predecessor continuity summary not found for session=session-1 key=agent:main:webchat:test reason=no_predecessor",
-        "[agenr] session-start recall: 1 durable entries for session=session-1 key=agent:main:webchat:test (core_candidates=1 artifact_candidates=0)",
+        "[agenr] session-start recall: 1 durables for session=session-1 key=agent:main:webchat:test (core_candidates=1 artifact_candidates=0)",
         "[agenr] session-start recall skipped (already ran) for session=session-1 key=agent:main:webchat:test",
-        "[agenr] before-turn recall: 0 durable entries for session=session-1 key=agent:main:webchat:test (durable_candidates=0 procedure_candidates=0)",
+        "[agenr] before-turn recall: 0 durables for session=session-1 key=agent:main:webchat:test (durable_candidates=0 procedure_candidates=0)",
       ]),
     );
     expect(getMessages(logger.debug)).toEqual(
@@ -160,7 +160,7 @@ describe("handleAgenrBeforePromptBuild", () => {
         "[agenr] before_prompt_build: session tracker first start for session=session-1 key=agent:main:webchat:test",
         "[agenr] before_prompt_build: session tracker duplicate blocked for session=session-1 key=agent:main:webchat:test",
         expect.stringContaining(
-          "[agenr] before_prompt_build: session-start durable entries for session=session-1 key=agent:main:webchat:test: master branch workflow",
+          "[agenr] before_prompt_build: session-start durables for session=session-1 key=agent:main:webchat:test: master branch workflow",
         ),
         expect.stringContaining('"suppressedTurnCategory":"short_social"'),
       ]),
@@ -326,7 +326,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(result?.prependContext).toContain("Implement the before turn memory patch");
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        "[agenr] before-turn recall: 1 durable entries for session=session-before-turn key=agent:main:webchat:test (durable_candidates=1 procedure_candidates=1)",
+        "[agenr] before-turn recall: 1 durables for session=session-before-turn key=agent:main:webchat:test (durable_candidates=1 procedure_candidates=1)",
       ]),
     );
   });
@@ -956,7 +956,7 @@ describe("handleAgenrBeforePromptBuild", () => {
         `[agenr] predecessor: predecessor found for session=${currentSessionId} key=${currentSessionKey} strategy=sessions_json_scan predecessorKey=agent:main:main predecessor=${predecessorFile}`,
         `[agenr] session-start predecessor continuity summary found for session=${currentSessionId} key=${currentSessionKey} path=` +
           path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md"),
-        `[agenr] session-start recall: 1 durable entries for session=${currentSessionId} key=${currentSessionKey} (core_candidates=1 artifact_candidates=0)`,
+        `[agenr] session-start recall: 1 durables for session=${currentSessionId} key=${currentSessionKey} (core_candidates=1 artifact_candidates=0)`,
       ]),
     );
   });
@@ -1083,7 +1083,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
         "[agenr] session-start predecessor continuity summary not found for session=session-topic-42 key=agent:main:telegram:group:-100123:topic:42 reason=no_predecessor",
-        "[agenr] session-start recall: 0 durable entries for session=session-topic-42 key=agent:main:telegram:group:-100123:topic:42 (core_candidates=0 artifact_candidates=0)",
+        "[agenr] session-start recall: 0 durables for session=session-topic-42 key=agent:main:telegram:group:-100123:topic:42 (core_candidates=0 artifact_candidates=0)",
         "[agenr] session-start recall: nothing to inject for session=session-topic-42 key=agent:main:telegram:group:-100123:topic:42",
       ]),
     );
@@ -1158,7 +1158,7 @@ describe("handleAgenrBeforePromptBuild", () => {
         `[agenr] predecessor: predecessor found for session=${currentSessionId} key=${currentSessionKey} strategy=sessions_json_scan predecessorKey=agent:main:main predecessor=${predecessorFile}`,
         `[agenr] session-start predecessor continuity summary found for session=${currentSessionId} key=${currentSessionKey} path=` +
           path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md"),
-        `[agenr] session-start recall: 0 durable entries for session=${currentSessionId} key=${currentSessionKey} (core_candidates=0 artifact_candidates=0)`,
+        `[agenr] session-start recall: 0 durables for session=${currentSessionId} key=${currentSessionKey} (core_candidates=0 artifact_candidates=0)`,
       ]),
     );
   });
@@ -2167,7 +2167,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
         "[agenr] session-start predecessor continuity summary not found for session=session-empty key=agent:main:webchat:empty reason=no_predecessor",
-        "[agenr] session-start recall: 0 durable entries for session=session-empty key=agent:main:webchat:empty (core_candidates=0 artifact_candidates=0)",
+        "[agenr] session-start recall: 0 durables for session=session-empty key=agent:main:webchat:empty (core_candidates=0 artifact_candidates=0)",
         "[agenr] session-start recall: nothing to inject for session=session-empty key=agent:main:webchat:empty",
       ]),
     );

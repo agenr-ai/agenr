@@ -62,7 +62,7 @@ export async function resolveTargetDurable(
   if (last) {
     const entry = await ports.findMostRecentEntry();
     if (!entry) {
-      throw new Error("No agenr entries exist yet.");
+      throw new Error("No agenr durables exist yet.");
     }
     return entry;
   }

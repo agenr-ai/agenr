@@ -2,9 +2,9 @@
 
 `agenr store` is still part of the planned CLI surface, but there is no live standalone CLI command today.
 
-The real store implementation is the shared core pipeline in `src/core/store/pipeline.ts`. The current shipped write paths are:
+The real store implementation is the shared core pipeline in `src/core/store/pipeline.ts`. The current shipped durable-memory write paths are:
 
-- durable entry ingest via `agenr ingest`
+- durable memory ingest via `agenr ingest durables`
 - the OpenClaw `agenr_store` tool
 
 The repo also contains claim-key scenarios that exercise the same pipeline, but those are a test/runtime seam, not the main user-facing store surface.
@@ -130,7 +130,7 @@ Callers should apply a durable-memory filter before writing. The store pipeline 
 - progress snapshots or current-state descriptions about what is happening right now
 - plans, checklists, intentions, or speculative future actions
 - conversation summaries or session meta narration
-- re-extracted recall material, including injected entries, episode recall, or continuity text
+- re-extracted recall material, including injected durables, episode recall, or continuity text
 - generic advice that could appear in any tutorial, guide, or self-help list
 - transient status, errors, troubleshooting steps, or debugging journey details
 

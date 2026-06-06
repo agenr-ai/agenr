@@ -53,10 +53,10 @@ export function registerRecallCommand(program: Command): void {
     .addOption(new Option("--limit <n>", "Max results").argParser(parsePositiveInteger).default(10))
     .addOption(new Option("--threshold <n>", "Minimum score cutoff").argParser(parseUnitInterval).default(0))
     .addOption(new Option("--budget <n>", "Max token budget").argParser(parsePositiveInteger))
-    .addOption(new Option("--types <types>", "Comma-separated entry types").argParser(parseDurableKinds))
+    .addOption(new Option("--types <types>", "Comma-separated durable types").argParser(parseDurableKinds))
     .addOption(new Option("--tags <tags>", "Comma-separated tags").argParser(parseCsvList))
-    .option("--since <date>", "Only entries after this date (ISO or relative like 7d)")
-    .option("--until <date>", "Only entries before this date")
+    .option("--since <date>", "Only durables after this date (ISO or relative like 7d)")
+    .option("--until <date>", "Only durables before this date")
     .option("--around <date>", "Bias results toward this date")
     .option("--as-of <date>", "Resolve current vs prior state at this reference time")
     .addOption(new Option("--around-radius <n>", "Gaussian radius in days").argParser(parsePositiveNumber).default(14))
@@ -109,7 +109,7 @@ export function registerRecallCommand(program: Command): void {
         }
 
         if (results.length === 0) {
-          clack.outro("No matching entries found.");
+          clack.outro("No matching durables found.");
           return;
         }
 
@@ -250,7 +250,7 @@ function parseDurableKinds(value: string): DurableKind[] {
   const parsed = parseCsvList(value);
   const invalid = parsed.filter((item) => !DURABLE_KINDS.includes(item as (typeof DURABLE_KINDS)[number]));
   if (invalid.length > 0) {
-    throw new InvalidArgumentError(`Unsupported entry type(s): ${invalid.join(", ")}.`);
+    throw new InvalidArgumentError(`Unsupported durable type(s): ${invalid.join(", ")}.`);
   }
 
   return parsed as DurableKind[];

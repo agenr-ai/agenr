@@ -38,7 +38,7 @@ export function registerDbCommand(program: Command): void {
           options.yes === true
             ? true
             : await clack.confirm({
-                message: `⚠ This will delete all entries in ${resolvedPath.displayPath}. Continue?`,
+                message: `⚠ This will delete all durables in ${resolvedPath.displayPath}. Continue?`,
               });
 
         if (clack.isCancel(confirmed) || confirmed !== true) {

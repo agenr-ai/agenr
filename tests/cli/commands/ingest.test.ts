@@ -357,11 +357,11 @@ describe("registerIngestCommand", () => {
     expect(messages).toEqual(
       expect.arrayContaining([
         "Processing transcripts... (2/2 extracted)",
-        "Deduplicating entries...",
-        "Deduplicating entries... 12/47 clusters arbitrated (388/1098 entries covered)",
+        "Deduplicating durables...",
+        "Deduplicating durables... 12/47 clusters arbitrated (388/1098 durables covered)",
         "Extracting claim keys...",
-        "Extracting claim keys... 437/1098 entries",
-        "Retrying unresolved claim keys... 21/94 entries",
+        "Extracting claim keys... 437/1098 durables",
+        "Retrying unresolved claim keys... 21/94 durables",
         "Running store pipeline for 4 durables...",
         "Preparing database indexes for bulk ingest...",
         "Rebuilding indexes after bulk ingest...",

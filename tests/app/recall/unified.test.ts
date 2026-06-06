@@ -40,7 +40,7 @@ describe("runUnifiedRecall", () => {
       requested: "auto",
       detectedIntent: "historical_state",
       queried: ["durables", "episodes"],
-      reason: "The query asks about a previous state or transition, so both entries and episodes were queried.",
+      reason: "The query asks about a previous state or transition, so both durables and episodes were queried.",
     });
   });
 

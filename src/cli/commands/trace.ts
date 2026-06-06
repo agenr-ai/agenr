@@ -21,10 +21,10 @@ interface TraceCommandOptions {
 export function registerTraceCommand(program: Command): void {
   program
     .command("trace")
-    .description("Inspect one entry's provenance and claim-family lineage")
-    .addOption(new Option("--id <id>", "Entry id to inspect"))
+    .description("Inspect one durable's provenance and claim-family lineage")
+    .addOption(new Option("--id <id>", "Durable id to inspect"))
     .addOption(new Option("--subject <text>", "Subject text to resolve when the id is unknown"))
-    .option("--last", "Inspect the most recently created entry")
+    .option("--last", "Inspect the most recently created durable")
     .option("--json", "Emit structured JSON output")
     .action(async (options: TraceCommandOptions) => {
       try {

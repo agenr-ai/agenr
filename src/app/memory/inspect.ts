@@ -59,7 +59,7 @@ async function resolveTraceEntryId(
   if (selector.last) {
     const entry = await repository.findMostRecentEntry();
     if (!entry) {
-      throw new Error("No agenr entries exist yet.");
+      throw new Error("No agenr durables exist yet.");
     }
 
     return entry.id;
@@ -71,7 +71,7 @@ async function resolveTraceEntryId(
 
   const entry = await repository.findEntryBySubject(selector.subject ?? "");
   if (!entry) {
-    throw new Error(`No agenr entry found for subject "${selector.subject}".`);
+    throw new Error(`No agenr durable found for subject "${selector.subject}".`);
   }
 
   return entry.id;

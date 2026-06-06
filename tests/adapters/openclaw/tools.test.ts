@@ -295,7 +295,7 @@ describe("agenr OpenClaw tools", () => {
       ],
     });
     expect(result.content[0]?.text).toContain("Recall Route");
-    expect(result.content[0]?.text).toContain("Entry Matches");
+    expect(result.content[0]?.text).toContain("Durable Matches");
     expect(result.content[0]?.text).toContain("session recall");
     expect(result.content[0]?.text).toContain("state=current");
     expect(result.content[0]?.text).toContain("why_surfaced=");
@@ -319,7 +319,7 @@ describe("agenr OpenClaw tools", () => {
         expect.stringContaining(
           '[agenr] tool=agenr_recall session=session-1 key=agent:main:webchat:test params={"query":"relevant prior context for the current session so the operator can verify recall isolation across multiple TUI sessions","limit":3}',
         ),
-        '[agenr] tool=agenr_recall session=session-1 key=agent:main:webchat:test result: 0 episodes, 1 entry [entry subjects: "session recall"]',
+        '[agenr] tool=agenr_recall session=session-1 key=agent:main:webchat:test result: 0 episodes, 1 durable [durable subjects: "session recall"]',
       ]),
     );
     expect(logger.debug).not.toHaveBeenCalled();
@@ -540,8 +540,8 @@ describe("agenr OpenClaw tools", () => {
     });
     expect(result.content[0]?.text).toContain("Resolved Time Window");
     expect(result.content[0]?.text).toContain("Episode Matches");
-    expect(result.content[0]?.text).toContain("Entry Matches");
-    expect(result.content[0]?.text).toContain("Type and tag filters were applied to entries only.");
+    expect(result.content[0]?.text).toContain("Durable Matches");
+    expect(result.content[0]?.text).toContain("Type and tag filters were applied to durables only.");
   });
 
   it("renders a structured canonical procedure block for procedural recall", async () => {
@@ -588,7 +588,7 @@ describe("agenr OpenClaw tools", () => {
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
         expect.stringContaining(
-          '[agenr] tool=agenr_recall session=session-1 key=agent:main:webchat:test result: 1 procedure candidate, 0 episodes, 0 entries [procedure: "Rotate the production signing key"]',
+          '[agenr] tool=agenr_recall session=session-1 key=agent:main:webchat:test result: 1 procedure candidate, 0 episodes, 0 durables [procedure: "Rotate the production signing key"]',
         ),
       ]),
     );
@@ -738,7 +738,7 @@ describe("agenr OpenClaw tools", () => {
     });
     const text = result.content[0]?.text ?? "";
     expect(text).toContain("requested=auto detected=historical_state queried=durables, episodes");
-    expect(text.indexOf("Entry Matches")).toBeLessThan(text.indexOf("Episode Matches"));
+    expect(text.indexOf("Durable Matches")).toBeLessThan(text.indexOf("Episode Matches"));
     expect(text).toContain("Claim Transitions");
     expect(text).toContain("slot_policy=exclusive");
     expect(getMessages(logger.debug)).toEqual(

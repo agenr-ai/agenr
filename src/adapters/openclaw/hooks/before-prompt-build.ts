@@ -109,7 +109,7 @@ export async function handleAgenrBeforePromptBuild(
     }
 
     params.logger.info(
-      `[agenr] session-start recall: ${sessionStartPatch.durableMemory.length} durable entries for ${sessionContext} ` +
+      `[agenr] session-start recall: ${sessionStartPatch.durableMemory.length} durables for ${sessionContext} ` +
         `(core_candidates=${sessionStartPatch.diagnostics.coreCandidateCount} artifact_candidates=${sessionStartPatch.diagnostics.artifactRecallCandidateCount})`,
     );
     if (sessionStartPatch.diagnostics.artifactRecallUsed) {
@@ -123,7 +123,7 @@ export async function handleAgenrBeforePromptBuild(
       params.logger.info(`[agenr] session-start recall notices for ${sessionContext}: ${sessionStartPatch.diagnostics.notices.join(" | ")}`);
     }
     params.logger.debug?.(
-      `[agenr] before_prompt_build: session-start durable entries for ${sessionContext}: ${formatEntryRefs(sessionStartPatch.durableMemory.map((item) => item.entry))}`,
+      `[agenr] before_prompt_build: session-start durables for ${sessionContext}: ${formatEntryRefs(sessionStartPatch.durableMemory.map((item) => item.entry))}`,
     );
     params.logger.debug?.(`[agenr] before_prompt_build: session-start prependContext length for ${sessionContext}: ${prependContext.length} chars`);
     if (prependContext.length === 0) {
@@ -276,7 +276,7 @@ async function resolveBeforeTurnResult(
     }
 
     params.logger.info(
-      `[agenr] before-turn recall: ${beforeTurnPatch.durableMemory.length} durable entries for ${sessionContext} ` +
+      `[agenr] before-turn recall: ${beforeTurnPatch.durableMemory.length} durables for ${sessionContext} ` +
         `(durable_candidates=${beforeTurnPatch.diagnostics.durableRecallCandidateCount} procedure_candidates=${beforeTurnPatch.diagnostics.procedureCandidateCount})`,
     );
     if (beforeTurnPatch.procedure) {
@@ -298,7 +298,7 @@ async function resolveBeforeTurnResult(
     }
     params.logger.debug?.(`[agenr] before_prompt_build: before-turn diagnostics for ${sessionContext}: ${formatBeforeTurnDiagnosticsForLog(beforeTurnPatch)}`);
     params.logger.debug?.(
-      `[agenr] before_prompt_build: before-turn durable entries for ${sessionContext}: ${formatEntryRefs(
+      `[agenr] before_prompt_build: before-turn durables for ${sessionContext}: ${formatEntryRefs(
         beforeTurnPatch.durableMemory.map((item: (typeof beforeTurnPatch.durableMemory)[number]) => item.entry),
       )}`,
     );

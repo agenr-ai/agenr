@@ -50,7 +50,7 @@ export function formatUnifiedRecallResults(result: UnifiedRecallResult): string 
   if (recallResultHasTruncatedEntryPreviews(result)) {
     lines.push("");
     lines.push("Fetch Guidance");
-    lines.push("One or more entry previews were truncated. Call agenr_fetch with id when exact stored wording is required.");
+    lines.push("One or more durable previews were truncated. Call agenr_fetch with id when exact stored wording is required.");
   }
 
   if (result.notices.length > 0) {
@@ -97,7 +97,7 @@ function appendProcedureMatches(lines: string[], result: UnifiedRecallResult): v
 
 /** Append the entry result section in tool-readable text format. */
 function appendEntryMatches(lines: string[], result: UnifiedRecallResult): void {
-  lines.push("Entry Matches");
+  lines.push("Durable Matches");
   if (result.projectedEntries.length === 0) {
     lines.push("None.");
     return;

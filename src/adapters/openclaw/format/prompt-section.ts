@@ -34,12 +34,12 @@ export function buildAgenrMemoryPromptSection({
     "## Memory Recall",
     "Before answering anything about prior work, decisions, preferences, people, dates, unfinished work, or past sessions, call agenr_recall first. Session-start recall is automatic, and conservative before-turn recall may also appear as injected background context; use agenr_recall mid-session when you need context you do not already have.",
     "agenr_recall supports exact fact recall plus historical and episodic recall behind one tool: use mode=durables for exact facts, decisions, thresholds, and versions; use mode=auto for prior-state questions like what was the previous approach, what did we use before, or what changed from X to Y; use mode=episodes when you explicitly want session narrative recall.",
-    "agenr_recall returns truncated entry previews with ids, scores, and preview_truncated flags.",
+    "agenr_recall returns truncated durable previews with ids, scores, and preview_truncated flags.",
     "For temporal narrative questions, put the time phrase in the query itself: examples include yesterday, last week, this month, 2 weeks ago, or in March.",
     "One focused agenr_recall call with the right scope beats several broad ones.",
     "When Agenr injects memory automatically, treat it as non-user background context and use it silently when relevant rather than forcing it into the reply.",
     "Memory authority, strongest to weakest:",
-    "- Durable entries are the canonical record for verified facts, decisions, preferences, and lessons unless live evidence contradicts them.",
+    "- Durable memory is the canonical record for verified facts, decisions, preferences, and lessons unless live evidence contradicts them.",
     "- Episode recall explains what happened in completed sessions, but it is a narrative summary, not an exact log.",
     "- Session handoffs and continuity summaries are approximate restart context and may be incomplete or stale.",
     "- Live verification beats stored memory whenever you can check quickly.",
@@ -65,7 +65,7 @@ export function buildAgenrMemoryPromptSection({
     );
     lines.push("Do not store progress snapshots or current-state narration about what is happening right now as durable memory.");
     lines.push("Do not store plans, checklists, or speculative future state as facts or decisions.");
-    lines.push("Do not re-store recalled entries, episode summaries, continuity text, or conversation summaries as new evidence.");
+    lines.push("Do not re-store recalled durables, episode summaries, continuity text, or conversation summaries as new evidence.");
     lines.push("Do not store meta narration about the current session.");
     lines.push(
       "Use memory lifetimes deliberately: core is injected at every session start and should be rare, permanent is durable recall-on-demand memory, and temporary is short-horizon. Importance is 1 to 10; 7 is normal durable memory and 9 to 10 is rare and critical.",

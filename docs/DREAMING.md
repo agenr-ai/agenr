@@ -94,6 +94,12 @@ Supported tiers:
 
 Use `procedures/agenr-dream-deep-maintenance.yaml` for the operator checklist.
 
+`tiers.deep.intervalHours` is a cadence hint for external schedulers (cron, launchd, or your orchestrator). Agenr does not ship a built-in cron daemon; operators wire the interval into their own scheduler.
+
+## Conflict resolution
+
+When a durable written through `agenr_store` (or ingest) conflicts with an older active row on the same claim-key family, the explicit store wins until the next successful dreaming run applies supersession. Dreaming's `temporalize` stage is the reconciliation path: it inserts a successor durable, closes the predecessor's valid-time window, and links `superseded_by` without rewriting content in place. Until that run completes with `--apply`, recall and injection treat the store-written row as authoritative current state.
+
 ## Configuration
 
 The `dreaming` section in `config.json` replaces the retired `surgeon` section. Legacy configs that still contain `surgeon` are rejected at parse time.

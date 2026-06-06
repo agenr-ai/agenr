@@ -210,7 +210,7 @@ const RECALL_TOOL_PARAMETERS = {
       type: "string",
       enum: [...RECALL_MODES],
       description:
-        "Recall mode: auto routes between exact durable recall, historical-state recall, procedural recall, and episodes; entries forces semantic recall; episodes forces temporal or semantic session recall; procedures forces procedural recall.",
+        "Recall mode: auto routes between exact durable recall, historical-state recall, procedural recall, and episodes; durables forces exact durable recall; episodes forces temporal or semantic session recall; procedures forces procedural recall.",
     },
     limit: {
       type: "integer",
@@ -227,7 +227,7 @@ const RECALL_TOOL_PARAMETERS = {
     budget: {
       type: "integer",
       minimum: 1,
-      description: "Approximate token budget applied after entry scoring. Omit when you do not want a budget cap.",
+      description: "Approximate token budget applied after durable scoring. Omit when you do not want a budget cap.",
     },
     types: {
       type: "array",
@@ -265,7 +265,7 @@ const UPDATE_TOOL_PARAMETERS = {
     },
     importance: {
       type: "integer",
-      description: "New importance from 1 to 10. Use 7 for normal durable memory and reserve 9 to 10 for rare critical entries.",
+      description: "New importance from 1 to 10. Use 7 for normal durable memory and reserve 9 to 10 for rare critical durables.",
     },
     expiry: {
       type: "string",
