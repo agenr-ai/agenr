@@ -352,7 +352,9 @@ Persistence behavior:
 - each stored row gets a fresh UUID
 - `created_at` uses the input value when present, otherwise `now`
 - `updated_at` is always set to `now`
-- `quality_score` is initialized to `0.5`
+- `quality_score` is initialized to neutral `0.5` and currently stays there for normal production-created durables
+- while `quality_score` is neutral/defaulted, it is reserved for diagnostics and conservative tie-breaks only; it should not be used as an active recall-ranking signal
+- any future non-neutral quality scorer should be introduced behind evals and/or a feature flag so bad heuristics cannot silently harm recall
 - `recall_count` is initialized to `0`
 - `user_id`, `project`, `valid_from`, `valid_to`, `content_hash`, and `norm_content_hash` are copied through when present
 - stale rows are represented by a closed `valid_to` plus optional `supersession_kind` / `supersession_reason`, not a separate retirement flag

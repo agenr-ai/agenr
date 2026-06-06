@@ -37,6 +37,8 @@ const CREATE_DURABLES_TABLE_SQL = `
     embedding F32_BLOB(1024),
     content_hash TEXT,
     norm_content_hash TEXT,
+    -- Neutral placeholder reserved for future quality scoring. It is not an
+    -- active production ranking signal while normal ingestion leaves it at 0.5.
     quality_score REAL NOT NULL DEFAULT 0.5,
     recall_count INTEGER DEFAULT 0,
     last_recalled_at TEXT,

@@ -297,6 +297,9 @@ function buildEntry(preparedEntry: PreparedEntry, embedding: number[]): Durable 
     embedding,
     content_hash: preparedEntry.contentHash,
     norm_content_hash: preparedEntry.normContentHash,
+    // Reserved neutral quality placeholder. Keep this constant unless a scored
+    // quality signal is introduced behind recall evals/feature flags; production
+    // recall must not treat this as an active ranking input while it is defaulted.
     quality_score: 0.5,
     recall_count: 0,
     valid_from: preparedEntry.input.valid_from,
