@@ -11,6 +11,64 @@ export interface EntryRecallEvent {
 }
 
 /**
+ * Recall summary returned by the trace read model.
+ */
+export interface EntryTraceRecallSummary {
+  /** Total persisted recall events for the durable. */
+  totalCount: number;
+  /** Most recent recall events, ordered newest first. */
+  recentEvents: EntryRecallEvent[];
+}
+
+/**
+ * Dreaming audit action linked to one traced durable.
+ */
+export interface EntryTraceDreamAction {
+  id: string;
+  runId: string;
+  actionType: string;
+  reasoning: string;
+  details?: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+/**
+ * Profile snapshot that included one traced durable.
+ */
+export interface EntryTraceProfileSnapshot {
+  id: string;
+  asOf: string;
+  runId: string | null;
+  createdAt: string;
+  role: "profile" | "directive";
+}
+
+/**
+ * Provenance facts surfaced by the trace read model.
+ */
+export interface EntryTraceProvenance {
+  sourceFile?: string;
+  sourceContext?: string;
+  claimKeySource?: string;
+  claimSupportLocator?: string;
+  claimSupportObservedAt?: string;
+  project?: string;
+  userId?: string;
+}
+
+/**
+ * One chronological audit event in a durable trace timeline.
+ */
+export interface EntryTraceTimelineEvent {
+  at: string;
+  kind: "created" | "updated" | "dream" | "recall" | "profile";
+  label: string;
+  detail?: string;
+  runId?: string;
+  actionType?: string;
+}
+
+/**
  * Narrow claim-family lineage view returned by trace surfaces.
  */
 export interface ClaimFamily {
@@ -25,14 +83,18 @@ export interface ClaimFamily {
 }
 
 /**
- * Minimal provenance view available from the current v1 schema.
+ * Unified provenance and audit view for one durable.
  */
 export interface EntryTrace {
   entry: Durable;
   supersededBy?: Durable;
   supersedes: Durable[];
   claimFamily?: ClaimFamily;
-  recallEvents: EntryRecallEvent[];
+  recall: EntryTraceRecallSummary;
+  provenance: EntryTraceProvenance;
+  dreamActions: EntryTraceDreamAction[];
+  profileSnapshots: EntryTraceProfileSnapshot[];
+  timeline: EntryTraceTimelineEvent[];
 }
 
 /**

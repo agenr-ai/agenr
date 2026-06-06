@@ -197,6 +197,14 @@ export interface DreamCandidate {
   /** Active durable this candidate refines, when disposition is `refines` or `known`. */
   refinesDurableId: string | null;
   evidenceRefs: DreamEvidenceRef[];
+  /** Stable episode locator used for content-hash provenance and recall audits. */
+  sourceFile?: string;
+  /** One-sentence evidence grounding carried from dreaming extract. */
+  sourceContext?: string;
+  /** Workspace scope when episode or extract output names one. */
+  project?: string;
+  /** World-state lower bound, usually the episode observation time. */
+  validFrom?: string;
 }
 
 /** Structured summary of one extract stage execution. */

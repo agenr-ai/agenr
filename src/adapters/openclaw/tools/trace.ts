@@ -2,6 +2,7 @@ import type { AnyAgentTool } from "openclaw/plugin-sdk/agent-runtime";
 import { failedTextResult, readStringParam, textResult } from "openclaw/plugin-sdk/agent-runtime";
 import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sdk/core";
 
+import { serializeEntryTrace } from "../../../app/memory/render-trace.js";
 import type { AgenrOpenClawServices } from "../types.js";
 import {
   asRecord,
@@ -48,7 +49,7 @@ export function createAgenrTraceTool(ctx: OpenClawPluginToolContext, servicesPro
     name: "agenr_trace",
     label: "Agenr Trace",
     description:
-      "Trace the provenance of a knowledge entry. The current v1 trace view shows the entry itself, supersession links, and recent recall history. Accepts id, subject, or last for lookup.",
+      "Trace one durable's provenance, claim-family lineage, dreaming audit trail, recall history, and chronological lifecycle timeline. Accepts id, subject, or last for lookup.",
     parameters: TRACE_TOOL_PARAMETERS,
     async execute(_toolCallId, rawParams) {
       try {
@@ -68,16 +69,10 @@ export function createAgenrTraceTool(ctx: OpenClawPluginToolContext, servicesPro
           });
         }
 
-        return textResult(formatTrace(trace.entry, trace.supersededBy, trace.supersedes, trace.claimFamily, trace.recallEvents), {
+        return textResult(formatTrace(trace), {
           status: "ok",
           sessionKey: ctx.sessionKey,
-          trace: {
-            entry: trace.entry,
-            supersededBy: trace.supersededBy,
-            supersedes: trace.supersedes,
-            claimFamily: trace.claimFamily,
-            recallEvents: trace.recallEvents,
-          },
+          trace: serializeEntryTrace(trace),
         });
       } catch (error) {
         logToolFailure(logger, "agenr_trace", ctx, error);

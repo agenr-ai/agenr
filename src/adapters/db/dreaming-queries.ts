@@ -270,6 +270,40 @@ export async function listEpisodeEvidenceSince(
   }));
 }
 
+const HOST_STORE_SOURCE_CLAUSE = `(source_file LIKE 'skeln-session:%' OR source_file LIKE 'openclaw-session:%')`;
+
+/**
+ * Lists host-store durables written during one episode session window.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param sessionId - Host session identifier carried on the episode row.
+ * @param startedAt - Episode lower bound.
+ * @param endedAt - Episode upper bound.
+ * @returns Host-store durables already captured live during the session.
+ */
+export async function listSessionHostStoreDurables(executor: SqlExecutor, sessionId: string, startedAt: string, endedAt: string): Promise<Durable[]> {
+  const normalizedSessionId = sessionId.trim();
+  if (normalizedSessionId.length === 0) {
+    return [];
+  }
+
+  const result = await executor.execute({
+    sql: `
+      SELECT ${DURABLE_SELECT_COLUMNS}
+      FROM durables
+      WHERE created_at >= ?
+        AND created_at <= ?
+        AND ${HOST_STORE_SOURCE_CLAUSE}
+        AND source_file LIKE ?
+        AND ${buildActiveDurableClause()}
+      ORDER BY created_at ASC, id ASC
+    `,
+    args: [startedAt, endedAt, `%${normalizedSessionId}%`],
+  });
+
+  return result.rows.map((row) => mapDurableRow(row));
+}
+
 /**
  * Counts episodes created or updated since a timestamp.
  *

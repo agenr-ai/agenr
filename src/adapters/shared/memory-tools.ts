@@ -2,6 +2,7 @@ import type { ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
 import { normalizeManualClaimKeyUpdate } from "../../core/claim-key-lifecycle.js";
 import { parseDirectiveTrigger } from "../../core/directives/model.js";
 import type { DatabasePort, EmbeddingPort, EpisodeDatabasePort, ProcedureDatabasePort, RecallPorts } from "../../core/ports.js";
+import { resolveDurableProjectScope } from "../../core/store/project-scope.js";
 import { storeDurablesDetailed } from "../../core/store/pipeline.js";
 import { validateTemporalValidityRange } from "../../core/temporal-validity.js";
 import { DURABLE_KINDS, type DirectiveTrigger, type DurableKind, type Expiry } from "../../core/types.js";
@@ -55,6 +56,7 @@ export interface StoreToolParams {
   trigger: DirectiveTrigger | undefined;
   validFrom: string | undefined;
   validTo: string | undefined;
+  project: string | undefined;
 }
 
 /** Parsed agenr_recall parameters. */
@@ -192,6 +194,11 @@ const STORE_TOOL_PARAMETERS = {
       type: "string",
       description: "ISO 8601 timestamp for when this fact stopped being true.",
     },
+    project: {
+      type: "string",
+      description:
+        "Optional workspace or product slug when this memory is specifically about one repo or deployment. Omit for personal, family, and other cross-workspace facts even when the current session has a workspace.",
+    },
   },
   required: ["type", "subject", "content"],
 } as const;
@@ -321,6 +328,7 @@ export function parseStoreToolParams(rawParams: unknown, reader: MemoryToolParam
     trigger: parseDirectiveTriggerParam(reader.readString(params, "trigger")),
     validFrom: reader.readString(params, "validFrom"),
     validTo: reader.readString(params, "validTo"),
+    project: reader.readString(params, "project"),
   };
 }
 
@@ -379,6 +387,19 @@ export async function runStoreMemoryTool(
     onWarning?: (warning: string) => void;
   },
 ): Promise<MemoryToolOutcome> {
+  const sourceContext = params.sourceContext ?? options.defaultSourceContext;
+  const project = resolveDurableProjectScope(
+    {
+      project: params.project,
+      subject: params.subject,
+      content: params.content,
+      tags: params.tags,
+      source_context: sourceContext,
+      claim_key: params.claimKey,
+    },
+    { sessionWorkspace: options.session.project },
+  );
+
   const result = await storeDurablesDetailed(
     [
       {
@@ -401,8 +422,8 @@ export async function runStoreMemoryTool(
         ...(params.validFrom ? { valid_from: params.validFrom } : {}),
         ...(params.validTo ? { valid_to: params.validTo } : {}),
         source_file: buildSessionSourceFile(options.session, options.sourcePrefix),
-        source_context: params.sourceContext ?? options.defaultSourceContext,
-        ...(options.session.project ? { project: options.session.project } : {}),
+        source_context: sourceContext,
+        ...(project ? { project } : {}),
       },
     ],
     services.entries,

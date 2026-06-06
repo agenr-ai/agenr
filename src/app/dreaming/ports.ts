@@ -190,6 +190,8 @@ export interface DreamPort {
   }): Promise<Durable[]>;
   /** Reads recent episode narrative evidence newer than one timestamp. */
   listEpisodeEvidenceSince(since: string, options?: { project?: string; limit?: number }): Promise<DreamEpisodeEvidence[]>;
+  /** Lists live host-store durables written during one episode session window. */
+  listSessionHostStoreDurables(sessionId: string, startedAt: string, endedAt: string): Promise<Durable[]>;
   /** Loads active durables that share one canonical claim key (context-lookup). */
   findActiveDurablesByClaimKey(claimKey: string): Promise<Durable[]>;
   /** Returns the subset of normalized content hashes that already exist among active durables. */

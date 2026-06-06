@@ -1,11 +1,10 @@
 import { failedTextResult, readNumberParam, readStringArrayParam, readStringParam, textResult } from "openclaw/plugin-sdk/agent-runtime";
 import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sdk/core";
 
-import { resolveClaimSlotPolicy } from "../../../core/claim-slot-policy.js";
-import { describeDurableLineageState, formatDurableClaimLifecycle, summarizeClaimFamilyTransition } from "../../../core/recall/entry-lineage.js";
+import { renderEntryTraceText } from "../../../app/memory/render-trace.js";
+import type { EntryTrace } from "../../../app/memory/ports.js";
 import type { Durable } from "../../../core/types.js";
 import { formatErrorMessage } from "../../shared/errors.js";
-import { truncate } from "../../shared/memory-tool-format.js";
 import type { MemoryToolOutcome, MemoryToolParamReader } from "../../shared/memory-tools.js";
 import {
   ENTRY_TYPE_DESCRIPTION,
@@ -133,84 +132,13 @@ export function sanitizeTraceToolParams(params: { id: string | undefined; subjec
 }
 
 /**
- * Formats the limited Phase 1 provenance view returned by `agenr_trace`.
+ * Formats the provenance and audit view returned by `agenr_trace`.
  *
- * @param entry - Target entry being traced.
- * @param supersededBy - Entry that superseded the target, when present.
- * @param supersedes - Entries superseded by the target.
- * @param recallEvents - Recent recall events linked to the target.
+ * @param trace - Loaded trace payload.
  * @returns Human-readable trace output.
  */
-export function formatTrace(
-  entry: Durable,
-  supersededBy: Durable | undefined,
-  supersedes: Durable[],
-  claimFamily: { claimKey: string; slotPolicy?: "exclusive" | "multivalued"; slotPolicyReason?: string; entries: Durable[] } | undefined,
-  recallEvents: Array<{ query?: string; sessionKey?: string; recalledAt: string }>,
-): string {
-  const nowMs = Date.now();
-  const slotPolicy = entry.claim_key
-    ? claimFamily
-      ? {
-          policy: claimFamily.slotPolicy ?? resolveClaimSlotPolicy(claimFamily.claimKey).policy,
-          reason: claimFamily.slotPolicyReason ?? resolveClaimSlotPolicy(claimFamily.claimKey).reason,
-        }
-      : resolveClaimSlotPolicy(entry.claim_key)
-    : undefined;
-  const lines = [
-    `Trace for ${entry.id} | ${entry.subject}`,
-    `type=${entry.type} expiry=${entry.expiry} importance=${entry.importance} memory_state=${describeDurableLineageState(entry, nowMs)}`,
-    `content=${truncate(entry.content, 220)}`,
-  ];
-
-  if (supersededBy) {
-    lines.push(`superseded_by=${supersededBy.id} | ${supersededBy.subject}`);
-  }
-
-  if (supersedes.length > 0) {
-    lines.push(`supersedes=${supersedes.map((item) => `${item.id} (${item.subject})`).join(", ")}`);
-  }
-
-  if (entry.claim_key) {
-    lines.push(`claim_key=${entry.claim_key}`);
-    if (slotPolicy) {
-      lines.push(`slot_policy=${slotPolicy.policy}`);
-      lines.push(`slot_policy_reason=${slotPolicy.reason}`);
-    }
-  }
-
-  if (claimFamily && claimFamily.entries.length > 0) {
-    lines.push(
-      `claim_family=${claimFamily.claimKey} | slot_policy=${slotPolicy?.policy ?? "exclusive"} | ${claimFamily.entries
-        .map((item) => `${item.id}:${describeDurableLineageState(item, nowMs)}:${formatDurableClaimLifecycle(item)}`)
-        .join(", ")}`,
-    );
-    if (slotPolicy) {
-      lines.push(`claim_family_policy_reason=${slotPolicy.reason}`);
-    }
-    const transitionSummary = summarizeClaimFamilyTransition(claimFamily.entries, nowMs);
-    if (transitionSummary) {
-      lines.push(`transition=${transitionSummary}`);
-    }
-  }
-
-  if (entry.valid_from || entry.valid_to) {
-    lines.push(`validity=${entry.valid_from ?? "?"} -> ${entry.valid_to ?? "ongoing"}`);
-  }
-
-  if (entry.supersession_kind) {
-    lines.push(`supersession_kind=${entry.supersession_kind}${entry.supersession_reason ? ` reason=${truncate(entry.supersession_reason, 120)}` : ""}`);
-  }
-
-  if (recallEvents.length > 0) {
-    lines.push(
-      `recent_recalls=${recallEvents
-        .map((event) => `${event.recalledAt}${event.query ? ` query=${event.query}` : ""}${event.sessionKey ? ` session=${event.sessionKey}` : ""}`)
-        .join(" ; ")}`,
-    );
-  }
-
-  return lines.join("\n");
+export function formatTrace(trace: EntryTrace): string {
+  return renderEntryTraceText(trace);
 }
 
 /**

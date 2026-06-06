@@ -1,10 +1,13 @@
 import { randomUUID } from "node:crypto";
 
-import { extractFromTranscript } from "../../core/ingestion/extract.js";
+import { extractFromEpisodeSummary } from "../../core/dreaming/extract.js";
+import { buildDreamSessionStoreContext, toDreamSessionStoreDurables } from "../../core/dreaming/session-store-context.js";
+import type { DreamSessionStoreContext } from "../../core/dreaming/session-store-context.js";
 import { normalizeClaimKey } from "../../core/claim-key.js";
 import type { EmbeddingPort } from "../../core/ports.js";
 import { composeEmbeddingText } from "../../core/store/embedding-text.js";
 import { computeContentHash, computeNormContentHash } from "../../core/store/hashing.js";
+import { resolveDurableProjectScope } from "../../core/store/project-scope.js";
 import type { DreamCandidate, DreamCandidateDisposition, DreamEvidenceRef, DreamExtractSummary } from "../../core/dreaming/types.js";
 import type { Durable, ParsedTranscript, StoreDurableInput } from "../../core/types.js";
 import { throwIfAborted } from "./abort.js";
@@ -107,8 +110,17 @@ export async function runExtractStage(options: DreamExtractOptions, deps: DreamE
       break;
     }
 
+    const episodeWindowEnd = episode.endedAt ?? options.now().toISOString();
+    const existingSessionDurables =
+      episode.sessionId !== null
+        ? toDreamSessionStoreDurables(await deps.port.listSessionHostStoreDurables(episode.sessionId, episode.startedAt, episodeWindowEnd))
+        : [];
+
     const transcript = buildEpisodeTranscript(episode);
-    const extraction = await extractFromTranscript(transcript, llm, { wholeFile: "force", interChunkDelayMs: 0 });
+    const extraction = await extractFromEpisodeSummary(transcript, llm, {
+      sessionWorkspace: episode.project,
+      existingSessionDurables,
+    });
     episodesScanned += 1;
     warnings.push(...extraction.warnings.map((warning) => `Episode ${episode.id}: ${warning}`));
     if (readUsage(llm).estimatedCostUsd >= options.costCapUsd) {
@@ -181,7 +193,7 @@ export async function applyExtractedDurables(
 
   await deps.port.withTransaction(async (tx) => {
     for (const [index, { candidate, durable }] of prepared.entries()) {
-      const contentHash = durable.content_hash ?? computeContentHash(durable.content);
+      const contentHash = durable.content_hash ?? computeContentHash(durable.content, durable.source_file);
       await tx.insertDurable(durable, embeddings[index] ?? [], contentHash);
       await tx.logRunAction({
         id: randomUUID(),
@@ -214,6 +226,13 @@ interface MinedCandidate {
   directiveTrigger?: Durable["directive_trigger"];
   claimKey: string | null;
   evidenceRefs: DreamEvidenceRef[];
+  sessionId: string | null;
+  episodeStartedAt: string;
+  episodeEndedAt: string;
+  sourceFile: string;
+  sourceContext?: string;
+  project?: string;
+  validFrom: string;
 }
 
 /**
@@ -239,6 +258,7 @@ export async function classifyCandidates(mined: MinedCandidate[], deps: { port: 
   const normHashByIndex = mined.map((candidate) => computeNormContentHash(candidate.content));
   const existingNormHashes = await deps.port.findExistingNormContentHashes(normHashByIndex);
   const seenNormHashes = new Set<string>(existingNormHashes);
+  const sessionContextByWindow = new Map<string, DreamSessionStoreContext>();
 
   const candidates: DreamCandidate[] = [];
   for (const [index, candidate] of mined.entries()) {
@@ -248,7 +268,16 @@ export async function classifyCandidates(mined: MinedCandidate[], deps: { port: 
 
     if (seenNormHashes.has(normHash)) {
       disposition = "known";
-    } else if (deps.contextLookupEnabled && candidate.claimKey) {
+    } else if (candidate.sessionId) {
+      const sessionContext = await loadSessionStoreContext(candidate, deps.port, sessionContextByWindow);
+      if (sessionContext.normContentHashes.has(normHash)) {
+        disposition = "known";
+      } else if (candidate.claimKey && sessionContext.claimKeys.has(candidate.claimKey)) {
+        disposition = "known";
+      }
+    }
+
+    if (disposition === "new" && deps.contextLookupEnabled && candidate.claimKey) {
       const family = await deps.port.findActiveDurablesByClaimKey(candidate.claimKey);
       const active = family[0];
       if (active) {
@@ -277,6 +306,10 @@ export async function classifyCandidates(mined: MinedCandidate[], deps: { port: 
       disposition,
       refinesDurableId,
       evidenceRefs: candidate.evidenceRefs,
+      sourceFile: candidate.sourceFile,
+      ...(candidate.sourceContext ? { sourceContext: candidate.sourceContext } : {}),
+      ...(candidate.project ? { project: candidate.project } : {}),
+      validFrom: candidate.validFrom,
     });
   }
 
@@ -303,10 +336,12 @@ export function buildDurableFromCandidate(
     claimKeyOverride?: string | null;
   },
 ): Durable {
-  const contentHash = computeContentHash(candidate.content);
+  const sourceFile = candidate.sourceFile;
+  const contentHash = computeContentHash(candidate.content, sourceFile);
   const normContentHash = computeNormContentHash(candidate.content);
   const claimKey = lifecycle.claimKeyOverride !== undefined ? lifecycle.claimKeyOverride : candidate.claimKey;
   const primaryEvidence = candidate.evidenceRefs[0];
+  const validFrom = lifecycle.validFrom ?? candidate.validFrom;
 
   const durable: Durable = {
     id: lifecycle.id ?? candidate.id,
@@ -324,11 +359,29 @@ export function buildDurableFromCandidate(
     norm_content_hash: normContentHash,
     created_at: lifecycle.createdAt,
     updated_at: lifecycle.createdAt,
+    source_file: sourceFile,
   };
 
-  if (lifecycle.validFrom) {
-    durable.valid_from = lifecycle.validFrom;
+  if (candidate.sourceContext) {
+    durable.source_context = candidate.sourceContext;
   }
+
+  if (candidate.project) {
+    durable.project = candidate.project;
+  }
+
+  if (validFrom) {
+    durable.valid_from = validFrom;
+  }
+
+  durable.claim_support_source_kind = primaryEvidence?.kind ?? "episode";
+  if (primaryEvidence?.locator) {
+    durable.claim_support_locator = primaryEvidence.locator;
+  }
+  if (primaryEvidence?.observedAt) {
+    durable.claim_support_observed_at = primaryEvidence.observedAt;
+  }
+  durable.claim_support_mode = "inferred";
 
   if (claimKey) {
     durable.claim_key = claimKey;
@@ -337,14 +390,6 @@ export function buildDurableFromCandidate(
     durable.claim_key_source = lifecycle.claimKeySource;
     durable.claim_key_confidence = lifecycle.claimKeyConfidence;
     durable.claim_key_rationale = lifecycle.claimKeyRationale;
-    durable.claim_support_source_kind = primaryEvidence?.kind ?? "episode";
-    if (primaryEvidence?.locator) {
-      durable.claim_support_locator = primaryEvidence.locator;
-    }
-    if (primaryEvidence?.observedAt) {
-      durable.claim_support_observed_at = primaryEvidence.observedAt;
-    }
-    durable.claim_support_mode = "inferred";
   }
 
   return durable;
@@ -386,6 +431,19 @@ function buildEpisodeTranscript(episode: DreamEpisodeEvidence): ParsedTranscript
 
 /** Converts one extracted entry into a mined candidate with episode provenance. */
 function toMinedCandidate(entry: StoreDurableInput, episode: DreamEpisodeEvidence): MinedCandidate {
+  const observedAt = episode.endedAt ?? episode.startedAt;
+  const project = resolveDurableProjectScope(
+    {
+      project: entry.project,
+      subject: entry.subject,
+      content: entry.content,
+      tags: entry.tags ?? [],
+      source_context: entry.source_context,
+      claim_key: entry.claim_key,
+    },
+    { sessionWorkspace: episode.project },
+  );
+
   return {
     type: entry.type,
     subject: entry.subject,
@@ -400,10 +458,49 @@ function toMinedCandidate(entry: StoreDurableInput, episode: DreamEpisodeEvidenc
       {
         kind: "episode",
         locator: episode.id,
-        observedAt: episode.endedAt ?? episode.startedAt,
+        observedAt,
       },
     ],
+    sessionId: episode.sessionId,
+    episodeStartedAt: episode.startedAt,
+    episodeEndedAt: observedAt,
+    sourceFile: buildEpisodeSourceFile(episode),
+    ...(entry.source_context ? { sourceContext: entry.source_context } : {}),
+    ...(project ? { project } : {}),
+    validFrom: observedAt,
   };
+}
+
+/** Builds the stable source locator persisted on dreamed durables. */
+export function buildEpisodeSourceFile(episode: Pick<DreamEpisodeEvidence, "id" | "sessionId">): string {
+  if (episode.sessionId) {
+    return `episode-session:${episode.sessionId}:${episode.id}`;
+  }
+
+  return `episode:${episode.id}`;
+}
+
+/** Loads dedup context from host-store durables written in one episode window. */
+async function loadSessionStoreContext(
+  candidate: Pick<MinedCandidate, "sessionId" | "episodeStartedAt" | "episodeEndedAt">,
+  port: DreamPort,
+  cache: Map<string, DreamSessionStoreContext>,
+): Promise<DreamSessionStoreContext> {
+  const sessionId = candidate.sessionId?.trim();
+  if (!sessionId) {
+    return { claimKeys: new Set(), normContentHashes: new Set() };
+  }
+
+  const cacheKey = `${sessionId}:${candidate.episodeStartedAt}:${candidate.episodeEndedAt}`;
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const durables = await port.listSessionHostStoreDurables(sessionId, candidate.episodeStartedAt, candidate.episodeEndedAt);
+  const resolved = buildDreamSessionStoreContext(toDreamSessionStoreDurables(durables));
+  cache.set(cacheKey, resolved);
+  return resolved;
 }
 
 /** Canonicalizes one optional candidate claim key, dropping invalid values. */

@@ -1,9 +1,11 @@
+import { buildEntryTraceProvenance, buildEntryTraceTimeline } from "../../app/memory/trace-timeline.js";
 import { DURABLE_VECTOR_INDEX_NAME } from "./schema.js";
 import { EMBEDDING_DIMENSIONS } from "../embeddings.js";
-import type { ClaimFamily, EntryTrace, MemoryStatusSnapshot, MemoryRepository, EntryRecallEvent } from "../../app/memory/ports.js";
+import type { ClaimFamily, EntryTrace, MemoryStatusSnapshot, MemoryRepository } from "../../app/memory/ports.js";
 import { resolveClaimSlotPolicy, type ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
 import type { Durable } from "../../core/types.js";
-import { buildActiveDurableClause, DURABLE_SELECT_COLUMNS, mapDurableRow, readNumber, readOptionalString, readRequiredString } from "./row-mapping.js";
+import { countRecallEventsForDurable, listDreamActionsForDurable, listProfileSnapshotsForDurable, listRecallEventsForDurable } from "./trace-queries.js";
+import { buildActiveDurableClause, DURABLE_SELECT_COLUMNS, mapDurableRow, readNumber } from "./row-mapping.js";
 import type { SqlExecutor } from "./queries.js";
 
 const ZERO_VECTOR = JSON.stringify(Array.from({ length: EMBEDDING_DIMENSIONS }, () => 0));
@@ -101,19 +103,36 @@ async function getEntryTrace(executor: SqlExecutor, entryId: string, claimSlotPo
     return null;
   }
 
-  const [supersededBy, supersedes, claimFamily, recallEvents] = await Promise.all([
+  const [supersededBy, supersedes, claimFamily, recallTotalCount, recallEvents, dreamActions, profileSnapshots] = await Promise.all([
     entry.superseded_by ? getDurableByIdIncludingInactive(executor, entry.superseded_by) : Promise.resolve(null),
     listSupersededEntries(executor, entry.id),
     entry.claim_key ? getClaimFamily(executor, entry.claim_key, claimSlotPolicyConfig) : Promise.resolve(undefined),
-    listRecallEvents(executor, entry.id),
+    countRecallEventsForDurable(executor, entry.id),
+    listRecallEventsForDurable(executor, entry.id),
+    listDreamActionsForDurable(executor, entry.id),
+    listProfileSnapshotsForDurable(executor, entry.id),
   ]);
+
+  const recall = {
+    totalCount: recallTotalCount,
+    recentEvents: recallEvents,
+  };
 
   return {
     entry,
     ...(supersededBy ? { supersededBy } : {}),
     supersedes,
     ...(claimFamily ? { claimFamily } : {}),
-    recallEvents,
+    recall,
+    provenance: buildEntryTraceProvenance(entry),
+    dreamActions,
+    profileSnapshots,
+    timeline: buildEntryTraceTimeline({
+      entry,
+      dreamActions,
+      recallEvents,
+      profileSnapshots,
+    }),
   };
 }
 
@@ -255,33 +274,4 @@ async function getClaimFamily(executor: SqlExecutor, claimKey: string, claimSlot
     slotPolicyReason: slotPolicy.reason,
     entries,
   };
-}
-
-/**
- * Lists recent recall telemetry rows for one entry.
- *
- * @param executor - SQL executor used for the lookup.
- * @param entryId - Entry identifier to inspect.
- * @returns Recent recall events ordered newest first.
- */
-async function listRecallEvents(executor: SqlExecutor, entryId: string): Promise<EntryRecallEvent[]> {
-  const result = await executor.execute({
-    sql: `
-      SELECT
-        query,
-        session_key,
-        recalled_at
-      FROM recall_events
-      WHERE durable_id = ?
-      ORDER BY recalled_at DESC
-      LIMIT 10
-    `,
-    args: [entryId],
-  });
-
-  return result.rows.map((row) => ({
-    query: readOptionalString(row, "query"),
-    sessionKey: readOptionalString(row, "session_key"),
-    recalledAt: readRequiredString(row, "recalled_at"),
-  }));
 }

@@ -35,6 +35,7 @@ import {
   getDreamHealthStats,
   listEpisodeEvidenceSince,
   listReconcileDurables,
+  listSessionHostStoreDurables,
   sumDurableImportanceCreatedSince,
 } from "./dreaming-queries.js";
 import type { SqlExecutor } from "./queries.js";
@@ -65,6 +66,7 @@ export function createDreamPort(executor: SqlExecutor): DreamPort {
     getActiveProfileSnapshot: async () => getActiveProfileSnapshot(executor),
     listReconcileDurables: async (query) => listReconcileDurables(executor, query),
     listEpisodeEvidenceSince: async (since, options) => listEpisodeEvidenceSince(executor, since, options),
+    listSessionHostStoreDurables: async (sessionId, startedAt, endedAt) => listSessionHostStoreDurables(executor, sessionId, startedAt, endedAt),
     findActiveDurablesByClaimKey: async (claimKey) => findActiveDurablesByClaimKey(executor, claimKey),
     findExistingNormContentHashes: async (hashes) => findExistingNormHashes(executor, hashes),
     insertDurable: async (durable, embedding, contentHash) => insertDurable(executor, durable, embedding, contentHash),

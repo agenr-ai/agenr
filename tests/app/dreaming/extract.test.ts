@@ -16,6 +16,8 @@ interface MinedDurableResponse {
   importance?: number;
   expiry?: string;
   tags?: string[];
+  source_context?: string;
+  project?: string;
 }
 
 /** Minimal extraction LLM double returning a fixed durable set per call. */
@@ -220,5 +222,168 @@ describe("dreaming extract stage", () => {
     expect(actions).toHaveLength(1);
     expect(actions[0]?.actionType).toBe("insert_durable");
     expect(actions[0]?.durableIds).toEqual([newCandidate?.id]);
+  });
+
+  it("still mines episodes but classifies host-store duplicates as known", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+    const sessionId = "session-with-live-store";
+
+    await insertDurable(client, {
+      id: "live-store-1",
+      subject: "user birthday and age",
+      content: "Jim's birthday is March 15. As of June 2026, he is 49.",
+      type: "fact",
+      claim_key: "user/birthday",
+      claim_key_source: "manual",
+      source_file: `skeln-session:skeln:session:${sessionId}:cwd:/Users/jmartin/Code/agenr`,
+      created_at: "2026-04-04T10:30:00.000Z",
+      updated_at: "2026-04-04T10:30:00.000Z",
+    });
+
+    await insertEpisode(client, {
+      id: "ep-live-store",
+      summary: "Session where the user shared family details that were already stored live.",
+      startedAt: "2026-04-04T10:00:00.000Z",
+      endedAt: "2026-04-04T11:00:00.000Z",
+    });
+    await client.execute({
+      sql: `UPDATE episodes SET source_id = ? WHERE id = ?`,
+      args: [sessionId, "ep-live-store"],
+    });
+
+    const llm = new FakeExtractLlm([
+      {
+        type: "fact",
+        subject: "Jim birthday",
+        content: "Jim Martin is 49 years old and his birthday is March 15.",
+        claim_key: "user/birthday",
+      },
+    ]);
+
+    const result = await runExtractStage(
+      { now: () => TEST_NOW, maxEpisodes: 8, contextLookupEnabled: true, costCapUsd: 10 },
+      { port, createExtractLlm: () => llm },
+    );
+
+    expect(llm.calls).toBe(1);
+    expect(result.summary.episodesScanned).toBe(1);
+    expect(result.summary.knownCandidates).toBe(1);
+    expect(result.summary.newCandidates).toBe(0);
+    expect(result.candidates[0]?.disposition).toBe("known");
+  });
+
+  it("still mines episodes when no host store writes exist for the session", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+
+    await insertEpisode(client, {
+      id: "ep-implicit",
+      summary: "Session where the user mentioned an oat milk coffee preference in passing.",
+      startedAt: "2026-04-04T10:00:00.000Z",
+      endedAt: "2026-04-04T11:00:00.000Z",
+    });
+    await client.execute({
+      sql: `UPDATE episodes SET source_id = ? WHERE id = ?`,
+      args: ["session-implicit-only", "ep-implicit"],
+    });
+
+    const llm = new FakeExtractLlm([
+      {
+        type: "preference",
+        subject: "Coffee",
+        content: "Prefers oat milk in coffee during daily standups.",
+        claim_key: "user/coffee_preference",
+      },
+    ]);
+
+    const result = await runExtractStage(
+      { now: () => TEST_NOW, maxEpisodes: 8, contextLookupEnabled: true, costCapUsd: 10 },
+      { port, createExtractLlm: () => llm },
+    );
+
+    expect(llm.calls).toBe(1);
+    expect(result.summary.episodesScanned).toBe(1);
+    expect(result.summary.newCandidates).toBe(1);
+  });
+
+  it("does not stamp episode workspace onto personal durables without an explicit project signal", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+
+    await insertEpisode(client, {
+      id: "ep-family",
+      summary: "Session where the user shared family details and a birthday.",
+      project: "skeln",
+    });
+
+    const llm = new FakeExtractLlm([
+      {
+        type: "fact",
+        subject: "Jim birthday",
+        content: "Jim Martin is 49 years old and his birthday is March 15.",
+        claim_key: "jim/birthday",
+        source_context: "User shared family details during casual conversation.",
+      },
+    ]);
+
+    const extract = await runExtractStage(
+      { now: () => TEST_NOW, maxEpisodes: 8, contextLookupEnabled: true, costCapUsd: 10 },
+      { port, createExtractLlm: () => llm },
+    );
+
+    expect(extract.candidates[0]?.project).toBeUndefined();
+
+    const runId = await port.createRun({ tier: "light", dryRun: false });
+    await applyExtractedDurables({ runId, candidates: extract.candidates, now: () => TEST_NOW }, { port, embedding: createDeterministicEmbedding() });
+
+    const inserted = await getDurable(client, extract.candidates[0]?.id ?? "");
+    expect(inserted?.project).toBeUndefined();
+  });
+
+  it("persists episode provenance and claim support on inserted durables", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+
+    await insertEpisode(client, {
+      id: "ep-provenance",
+      summary: "Session where the user shared a durable coffee preference.",
+      endedAt: "2026-04-04T11:30:00.000Z",
+      project: "agenr",
+    });
+
+    const llm = new FakeExtractLlm([
+      {
+        type: "decision",
+        subject: "agenr package manager",
+        content: "Agenr uses pnpm for dependency management and workspace scripts.",
+        claim_key: "agenr/package_manager",
+        source_context: "User confirmed the agenr repo package manager policy.",
+        project: "agenr",
+      },
+    ]);
+
+    const runId = await port.createRun({ tier: "light", dryRun: false });
+    const extract = await runExtractStage(
+      { now: () => TEST_NOW, maxEpisodes: 8, contextLookupEnabled: true, costCapUsd: 10 },
+      { port, createExtractLlm: () => llm },
+    );
+
+    const applied = await applyExtractedDurables(
+      { runId, candidates: extract.candidates, now: () => TEST_NOW },
+      { port, embedding: createDeterministicEmbedding() },
+    );
+    expect(applied.inserted).toBe(1);
+
+    const inserted = await getDurable(client, extract.candidates[0]?.id ?? "");
+    expect(inserted?.source_file).toBe("episode-session:session-ep-provenance:ep-provenance");
+    expect(inserted?.source_context).toBe("User confirmed the agenr repo package manager policy.");
+    expect(inserted?.valid_from).toBe("2026-04-04T11:30:00.000Z");
+    expect(inserted?.project).toBe("agenr");
+    expect(inserted?.claim_key).toBe("agenr/package_manager");
+    expect(inserted?.claim_key_source).toBe("dreaming_extract");
+    expect(inserted?.claim_support_source_kind).toBe("episode");
+    expect(inserted?.claim_support_locator).toBe("ep-provenance");
+    expect(inserted?.claim_support_observed_at).toBe("2026-04-04T11:30:00.000Z");
   });
 });

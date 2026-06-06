@@ -77,6 +77,7 @@ function createDreamPortDouble(overrides: Partial<DreamPort> = {}): DreamPort {
     })),
     listReconcileDurables: vi.fn(async () => []),
     listEpisodeEvidenceSince: vi.fn(async () => []),
+    listSessionHostStoreDurables: vi.fn(async () => []),
     findActiveDurablesByClaimKey: vi.fn(async () => []),
     findExistingNormContentHashes: vi.fn(async () => new Set<string>()),
     insertDurable: vi.fn(async () => "durable-1"),

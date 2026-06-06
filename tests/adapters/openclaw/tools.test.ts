@@ -818,7 +818,7 @@ describe("agenr OpenClaw tools", () => {
     expect(replacementEntry?.claim_support_locator).toContain("#agenr_store");
     expect(replacementEntry?.claim_support_observed_at).toMatch(/^20\d\d-/);
     expect(expectTextContent(traceResult.content[0])).toContain("superseded_by=");
-    expect(expectTextContent(traceResult.content[0])).toContain("supersession_kind=update");
+    expect(expectTextContent(traceResult.content[0])).toContain("supersession=update");
     expect(expectTextContent(traceResult.content[0])).toContain("claim_key=jim/home_city");
     expect(expectTextContent(traceResult.content[0])).toContain("claim_family=jim/home_city");
 

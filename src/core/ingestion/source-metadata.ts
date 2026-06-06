@@ -1,9 +1,7 @@
-import path from "node:path";
-
+import { resolveDurableProjectScope } from "../store/project-scope.js";
 import type { ParsedTranscript, StoreDurableInput } from "../types.js";
 
 const SNAPSHOT_STYLE_SOURCE_FILE_PATTERN = /\.jsonl\.(?:reset|deleted)\./iu;
-const IGNORED_PROJECT_DIRECTORY_NAMES = new Set(["", ".", "..", "users", "user", "home", "tmp", "var"]);
 
 /**
  * Returns whether one source-file value still points at a reset/deleted snapshot path.
@@ -51,75 +49,20 @@ export function resolveTranscriptUserId(transcript: ParsedTranscript, entryUserI
 }
 
 /**
- * Resolves one stored project identifier from explicit transcript metadata or a matching workspace hint.
+ * Resolves one stored project identifier using explicit entry metadata and conservative workspace hints.
  *
  * @param transcript - Parsed transcript metadata.
  * @param entry - Extracted row that may already carry explicit project metadata.
- * @returns Stored project identifier when the source safely supports one.
+ * @returns Stored project identifier when the durable knowledge is scoped to a workspace.
  */
 export function resolveTranscriptProject(
   transcript: ParsedTranscript,
-  entry: Pick<StoreDurableInput, "project" | "subject" | "content" | "tags" | "source_context">,
+  entry: Pick<StoreDurableInput, "project" | "subject" | "content" | "tags" | "source_context" | "claim_key">,
 ): string | undefined {
-  const explicitProject = normalizeOptionalString(entry.project) ?? normalizeOptionalString(transcript.metadata.project);
-  if (explicitProject) {
-    return explicitProject;
-  }
-
-  const workingDirectoryProject = deriveWorkingDirectoryProject(transcript.metadata.workingDirectory);
-  if (!workingDirectoryProject) {
-    return undefined;
-  }
-
-  return entryContainsProjectSignal(entry, workingDirectoryProject) ? workingDirectoryProject : undefined;
-}
-
-/** Derives a conservative project identifier from a working-directory path. */
-function deriveWorkingDirectoryProject(workingDirectory?: string): string | undefined {
-  const normalizedWorkingDirectory = normalizeOptionalString(workingDirectory);
-  if (!normalizedWorkingDirectory) {
-    return undefined;
-  }
-
-  const candidate = normalizeMetadataIdentifier(path.basename(normalizedWorkingDirectory));
-  if (!candidate || IGNORED_PROJECT_DIRECTORY_NAMES.has(candidate)) {
-    return undefined;
-  }
-
-  return candidate;
-}
-
-/** Returns whether one entry visibly references the candidate project identifier. */
-function entryContainsProjectSignal(entry: Pick<StoreDurableInput, "subject" | "content" | "tags" | "source_context">, project: string): boolean {
-  const projectTokens = project.split("_").filter((token) => token.length > 0);
-  if (projectTokens.length === 0) {
-    return false;
-  }
-
-  return [entry.subject, entry.source_context].some((value) => {
-    const tokens = tokenizeText(value);
-    return projectTokens.every((token) => tokens.has(token));
+  return resolveDurableProjectScope(entry, {
+    sessionWorkspace: transcript.metadata.project,
+    workingDirectory: transcript.metadata.workingDirectory,
   });
-}
-
-/** Normalizes one identifier into lowercase snake_case for metadata matching. */
-function normalizeMetadataIdentifier(value?: string): string | undefined {
-  const normalized = normalizeOptionalString(value)
-    ?.toLowerCase()
-    .replace(/[^a-z0-9]+/gu, "_")
-    .replace(/^_+|_+$/gu, "");
-  return normalized && normalized.length > 0 ? normalized : undefined;
-}
-
-/** Tokenizes free text into lowercase alphanumeric words for conservative matching. */
-function tokenizeText(value?: string): Set<string> {
-  return new Set(
-    (value ?? "")
-      .toLowerCase()
-      .split(/[^a-z0-9]+/u)
-      .map((token) => token.trim())
-      .filter((token) => token.length > 0),
-  );
 }
 
 /** Trims one optional string and drops the empty result. */

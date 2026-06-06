@@ -25,81 +25,9 @@ describe("registerTraceCommand", () => {
     expect(program.commands.some((command) => command.name() === "trace")).toBe(true);
   });
 
-  it("renders claim-family lineage for one traced entry", async () => {
+  it("renders claim-family lineage and timeline sections for one traced entry", async () => {
     const { program, stdout } = createProgramWithCapturedOutput();
-    loadEntryTraceRuntimeMock.mockResolvedValue({
-      entry: {
-        id: "entry-1",
-        type: "fact",
-        subject: "Jim home city",
-        content: "Jim lives in Austin.",
-        importance: 7,
-        expiry: "permanent",
-        tags: [],
-        quality_score: 0.5,
-        recall_count: 0,
-        claim_key: "jim/home_city",
-        claim_key_status: "trusted",
-        superseded_by: "entry-2",
-        created_at: "2026-03-01T00:00:00.000Z",
-        updated_at: "2026-03-01T00:00:00.000Z",
-      },
-      supersededBy: {
-        id: "entry-2",
-        type: "fact",
-        subject: "Jim home city",
-        content: "Jim lives in Denver.",
-        importance: 8,
-        expiry: "permanent",
-        tags: [],
-        quality_score: 0.5,
-        recall_count: 0,
-        claim_key: "jim/home_city",
-        claim_key_status: "trusted",
-        created_at: "2026-03-20T00:00:00.000Z",
-        updated_at: "2026-03-20T00:00:00.000Z",
-      },
-      supersedes: [],
-      claimFamily: {
-        claimKey: "jim/home_city",
-        slotPolicy: "exclusive",
-        slotPolicyReason: 'Attribute head "home" defaults to exclusive current-state shaping.',
-        entries: [
-          {
-            id: "entry-1",
-            type: "fact",
-            subject: "Jim home city",
-            content: "Jim lives in Austin.",
-            importance: 7,
-            expiry: "permanent",
-            tags: [],
-            quality_score: 0.5,
-            recall_count: 0,
-            claim_key: "jim/home_city",
-            claim_key_status: "trusted",
-            superseded_by: "entry-2",
-            created_at: "2026-03-01T00:00:00.000Z",
-            updated_at: "2026-03-01T00:00:00.000Z",
-          },
-          {
-            id: "entry-2",
-            type: "fact",
-            subject: "Jim home city",
-            content: "Jim lives in Denver.",
-            importance: 8,
-            expiry: "permanent",
-            tags: [],
-            quality_score: 0.5,
-            recall_count: 0,
-            claim_key: "jim/home_city",
-            claim_key_status: "trusted",
-            created_at: "2026-03-20T00:00:00.000Z",
-            updated_at: "2026-03-20T00:00:00.000Z",
-          },
-        ],
-      },
-      recallEvents: [],
-    });
+    loadEntryTraceRuntimeMock.mockResolvedValue(createTrace());
 
     await program.parseAsync(["trace", "--id", "entry-1"], { from: "user" });
 
@@ -110,71 +38,15 @@ describe("registerTraceCommand", () => {
       }),
     );
     expect(stdout.join("")).toContain("Trace for entry-1 | Jim home city");
-    expect(stdout.join("")).toContain("claim_family=jim/home_city | slot_policy=exclusive | entry-1:superseded:trusted, entry-2:current:trusted");
-    expect(stdout.join("")).toContain("transition=entry-1 -> entry-2");
+    expect(stdout.join("")).toContain("[lineage]");
+    expect(stdout.join("")).toContain("claim_family=jim/home_city");
+    expect(stdout.join("")).toContain("[timeline]");
+    expect(stdout.join("")).toContain("Dream stale");
   });
 
   it("renders structured JSON trace output when requested", async () => {
     const { program, stdout } = createProgramWithCapturedOutput();
-    loadEntryTraceRuntimeMock.mockResolvedValue({
-      entry: {
-        id: "entry-1",
-        type: "fact",
-        subject: "Jim home city",
-        content: "Jim lives in Austin.",
-        importance: 7,
-        expiry: "permanent",
-        tags: [],
-        quality_score: 0.5,
-        recall_count: 0,
-        claim_key: "jim/home_city",
-        claim_key_status: "trusted",
-        superseded_by: "entry-2",
-        created_at: "2026-03-01T00:00:00.000Z",
-        updated_at: "2026-03-01T00:00:00.000Z",
-      },
-      supersededBy: undefined,
-      supersedes: [],
-      claimFamily: {
-        claimKey: "jim/home_city",
-        slotPolicy: "exclusive",
-        slotPolicyReason: 'Attribute head "home" defaults to exclusive current-state shaping.',
-        entries: [
-          {
-            id: "entry-1",
-            type: "fact",
-            subject: "Jim home city",
-            content: "Jim lives in Austin.",
-            importance: 7,
-            expiry: "permanent",
-            tags: [],
-            quality_score: 0.5,
-            recall_count: 0,
-            claim_key: "jim/home_city",
-            claim_key_status: "trusted",
-            superseded_by: "entry-2",
-            created_at: "2026-03-01T00:00:00.000Z",
-            updated_at: "2026-03-01T00:00:00.000Z",
-          },
-          {
-            id: "entry-2",
-            type: "fact",
-            subject: "Jim home city",
-            content: "Jim lives in Denver.",
-            importance: 8,
-            expiry: "permanent",
-            tags: [],
-            quality_score: 0.5,
-            recall_count: 0,
-            claim_key: "jim/home_city",
-            claim_key_status: "trusted",
-            created_at: "2026-03-20T00:00:00.000Z",
-            updated_at: "2026-03-20T00:00:00.000Z",
-          },
-        ],
-      },
-      recallEvents: [{ recalledAt: "2026-03-22T00:00:00.000Z", query: "Jim home city" }],
-    });
+    loadEntryTraceRuntimeMock.mockResolvedValue(createTrace());
 
     await program.parseAsync(["trace", "--id", "entry-1", "--json"], { from: "user" });
 
@@ -182,19 +54,137 @@ describe("registerTraceCommand", () => {
       expect.objectContaining({
         entry: expect.objectContaining({
           id: "entry-1",
-          slotPolicy: "exclusive",
-          slotPolicyReason: 'Attribute head "home" defaults to exclusive current-state shaping.',
           memoryState: "superseded",
         }),
         claimFamily: expect.objectContaining({
           claimKey: "jim/home_city",
           transition: "entry-1 -> entry-2",
         }),
-        recallEvents: [{ recalledAt: "2026-03-22T00:00:00.000Z", query: "Jim home city" }],
+        recall: expect.objectContaining({
+          totalCount: 1,
+          recentEvents: [{ recalledAt: "2026-03-22T00:00:00.000Z", query: "Jim home city" }],
+        }),
+        dreamActions: [
+          expect.objectContaining({
+            actionType: "stale",
+            runId: "run-1",
+          }),
+        ],
+        timeline: expect.arrayContaining([
+          expect.objectContaining({
+            kind: "dream",
+          }),
+        ]),
       }),
     );
   });
 });
+
+function createTrace() {
+  return {
+    entry: {
+      id: "entry-1",
+      type: "fact",
+      subject: "Jim home city",
+      content: "Jim lives in Austin.",
+      importance: 7,
+      expiry: "permanent",
+      tags: [],
+      quality_score: 0.5,
+      recall_count: 0,
+      claim_key: "jim/home_city",
+      claim_key_status: "trusted",
+      superseded_by: "entry-2",
+      created_at: "2026-03-01T00:00:00.000Z",
+      updated_at: "2026-03-01T00:00:00.000Z",
+    },
+    supersededBy: {
+      id: "entry-2",
+      type: "fact",
+      subject: "Jim home city",
+      content: "Jim lives in Denver.",
+      importance: 8,
+      expiry: "permanent",
+      tags: [],
+      quality_score: 0.5,
+      recall_count: 0,
+      claim_key: "jim/home_city",
+      claim_key_status: "trusted",
+      created_at: "2026-03-20T00:00:00.000Z",
+      updated_at: "2026-03-20T00:00:00.000Z",
+    },
+    supersedes: [],
+    claimFamily: {
+      claimKey: "jim/home_city",
+      slotPolicy: "exclusive",
+      slotPolicyReason: 'Attribute head "home" defaults to exclusive current-state shaping.',
+      entries: [
+        {
+          id: "entry-1",
+          type: "fact",
+          subject: "Jim home city",
+          content: "Jim lives in Austin.",
+          importance: 7,
+          expiry: "permanent",
+          tags: [],
+          quality_score: 0.5,
+          recall_count: 0,
+          claim_key: "jim/home_city",
+          claim_key_status: "trusted",
+          superseded_by: "entry-2",
+          created_at: "2026-03-01T00:00:00.000Z",
+          updated_at: "2026-03-01T00:00:00.000Z",
+        },
+        {
+          id: "entry-2",
+          type: "fact",
+          subject: "Jim home city",
+          content: "Jim lives in Denver.",
+          importance: 8,
+          expiry: "permanent",
+          tags: [],
+          quality_score: 0.5,
+          recall_count: 0,
+          claim_key: "jim/home_city",
+          claim_key_status: "trusted",
+          created_at: "2026-03-20T00:00:00.000Z",
+          updated_at: "2026-03-20T00:00:00.000Z",
+        },
+      ],
+    },
+    recall: {
+      totalCount: 1,
+      recentEvents: [{ recalledAt: "2026-03-22T00:00:00.000Z", query: "Jim home city" }],
+    },
+    provenance: {
+      sourceFile: "episode:abc",
+    },
+    dreamActions: [
+      {
+        id: "action-1",
+        runId: "run-1",
+        actionType: "stale",
+        reasoning: "Dream prune staled a low-signal durable after synthesis.",
+        createdAt: "2026-03-21T00:00:00.000Z",
+      },
+    ],
+    profileSnapshots: [],
+    timeline: [
+      {
+        at: "2026-03-01T00:00:00.000Z",
+        kind: "created",
+        label: "Durable created",
+      },
+      {
+        at: "2026-03-21T00:00:00.000Z",
+        kind: "dream",
+        label: "Dream stale",
+        runId: "run-1",
+        actionType: "stale",
+      },
+    ],
+  };
+}
 
 function createProgramWithCapturedOutput(): { program: Command; stdout: string[]; stderr: string[] } {
   const stdout: string[] = [];

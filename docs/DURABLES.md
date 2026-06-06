@@ -96,6 +96,7 @@ Notable properties:
 - `source_file` participates in the exact content hash
 - `source_context` is stored for provenance but does not affect dedup
 - `user_id` and `project` are stored when supplied, but do not affect dedup
+- `project` tags knowledge _about_ a workspace or product, not the workspace where a conversation happened. Store, ingest, and dreaming resolve it conservatively: explicit tool or extract output wins; otherwise the session workspace or working-directory basename applies only when the durable content or claim key visibly references that workspace
 - `created_at` is trimmed and preserved when supplied, but is not format-validated by the store validator
 - `supersedes` lets a caller explicitly mark one active entry as replaced by the new stored row
 - `claim_key` and its lifecycle/support fields may be supplied directly, inferred earlier by ingest, or extracted inside the store pipeline

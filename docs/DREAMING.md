@@ -135,10 +135,12 @@ These tables ship in schema version `5` alongside `durables`. This build can mig
 ## Pipeline
 
 1. **Scan** - load active durables and claim-key lifecycle counters for the requested scope.
-2. **Extract** - mine durable candidates from episode evidence since the last successful run, then classify each candidate against the active corpus:
+2. **Extract** - mine durable candidates from episode evidence since the last successful run using the dreaming-specific extract prompt in `src/core/dreaming/prompts.ts` (not the ingest transcript prompt), then classify each candidate against the active corpus:
    - content-hash equality marks a candidate `known` (dropped, no write or embedding);
    - an active claim-key family match (when context-lookup is enabled) marks it `refines` and records the predecessor for the temporalize stage;
-   - everything else is `new` and is inserted on apply with a `dreaming_extract` claim-key source and `tentative` status.
+   - everything else is `new` and is inserted on apply with a `dreaming_extract` claim-key source and `tentative` status when a claim key is emitted;
+   - apply persists episode provenance on each insert: `source_file` (`episode:<id>` or `episode-session:<sessionId>:<id>`), `source_context`, `valid_from` (episode end or start), conservative `project` scope via `resolveDurableProjectScope()` (explicit extract output, claim-key entity match, or visible workspace reference - never a blind session-workspace stamp), and episode support metadata even when claim keys are still missing.
+   - when the host already wrote `agenr_store` durables in that session window, passes those rows into the mining prompt and classifies re-emitted duplicates as `known` using session claim keys and normalized content hashes. Episode mining still runs so implicit preferences and other facts not captured live can be mined normally.
 3. **Reconcile** - run deterministic claim-key quality maintenance (missing-key backfill, malformed-key normalization, and related structural fixes covered by scenario fixtures).
 4. **Temporalize** - apply supersession-based revision to each `refines` candidate. The stage never rewrites content in place: it inserts a successor durable that inherits the predecessor's canonical claim key, closes the predecessor's valid-time window at the revision instant, and links the predecessor to the successor through `superseded_by`. Point-in-time recall before the revision still surfaces the predecessor; current-state recall surfaces the successor.
 5. **Project** - rank current active durables into a bounded profile snapshot candidate and keep directive ids separate. Dry runs and project-scoped runs report the projected bundle without writing or globally activating it. Successful unscoped apply runs insert a `profile_snapshots` row and mark it active in `dream_state` in the final workflow transaction.

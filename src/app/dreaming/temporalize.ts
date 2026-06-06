@@ -123,7 +123,7 @@ async function applyRevision(
   // The successor inherits the family expiry so revision never widens durability.
   successor.expiry = predecessor.expiry;
 
-  const contentHash = successor.content_hash ?? computeContentHash(successor.content);
+  const contentHash = successor.content_hash ?? computeContentHash(successor.content, successor.source_file);
   const [successorEmbedding = []] = await deps.embedding.embed([composeEmbeddingText(successor)]);
 
   await deps.port.withTransaction(async (tx) => {
