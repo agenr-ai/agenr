@@ -1185,6 +1185,90 @@ describe("runBeforeTurn", () => {
     expect(result.diagnostics.abstained).toBe(true);
   });
 
+  it("surfaces proactive topic directives when the current turn mentions the topic", async () => {
+    const proactiveDirective = createEntry({
+      id: "dir-stan-topic",
+      type: "directive",
+      subject: "stan check-in directive",
+      content: "When Stan comes up, ask whether his async standup preference still holds.",
+      claim_key: "user/memory_directive/stan_check_in",
+      directive_polarity: "proactive",
+      directive_trigger: "topic:stan",
+      expiry: "core",
+      importance: 9,
+    });
+    const deps = createDeps({
+      listActiveTopicProactiveDirectives: vi.fn(async () => [proactiveDirective]),
+    });
+
+    const result = await runBeforeTurn(
+      {
+        currentTurnText: "What does Stan prefer for standups?",
+        policy: {
+          enableProcedureSuggestion: false,
+          recallThreshold: 1,
+        },
+      },
+      deps,
+    );
+
+    expect(result.durableMemory).toMatchObject([
+      {
+        sourceKind: "directive",
+        entry: { id: "dir-stan-topic" },
+      },
+    ]);
+    expect(result.diagnostics.topicProactiveDirectiveCandidateCount).toBe(1);
+    expect(result.diagnostics.topicProactiveDirectiveMatchedCount).toBe(1);
+    expect(result.diagnostics.abstained).toBe(false);
+  });
+
+  it("suppresses proactive topic directives when an abstain directive blocks the same topic", async () => {
+    const proactiveDirective = createEntry({
+      id: "dir-stan-topic",
+      type: "directive",
+      subject: "stan check-in directive",
+      content: "When Stan comes up, ask whether his async standup preference still holds.",
+      claim_key: "user/memory_directive/stan_check_in",
+      directive_polarity: "proactive",
+      directive_trigger: "topic:stan",
+      expiry: "core",
+      importance: 9,
+    });
+    const abstainDirective = createEntry({
+      id: "dir-no-stan",
+      type: "directive",
+      subject: "memory directive",
+      content: "Do not mention Stan.",
+      claim_key: "user/memory_directive/do_not_mention_stan",
+      directive_polarity: "abstain",
+      directive_trigger: "always",
+      expiry: "core",
+      importance: 10,
+    });
+    const deps = createDeps({
+      listActiveTopicProactiveDirectives: vi.fn(async () => [proactiveDirective]),
+      listActiveAbstainDirectives: vi.fn(async () => [abstainDirective]),
+    });
+
+    const result = await runBeforeTurn(
+      {
+        currentTurnText: "What does Stan prefer for standups?",
+        policy: {
+          enableProcedureSuggestion: false,
+          recallThreshold: 1,
+        },
+      },
+      deps,
+    );
+
+    expect(result.durableMemory).toEqual([]);
+    expect(result.diagnostics.directiveAbstentions).toEqual([
+      { entryId: "dir-stan-topic", reason: "directive_topic", directiveId: "dir-no-stan", blockedTerm: "stan" },
+    ]);
+    expect(result.diagnostics.abstained).toBe(true);
+  });
+
   it("leaves durable memory untouched when no directive lookup is wired", async () => {
     const stanEntry = createEntry({
       id: "fact-stan",
@@ -1221,6 +1305,7 @@ function createDeps(
     procedureVectorMatches?: Array<{ procedure: Procedure; vectorSim: number }>;
     embedQuery?: BeforeTurnDeps["embedQuery"];
     listActiveAbstainDirectives?: BeforeTurnDeps["listActiveAbstainDirectives"];
+    listActiveTopicProactiveDirectives?: BeforeTurnDeps["listActiveTopicProactiveDirectives"];
   } = {},
 ): BeforeTurnDeps & {
   procedures: ProcedureDatabasePort & {
@@ -1256,6 +1341,7 @@ function createDeps(
     procedures,
     ...(options.embedQuery ? { embedQuery: options.embedQuery } : {}),
     ...(options.listActiveAbstainDirectives ? { listActiveAbstainDirectives: options.listActiveAbstainDirectives } : {}),
+    ...(options.listActiveTopicProactiveDirectives ? { listActiveTopicProactiveDirectives: options.listActiveTopicProactiveDirectives } : {}),
   };
 }
 
@@ -1303,6 +1389,8 @@ function createEntry(overrides: Partial<Durable> = {}): Durable {
     superseded_by: overrides.superseded_by,
     valid_from: overrides.valid_from,
     valid_to: overrides.valid_to,
+    directive_polarity: overrides.directive_polarity,
+    directive_trigger: overrides.directive_trigger,
     claim_key: overrides.claim_key,
     claim_key_raw: overrides.claim_key_raw,
     claim_key_status: overrides.claim_key_status,

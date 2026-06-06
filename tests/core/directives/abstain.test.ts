@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { collectAbstainDirectives, findAbstainViolation, parseAbstainDirective } from "../../../src/core/directives/abstain.js";
+import {
+  collectAbstainDirectives,
+  findAbstainViolation,
+  normalizeTextForPhraseMatch,
+  parseAbstainDirective,
+  textMatchesTopicTrigger,
+  textMentionsPhrase,
+} from "../../../src/core/directives/abstain.js";
 import {
   isDirectiveDurable,
   MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX,
@@ -57,6 +64,16 @@ describe("directive metadata", () => {
     );
 
     expect(metadata).toEqual({ polarity: "proactive", trigger: "session_start" });
+  });
+});
+
+describe("topic trigger matching", () => {
+  it("matches whole-word topic phrases in normalized turn text", () => {
+    const haystack = normalizeTextForPhraseMatch("What does Stan prefer for standups?");
+
+    expect(textMentionsPhrase(haystack, "stan")).toBe(true);
+    expect(textMatchesTopicTrigger(haystack, "topic:stan")).toBe(true);
+    expect(textMatchesTopicTrigger(haystack, "topic:standup")).toBe(false);
   });
 });
 

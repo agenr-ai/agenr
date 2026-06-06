@@ -173,6 +173,44 @@ export function findAbstainViolation(entry: Pick<Durable, "id" | "subject" | "co
 }
 
 /**
+ * Normalizes text for whole-phrase directive topic matching.
+ *
+ * @param value - Raw text.
+ * @returns Lowercase whitespace-collapsed text.
+ */
+export function normalizeTextForPhraseMatch(value: string): string {
+  return normalizeForMatch(value);
+}
+
+/**
+ * Returns whether normalized text mentions one normalized phrase on word
+ * boundaries.
+ *
+ * @param normalizedHaystack - Normalized candidate text.
+ * @param normalizedPhrase - Normalized topic phrase.
+ * @returns True when the phrase appears on word boundaries.
+ */
+export function textMentionsPhrase(normalizedHaystack: string, normalizedPhrase: string): boolean {
+  return mentionsBlockedTerm(normalizedHaystack, normalizedPhrase);
+}
+
+/**
+ * Returns whether normalized text matches one proactive `topic:` trigger.
+ *
+ * @param normalizedHaystack - Normalized turn or query text.
+ * @param trigger - Parsed directive trigger value.
+ * @returns True when the trigger is topic-scoped and the topic appears in text.
+ */
+export function textMatchesTopicTrigger(normalizedHaystack: string, trigger: string): boolean {
+  if (!trigger.startsWith("topic:")) {
+    return false;
+  }
+
+  const topic = trigger.slice("topic:".length);
+  return textMentionsPhrase(normalizedHaystack, topic);
+}
+
+/**
  * Extracts normalized blocked topic phrases from one directive durable.
  *
  * @param entry - Directive durable supplying content and subject text.

@@ -182,7 +182,7 @@ const STORE_TOOL_PARAMETERS = {
     trigger: {
       type: "string",
       description:
-        "Optional when type is directive. Use session_start, always, or topic:<term>. Defaults to session_start for proactive directives and always for abstain directives.",
+        "Optional when type is directive. Use session_start or always for proactive directives that should surface at session start; use topic:<term> for proactive directives that should surface during before-turn when the user mentions the topic; use always for abstain directives. Defaults to session_start for proactive directives and always for abstain directives.",
     },
     validFrom: {
       type: "string",

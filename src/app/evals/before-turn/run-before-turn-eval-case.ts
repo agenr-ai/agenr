@@ -148,6 +148,7 @@ export async function runBeforeTurnEvalCase(
         procedures: activeSandbox.procedureDatabase,
         ...(evalNow ? { now: evalNow } : {}),
         listActiveAbstainDirectives: () => activeSandbox.listActiveAbstainDirectives(evalNow),
+        listActiveTopicProactiveDirectives: () => activeSandbox.listActiveTopicProactiveDirectives(evalNow),
         embedQuery: embeddingSupport.port
           ? async (text: string) => {
               const vectors = await embeddingSupport.port!.embed([text]);

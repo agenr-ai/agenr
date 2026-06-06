@@ -173,7 +173,7 @@ export interface BeforeTurnPatchItem {
   /** Hydrated durable entry selected for the active turn. */
   entry: Durable;
   /** Source channel for this surfaced item. */
-  sourceKind: "turn_recall";
+  sourceKind: "turn_recall" | "directive";
   /** Final ranking score from durable-memory recall. */
   score: number;
   /** Concise explanation of why the item surfaced. */
@@ -234,6 +234,10 @@ export interface BeforeTurnPatchDiagnostics {
   durableRecallUsed: boolean;
   /** Count of durable-memory candidates considered before final shaping. */
   durableRecallCandidateCount: number;
+  /** Count of active topic-triggered proactive directives considered. */
+  topicProactiveDirectiveCandidateCount?: number;
+  /** Count of topic-triggered proactive directives matched to the current turn. */
+  topicProactiveDirectiveMatchedCount?: number;
   /** Typed trace emitted by the shared durable recall pipeline. */
   durableRecallTrace?: RecallExecutionTraceSummary;
   /** Optional diagnostics for a local before-turn directness rerank pass. */

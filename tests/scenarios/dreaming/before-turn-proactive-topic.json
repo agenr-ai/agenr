@@ -1,0 +1,34 @@
+{
+  "id": "before-turn-proactive-topic",
+  "description": "A proactive topic directive surfaces during before-turn when the user mentions the topic.",
+  "kind": "before_turn",
+  "now": "2026-03-26T12:00:00.000Z",
+  "durables": [],
+  "directives": [
+    {
+      "id": "dir-stan-topic",
+      "type": "directive",
+      "subject": "stan check-in directive",
+      "content": "When Stan comes up, ask whether his async standup preference still holds.",
+      "claim_key": "user/memory_directive/stan_check_in",
+      "directive_polarity": "proactive",
+      "directive_trigger": "topic:stan",
+      "expiry": "core",
+      "importance": 9,
+      "created_at": "2026-02-10T00:00:00.000Z"
+    }
+  ],
+  "beforeTurn": {
+    "currentTurnText": "What does Stan prefer for standups?"
+  },
+  "policy": {
+    "enableProcedureSuggestion": false,
+    "recallThreshold": 1,
+    "maxDurableEntries": 5,
+    "maxHighConfidenceDurableEntries": 5,
+    "highConfidenceRecallThreshold": 0
+  },
+  "expect": {
+    "includesEntryIds": ["dir-stan-topic"]
+  }
+}

@@ -72,3 +72,30 @@ export async function listActiveSessionStartProactiveDirectives(executor: SqlExe
 
   return result.rows.map((row) => mapDurableRow(row));
 }
+
+/**
+ * Lists active proactive directives whose trigger is topic-scoped.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @returns Active topic-triggered proactive directive durables, highest priority first.
+ */
+export async function listActiveTopicProactiveDirectives(executor: SqlExecutor, now = new Date()): Promise<Durable[]> {
+  const nowIso = now.toISOString();
+  const result = await executor.execute({
+    sql: `
+      SELECT
+        ${DURABLE_SELECT_COLUMNS}
+      FROM durables
+      WHERE ${buildActiveDurableClause()}
+        AND type = 'directive'
+        AND directive_polarity = 'proactive'
+        AND directive_trigger LIKE 'topic:%'
+        AND ${buildValidAsOfClause()}
+      ORDER BY importance DESC, created_at DESC
+      LIMIT ?
+    `,
+    args: [nowIso, nowIso, MAX_DIRECTIVES],
+  });
+
+  return result.rows.map((row) => mapDurableRow(row));
+}

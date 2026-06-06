@@ -3,7 +3,7 @@ import type { AgenrConfig } from "../../config.js";
 import { createOpenAICrossEncoder, resolveCrossEncoderApiKey } from "../cross-encoder/openai-cross-encoder.js";
 import { createDatabase } from "../db/client.js";
 import { createDreamPort } from "../db/dreaming-port.js";
-import { listActiveAbstainDirectives, listActiveSessionStartProactiveDirectives } from "../db/directives-repository.js";
+import { listActiveAbstainDirectives, listActiveSessionStartProactiveDirectives, listActiveTopicProactiveDirectives } from "../db/directives-repository.js";
 import { createMemoryRepository } from "../db/memory-repository.js";
 import { createSessionMemoryRepository } from "../db/session-memory-repository.js";
 import { createSessionStartRepository } from "../db/session-start-repository.js";
@@ -50,6 +50,8 @@ export async function createPluginMemoryRuntime(input: CreatePluginMemoryRuntime
   const fetchActiveAbstainDirectives = (): Promise<Awaited<ReturnType<typeof listActiveAbstainDirectives>>> => listActiveAbstainDirectives(database);
   const fetchSessionStartProactiveDirectives = (): Promise<Awaited<ReturnType<typeof listActiveSessionStartProactiveDirectives>>> =>
     listActiveSessionStartProactiveDirectives(database);
+  const fetchTopicProactiveDirectives = (): Promise<Awaited<ReturnType<typeof listActiveTopicProactiveDirectives>>> =>
+    listActiveTopicProactiveDirectives(database);
   let closed = false;
 
   return {
@@ -75,6 +77,7 @@ export async function createPluginMemoryRuntime(input: CreatePluginMemoryRuntime
       embedQuery: createEmbedQuery(embedding, embeddingStatus.available),
       slotPolicyConfig: slotPolicies,
       listActiveAbstainDirectives: fetchActiveAbstainDirectives,
+      listActiveTopicProactiveDirectives: fetchTopicProactiveDirectives,
     },
     embedding,
     recall,

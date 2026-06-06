@@ -136,6 +136,22 @@ Callers should apply a durable-memory filter before writing. The store pipeline 
 
 Store the durable takeaway, not the record itself.
 
+## Directives
+
+Memory directives are first-class durable rows under `user/memory_directive/<name>` with `directive_polarity` and `directive_trigger`.
+
+Trigger semantics in v1:
+
+- **`session_start` and `always` (proactive):** Surface at session start through `listActiveSessionStartProactiveDirectives()`. These are the only proactive triggers evaluated during session-start injection.
+- **`topic:<term>` (proactive):** Surface during before-turn when the current user turn mentions the topic. Matching reuses the same whole-word, normalized phrase machinery as abstain topic suppression. Session-start does not evaluate `topic:` triggers in v1.
+- **`always` (abstain):** Applied last during injection. Abstain directives suppress recalled durables and proactive directive rows that mention the blocked topic.
+
+Before-turn injection order:
+
+1. Bounded durable recall for the current turn.
+2. Matching proactive `topic:<term>` directives merged into the patch with high-confidence weight.
+3. Abstain directives applied last so blocked topics win on conflict.
+
 ## Runtime options
 
 There is no CLI option surface yet, but the pipeline supports these programmatic options:

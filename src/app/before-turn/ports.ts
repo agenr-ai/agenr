@@ -24,4 +24,11 @@ export interface BeforeTurnDeps {
    * omit it skip directive abstention entirely.
    */
   listActiveAbstainDirectives?: () => Promise<Durable[]>;
+  /**
+   * Optional lookup for active proactive directives with `topic:` triggers.
+   *
+   * When wired, the service may inject matching directives during before-turn
+   * selection before the abstain filter runs.
+   */
+  listActiveTopicProactiveDirectives?: () => Promise<Durable[]>;
 }

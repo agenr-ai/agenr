@@ -63,6 +63,13 @@ export interface RecallEvalSandboxContext extends EvalSandboxBaseContext {
    */
   listActiveSessionStartProactiveDirectives(now?: Date): Promise<Durable[]>;
   /**
+   * Lists active topic-triggered proactive directives in the sandbox.
+   *
+   * @param now - Optional reference time for validity filtering.
+   * @returns Active topic-triggered proactive directive durables.
+   */
+  listActiveTopicProactiveDirectives(now?: Date): Promise<Durable[]>;
+  /**
    * Activates one profile snapshot fixture in the sandbox dream state.
    *
    * @param fixture - Profile snapshot fixture to seed.

@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
-import { listActiveAbstainDirectives } from "../../../src/adapters/db/directives-repository.js";
+import { listActiveAbstainDirectives, listActiveTopicProactiveDirectives } from "../../../src/adapters/db/directives-repository.js";
 import { createRecallAdapter } from "../../../src/adapters/db/recall-adapter.js";
 import { createSessionStartRepository } from "../../../src/adapters/db/session-start-repository.js";
 import { runBeforeTurn } from "../../../src/app/before-turn/index.js";
@@ -42,6 +42,8 @@ interface ScenarioDurable {
   superseded_by?: string;
   retired?: boolean;
   created_at?: string;
+  directive_polarity?: Durable["directive_polarity"];
+  directive_trigger?: Durable["directive_trigger"];
 }
 
 interface ScenarioExpectation {
@@ -124,6 +126,7 @@ async function runScenario(scenario: DreamingScenario, database: SqlDatabase, re
         recall,
         procedures: database,
         listActiveAbstainDirectives: fetchDirectives,
+        listActiveTopicProactiveDirectives: () => listActiveTopicProactiveDirectives(database),
       },
     );
 
@@ -221,6 +224,8 @@ function toDurable(durable: ScenarioDurable): Durable {
     valid_to: durable.valid_to,
     claim_key: durable.claim_key,
     claim_key_status: durable.claim_key_status,
+    directive_polarity: durable.directive_polarity,
+    directive_trigger: durable.directive_trigger,
     retired: durable.retired ?? false,
     created_at: createdAt,
     updated_at: createdAt,

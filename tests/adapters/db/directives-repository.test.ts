@@ -4,7 +4,11 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
-import { listActiveAbstainDirectives, listActiveSessionStartProactiveDirectives } from "../../../src/adapters/db/directives-repository.js";
+import {
+  listActiveAbstainDirectives,
+  listActiveSessionStartProactiveDirectives,
+  listActiveTopicProactiveDirectives,
+} from "../../../src/adapters/db/directives-repository.js";
 import { closeTestDatabases, removeTestPath } from "../../helpers/temp-paths.js";
 import type { Durable } from "../../../src/core/types.js";
 
@@ -111,6 +115,43 @@ describe("listActiveAbstainDirectives", () => {
     const directives = await listActiveSessionStartProactiveDirectives(database);
 
     expect(directives.map((entry) => entry.id)).toEqual(["dir-session-start"]);
+  });
+
+  it("returns only active proactive directives with topic triggers", async () => {
+    const database = await createTestDatabase();
+
+    await database.insertDurable(
+      createEntry({
+        id: "dir-topic-stan",
+        type: "directive",
+        subject: "stan check-in directive",
+        content: "When Stan comes up, ask whether his async standup preference still holds.",
+        claim_key: "user/memory_directive/stan_check_in",
+        directive_polarity: "proactive",
+        directive_trigger: "topic:stan",
+        importance: 10,
+      }),
+      [],
+      "dir-topic-stan-hash",
+    );
+    await database.insertDurable(
+      createEntry({
+        id: "dir-session-start",
+        type: "directive",
+        subject: "weekly goals directive",
+        content: "Ask about weekly goals at session start.",
+        claim_key: "user/memory_directive/weekly_goals",
+        directive_polarity: "proactive",
+        directive_trigger: "session_start",
+        importance: 9,
+      }),
+      [],
+      "dir-session-start-hash",
+    );
+
+    const directives = await listActiveTopicProactiveDirectives(database);
+
+    expect(directives.map((entry) => entry.id)).toEqual(["dir-topic-stan"]);
   });
 });
 
