@@ -1,4 +1,4 @@
-export /** SQL statement that creates schema v12 session lineage edges. */
+export /** SQL statement that creates session lineage edges. */
 const CREATE_SESSION_LINEAGE_EDGES_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_lineage_edges (
     id TEXT PRIMARY KEY,
@@ -12,7 +12,7 @@ const CREATE_SESSION_LINEAGE_EDGES_TABLE_SQL = `
   )
 `;
 
-export /** SQL statement that creates schema v12 session artifacts. */
+export /** SQL statement that creates session artifacts. */
 const CREATE_SESSION_ARTIFACTS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_artifacts (
     id TEXT PRIMARY KEY,
@@ -80,7 +80,7 @@ const CREATE_SESSION_ARTIFACTS_EXPIRES_AT_INDEX_SQL = `
   WHERE expires_at IS NOT NULL
 `;
 
-export /** Schema v12 session-memory DDL applied during init and v11 migrations. */
+export /** Session-memory DDL applied during database initialization. */
 const SESSION_MEMORY_SCHEMA_STATEMENTS = [
   CREATE_SESSION_LINEAGE_EDGES_TABLE_SQL,
   CREATE_SESSION_ARTIFACTS_TABLE_SQL,

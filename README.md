@@ -140,7 +140,7 @@ Important: when agenr is running as an OpenClaw plugin, session summaries and st
 Compatibility policy:
 
 - Agenr only supports the current `config.json` shape. Move any legacy `apiKey` value into `credentials.openaiApiKey` or `credentials.anthropicApiKey`, move any `embeddingApiKey` value into `credentials.openaiApiKey`, then remove the legacy fields.
-- Agenr only supports fresh databases and databases already at the current schema version. Older schema versions are no longer auto-migrated at startup.
+- Agenr only supports fresh databases created by the current schema. Run `agenr db reset` before upgrading when the knowledge database predates the current shape.
 
 ## What You Need
 

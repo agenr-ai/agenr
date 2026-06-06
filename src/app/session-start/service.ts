@@ -2,6 +2,7 @@ import { recall, type RecallExecutionTraceSummary, type RecallOutput } from "../
 import { isCurrentlyValidMemory, isWithinValidityWindow } from "../../core/temporal-validity.js";
 import type { Durable } from "../../core/types.js";
 
+import { resolveKeyedDurableLifecycleStatus } from "../../core/claim-key-lifecycle.js";
 import { parseDirectiveMetadata } from "../../core/directives/model.js";
 import { applyAbstainDirectivesForInjection } from "../directives/abstain-filter.js";
 import { projectClaimCentricRecallEntry } from "../recall/claim-centric.js";
@@ -385,11 +386,7 @@ function resolveMemoryState(entry: Durable, nowMs: number): SessionStartPatchIte
  * @returns Claim-lifecycle label suitable for inspection surfaces.
  */
 function resolveClaimStatus(entry: Durable): SessionStartPatchItem["claimStatus"] {
-  if (!normalizeOptionalString(entry.claim_key)) {
-    return "no_key";
-  }
-
-  return entry.claim_key_status ?? "legacy";
+  return resolveKeyedDurableLifecycleStatus(entry);
 }
 
 /**

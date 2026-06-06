@@ -251,6 +251,28 @@ describe("detectClaimKeySingletonAliasCandidates", () => {
     ]);
   });
 
+  it("skips keyed observations that are missing lifecycle status", () => {
+    const stats = summarizeClaimKeyEntityPrefixStats([
+      {
+        claim_key: "jim/timezone",
+        claim_key_source: "manual",
+      },
+      {
+        claim_key: "jim/language",
+        claim_key_status: "trusted",
+        claim_key_source: "manual",
+      },
+    ]);
+
+    expect(stats).toEqual([
+      expect.objectContaining({
+        entityPrefix: "jim",
+        activeEntryCount: 1,
+        trustedEntryCount: 1,
+      }),
+    ]);
+  });
+
   it("does not treat intentional scope nesting as a singleton alias family", () => {
     const stats = summarizeClaimKeyEntityPrefixStats([
       buildEntry({
@@ -312,7 +334,6 @@ function buildEntry(overrides: Partial<Durable> & Pick<Durable, "id" | "subject"
     claim_key_source: overrides.claim_key_source,
     supersession_kind: overrides.supersession_kind,
     supersession_reason: overrides.supersession_reason,
-    cluster_id: overrides.cluster_id,
     user_id: overrides.user_id,
     project: overrides.project,
     created_at: overrides.created_at ?? "2026-04-01T00:00:00.000Z",

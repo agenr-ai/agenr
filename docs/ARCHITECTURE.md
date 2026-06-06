@@ -257,7 +257,7 @@ The adapter is responsible for:
 
 ### 6.2 Schema
 
-The current logical schema version is `4`.
+The current database is greenfield-only. Create a fresh database with `agenr db reset` when upgrading. Startup rejects legacy tables and columns, and rejects partially initialized databases unless every required table is already present.
 
 Key tables:
 
@@ -299,7 +299,7 @@ Episodes do not currently use FTS. Episode retrieval is time-window and vector b
 
 `src/adapters/db/schema.ts` owns more than table creation. It also manages:
 
-- greenfield schema initialization at version `2` with no legacy migration path
+- greenfield schema initialization with legacy artifact detection, required-table fingerprinting, and no migration path
 - FTS trigger creation and rebuilds
 - vector index creation and feature probing
 - interrupted bulk-write recovery via `_meta`

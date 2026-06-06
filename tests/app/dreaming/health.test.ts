@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { finalizeTestDurable } from "../../helpers/durable-fixtures.js";
 import { summarizeClaimKeyHealth } from "../../../src/app/dreaming/reconcile/health.js";
 import type { Durable } from "../../../src/core/types.js";
 
@@ -19,13 +20,15 @@ function buildDurable(overrides: Partial<Durable> & Pick<Durable, "id" | "type" 
 describe("summarizeClaimKeyHealth", () => {
   it("reports durable coverage and missing-key counts for eligible types", () => {
     const durables: Durable[] = [
-      buildDurable({
-        id: "with-key",
-        type: "fact",
-        subject: "Timezone",
-        content: "Jim's timezone is America/Chicago.",
-        claim_key: "jim/timezone",
-      }),
+      finalizeTestDurable(
+        buildDurable({
+          id: "with-key",
+          type: "fact",
+          subject: "Timezone",
+          content: "Jim's timezone is America/Chicago.",
+          claim_key: "jim/timezone",
+        }),
+      ),
       buildDurable({
         id: "missing-key",
         type: "fact",

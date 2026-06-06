@@ -655,7 +655,6 @@ function buildEntry(overrides: Partial<Durable>): Durable {
     valid_to: overrides.valid_to,
     supersession_kind: overrides.supersession_kind,
     supersession_reason: overrides.supersession_reason,
-    cluster_id: overrides.cluster_id,
     created_at: createdAt,
     updated_at: updatedAt,
   };

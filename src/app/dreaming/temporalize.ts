@@ -143,7 +143,6 @@ async function applyRevision(
       actionType: "supersede_durable",
       durableIds: [predecessor.id, successorId],
       reasoning: `Superseded durable ${predecessor.id} with temporal revision ${successorId}.`,
-      recallDelta: null,
       details: {
         claim_key: successor.claim_key ?? null,
         predecessor_id: predecessor.id,

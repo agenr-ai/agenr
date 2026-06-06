@@ -2,15 +2,19 @@ import type { Client } from "@libsql/client";
 
 import type { SqlExecutor } from "./queries.js";
 import { DREAMING_SCHEMA_STATEMENTS } from "./schema/dreaming.js";
-import { migrateSchemaV4ToV5 } from "./schema/migrate-v5.js";
+import {
+  LEGACY_DB_COLUMNS,
+  LEGACY_DB_TABLE_PREFIXES,
+  LEGACY_DB_TABLES,
+  legacyColumnReason,
+  legacyTablePrefixReason,
+  legacyTableReason,
+  missingRequiredTableReason,
+  REQUIRED_INITIALIZED_TABLES,
+} from "./schema/legacy-artifacts.js";
 import { SESSION_MEMORY_SCHEMA_STATEMENTS } from "./schema/session-memory.js";
 import { WORKING_MEMORY_SCHEMA_STATEMENTS } from "./schema/working-memory.js";
 import { runImmediateTransaction } from "./transaction.js";
-
-/**
- * Logical schema version stored in the metadata table.
- */
-const SCHEMA_VERSION = "5";
 
 /** FTS indexes non-superseded rows; query-time filters exclude stale rows from live recall. */
 const FTS_DURABLE_INSERT_WHEN = "new.superseded_by IS NULL";
@@ -58,7 +62,6 @@ const CREATE_DURABLES_TABLE_SQL = `
     embedding F32_BLOB(1024),
     content_hash TEXT,
     norm_content_hash TEXT,
-    minhash_sig BLOB,
     quality_score REAL NOT NULL DEFAULT 0.5,
     recall_count INTEGER DEFAULT 0,
     last_recalled_at TEXT,
@@ -79,7 +82,6 @@ const CREATE_DURABLES_TABLE_SQL = `
     claim_support_mode TEXT,
     supersession_kind TEXT,
     supersession_reason TEXT,
-    cluster_id TEXT,
     user_id TEXT,
     project TEXT,
     created_at TEXT NOT NULL,
@@ -479,7 +481,6 @@ export {
   DURABLE_VECTOR_INDEX_NAME,
   EPISODE_VECTOR_INDEX_NAME,
   PROCEDURE_VECTOR_INDEX_NAME,
-  SCHEMA_VERSION,
 };
 
 /**
@@ -487,16 +488,11 @@ export {
  *
  * @param db - libSQL client connected to the target database.
  * @returns Promise that resolves once schema initialization is complete.
- * @throws Error When the database uses an unsupported older schema state.
+ * @throws Error When the database contains legacy tables or columns.
  */
 export async function initSchema(db: Client): Promise<void> {
   await db.execute("PRAGMA foreign_keys = ON");
-  const currentVersion = await getSchemaVersion(db);
-  await assertSupportedSchemaState(db, currentVersion);
-
-  if (currentVersion === "4") {
-    await migrateSchemaV4ToV5(db);
-  }
+  await assertSupportedDatabaseState(db);
 
   const hadDurablesFts = await tableExists(db, "durables_fts");
   const hadProceduresFts = await tableExists(db, "procedures_fts");
@@ -505,15 +501,6 @@ export async function initSchema(db: Client): Promise<void> {
     await db.execute(statement);
   }
 
-  await db.execute({
-    sql: `
-      INSERT INTO _meta (key, value)
-      VALUES ('schema_version', ?)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value
-    `,
-    args: [SCHEMA_VERSION],
-  });
-
   await ensureDreamStateRow(db);
 
   if (await hasActiveBulkWriteState(db)) {
@@ -521,9 +508,7 @@ export async function initSchema(db: Client): Promise<void> {
     return;
   }
 
-  // A v4 database lands here with currentVersion "4", which already differs from
-  // SCHEMA_VERSION, so the migration path rebuilds FTS without a special case.
-  if (currentVersion !== SCHEMA_VERSION || !hadDurablesFts || !hadProceduresFts) {
+  if (!hadDurablesFts || !hadProceduresFts) {
     await rebuildFts(db);
   }
 
@@ -531,34 +516,48 @@ export async function initSchema(db: Client): Promise<void> {
 }
 
 /**
- * Rejects persisted databases that are not fresh or already on the current schema.
+ * Rejects persisted databases that still carry legacy tables or columns.
  *
  * @param db - libSQL client connected to the target database.
- * @param currentVersion - Stored schema version, when present.
  */
-async function assertSupportedSchemaState(db: Client, currentVersion: string | null): Promise<void> {
-  if (currentVersion && currentVersion !== SCHEMA_VERSION && currentVersion !== "4") {
-    throw new Error(
-      `Unsupported agenr database schema version "${currentVersion}". ` +
-        `This build supports schema version ${SCHEMA_VERSION} and can migrate from version 4. ` +
-        "Create a fresh database with `agenr db reset` or manually migrate the data into a new database.",
-    );
-  }
-
-  if (currentVersion !== null) {
-    return;
-  }
-
+async function assertSupportedDatabaseState(db: Client): Promise<void> {
   const existingTables = await listUserTables(db);
   if (existingTables.length === 0) {
     return;
   }
 
-  throw new Error(
-    "Unsupported agenr database without schema metadata. " +
-      `This build only supports a fresh database or one already initialized at schema version ${SCHEMA_VERSION}. ` +
-      "Create a fresh database with `agenr db reset` or manually migrate the data into a new database.",
-  );
+  for (const table of LEGACY_DB_TABLES) {
+    if (existingTables.includes(table)) {
+      throw unsupportedDatabaseError(legacyTableReason(table));
+    }
+  }
+
+  for (const prefix of LEGACY_DB_TABLE_PREFIXES) {
+    if (existingTables.some((tableName) => tableName.startsWith(prefix))) {
+      throw unsupportedDatabaseError(legacyTablePrefixReason(prefix));
+    }
+  }
+
+  for (const marker of LEGACY_DB_COLUMNS) {
+    if (!existingTables.includes(marker.table)) {
+      continue;
+    }
+
+    if (await columnExists(db, marker.table, marker.column)) {
+      throw unsupportedDatabaseError(legacyColumnReason(marker.table, marker.column));
+    }
+  }
+
+  for (const table of REQUIRED_INITIALIZED_TABLES) {
+    if (!existingTables.includes(table)) {
+      throw unsupportedDatabaseError(missingRequiredTableReason(table));
+    }
+  }
+}
+
+/** Builds the standard unsupported-database error for legacy persisted state. */
+function unsupportedDatabaseError(reason: string): Error {
+  return new Error(`Unsupported agenr database because ${reason}. Create a fresh database with \`agenr db reset\`.`);
 }
 
 /**
@@ -667,20 +666,10 @@ export async function getLastBulkIngestAt(db: Client | SqlExecutor): Promise<str
   }
 }
 
-/** Reads the stored schema version when the metadata table exists. */
-async function getSchemaVersion(db: Client): Promise<string | null> {
-  try {
-    const result = await db.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    const row = result.rows[0];
-    if (!row) {
-      return null;
-    }
-
-    const value = row.value;
-    return typeof value === "string" ? value : null;
-  } catch {
-    return null;
-  }
+/** Checks whether one column exists on a table. */
+async function columnExists(db: Client, table: string, column: string): Promise<boolean> {
+  const result = await db.execute(`PRAGMA table_info(${table})`);
+  return result.rows.some((row) => row.name === column);
 }
 
 /** Checks whether a SQLite table already exists. */

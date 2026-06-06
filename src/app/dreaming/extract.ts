@@ -201,7 +201,6 @@ export async function applyExtractedDurables(
         actionType: "insert_durable",
         durableIds: [durable.id],
         reasoning: "Inserted durable mined from episode evidence.",
-        recallDelta: null,
         details: {
           claim_key: candidate.claimKey,
           evidence_refs: candidate.evidenceRefs.map((ref) => `${ref.kind}:${ref.locator}`),

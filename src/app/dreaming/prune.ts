@@ -76,7 +76,6 @@ export async function runPruneStage(options: DreamPruneOptions, deps: DreamPrune
           actionType: "stale",
           durableIds: [candidate.durable.id],
           reasoning: candidate.staleReason,
-          recallDelta: null,
           details: {
             stage: "prune",
             expiry: candidate.durable.expiry,

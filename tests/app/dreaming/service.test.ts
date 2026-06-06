@@ -67,7 +67,7 @@ function createDreamPortDouble(overrides: Partial<DreamPort> = {}): DreamPort {
     getHealthStats: vi.fn(async () => ({
       total: 0,
       byType: {},
-      claimKeyLifecycle: { trusted: 0, tentative: 0, unresolved: 0, legacy: 0, noKey: 0 },
+      claimKeyLifecycle: { trusted: 0, tentative: 0, unresolved: 0, noKey: 0 },
       proposalBacklogCount: 0,
       eligibleProposalBacklogCount: 0,
       oldestOpenProposalCreatedAt: null,

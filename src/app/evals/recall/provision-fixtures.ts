@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { applyDefaultClaimKeyLifecycle } from "../../fixtures/default-claim-key-lifecycle.js";
 import type { EmbeddingPort } from "../../../core/ports.js";
 import { composeEmbeddingText } from "../../../core/store/embedding-text.js";
 import type { Durable, Expiry } from "../../../core/types.js";
@@ -147,35 +148,38 @@ function buildEntry(fixture: RecallEvalFixtureEntry, id: string, provisionedAt: 
   const createdAt = fixture.created_at ?? provisionedAt;
   const updatedAt = fixture.updated_at ?? createdAt;
 
-  return {
-    id,
-    type: fixture.type,
-    subject: fixture.subject,
-    content: fixture.content,
-    importance: fixture.importance ?? DEFAULT_IMPORTANCE,
-    expiry: fixture.expiry ?? DEFAULT_EXPIRY,
-    tags: fixture.tags ?? [],
-    source_file: fixture.source_file,
-    source_context: fixture.source_context,
-    quality_score: DEFAULT_QUALITY_SCORE,
-    recall_count: 0,
-    superseded_by: fixture.superseded_by,
-    claim_key: fixture.claim_key,
-    claim_key_status: fixture.claim_key_status,
-    claim_key_source: fixture.claim_key_source,
-    claim_support_source_kind: fixture.claim_support_source_kind,
-    claim_support_locator: fixture.claim_support_locator,
-    claim_support_observed_at: fixture.claim_support_observed_at,
-    claim_support_mode: fixture.claim_support_mode,
-    valid_from: fixture.valid_from,
-    valid_to: fixture.valid_to,
-    supersession_kind: fixture.supersession_kind,
-    supersession_reason: fixture.supersession_reason,
-    directive_polarity: fixture.directive_polarity,
-    directive_trigger: fixture.directive_trigger,
-    created_at: createdAt,
-    updated_at: updatedAt,
-  };
+  return applyDefaultClaimKeyLifecycle(
+    {
+      id,
+      type: fixture.type,
+      subject: fixture.subject,
+      content: fixture.content,
+      importance: fixture.importance ?? DEFAULT_IMPORTANCE,
+      expiry: fixture.expiry ?? DEFAULT_EXPIRY,
+      tags: fixture.tags ?? [],
+      source_file: fixture.source_file,
+      source_context: fixture.source_context,
+      quality_score: DEFAULT_QUALITY_SCORE,
+      recall_count: 0,
+      superseded_by: fixture.superseded_by,
+      claim_key: fixture.claim_key,
+      claim_key_status: fixture.claim_key_status,
+      claim_key_source: fixture.claim_key_source,
+      claim_support_source_kind: fixture.claim_support_source_kind,
+      claim_support_locator: fixture.claim_support_locator,
+      claim_support_observed_at: fixture.claim_support_observed_at,
+      claim_support_mode: fixture.claim_support_mode,
+      valid_from: fixture.valid_from,
+      valid_to: fixture.valid_to,
+      supersession_kind: fixture.supersession_kind,
+      supersession_reason: fixture.supersession_reason,
+      directive_polarity: fixture.directive_polarity,
+      directive_trigger: fixture.directive_trigger,
+      created_at: createdAt,
+      updated_at: updatedAt,
+    },
+    "eval fixture",
+  );
 }
 
 /** Captures the exact seeded state that existed before recall telemetry mutations. */

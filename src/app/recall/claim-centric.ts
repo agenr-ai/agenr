@@ -1,3 +1,4 @@
+import { resolveKeyedDurableLifecycleStatus } from "../../core/claim-key-lifecycle.js";
 import { resolveClaimSlotPolicy, type ClaimSlotPolicy, type ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
 import { isCurrentlyValidMemory } from "../../core/temporal-validity.js";
 import type { ClaimKeyStatus, ClaimSupportMode } from "../../core/types.js";
@@ -11,7 +12,7 @@ export type ClaimCentricMemoryState = "current" | "historical" | "superseded";
 /**
  * Normalized claim-family lifecycle label for one recalled entry.
  */
-export type ClaimCentricClaimStatus = ClaimKeyStatus | "legacy" | "no_key";
+export type ClaimCentricClaimStatus = ClaimKeyStatus | "no_key";
 
 /**
  * Freshness metadata surfaced alongside one recalled entry.
@@ -245,12 +246,7 @@ function resolveMemoryState(recall: RecallOutput, asOfResolution?: ClaimCentricA
  * @returns Claim-family lifecycle label for trust surfaces.
  */
 function resolveClaimStatus(recall: RecallOutput): ClaimCentricClaimStatus {
-  const entry = recall.entry;
-  if (!normalizeOptionalString(entry.claim_key)) {
-    return "no_key";
-  }
-
-  return entry.claim_key_status ?? "legacy";
+  return resolveKeyedDurableLifecycleStatus(recall.entry);
 }
 
 /**

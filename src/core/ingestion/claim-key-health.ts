@@ -68,7 +68,6 @@ export interface IngestClaimKeyHealthSummary {
     trusted: number;
     tentative: number;
     unresolved: number;
-    legacy: number;
   };
   keyedRows: number;
   keyedWithSupportCount: number;
@@ -114,7 +113,6 @@ export function summarizeIngestClaimKeyHealth(
     trusted: 0,
     tentative: 0,
     unresolved: 0,
-    legacy: 0,
   };
   let keyedRows = 0;
   let keyedWithSupportCount = 0;
@@ -137,9 +135,6 @@ export function summarizeIngestClaimKeyHealth(
         break;
       case "unresolved":
         lifecycle.unresolved += 1;
-        break;
-      default:
-        lifecycle.legacy += 1;
         break;
     }
 

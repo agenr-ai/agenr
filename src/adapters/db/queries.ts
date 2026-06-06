@@ -63,7 +63,6 @@ export async function insertDurable(executor: SqlExecutor, entry: Durable, embed
         embedding,
         content_hash,
         norm_content_hash,
-        minhash_sig,
         quality_score,
         recall_count,
         last_recalled_at,
@@ -84,7 +83,6 @@ export async function insertDurable(executor: SqlExecutor, entry: Durable, embed
         claim_support_mode,
         supersession_kind,
         supersession_reason,
-        cluster_id,
         user_id,
         project,
         created_at,
@@ -93,7 +91,7 @@ export async function insertDurable(executor: SqlExecutor, entry: Durable, embed
       VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?,
         CASE WHEN ? IS NULL THEN NULL ELSE vector32(?) END,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
     `,
     args: [
@@ -110,7 +108,6 @@ export async function insertDurable(executor: SqlExecutor, entry: Durable, embed
       vectorJson,
       contentHash.trim(),
       normalizeOptionalString(entry.norm_content_hash),
-      null,
       normalizeNumber(entry.quality_score, DEFAULT_QUALITY_SCORE),
       normalizeInteger(entry.recall_count, 0),
       normalizeOptionalString(entry.last_recalled_at),
@@ -131,7 +128,6 @@ export async function insertDurable(executor: SqlExecutor, entry: Durable, embed
       normalizeOptionalString(entry.claim_support_mode),
       normalizeOptionalString(entry.supersession_kind),
       normalizeOptionalString(entry.supersession_reason),
-      normalizeOptionalString(entry.cluster_id),
       normalizeOptionalString(entry.user_id),
       normalizeOptionalString(entry.project),
       createdAt,
@@ -426,7 +422,6 @@ export async function getClaimKeyEntityPrefixStats(executor: SqlExecutor): Promi
         COALESCE(SUM(CASE WHEN claim_key_status = 'trusted' THEN 1 ELSE 0 END), 0) AS trusted_durable_count,
         COALESCE(SUM(CASE WHEN claim_key_status = 'tentative' THEN 1 ELSE 0 END), 0) AS tentative_durable_count,
         COALESCE(SUM(CASE WHEN claim_key_status = 'unresolved' THEN 1 ELSE 0 END), 0) AS unresolved_durable_count,
-        COALESCE(SUM(CASE WHEN claim_key_status IS NULL THEN 1 ELSE 0 END), 0) AS legacy_durable_count,
         COALESCE(SUM(CASE WHEN claim_key_source = 'deterministic_repair' THEN 1 ELSE 0 END), 0) AS deterministic_repair_durable_count,
         COALESCE(SUM(CASE WHEN claim_key_source = 'manual' THEN 1 ELSE 0 END), 0) AS manual_durable_count,
         COALESCE(SUM(CASE WHEN claim_key_source = 'model' THEN 1 ELSE 0 END), 0) AS model_durable_count,
@@ -454,7 +449,6 @@ export async function getClaimKeyEntityPrefixStats(executor: SqlExecutor): Promi
         trustedEntryCount: coerceRowInteger(row.trusted_durable_count),
         tentativeEntryCount: coerceRowInteger(row.tentative_durable_count),
         unresolvedEntryCount: coerceRowInteger(row.unresolved_durable_count),
-        legacyEntryCount: coerceRowInteger(row.legacy_durable_count),
         deterministicRepairEntryCount: coerceRowInteger(row.deterministic_repair_durable_count),
         manualEntryCount: coerceRowInteger(row.manual_durable_count),
         modelEntryCount: coerceRowInteger(row.model_durable_count),

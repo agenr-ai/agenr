@@ -48,11 +48,10 @@ export async function logDreamAction(executor: SqlExecutor, action: DreamRunActi
         durable_id,
         durable_ids,
         reasoning,
-        recall_delta,
         details_json,
         created_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `,
     args: [
       action.id.trim().length > 0 ? action.id.trim() : randomUUID(),
@@ -61,7 +60,6 @@ export async function logDreamAction(executor: SqlExecutor, action: DreamRunActi
       durableIds[0] ?? null,
       JSON.stringify(durableIds),
       action.reasoning,
-      JSON.stringify(action.recallDelta ?? null),
       JSON.stringify(action.details ?? null),
       normalizeTimestamp(action.createdAt) ?? new Date().toISOString(),
     ],

@@ -32,7 +32,6 @@ const CREATE_DREAM_RUN_ACTIONS_TABLE_SQL = `
     durable_ids TEXT NOT NULL DEFAULT '[]',
     reasoning TEXT NOT NULL DEFAULT '',
     evidence_refs_json TEXT,
-    recall_delta TEXT,
     details_json TEXT,
     created_at TEXT NOT NULL
   )

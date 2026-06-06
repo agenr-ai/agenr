@@ -1156,7 +1156,6 @@ function summarizeAugmentedEntityPrefixStats(entityPrefixStats: ClaimKeyEntityPr
       trustedEntryCount: 0,
       tentativeEntryCount: 1,
       unresolvedEntryCount: 0,
-      legacyEntryCount: 0,
       deterministicRepairEntryCount: 1,
       manualEntryCount: 0,
       modelEntryCount: 0,

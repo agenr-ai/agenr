@@ -87,9 +87,6 @@ const SEED_ENTRY_KEYS = new Set([
   "valid_to",
   "user_id",
   "project",
-  "retired",
-  "retired_at",
-  "retired_reason",
   "created_at",
   "updated_at",
 ]);
@@ -504,9 +501,6 @@ function readSeedEntry(value: unknown, label: string): ClaimKeyScenarioSeedEntry
     ...(record.valid_to !== undefined ? { valid_to: readRequiredString(record.valid_to, `${label}.valid_to`, label) } : {}),
     ...(record.user_id !== undefined ? { user_id: readRequiredString(record.user_id, `${label}.user_id`, label) } : {}),
     ...(record.project !== undefined ? { project: readRequiredString(record.project, `${label}.project`, label) } : {}),
-    ...(record.retired !== undefined ? { retired: readRequiredBoolean(record.retired, `${label}.retired`, label) } : {}),
-    ...(record.retired_at !== undefined ? { retired_at: readRequiredString(record.retired_at, `${label}.retired_at`, label) } : {}),
-    ...(record.retired_reason !== undefined ? { retired_reason: readRequiredString(record.retired_reason, `${label}.retired_reason`, label) } : {}),
     ...(record.created_at !== undefined ? { created_at: readRequiredString(record.created_at, `${label}.created_at`, label) } : {}),
     ...(record.updated_at !== undefined ? { updated_at: readRequiredString(record.updated_at, `${label}.updated_at`, label) } : {}),
   };

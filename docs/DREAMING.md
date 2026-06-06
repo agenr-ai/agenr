@@ -130,7 +130,7 @@ Dreaming state is stored in:
 - `dream_state` - lightweight cross-run bookkeeping
 - `profile_snapshots` - ordered profile durable ids, directive ids, as-of time, content hash, run id, and creation time
 
-These tables ship in schema version `5` alongside `durables`. This build can migrate from schema version `4`; older databases still require `agenr db reset`.
+These tables ship alongside `durables` during database initialization. Older persisted databases require `agenr db reset`.
 
 ## Pipeline
 

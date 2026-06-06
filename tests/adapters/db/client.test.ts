@@ -11,6 +11,7 @@ import { createRecallAdapter } from "../../../src/adapters/db/recall-adapter.js"
 import { computeProcedureRevisionHash, computeProcedureSourceHash } from "../../../src/core/procedures/hashing.js";
 import { composeProcedureRecallText } from "../../../src/core/procedures/recall-text.js";
 import type { Durable, Procedure } from "../../../src/core/types.js";
+import { finalizeTestDurable } from "../../helpers/durable-fixtures.js";
 import { closeTestDatabases, removeTestPath } from "../../helpers/temp-paths.js";
 
 describe("createDatabase", () => {
@@ -1064,7 +1065,7 @@ describe("createDatabase", () => {
 
 function createEntry(overrides: Partial<Durable> = {}): Durable {
   const now = new Date().toISOString();
-  return {
+  return finalizeTestDurable({
     id: overrides.id ?? randomUUID(),
     type: overrides.type ?? "decision",
     subject: overrides.subject ?? "batch lookup",
@@ -1095,12 +1096,11 @@ function createEntry(overrides: Partial<Durable> = {}): Durable {
     claim_support_mode: overrides.claim_support_mode,
     supersession_kind: overrides.supersession_kind,
     supersession_reason: overrides.supersession_reason,
-    cluster_id: overrides.cluster_id,
     user_id: overrides.user_id,
     project: overrides.project,
     created_at: overrides.created_at ?? now,
     updated_at: overrides.updated_at ?? now,
-  };
+  });
 }
 
 function createProcedure(overrides: Partial<Procedure> = {}): Procedure {

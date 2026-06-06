@@ -211,7 +211,7 @@ describe("agenr OpenClaw plugin entry", () => {
   });
 
   it("logs startup failures without letting the registration promise go unhandled", async () => {
-    const startupError = new Error('Unsupported agenr database schema version "10".');
+    const startupError = new Error("Unsupported agenr database because the durables.retired column is present. Create a fresh database with `agenr db reset`.");
     const logger = createLogger();
 
     coerceAgenrOpenClawPluginConfigMock.mockReturnValue({});

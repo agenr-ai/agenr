@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { mapDurableRow } from "../../../src/adapters/db/row-mapping.js";
 
 describe("mapDurableRow", () => {
-  it("rejects invalid lifecycle enum values from database rows", () => {
+  it("rejects keyed durables missing claim_key_status", () => {
     expect(() =>
       mapDurableRow({
         length: 0,
@@ -28,7 +28,7 @@ describe("mapDurableRow", () => {
         valid_to: null,
         claim_key: "jim/timezone",
         claim_key_raw: "Jim/timezone",
-        claim_key_status: "legacy",
+        claim_key_status: null,
         claim_key_source: "manual",
         claim_key_confidence: 1,
         claim_key_rationale: "manual claim key supplied by caller",
@@ -38,7 +38,6 @@ describe("mapDurableRow", () => {
         claim_support_mode: "explicit",
         supersession_kind: null,
         supersession_reason: null,
-        cluster_id: null,
         user_id: null,
         project: null,
         created_at: "2026-04-01T10:00:00.000Z",

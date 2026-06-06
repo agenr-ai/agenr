@@ -47,8 +47,7 @@ export async function getDreamHealthStats(executor: SqlExecutor, now: Date = new
           COALESCE(SUM(CASE WHEN e.claim_key_status = 'trusted' THEN 1 ELSE 0 END), 0) AS trusted_count,
           COALESCE(SUM(CASE WHEN e.claim_key_status = 'tentative' THEN 1 ELSE 0 END), 0) AS tentative_count,
           COALESCE(SUM(CASE WHEN e.claim_key_status = 'unresolved' THEN 1 ELSE 0 END), 0) AS unresolved_count,
-          COALESCE(SUM(CASE WHEN e.claim_key_status IS NULL AND e.claim_key IS NOT NULL AND TRIM(e.claim_key) <> '' THEN 1 ELSE 0 END), 0) AS legacy_count,
-          COALESCE(SUM(CASE WHEN e.claim_key_status IS NULL AND (e.claim_key IS NULL OR TRIM(e.claim_key) = '') THEN 1 ELSE 0 END), 0) AS no_key_count
+          COALESCE(SUM(CASE WHEN e.claim_key IS NULL OR TRIM(e.claim_key) = '' THEN 1 ELSE 0 END), 0) AS no_key_count
         FROM durables AS e
         WHERE ${buildActiveDurableClause("e")}
       `,
@@ -125,7 +124,6 @@ export async function getDreamHealthStats(executor: SqlExecutor, now: Date = new
       trusted: lifecycleRow ? readNumber(lifecycleRow, "trusted_count", 0) : 0,
       tentative: lifecycleRow ? readNumber(lifecycleRow, "tentative_count", 0) : 0,
       unresolved: lifecycleRow ? readNumber(lifecycleRow, "unresolved_count", 0) : 0,
-      legacy: lifecycleRow ? readNumber(lifecycleRow, "legacy_count", 0) : 0,
       noKey: lifecycleRow ? readNumber(lifecycleRow, "no_key_count", 0) : 0,
     },
     proposalBacklogCount: proposalBacklogRow ? readNumber(proposalBacklogRow, "proposal_backlog_count", 0) : 0,

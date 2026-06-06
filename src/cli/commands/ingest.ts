@@ -341,10 +341,7 @@ function formatClaimKeyHealthSummary(summary: IngestClaimKeyHealthSummary): stri
       `${summary.keyedEligibleRows}/${summary.eligibleRows} eligible keyed (${formatPercent(summary.coveragePct)}), ${summary.missingEligibleRows} eligible missing`,
     ),
     formatLabel("By type", coverageByType || "none"),
-    formatLabel(
-      "Lifecycle",
-      `trusted ${summary.lifecycle.trusted} | tentative ${summary.lifecycle.tentative} | unresolved ${summary.lifecycle.unresolved} | legacy ${summary.lifecycle.legacy}`,
-    ),
+    formatLabel("Lifecycle", `trusted ${summary.lifecycle.trusted} | tentative ${summary.lifecycle.tentative} | unresolved ${summary.lifecycle.unresolved}`),
     formatLabel(
       "Missing outcomes",
       `low-confidence ${summary.diagnostics.lowConfidenceCandidate} | no-claim ${summary.diagnostics.noClaim} | rejected ${summary.diagnostics.rejectedCandidate} | extraction-failure ${summary.diagnostics.extractionFailure}`,

@@ -16,6 +16,7 @@ import type { SessionStartPolicy } from "../../../src/app/session-start/index.js
 import type { EmbeddingPort } from "../../../src/core/ports.js";
 import type { Durable } from "../../../src/core/types.js";
 import { closeTestDatabases, removeTestPath } from "../../helpers/temp-paths.js";
+import { finalizeTestDurable } from "../../helpers/durable-fixtures.js";
 
 /**
  * Fixture-backed injection scenarios for the dreaming program.
@@ -208,7 +209,7 @@ async function seedDurables(database: SqlDatabase, durables: ScenarioDurable[]):
  */
 function toDurable(durable: ScenarioDurable): Durable {
   const createdAt = durable.created_at ?? "2026-03-01T00:00:00.000Z";
-  return {
+  return finalizeTestDurable({
     id: durable.id,
     type: durable.type ?? "fact",
     subject: durable.subject,
@@ -227,7 +228,7 @@ function toDurable(durable: ScenarioDurable): Durable {
     directive_trigger: durable.directive_trigger,
     created_at: createdAt,
     updated_at: createdAt,
-  };
+  });
 }
 
 async function createTestDatabase(): Promise<SqlDatabase> {

@@ -35,6 +35,7 @@ import { createNoopAgenrDebugSink } from "../../../src/adapters/openclaw/debug/i
 import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../src/adapters/openclaw/types.js";
 import type { EmbeddingPort, RecallPorts } from "../../../src/core/ports.js";
 import type { Durable, Procedure } from "../../../src/core/types.js";
+import { finalizeTestDurable } from "../../helpers/durable-fixtures.js";
 import { closeTestDatabases, removeTestPath } from "../../helpers/temp-paths.js";
 
 const openDatabases: SqlDatabase[] = [];
@@ -1246,7 +1247,7 @@ async function createTestDatabase(): Promise<SqlDatabase> {
 
 function createEntry(overrides: Partial<Durable> = {}): Durable {
   const now = new Date("2026-03-27T12:00:00.000Z").toISOString();
-  return {
+  return finalizeTestDurable({
     id: overrides.id ?? randomUUID(),
     type: overrides.type ?? "fact",
     subject: overrides.subject ?? "test subject",
@@ -1268,12 +1269,11 @@ function createEntry(overrides: Partial<Durable> = {}): Durable {
     claim_key: overrides.claim_key,
     supersession_kind: overrides.supersession_kind,
     supersession_reason: overrides.supersession_reason,
-    cluster_id: overrides.cluster_id,
     user_id: overrides.user_id,
     project: overrides.project,
     created_at: overrides.created_at ?? now,
     updated_at: overrides.updated_at ?? now,
-  };
+  });
 }
 
 function createProcedure(overrides: Partial<Procedure> = {}): Procedure {

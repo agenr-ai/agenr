@@ -1215,7 +1215,6 @@ function createExistingEntry(overrides: Partial<Durable> & Pick<Durable, "claim_
     claim_key: overrides.claim_key,
     supersession_kind: overrides.supersession_kind,
     supersession_reason: overrides.supersession_reason,
-    cluster_id: overrides.cluster_id,
     user_id: overrides.user_id,
     project: overrides.project,
     created_at: overrides.created_at ?? now,

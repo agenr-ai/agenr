@@ -51,7 +51,6 @@ describe("memory repository entry trace", () => {
       actionType: "stale",
       durableIds: [durableId],
       reasoning: "Dream prune staled a low-signal durable after synthesis.",
-      recallDelta: null,
       details: { stage: "prune" },
       createdAt: now,
     });

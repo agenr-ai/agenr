@@ -21,7 +21,6 @@ describe("createInstrumentedRecallPorts", () => {
       recall_count: 0,
       last_recalled_at: undefined,
       superseded_by: undefined,
-      cluster_id: undefined,
       created_at: "2026-03-01T00:00:00.000Z",
       updated_at: "2026-03-01T00:00:00.000Z",
     };

@@ -1,3 +1,4 @@
+import { resolveKeyedDurableLifecycleStatus } from "../claim-key-lifecycle.js";
 import { isCurrentlyValidMemory } from "../temporal-validity.js";
 import type { Durable } from "../types.js";
 
@@ -42,11 +43,8 @@ export function describeDurableLineageState(entry: Durable, nowMs: number): Dura
  * @returns Lifecycle label used in lineage inspection.
  */
 export function formatDurableClaimLifecycle(entry: Durable): string {
-  if (!entry.claim_key) {
-    return "no-key";
-  }
-
-  return entry.claim_key_status ?? "legacy";
+  const status = resolveKeyedDurableLifecycleStatus(entry);
+  return status === "no_key" ? "no-key" : status;
 }
 
 /**

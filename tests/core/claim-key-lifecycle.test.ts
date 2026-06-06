@@ -16,9 +16,11 @@ import {
   buildReconcileAppliedClaimKeyLifecycleBundle,
   buildReconcileProposalClaimKeyAuditDetails,
   buildReconcileProposalClaimKeyLifecycle,
+  assertKeyedDurableHasLifecycle,
   parseClaimKeySource,
   parseClaimKeyStatus,
   parseClaimSupportMode,
+  resolveKeyedDurableLifecycleStatus,
   validateDirectClaimKeyLifecycleUpdate,
 } from "../../src/core/claim-key-lifecycle.js";
 import type { StoreDurableInput } from "../../src/core/types.js";
@@ -269,6 +271,24 @@ describe("claim-key lifecycle helpers", () => {
       claim_key_confidence: 1,
       claim_key_rationale: "manual claim key supplied by caller",
     });
+  });
+
+  it("resolves keyed durable lifecycle status and rejects missing lifecycle metadata", () => {
+    expect(resolveKeyedDurableLifecycleStatus({ claim_key: undefined })).toBe("no_key");
+    expect(
+      resolveKeyedDurableLifecycleStatus({
+        id: "entry-1",
+        claim_key: "jim/timezone",
+        claim_key_status: "trusted",
+      }),
+    ).toBe("trusted");
+    expect(() =>
+      assertKeyedDurableHasLifecycle({
+        id: "entry-1",
+        claim_key: "jim/timezone",
+        claim_key_status: undefined,
+      }),
+    ).toThrow(/claim_key_status/i);
   });
 
   it("parses only supported lifecycle boundary values", () => {

@@ -4,7 +4,10 @@
 
 ### Breaking
 
-- **Retirement flags removed; staleness uses `valid_to`.** `durables`, `episodes`, and `procedures` no longer store `retired`, `retired_at`, or `retired_reason`. Close validity with `valid_to` plus optional `supersession_kind: "stale"` and `supersession_reason` instead. Schema version is now `5` (migrates from `4`).
+- **Greenfield database only.** Schema versioning and in-place migrations are removed. Startup rejects legacy tables and columns such as `entries`, `retired`, `minhash_sig`, `cluster_id`, `durables_retired`, and `recall_delta`, and rejects partially initialized databases that are missing required tables. Run `agenr db reset` before upgrading.
+- **Removed unused columns.** `durables.minhash_sig`, `durables.cluster_id`, and `dream_run_actions.recall_delta` are dropped from the schema.
+- **Keyed durables require lifecycle status.** Rows with a `claim_key` must also store a valid `claim_key_status`; NULL lifecycle status is no longer treated as legacy at read time.
+- **Retirement flags removed; staleness uses `valid_to`.** `durables`, `episodes`, and `procedures` no longer store `retired`, `retired_at`, or `retired_reason`. Close validity with `valid_to` plus optional `supersession_kind: "stale"` and `supersession_reason` instead.
 - **`agenr_retire` removed.** Use `agenr_update` with `validTo` to close durable validity from OpenClaw hosts.
 - **Dreaming prune actions renamed.** Run summaries and `dream_runs.durables_staled` replace `durables_retired`; audit actions use `stale` instead of `retire`.
 - **Neighborhood expansion flag renamed.** Recall adapters accept `includeHistorical` instead of `includeRetired`.

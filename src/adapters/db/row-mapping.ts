@@ -1,7 +1,7 @@
 import type { Row } from "@libsql/client";
 
 export { cosineSimilarity } from "../../core/recall/scoring.js";
-import { parseClaimKeySource, parseClaimKeyStatus, parseClaimSupportMode } from "../../core/claim-key-lifecycle.js";
+import { assertKeyedDurableHasLifecycle, parseClaimKeySource, parseClaimKeyStatus, parseClaimSupportMode } from "../../core/claim-key-lifecycle.js";
 import type { Durable, Episode } from "../../core/types.js";
 
 const DEFAULT_QUALITY_SCORE = 0.5;
@@ -62,7 +62,6 @@ const DURABLE_SELECT_COLUMNS = `
   claim_support_mode,
   supersession_kind,
   supersession_reason,
-  cluster_id,
   user_id,
   project,
   created_at,
@@ -347,9 +346,13 @@ export function readEmbedding(row: Row, key: string): number[] {
 export function mapDurableRow(row: Row): Durable {
   const type = readRequiredString(row, "type");
   const expiry = readRequiredString(row, "expiry");
+  const id = readRequiredString(row, "id");
+  const claimKey = readOptionalString(row, "claim_key");
+  const claimKeyStatus = readOptionalLifecycleEnum(row, "claim_key_status", parseClaimKeyStatus);
+  assertKeyedDurableHasLifecycle({ id, claim_key: claimKey, claim_key_status: claimKeyStatus });
 
   return {
-    id: readRequiredString(row, "id"),
+    id,
     type: type as Durable["type"],
     subject: readRequiredString(row, "subject"),
     content: readRequiredString(row, "content"),
@@ -369,9 +372,9 @@ export function mapDurableRow(row: Row): Durable {
     valid_to: readOptionalString(row, "valid_to"),
     directive_polarity: readOptionalString(row, "directive_polarity") as Durable["directive_polarity"],
     directive_trigger: readOptionalString(row, "directive_trigger") as Durable["directive_trigger"],
-    claim_key: readOptionalString(row, "claim_key"),
+    claim_key: claimKey,
     claim_key_raw: readOptionalString(row, "claim_key_raw"),
-    claim_key_status: readOptionalLifecycleEnum(row, "claim_key_status", parseClaimKeyStatus),
+    claim_key_status: claimKeyStatus,
     claim_key_source: readOptionalLifecycleEnum(row, "claim_key_source", parseClaimKeySource),
     claim_key_confidence: readOptionalNumber(row, "claim_key_confidence"),
     claim_key_rationale: readOptionalString(row, "claim_key_rationale"),
@@ -381,7 +384,6 @@ export function mapDurableRow(row: Row): Durable {
     claim_support_mode: readOptionalLifecycleEnum(row, "claim_support_mode", parseClaimSupportMode),
     supersession_kind: readOptionalString(row, "supersession_kind"),
     supersession_reason: readOptionalString(row, "supersession_reason"),
-    cluster_id: readOptionalString(row, "cluster_id"),
     user_id: readOptionalString(row, "user_id"),
     project: readOptionalString(row, "project"),
     created_at: readRequiredString(row, "created_at"),

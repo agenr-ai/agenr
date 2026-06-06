@@ -227,7 +227,6 @@ function createEntry(overrides: Partial<Durable> & Pick<Durable, "id" | "subject
     claim_support_mode: overrides.claim_support_mode,
     supersession_kind: overrides.supersession_kind,
     supersession_reason: overrides.supersession_reason,
-    cluster_id: overrides.cluster_id,
     user_id: overrides.user_id,
     project: overrides.project,
     created_at: overrides.created_at ?? now,

@@ -2789,7 +2789,6 @@ function createEntry(overrides: Partial<Durable> = {}): Durable {
     recall_count: overrides.recall_count ?? 0,
     last_recalled_at: overrides.last_recalled_at,
     superseded_by: overrides.superseded_by,
-    cluster_id: overrides.cluster_id,
     created_at: overrides.created_at ?? now,
     updated_at: overrides.updated_at ?? now,
   };

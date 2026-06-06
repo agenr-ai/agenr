@@ -2213,7 +2213,6 @@ function buildEntry(overrides: Partial<Durable> & Pick<Durable, "id" | "subject"
     claim_key: overrides.claim_key,
     claim_key_status: overrides.claim_key_status,
     claim_support_observed_at: overrides.claim_support_observed_at,
-    cluster_id: overrides.cluster_id,
     created_at: createdAt,
     updated_at: updatedAt,
   };

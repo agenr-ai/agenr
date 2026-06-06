@@ -1,6 +1,7 @@
 import { createClient, type Client, type InArgs, type InStatement } from "@libsql/client";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { LEGACY_DB_COLUMNS, legacyColumnReason, missingRequiredTableReason } from "../../../src/adapters/db/schema/legacy-artifacts.js";
 import {
   BULK_WRITE_STATE_META_KEY,
   PROCEDURE_VECTOR_INDEX_NAME,
@@ -95,7 +96,6 @@ describe("initSchema", () => {
       "embedding",
       "content_hash",
       "norm_content_hash",
-      "minhash_sig",
       "quality_score",
       "recall_count",
       "last_recalled_at",
@@ -116,7 +116,6 @@ describe("initSchema", () => {
       "claim_support_mode",
       "supersession_kind",
       "supersession_reason",
-      "cluster_id",
       "user_id",
       "project",
       "created_at",
@@ -213,7 +212,6 @@ describe("initSchema", () => {
       "durable_ids",
       "reasoning",
       "evidence_refs_json",
-      "recall_delta",
       "details_json",
       "created_at",
     ]);
@@ -344,18 +342,6 @@ describe("initSchema", () => {
     expect(await indexExists(client, "idx_procedures_active_procedure_key")).toBe(true);
   });
 
-  it("is idempotent when episode vector index creation runs more than once", async () => {
-    const client = createClient({ url: ":memory:" });
-    clients.push(client);
-
-    await expect(initSchema(client)).resolves.toBeUndefined();
-    await expect(initSchema(client)).resolves.toBeUndefined();
-
-    const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("5");
-    expect(await indexExists(client, "idx_episodes_started_at")).toBe(true);
-  });
-
   it("enforces one active procedure revision per procedure key", async () => {
     const client = createClient({ url: ":memory:" });
     clients.push(client);
@@ -377,26 +363,47 @@ describe("initSchema", () => {
     await expect(insertTestWorkingSet(client, "working-c", "scope:one", "closed")).resolves.toBeUndefined();
   });
 
-  for (const version of ["1", "2", "3", "7", "9", "11", "12"] as const) {
-    it(`rejects unsupported schema version ${version}`, async () => {
+  it("rejects legacy database state when the entries table is present", async () => {
+    const client = createClient({ url: ":memory:" });
+    clients.push(client);
+
+    await client.execute("CREATE TABLE entries (id TEXT PRIMARY KEY)");
+
+    await expect(initSchema(client)).rejects.toThrow(/unsupported agenr database/i);
+    await expect(initSchema(client)).rejects.toThrow(/agenr db reset/i);
+  });
+
+  it("rejects legacy database state when surgeon tables are present", async () => {
+    const client = createClient({ url: ":memory:" });
+    clients.push(client);
+
+    await client.execute("CREATE TABLE surgeon_runs (id TEXT PRIMARY KEY)");
+
+    await expect(initSchema(client)).rejects.toThrow(/legacy surgeon tables are present/i);
+  });
+
+  for (const marker of LEGACY_DB_COLUMNS) {
+    it(`rejects legacy database state when ${marker.table}.${marker.column} is present`, async () => {
       const client = createClient({ url: ":memory:" });
       clients.push(client);
 
-      await client.execute("CREATE TABLE _meta (key TEXT PRIMARY KEY, value TEXT)");
-      await client.execute({
-        sql: `
-          INSERT INTO _meta (key, value)
-          VALUES ('schema_version', ?)
-        `,
-        args: [version],
-      });
+      await setupLegacyColumnDatabase(client, marker.table, marker.column);
 
-      await expect(initSchema(client)).rejects.toThrow(new RegExp(`schema version "${version}"`, "i"));
+      await expect(initSchema(client)).rejects.toThrow(new RegExp(legacyColumnReason(marker.table, marker.column), "i"));
       await expect(initSchema(client)).rejects.toThrow(/agenr db reset/i);
     });
   }
 
-  it("rejects an existing database without schema metadata", async () => {
+  it("rejects partially initialized databases that are missing required tables", async () => {
+    const client = createClient({ url: ":memory:" });
+    clients.push(client);
+
+    await client.execute(MINIMAL_DURABLES_TABLE_SQL);
+
+    await expect(initSchema(client)).rejects.toThrow(new RegExp(missingRequiredTableReason("_meta"), "i"));
+  });
+
+  it("rejects an existing database without the durables table", async () => {
     const client = createClient({ url: ":memory:" });
     clients.push(client);
 
@@ -410,7 +417,7 @@ describe("initSchema", () => {
       )
     `);
 
-    await expect(initSchema(client)).rejects.toThrow(/without schema metadata/i);
+    await expect(initSchema(client)).rejects.toThrow(new RegExp(missingRequiredTableReason("durables"), "i"));
     expect(await tableColumns(client, "dream_run_actions")).toEqual([]);
   });
 
@@ -423,7 +430,7 @@ describe("initSchema", () => {
     expect(tracker.rebuildCount()).toBe(2);
   });
 
-  it("skips the FTS rebuild when the schema version is unchanged", async () => {
+  it("skips the FTS rebuild when FTS tables already exist", async () => {
     const tracker = createTrackedClient();
     clients.push(tracker.client);
 
@@ -441,6 +448,9 @@ describe("initSchema", () => {
 
     await initSchema(client);
     await initSchema(client);
+
+    expect(await tableColumns(client, "durables")).not.toContain("minhash_sig");
+    expect(await tableColumns(client, "durables")).not.toContain("cluster_id");
 
     expect(await tableColumns(client, "dream_runs")).toEqual([
       "id",
@@ -470,7 +480,6 @@ describe("initSchema", () => {
       "durable_ids",
       "reasoning",
       "evidence_refs_json",
-      "recall_delta",
       "details_json",
       "created_at",
     ]);
@@ -493,24 +502,6 @@ describe("initSchema", () => {
       "applied_action_count",
       "created_at",
     ]);
-  });
-
-  it("rejects a database whose stored schema version changes away from the current version", async () => {
-    const tracker = createTrackedClient();
-    clients.push(tracker.client);
-
-    await initSchema(tracker.trackedClient);
-    await tracker.client.execute({
-      sql: `
-        UPDATE _meta
-        SET value = '0'
-        WHERE key = 'schema_version'
-      `,
-    });
-    tracker.reset();
-
-    await expect(initSchema(tracker.trackedClient)).rejects.toThrow(/schema version "0"/i);
-    expect(tracker.rebuildCount()).toBe(0);
   });
 
   it("drops FTS triggers during bulk-write preparation and restores searchability on finalize", async () => {
@@ -591,6 +582,65 @@ describe("initSchema", () => {
   });
 });
 
+const MINIMAL_DURABLES_TABLE_SQL = `
+  CREATE TABLE durables (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    content TEXT NOT NULL,
+    importance INTEGER NOT NULL,
+    expiry TEXT NOT NULL,
+    tags TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )
+`;
+
+async function setupLegacyColumnDatabase(client: Client, table: string, column: string): Promise<void> {
+  if (table === "durables") {
+    await client.execute(`
+      CREATE TABLE durables (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        content TEXT NOT NULL,
+        importance INTEGER NOT NULL,
+        expiry TEXT NOT NULL,
+        tags TEXT,
+        ${column} TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+    return;
+  }
+
+  await client.execute(MINIMAL_DURABLES_TABLE_SQL);
+
+  if (table === "dream_runs") {
+    await client.execute(`
+      CREATE TABLE dream_runs (
+        id TEXT PRIMARY KEY,
+        started_at TEXT NOT NULL,
+        ${column} INTEGER DEFAULT 0
+      )
+    `);
+    return;
+  }
+
+  if (table === "dream_run_actions") {
+    await client.execute(`
+      CREATE TABLE dream_run_actions (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        action_type TEXT NOT NULL,
+        ${column} TEXT,
+        created_at TEXT NOT NULL
+      )
+    `);
+  }
+}
+
 function createTrackedClient(): {
   client: ReturnType<typeof createClient>;
   trackedClient: Client;
@@ -640,16 +690,14 @@ async function insertTestEntry(client: Client, id: string, content: string): Pro
         embedding,
         content_hash,
         norm_content_hash,
-        minhash_sig,
         quality_score,
         recall_count,
         last_recalled_at,
         superseded_by,
-        cluster_id,
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     args: [
       id,
@@ -664,10 +712,8 @@ async function insertTestEntry(client: Client, id: string, content: string): Pro
       null,
       `hash-${id}`,
       `norm-${id}`,
-      null,
       0.5,
       0,
-      null,
       null,
       null,
       "2026-03-26T00:00:00.000Z",

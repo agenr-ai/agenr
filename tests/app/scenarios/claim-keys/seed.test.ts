@@ -57,8 +57,8 @@ describe("buildClaimKeyScenarioSeedEntry", () => {
 
     expect(entry).toMatchObject({
       claim_key: "Jim / Home City",
-      claim_key_status: undefined,
-      claim_key_source: undefined,
+      claim_key_status: "trusted",
+      claim_key_source: "manual",
     });
   });
 });

@@ -53,12 +53,6 @@ export interface ClaimKeyScenarioSeedEntry extends Partial<
     | "updated_at"
   >
 > {
-  /** @deprecated Legacy scenario input mapped to valid-time staleness during seeding. */
-  retired?: boolean;
-  /** @deprecated Legacy scenario input mapped to valid_to during seeding. */
-  retired_at?: string;
-  /** @deprecated Legacy scenario input mapped to supersession_reason during seeding. */
-  retired_reason?: string;
   type: Durable["type"];
   subject: Durable["subject"];
   content: Durable["content"];

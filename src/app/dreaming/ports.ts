@@ -74,8 +74,6 @@ export interface DreamHealthStats {
     trusted: number;
     tentative: number;
     unresolved: number;
-    /** Legacy rows with a canonical claim key but no lifecycle status yet. */
-    legacy: number;
     noKey: number;
   };
   /** Count of durable unresolved dreaming proposals awaiting review. */

@@ -92,7 +92,6 @@ export async function applyProposalToDurables(
       actionType: "update_durable",
       durableIds: updatedDurableIds,
       reasoning,
-      recallDelta: null,
       details: {
         proposal_id: input.proposal.id,
         proposal_issue_kind: input.proposal.issueKind,

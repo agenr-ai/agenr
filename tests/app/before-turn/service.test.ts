@@ -9,6 +9,7 @@ import { composeProcedureRecallText } from "../../../src/core/procedures/recall-
 import type { ProcedureDatabasePort, RecallPorts } from "../../../src/core/ports.js";
 import type { RecallCandidateDurable } from "../../../src/core/recall/types.js";
 import type { Durable, Procedure } from "../../../src/core/types.js";
+import { finalizeTestDurable } from "../../helpers/durable-fixtures.js";
 
 describe("runBeforeTurn", () => {
   it("abstains when the current turn is empty after normalization", async () => {
@@ -1371,7 +1372,7 @@ function createProcedureDatabase(
 
 function createEntry(overrides: Partial<Durable> = {}): Durable {
   const now = "2026-04-14T10:00:00.000Z";
-  return {
+  return finalizeTestDurable({
     id: overrides.id ?? "entry-1",
     type: overrides.type ?? "decision",
     subject: overrides.subject ?? "test subject",
@@ -1404,12 +1405,11 @@ function createEntry(overrides: Partial<Durable> = {}): Durable {
     claim_support_mode: overrides.claim_support_mode,
     supersession_kind: overrides.supersession_kind,
     supersession_reason: overrides.supersession_reason,
-    cluster_id: overrides.cluster_id,
     user_id: overrides.user_id,
     project: overrides.project,
     created_at: overrides.created_at ?? now,
     updated_at: overrides.updated_at ?? now,
-  };
+  });
 }
 
 function toRecallCandidateDurable(entry: Durable): RecallCandidateDurable {

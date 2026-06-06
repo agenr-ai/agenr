@@ -80,7 +80,6 @@ export async function maybeApplyClaimKeyUpdate(
     actionType: "update_durable",
     durableIds: [durableId],
     reasoning: input.rationale,
-    recallDelta: null,
     details: buildAppliedClaimKeyActionDetails({
       issueKind: input.issueKind,
       oldClaimKey: input.oldClaimKey,

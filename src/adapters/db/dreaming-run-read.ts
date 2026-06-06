@@ -164,7 +164,6 @@ export async function getDreamRunActions(executor: SqlExecutor, runId: string): 
         action_type,
         durable_ids,
         reasoning,
-        recall_delta,
         details_json,
         created_at
       FROM dream_run_actions

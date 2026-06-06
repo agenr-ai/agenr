@@ -48,7 +48,6 @@ export async function persistReconcileProposal(ctx: ReconcilePassContext, input:
     actionType: "flag_review",
     durableIds: proposal.durableIds,
     reasoning: proposal.rationale,
-    recallDelta: null,
     details: buildProposalClaimKeyActionDetails(proposal, {
       proposalLifecycle,
       ...input.audit,

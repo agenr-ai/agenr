@@ -58,7 +58,9 @@ describe("createAgenrMemoryRuntime", () => {
   });
 
   it("returns a stable error payload when startup services fail", async () => {
-    const runtime = createAgenrMemoryRuntime(Promise.reject(new Error('Unsupported agenr database schema version "10".')));
+    const runtime = createAgenrMemoryRuntime(
+      Promise.reject(new Error("Unsupported agenr database because the durables.retired column is present. Create a fresh database with `agenr db reset`.")),
+    );
     const result = await runtime.getMemorySearchManager({
       agentId: "main",
       cfg: {} as AgenrOpenClawServices["openClaw"]["config"],
@@ -67,7 +69,7 @@ describe("createAgenrMemoryRuntime", () => {
 
     expect(result.manager).toBeNull();
     expect(result.error).toContain("[agenr] memory runtime unavailable:");
-    expect(result.error).toContain('Unsupported agenr database schema version "10".');
+    expect(result.error).toContain("Unsupported agenr database because the durables.retired column is present.");
     await expect(runtime.closeAllMemorySearchManagers?.()).resolves.toBeUndefined();
   });
 });

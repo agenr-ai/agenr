@@ -11,6 +11,7 @@ import {
 } from "../../../src/adapters/db/directives-repository.js";
 import { closeTestDatabases, removeTestPath } from "../../helpers/temp-paths.js";
 import type { Durable } from "../../../src/core/types.js";
+import { finalizeTestDurable } from "../../helpers/durable-fixtures.js";
 
 const databases: SqlDatabase[] = [];
 const databasePaths: string[] = [];
@@ -166,7 +167,7 @@ async function createTestDatabase(): Promise<SqlDatabase> {
 
 function createEntry(overrides: Partial<Durable> = {}): Durable {
   const now = "2026-03-01T00:00:00.000Z";
-  return {
+  return finalizeTestDurable({
     id: overrides.id ?? randomUUID(),
     type: overrides.type ?? "preference",
     subject: overrides.subject ?? "subject",
@@ -191,10 +192,9 @@ function createEntry(overrides: Partial<Durable> = {}): Durable {
     claim_key_status: overrides.claim_key_status,
     supersession_kind: overrides.supersession_kind,
     supersession_reason: overrides.supersession_reason,
-    cluster_id: overrides.cluster_id,
     user_id: overrides.user_id,
     project: overrides.project,
     created_at: overrides.created_at ?? now,
     updated_at: overrides.updated_at ?? overrides.created_at ?? now,
-  };
+  });
 }

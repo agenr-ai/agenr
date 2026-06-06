@@ -96,7 +96,6 @@ export async function listDreamActionsForDurable(executor: SqlExecutor, entryId:
         action_type,
         durable_ids,
         reasoning,
-        recall_delta,
         details_json,
         created_at
       FROM dream_run_actions

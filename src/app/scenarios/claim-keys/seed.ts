@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { insertDurable, type SqlExecutor } from "../../../adapters/db/queries.js";
+import { applyDefaultClaimKeyLifecycle } from "../../fixtures/default-claim-key-lifecycle.js";
 import { buildManualClaimKeyLifecycle, buildPrecomputedClaimKeyLifecycle, type ResolvedClaimKeyLifecycle } from "../../../core/claim-key-lifecycle.js";
 import { normalizeClaimKey } from "../../../core/claim-key.js";
 import { computeContentHash, computeNormContentHash } from "../../../core/store/hashing.js";
@@ -24,43 +25,45 @@ export function buildClaimKeyScenarioSeedEntry(seedEntry: ClaimKeyScenarioSeedEn
   const createdAt = seedEntry.created_at?.trim() || validatedInput.created_at || DEFAULT_SCENARIO_CREATED_AT;
   const updatedAt = seedEntry.updated_at?.trim() || createdAt;
 
-  return {
-    id: seedEntry.id?.trim() || randomUUID(),
-    type: validatedInput.type,
-    subject: validatedInput.subject,
-    content: validatedInput.content,
-    importance: validatedInput.importance ?? 7,
-    expiry: validatedInput.expiry ?? "temporary",
-    tags: validatedInput.tags ?? [],
-    source_file: validatedInput.source_file,
-    source_context: validatedInput.source_context,
-    embedding: undefined,
-    content_hash: computeContentHash(validatedInput.content, validatedInput.source_file),
-    norm_content_hash: computeNormContentHash(validatedInput.content),
-    quality_score: 0.5,
-    recall_count: 0,
-    last_recalled_at: undefined,
-    superseded_by: normalizeOptionalString(seedEntry.superseded_by),
-    valid_from: validatedInput.valid_from,
-    valid_to: seedEntry.valid_to ?? (seedEntry.retired ? (normalizeOptionalString(seedEntry.retired_at) ?? updatedAt) : validatedInput.valid_to),
-    supersession_kind: seedEntry.supersession_kind ?? (seedEntry.retired ? "stale" : undefined),
-    supersession_reason: normalizeOptionalString(seedEntry.supersession_reason) ?? normalizeOptionalString(seedEntry.retired_reason),
-    claim_key: preserveLegacyStoredClaimKey ? seedClaimKey : lifecycle?.claim_key,
-    claim_key_raw: preserveLegacyStoredClaimKey ? normalizeOptionalString(seedEntry.claim_key_raw) : lifecycle?.claim_key_raw,
-    claim_key_status: lifecycle?.claim_key_status,
-    claim_key_source: lifecycle?.claim_key_source,
-    claim_key_confidence: lifecycle?.claim_key_confidence,
-    claim_key_rationale: lifecycle?.claim_key_rationale,
-    claim_support_source_kind: lifecycle?.claim_support_source_kind,
-    claim_support_locator: lifecycle?.claim_support_locator,
-    claim_support_observed_at: lifecycle?.claim_support_observed_at,
-    claim_support_mode: lifecycle?.claim_support_mode,
-    cluster_id: undefined,
-    user_id: validatedInput.user_id,
-    project: validatedInput.project,
-    created_at: createdAt,
-    updated_at: updatedAt,
-  };
+  return applyDefaultClaimKeyLifecycle(
+    {
+      id: seedEntry.id?.trim() || randomUUID(),
+      type: validatedInput.type,
+      subject: validatedInput.subject,
+      content: validatedInput.content,
+      importance: validatedInput.importance ?? 7,
+      expiry: validatedInput.expiry ?? "temporary",
+      tags: validatedInput.tags ?? [],
+      source_file: validatedInput.source_file,
+      source_context: validatedInput.source_context,
+      embedding: undefined,
+      content_hash: computeContentHash(validatedInput.content, validatedInput.source_file),
+      norm_content_hash: computeNormContentHash(validatedInput.content),
+      quality_score: 0.5,
+      recall_count: 0,
+      last_recalled_at: undefined,
+      superseded_by: normalizeOptionalString(seedEntry.superseded_by),
+      valid_from: validatedInput.valid_from,
+      valid_to: seedEntry.valid_to ?? validatedInput.valid_to,
+      supersession_kind: seedEntry.supersession_kind,
+      supersession_reason: normalizeOptionalString(seedEntry.supersession_reason),
+      claim_key: preserveLegacyStoredClaimKey ? seedClaimKey : lifecycle?.claim_key,
+      claim_key_raw: preserveLegacyStoredClaimKey ? normalizeOptionalString(seedEntry.claim_key_raw) : lifecycle?.claim_key_raw,
+      claim_key_status: lifecycle?.claim_key_status,
+      claim_key_source: lifecycle?.claim_key_source,
+      claim_key_confidence: lifecycle?.claim_key_confidence,
+      claim_key_rationale: lifecycle?.claim_key_rationale,
+      claim_support_source_kind: lifecycle?.claim_support_source_kind,
+      claim_support_locator: lifecycle?.claim_support_locator,
+      claim_support_observed_at: lifecycle?.claim_support_observed_at,
+      claim_support_mode: lifecycle?.claim_support_mode,
+      user_id: validatedInput.user_id,
+      project: validatedInput.project,
+      created_at: createdAt,
+      updated_at: updatedAt,
+    },
+    "scenario seed",
+  );
 }
 
 /**

@@ -128,7 +128,6 @@ export interface ClaimKeyEntityPrefixStats {
   trustedEntryCount: number;
   tentativeEntryCount: number;
   unresolvedEntryCount: number;
-  legacyEntryCount: number;
   deterministicRepairEntryCount: number;
   manualEntryCount: number;
   modelEntryCount: number;
@@ -319,6 +318,10 @@ export function summarizeClaimKeyEntityPrefixStats(observations: ClaimKeyEntityP
       continue;
     }
 
+    if (!observation.claim_key_status) {
+      continue;
+    }
+
     const entityPrefix = inspection.normalized.entity;
     const existing =
       counts.get(entityPrefix) ??
@@ -328,7 +331,6 @@ export function summarizeClaimKeyEntityPrefixStats(observations: ClaimKeyEntityP
         trustedEntryCount: 0,
         tentativeEntryCount: 0,
         unresolvedEntryCount: 0,
-        legacyEntryCount: 0,
         deterministicRepairEntryCount: 0,
         manualEntryCount: 0,
         modelEntryCount: 0,
@@ -346,9 +348,6 @@ export function summarizeClaimKeyEntityPrefixStats(observations: ClaimKeyEntityP
         break;
       case "unresolved":
         existing.unresolvedEntryCount += 1;
-        break;
-      default:
-        existing.legacyEntryCount += 1;
         break;
     }
 

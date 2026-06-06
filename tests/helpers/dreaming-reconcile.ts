@@ -6,6 +6,7 @@ import type { AgenrConfig } from "../../src/config.js";
 import type { CostMeteredLlm } from "../../src/app/dreaming/ports.js";
 import type { EmbeddingPort, LlmPort } from "../../src/core/ports.js";
 import type { Durable } from "../../src/core/types.js";
+import { finalizeTestDurable } from "./durable-fixtures.js";
 import { runDream } from "../../src/app/dreaming/service.js";
 
 export const TEST_NOW = new Date("2026-04-04T15:00:00.000Z");
@@ -97,7 +98,6 @@ export async function insertDurable(client: Client, overrides: Partial<Durable> 
         embedding,
         content_hash,
         norm_content_hash,
-        minhash_sig,
         quality_score,
         recall_count,
         last_recalled_at,
@@ -118,13 +118,12 @@ export async function insertDurable(client: Client, overrides: Partial<Durable> 
         claim_support_mode,
         supersession_kind,
         supersession_reason,
-        cluster_id,
         user_id,
         project,
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     args: [
       durable.id,
@@ -139,7 +138,6 @@ export async function insertDurable(client: Client, overrides: Partial<Durable> 
       null,
       durable.content_hash ?? null,
       durable.norm_content_hash ?? null,
-      null,
       durable.quality_score,
       durable.recall_count,
       durable.last_recalled_at ?? null,
@@ -160,7 +158,6 @@ export async function insertDurable(client: Client, overrides: Partial<Durable> 
       durable.claim_support_mode ?? null,
       durable.supersession_kind ?? null,
       durable.supersession_reason ?? null,
-      durable.cluster_id ?? null,
       durable.user_id ?? null,
       durable.project ?? null,
       durable.created_at,
@@ -170,7 +167,7 @@ export async function insertDurable(client: Client, overrides: Partial<Durable> 
 }
 
 export function buildDurable(overrides: Partial<Durable> & Pick<Durable, "id" | "subject">): Durable {
-  return {
+  return finalizeTestDurable({
     id: overrides.id,
     type: overrides.type ?? "fact",
     subject: overrides.subject,
@@ -192,14 +189,22 @@ export function buildDurable(overrides: Partial<Durable> & Pick<Durable, "id" | 
     directive_polarity: overrides.directive_polarity,
     directive_trigger: overrides.directive_trigger,
     claim_key: overrides.claim_key,
+    claim_key_raw: overrides.claim_key_raw,
+    claim_key_status: overrides.claim_key_status,
+    claim_key_source: overrides.claim_key_source,
+    claim_key_confidence: overrides.claim_key_confidence,
+    claim_key_rationale: overrides.claim_key_rationale,
+    claim_support_source_kind: overrides.claim_support_source_kind,
+    claim_support_locator: overrides.claim_support_locator,
+    claim_support_observed_at: overrides.claim_support_observed_at,
+    claim_support_mode: overrides.claim_support_mode,
     supersession_kind: overrides.supersession_kind,
     supersession_reason: overrides.supersession_reason,
-    cluster_id: overrides.cluster_id,
     user_id: overrides.user_id,
     project: overrides.project,
     created_at: overrides.created_at ?? "2026-01-01T00:00:00.000Z",
     updated_at: overrides.updated_at ?? "2026-01-01T00:00:00.000Z",
-  };
+  });
 }
 
 export class MockClaimLlm implements LlmPort {

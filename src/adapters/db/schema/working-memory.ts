@@ -27,7 +27,7 @@ const CREATE_WORKING_SETS_TABLE_SQL = `
   )
 `;
 
-export /** SQL statement that creates schema v11 working events. */
+export /** SQL statement that creates working events. */
 const CREATE_WORKING_EVENTS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS working_events (
     id TEXT PRIMARY KEY,
