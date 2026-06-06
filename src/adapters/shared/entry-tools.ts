@@ -198,6 +198,7 @@ export function sanitizeUpdateToolParams(params: {
   claimKey: string | undefined;
   validFrom: string | undefined;
   validTo: string | undefined;
+  project: string | undefined;
 }): Record<string, unknown> {
   return {
     ...(params.id ? { id: params.id } : {}),
@@ -207,6 +208,7 @@ export function sanitizeUpdateToolParams(params: {
     ...(params.claimKey !== undefined ? { hasClaimKey: true } : {}),
     ...(params.validFrom !== undefined ? { hasValidFrom: true } : {}),
     ...(params.validTo !== undefined ? { hasValidTo: true } : {}),
+    ...(params.project !== undefined ? { project: params.project } : {}),
   };
 }
 

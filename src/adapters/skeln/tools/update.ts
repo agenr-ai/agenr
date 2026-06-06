@@ -15,7 +15,7 @@ export function registerAgenrSkelnUpdateTool(
   skeln.registerTool({
     name: "agenr_update",
     label: "Agenr Update",
-    description: "Update an existing memory entry in place. Supports importance, expiry, claimKey, validFrom, and validTo.",
+    description: "Update an existing memory entry in place. Supports metadata corrections: importance, expiry, claimKey, validFrom, validTo, and project.",
     promptSnippet: "Use agenr_update to correct metadata on an existing durable memory entry.",
     promptGuidelines: ["Provide exactly one target selector: id or subject.", "Use agenr_store with supersedes for substantive content replacement."],
     parameters: toolSchema(UPDATE_TOOL_PARAMETERS),
@@ -43,6 +43,7 @@ export function registerAgenrSkelnUpdateTool(
               claimKey: params.claimKeyInput,
               validFrom: params.validFrom,
               validTo: params.validTo,
+              project: params.project,
             }),
           },
         });

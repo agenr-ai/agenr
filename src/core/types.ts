@@ -202,6 +202,7 @@ export interface DurableUpdateInput {
   claim_support_mode?: Durable["claim_support_mode"];
   valid_from?: Durable["valid_from"];
   valid_to?: Durable["valid_to"];
+  project?: Durable["project"];
 }
 
 /**

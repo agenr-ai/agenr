@@ -492,6 +492,9 @@ Current update fields:
 - `claimKey`
 - `validFrom`
 - `validTo`
+- `project`
+
+Use `agenr_update` for metadata corrections only. Use `agenr_store` with `supersedes` when subject, content, type, or meaning changes.
 
 When `claimKey` is updated, the tool writes the shared normalized manual claim-key lifecycle bundle plus claim-support facts from the current OpenClaw session context.
 

@@ -849,6 +849,7 @@ describe("agenr OpenClaw tools", () => {
       claimKey: " Jim / Timezone ",
       validFrom: "2027-03-01T00:00:00.000Z",
       validTo: "2027-03-31T00:00:00.000Z",
+      project: "agenr",
     });
     const traceResult = await traceTool.execute("tool-18", {
       id: storedEntry?.id,
@@ -860,6 +861,7 @@ describe("agenr OpenClaw tools", () => {
       claimKey: "jim/timezone",
       validFrom: "2027-03-01T00:00:00.000Z",
       validTo: "2027-03-31T00:00:00.000Z",
+      project: "agenr",
     });
     expect(updatedEntry).toMatchObject({
       claim_key: "jim/timezone",
@@ -872,6 +874,7 @@ describe("agenr OpenClaw tools", () => {
       claim_support_mode: "explicit",
       valid_from: "2027-03-01T00:00:00.000Z",
       valid_to: "2027-03-31T00:00:00.000Z",
+      project: "agenr",
     });
     expect(updatedEntry?.claim_support_locator).toContain("#agenr_update");
     expect(updatedEntry?.claim_support_observed_at).toMatch(/^20\d\d-/);
@@ -883,6 +886,7 @@ describe("agenr OpenClaw tools", () => {
     expect(updateParamsMessage).toContain('"hasClaimKey":true');
     expect(updateParamsMessage).toContain('"hasValidFrom":true');
     expect(updateParamsMessage).toContain('"hasValidTo":true');
+    expect(updateParamsMessage).toContain('"project":"agenr"');
   });
 
   it("rejects invalid claimKey input through agenr_update", async () => {

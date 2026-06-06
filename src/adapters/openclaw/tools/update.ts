@@ -25,7 +25,7 @@ export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPr
   return {
     name: "agenr_update",
     label: "Agenr Update",
-    description: "Update an existing memory entry in place. Currently supports importance, expiry, claim_key, valid_from, and valid_to.",
+    description: "Update an existing memory entry in place. Supports metadata corrections: importance, expiry, claimKey, validFrom, validTo, and project.",
     parameters: UPDATE_TOOL_PARAMETERS,
     async execute(_toolCallId, rawParams) {
       try {
@@ -43,6 +43,7 @@ export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPr
             claimKey: params.claimKeyInput,
             validFrom: params.validFrom,
             validTo: params.validTo,
+            project: params.project,
           }),
         );
         const services = await servicesPromise;

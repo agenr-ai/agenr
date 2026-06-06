@@ -80,6 +80,7 @@ export interface UpdateToolParams {
   claimKeyInput: string | undefined;
   validFrom: string | undefined;
   validTo: string | undefined;
+  project: string | undefined;
 }
 
 /** Parsed agenr_fetch parameters. */
@@ -291,6 +292,11 @@ const UPDATE_TOOL_PARAMETERS = {
       type: "string",
       description: "ISO 8601 timestamp for when this fact stopped being true.",
     },
+    project: {
+      type: "string",
+      description:
+        "Workspace or product slug for correcting memory scope/routing metadata. Use agenr_store with supersedes instead when the memory content, subject, type, or meaning changes.",
+    },
   },
 } as const;
 
@@ -363,6 +369,7 @@ export function parseUpdateToolParams(rawParams: unknown, reader: MemoryToolPara
     claimKeyInput: reader.readString(params, "claimKey", { trim: false }),
     validFrom: reader.readString(params, "validFrom"),
     validTo: reader.readString(params, "validTo"),
+    project: reader.readString(params, "project"),
   };
 }
 
@@ -560,9 +567,10 @@ export async function runUpdateMemoryTool(
     params.expiry === undefined &&
     normalizedClaimKeyUpdate === undefined &&
     params.validFrom === undefined &&
-    params.validTo === undefined
+    params.validTo === undefined &&
+    params.project === undefined
   ) {
-    throw new Error("Provide at least one update field: importance, expiry, claimKey, validFrom, or validTo.");
+    throw new Error("Provide at least one update field: importance, expiry, claimKey, validFrom, validTo, or project.");
   }
 
   const mergedValidity = validateTemporalValidityRange(params.validFrom ?? entry.valid_from, params.validTo ?? entry.valid_to);
@@ -578,6 +586,7 @@ export async function runUpdateMemoryTool(
     ...(normalizedClaimKeyUpdate?.updateFields ?? {}),
     ...(params.validFrom !== undefined ? { valid_from: normalizedValidFrom } : {}),
     ...(params.validTo !== undefined ? { valid_to: normalizedValidTo } : {}),
+    ...(params.project !== undefined ? { project: params.project } : {}),
   });
 
   if (!updated) {
@@ -597,6 +606,7 @@ export async function runUpdateMemoryTool(
     ...(normalizedClaimKeyUpdate !== undefined ? { claimKey: normalizedClaimKeyUpdate.claimKey } : {}),
     ...(params.validFrom !== undefined ? { validFrom: normalizedValidFrom } : {}),
     ...(params.validTo !== undefined ? { validTo: normalizedValidTo } : {}),
+    ...(params.project !== undefined ? { project: params.project } : {}),
     ...options.successDetails,
   });
 }

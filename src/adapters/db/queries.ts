@@ -544,6 +544,11 @@ export async function updateDurable(
     args.push(normalizeOptionalString(fields.valid_to));
   }
 
+  if (fields.project !== undefined) {
+    assignments.push("project = ?");
+    args.push(normalizeOptionalString(fields.project));
+  }
+
   if (assignments.length === 0) {
     return false;
   }

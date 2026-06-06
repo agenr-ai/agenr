@@ -424,7 +424,8 @@ Current behavior:
 Current behavior:
 
 - accepts exactly one target selector: `id` or `subject`
-- supports metadata updates including `importance`, `expiry`, `claimKey`, `validFrom`, and `validTo`
+- supports metadata updates including `importance`, `expiry`, `claimKey`, `validFrom`, `validTo`, and `project`
+- still requires `agenr_store` with `supersedes` for substantive replacement when subject, content, type, or meaning changes
 - writes normalized claim-key lifecycle metadata when `claimKey` is updated
 
 There is no `agenr_retire` tool on any host. Taking a memory offline now happens through valid-time staleness (closing `validTo` via `agenr_update`), explicit supersession, or dreaming maintenance.
