@@ -428,3 +428,26 @@ Current tool-specific behavior:
 - may enable the same optional claim-key extraction path if the plugin runtime was configured with claim extraction
 
 So the tool and ingest paths converge in the same store pipeline, but ingest adds cross-file semantic dedup and bulk-write index management around it.
+
+## Metadata updates via `agenr_update`
+
+OpenClaw and Skeln expose `agenr_update` for in-place metadata corrections on active durables. The shared implementation lives in `src/adapters/shared/memory-tools.ts` and persists through `DatabasePort.updateDurable()`.
+
+Current update fields:
+
+- `importance`
+- `expiry`
+- `claimKey`
+- `validFrom`
+- `validTo`
+- `project`
+
+Use `agenr_update` only for metadata corrections. Use `agenr_store` with `supersedes` when `subject`, `content`, `type`, or meaning changes.
+
+`project` updates are explicit corrections only. Unlike `agenr_store`, update does not infer project scope from the active session workspace or working directory.
+
+- pass a workspace or product slug to set or change `project`
+- pass an empty string to clear `project` and leave the durable globally scoped
+- omit `project` when you are not correcting scope metadata
+
+`project` still tags knowledge _about_ one workspace or product. Clearing it is the supported way to move a durable back to cross-workspace scope without superseding the row.

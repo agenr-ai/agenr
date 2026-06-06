@@ -208,7 +208,7 @@ export function sanitizeUpdateToolParams(params: {
     ...(params.claimKey !== undefined ? { hasClaimKey: true } : {}),
     ...(params.validFrom !== undefined ? { hasValidFrom: true } : {}),
     ...(params.validTo !== undefined ? { hasValidTo: true } : {}),
-    ...(params.project !== undefined ? { project: params.project } : {}),
+    ...(params.project !== undefined ? { hasProject: true } : {}),
   };
 }
 

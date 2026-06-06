@@ -886,7 +886,7 @@ describe("agenr OpenClaw tools", () => {
     expect(updateParamsMessage).toContain('"hasClaimKey":true');
     expect(updateParamsMessage).toContain('"hasValidFrom":true');
     expect(updateParamsMessage).toContain('"hasValidTo":true');
-    expect(updateParamsMessage).toContain('"project":"agenr"');
+    expect(updateParamsMessage).toContain('"hasProject":true');
   });
 
   it("rejects invalid claimKey input through agenr_update", async () => {

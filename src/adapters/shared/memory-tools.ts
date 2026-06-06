@@ -5,7 +5,7 @@ import type { DatabasePort, EmbeddingPort, EpisodeDatabasePort, ProcedureDatabas
 import { resolveDurableProjectScope } from "../../core/store/project-scope.js";
 import { storeDurablesDetailed } from "../../core/store/pipeline.js";
 import { validateTemporalValidityRange } from "../../core/temporal-validity.js";
-import { DURABLE_KINDS, type DirectiveTrigger, type DurableKind, type Expiry } from "../../core/types.js";
+import { DURABLE_KINDS, type DirectiveTrigger, type DurableKind, type DurableUpdateInput, type Expiry } from "../../core/types.js";
 import type { MemoryRepository } from "../../app/memory/ports.js";
 import type { PluginClaimExtractionRuntime, PluginEmbeddingStatus, PluginMemoryRuntimeServices } from "../../app/plugin-runtime/types.js";
 import { runUnifiedRecall, type UnifiedRecallMode, type UnifiedRecallResult } from "../../app/recall/index.js";
@@ -562,17 +562,6 @@ export async function runUpdateMemoryTool(
         })();
   const entry = await resolveTargetDurable(buildEntryMemoryResolverPorts(services), { id: params.id, subject: params.subject });
 
-  if (
-    params.importance === undefined &&
-    params.expiry === undefined &&
-    normalizedClaimKeyUpdate === undefined &&
-    params.validFrom === undefined &&
-    params.validTo === undefined &&
-    params.project === undefined
-  ) {
-    throw new Error("Provide at least one update field: importance, expiry, claimKey, validFrom, validTo, or project.");
-  }
-
   const mergedValidity = validateTemporalValidityRange(params.validFrom ?? entry.valid_from, params.validTo ?? entry.valid_to);
   if (!mergedValidity.ok) {
     throw new Error(mergedValidity.message);
@@ -580,14 +569,12 @@ export async function runUpdateMemoryTool(
 
   const normalizedValidFrom = params.validFrom !== undefined ? mergedValidity.value.validFrom : undefined;
   const normalizedValidTo = params.validTo !== undefined ? mergedValidity.value.validTo : undefined;
-  const updated = await services.entries.updateDurable(entry.id, {
-    ...(params.importance !== undefined ? { importance: params.importance } : {}),
-    ...(params.expiry !== undefined ? { expiry: params.expiry } : {}),
-    ...(normalizedClaimKeyUpdate?.updateFields ?? {}),
-    ...(params.validFrom !== undefined ? { valid_from: normalizedValidFrom } : {}),
-    ...(params.validTo !== undefined ? { valid_to: normalizedValidTo } : {}),
-    ...(params.project !== undefined ? { project: params.project } : {}),
-  });
+  const patch = buildUpdateMemoryToolPatch(params, normalizedClaimKeyUpdate, normalizedValidFrom, normalizedValidTo);
+  if (Object.keys(patch.dbFields).length === 0) {
+    throw new Error("Provide at least one update field.");
+  }
+
+  const updated = await services.entries.updateDurable(entry.id, patch.dbFields);
 
   if (!updated) {
     return failedOutcome(`Entry ${entry.id} is not active, so it could not be updated.`, {
@@ -601,17 +588,61 @@ export async function runUpdateMemoryTool(
     status: "updated",
     entryId: entry.id,
     subject: entry.subject,
-    ...(params.importance !== undefined ? { importance: params.importance } : {}),
-    ...(params.expiry !== undefined ? { expiry: params.expiry } : {}),
-    ...(normalizedClaimKeyUpdate !== undefined ? { claimKey: normalizedClaimKeyUpdate.claimKey } : {}),
-    ...(params.validFrom !== undefined ? { validFrom: normalizedValidFrom } : {}),
-    ...(params.validTo !== undefined ? { validTo: normalizedValidTo } : {}),
-    ...(params.project !== undefined ? { project: params.project } : {}),
+    ...patch.details,
     ...options.successDetails,
   });
 }
 
 export { FETCH_TOOL_PARAMETERS, RECALL_TOOL_PARAMETERS, STORE_TOOL_PARAMETERS, UPDATE_TOOL_PARAMETERS };
+
+/** Database and response details built from one agenr_update parameter set. */
+interface UpdateMemoryToolPatch {
+  dbFields: DurableUpdateInput;
+  details: Record<string, unknown>;
+}
+
+/**
+ * Builds the database patch and success details for agenr_update from parsed parameters.
+ *
+ * @param params - Parsed update-tool parameters.
+ * @param normalizedClaimKeyUpdate - Normalized claim-key lifecycle bundle when claimKey was supplied.
+ * @param normalizedValidFrom - Merged valid_from value when validFrom was supplied.
+ * @param normalizedValidTo - Merged valid_to value when validTo was supplied.
+ * @returns Database fields and camelCase success details for the same update.
+ */
+function buildUpdateMemoryToolPatch(
+  params: UpdateToolParams,
+  normalizedClaimKeyUpdate: ReturnType<typeof normalizeManualClaimKeyUpdate> | undefined,
+  normalizedValidFrom: string | undefined,
+  normalizedValidTo: string | undefined,
+): UpdateMemoryToolPatch {
+  const dbFields: DurableUpdateInput = {
+    ...(params.importance !== undefined ? { importance: params.importance } : {}),
+    ...(params.expiry !== undefined ? { expiry: params.expiry } : {}),
+    ...(normalizedClaimKeyUpdate?.updateFields ?? {}),
+    ...(params.validFrom !== undefined ? { valid_from: normalizedValidFrom } : {}),
+    ...(params.validTo !== undefined ? { valid_to: normalizedValidTo } : {}),
+    ...(params.project !== undefined ? { project: params.project } : {}),
+  };
+
+  return {
+    dbFields,
+    details: {
+      ...(params.importance !== undefined ? { importance: params.importance } : {}),
+      ...(params.expiry !== undefined ? { expiry: params.expiry } : {}),
+      ...(normalizedClaimKeyUpdate !== undefined ? { claimKey: normalizedClaimKeyUpdate.claimKey } : {}),
+      ...(params.validFrom !== undefined ? { validFrom: normalizedValidFrom } : {}),
+      ...(params.validTo !== undefined ? { validTo: normalizedValidTo } : {}),
+      ...(params.project !== undefined ? projectDetailValue(params.project) : {}),
+    },
+  };
+}
+
+/** Maps one update-tool project input into persisted or cleared success-detail shape. */
+function projectDetailValue(project: string): { project: string | null } {
+  const trimmed = project.trim();
+  return { project: trimmed.length > 0 ? trimmed : null };
+}
 
 /**
  * Builds a successful host-neutral memory tool outcome.

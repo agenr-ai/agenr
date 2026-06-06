@@ -246,6 +246,34 @@ describe("createDatabase", () => {
     expect(await adapter.ftsSearch({ text: "disappear", limit: 5 })).toEqual([]);
   });
 
+  it("updates entry project metadata", async () => {
+    const database = await createTestDatabase();
+    const entry = createEntry({ project: "openclaw" });
+
+    await database.insertDurable(entry, createEmbedding(0, 1), "update-project-hash");
+    const updated = await database.updateDurable(entry.id, {
+      project: "agenr",
+    });
+    const stored = await database.getDurable(entry.id);
+
+    expect(updated).toBe(true);
+    expect(stored?.project).toBe("agenr");
+  });
+
+  it("clears entry project metadata when update receives an empty string", async () => {
+    const database = await createTestDatabase();
+    const entry = createEntry({ project: "agenr" });
+
+    await database.insertDurable(entry, createEmbedding(0, 1), "clear-project-hash");
+    const updated = await database.updateDurable(entry.id, {
+      project: "",
+    });
+    const stored = await database.getDurable(entry.id);
+
+    expect(updated).toBe(true);
+    expect(stored?.project).toBeUndefined();
+  });
+
   it("updates entry importance and expiry", async () => {
     const database = await createTestDatabase();
     const entry = createEntry({ importance: 4, expiry: "temporary" });

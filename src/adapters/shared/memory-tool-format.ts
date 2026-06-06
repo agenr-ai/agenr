@@ -99,6 +99,7 @@ export function sanitizeStoreToolParams(params: StoreToolParams): Record<string,
     ...(params.trigger !== undefined ? { hasTrigger: true } : {}),
     ...(params.validFrom !== undefined ? { hasValidFrom: true } : {}),
     ...(params.validTo !== undefined ? { hasValidTo: true } : {}),
+    ...(params.project !== undefined ? { hasProject: true } : {}),
   };
 }
 
