@@ -11,6 +11,7 @@ import type { PluginClaimExtractionRuntime, PluginEmbeddingStatus, PluginMemoryR
 import { runUnifiedRecall, type UnifiedRecallMode, type UnifiedRecallResult } from "../../app/recall/index.js";
 import { buildSessionSourceFile, buildToolCallClaimSupport, type SessionSourcePrefix, type ToolSessionLike } from "./claim-support.js";
 import {
+  CLAIM_KEY_DESCRIPTION,
   ENTRY_TYPE_DESCRIPTION,
   EXPIRY_DESCRIPTION,
   RECALL_MODES,
@@ -173,8 +174,7 @@ const STORE_TOOL_PARAMETERS = {
     },
     claimKey: {
       type: "string",
-      description:
-        'Slot key identifying the specific knowledge slot (entity/attribute format, e.g., "project_name/deploy_strategy" or "postgres/max_connections"). Directive rows must use user/memory_directive/<name>. Entries with the same claim key are candidates for supersession.',
+      description: CLAIM_KEY_DESCRIPTION,
     },
     polarity: {
       type: "string",
@@ -281,8 +281,7 @@ const UPDATE_TOOL_PARAMETERS = {
     },
     claimKey: {
       type: "string",
-      description:
-        'Slot key identifying the specific knowledge slot (entity/attribute format, e.g., "project_name/deploy_strategy" or "postgres/max_connections"). Entries with the same claim key are candidates for supersession.',
+      description: CLAIM_KEY_DESCRIPTION,
     },
     validFrom: {
       type: "string",
@@ -407,6 +406,12 @@ export async function runStoreMemoryTool(
     { sessionWorkspace: options.session.project },
   );
 
+  const warnings: string[] = [];
+  const handleWarning = (warning: string) => {
+    warnings.push(warning);
+    options.onWarning?.(warning);
+  };
+
   const result = await storeDurablesDetailed(
     [
       {
@@ -445,35 +450,39 @@ export async function runStoreMemoryTool(
             },
           }
         : {}),
-      onWarning: options.onWarning,
+      onWarning: handleWarning,
     },
   );
   const storedEntry = await services.memory.findEntryBySubject(params.subject);
+  const warningDetails = buildMemoryToolWarningDetails(warnings);
 
   if (result.stored > 0) {
-    return okOutcome(`Stored "${params.subject}".`, {
+    return okOutcome(formatMemoryToolOutcomeText(`Stored "${params.subject}".`, warnings), {
       status: "stored",
       subject: params.subject,
       entryId: storedEntry?.id,
       result,
+      ...warningDetails,
       ...options.extraDetails,
     });
   }
 
   if (result.skipped > 0) {
-    return okOutcome(`Skipped "${params.subject}" because an active duplicate already exists.`, {
+    return okOutcome(formatMemoryToolOutcomeText(`Skipped "${params.subject}" because an active duplicate already exists.`, warnings), {
       status: "skipped",
       subject: params.subject,
       entryId: storedEntry?.id,
       result,
+      ...warningDetails,
       ...options.extraDetails,
     });
   }
 
-  return failedOutcome(`Rejected "${params.subject}". Check the supplied type, content, and metadata.`, {
+  return failedOutcome(formatMemoryToolOutcomeText(`Rejected "${params.subject}". Check the supplied type, content, and metadata.`, warnings), {
     status: "failed",
     subject: params.subject,
     result,
+    ...warningDetails,
     ...options.extraDetails,
   });
 }
@@ -642,6 +651,32 @@ function buildUpdateMemoryToolPatch(
 function projectDetailValue(project: string): { project: string | null } {
   const trimmed = project.trim();
   return { project: trimmed.length > 0 ? trimmed : null };
+}
+
+/**
+ * Appends non-fatal pipeline warnings to the agent-visible tool text.
+ *
+ * @param baseText - Primary success or failure message.
+ * @param warnings - Non-fatal warnings collected during tool execution.
+ * @returns Combined tool text with a warnings section when needed.
+ */
+function formatMemoryToolOutcomeText(baseText: string, warnings: string[]): string {
+  if (warnings.length === 0) {
+    return baseText;
+  }
+
+  const warningLines = warnings.map((warning) => `- ${warning}`).join("\n");
+  return `${baseText}\n\nWarnings:\n${warningLines}`;
+}
+
+/**
+ * Builds optional structured warning details for tool outcomes.
+ *
+ * @param warnings - Non-fatal warnings collected during tool execution.
+ * @returns Details payload fragment when warnings were emitted.
+ */
+function buildMemoryToolWarningDetails(warnings: string[]): Record<string, unknown> {
+  return warnings.length > 0 ? { warnings } : {};
 }
 
 /**

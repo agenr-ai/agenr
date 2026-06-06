@@ -11,6 +11,7 @@ export function buildAgenrSkelnMemoryPromptSection(): string[] {
     "agenr_recall returns truncated durable previews with ids, scores, and preview_truncated flags. Call agenr_fetch with id when preview_truncated=true or exact stored wording is required.",
     "When Agenr injects memory automatically, treat it as non-user background context and use it silently when relevant rather than forcing it into the reply.",
     "Use agenr_store for durable memory, not for logging. Store only the durable takeaway, standing rule, preference, risk, lesson, or relationship - not progress logs or data already canonical elsewhere.",
+    "When storing slot-like facts, pass claimKey as exactly two segments with one slash: entity/attribute. Do not use nested paths like project/category/item; collapse extra words into snake_case on either side, for example skeln/codebase_layout.",
     "Use agenr_update to correct metadata on an existing durable. Use agenr_store with supersedes for substantive content replacement.",
     "",
   ];

@@ -23,6 +23,7 @@ export function registerAgenrSkelnStoreTool(
       "Do not store progress logs, plans, or data already canonical in git, tickets, calendars, signed docs, chat/email, or databases.",
       "Store the durable takeaway, standing rule, preference, risk, lesson, or relationship instead of raw activity.",
       "Use claimKey for slot-like facts that may be superseded later, such as versions, strategies, owners, or limits.",
+      "Format claimKey as exactly two segments with one slash: entity/attribute. Do not use nested paths like skeln/codebase/layout; use skeln/codebase_layout instead.",
     ],
     parameters: toolSchema(STORE_TOOL_PARAMETERS),
     execute: async (_toolCallId, rawParams, _signal, _onUpdate, context) => {
