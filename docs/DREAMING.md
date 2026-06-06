@@ -143,13 +143,43 @@ The extract and temporalize stages call models only through injected factories, 
 
 Every completion summary includes a compute-efficiency block used by eval scoreboard runs:
 
-- `evidenceItemsRead`
-- `synthesizedDurableMutations`
-- `costPerSynthesizedDurableUsd`
-- `profileInjectionTokenEstimate`
-- `recomputeRatio`
+See [Compute efficiency](#compute-efficiency) for field definitions and the initial loose eval thresholds.
 
 `dream_state.unsynthesized_importance_sum` is reset after a completed run and retained after incomplete runs.
+
+## Compute efficiency
+
+Dreaming completion summaries expose a bounded telemetry block so `agenr-evals` can track synthesis cost separately from daily dreaming spend caps. The PRD targets roughly **5× lower serving cost** for profile-first injection versus repeatedly re-reading and re-injecting the same durables at session start; these counters are the first measurable step toward that thesis. They are **not hard CI gates yet** - the thresholds below are loose baselines used by the WS3 compute-efficiency manifest until production baselines exist.
+
+| Field                           | Definition                                                                                                                                                                                          |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `evidenceItemsRead`             | Count of episode, ingest-log, and durable-create signals scanned during the run (`scan.episodesSinceLastRun + scan.ingestFilesSinceLastRun + scan.durablesCreatedSinceLastRun`).                    |
+| `synthesizedDurableMutations`   | Count of durable writes produced by the run: extract inserts, temporalize revisions, and prune retirements. Known extract candidates (content-hash match) do **not** increment this counter.        |
+| `recomputeRatio`                | `synthesizedDurableMutations / evidenceItemsRead`, rounded to six decimals. `0` when no evidence was read. Lower is better for incremental/light maintenance.                                       |
+| `costPerSynthesizedDurableUsd`  | `estimatedCostUsd / synthesizedDurableMutations`, rounded to six decimals. `null` when no mutations occurred.                                                                                       |
+| `profileInjectionTokenEstimate` | Rough prompt-token estimate for the active profile bundle (`36` tokens × profile durables + `24` tokens × directives). Used to compare dreaming-on profile projection against store-only injection. |
+
+Initial loose thresholds exercised by `agenr-evals` cases (Option A completion-summary fixtures, not live `runDream()`):
+
+| Signal                                                   | Loose threshold                           | Eval case                                             |
+| -------------------------------------------------------- | ----------------------------------------- | ----------------------------------------------------- |
+| `recomputeRatio` on `light` tier                         | `< 0.5`                                   | `dreaming.efficiency.light-low-recompute`             |
+| `synthesizedDurableMutations` for known candidates       | `= 0`                                     | `dreaming.efficiency.known-candidates-zero-mutations` |
+| `profileInjectionTokenEstimate` vs store-only equivalent | profile bundle `< memoryPool.length × 36` | `dreaming.efficiency.dreaming-on-profile-tokens`      |
+
+Run the compute-efficiency suite:
+
+```bash
+# terminal 1 - agenr eval server
+cd /path/to/agenr
+pnpm internal:eval-server
+
+# terminal 2 - agenr-evals manifest
+cd /path/to/agenr-evals
+npm run evals -- run --manifest dreaming/compute-efficiency --adapter agenr-dreaming-efficiency-http
+```
+
+See [`docs/EVALS.md` § Dreaming compute-efficiency seam](./EVALS.md#dreaming-compute-efficiency-seam-ws3) for the HTTP contract.
 
 ## Background triggers
 
@@ -242,6 +272,8 @@ npm run run-ablation dreaming
 Per-arm artifacts are written under `agenr-evals/artifacts/runs/dreaming-ablation/<arm>/`. The scoreboard markdown is written beside those runs for case × arm comparison.
 
 Arm contract and seam mapping: [`docs/EVALS.md` § Dreaming ablation arms](./EVALS.md#dreaming-ablation-arms-ws1).
+
+Compute-efficiency regression (WS3) uses a separate manifest and pre-seeded completion summaries: [`docs/EVALS.md` § Dreaming compute-efficiency seam](./EVALS.md#dreaming-compute-efficiency-seam-ws3).
 
 ## Related docs
 

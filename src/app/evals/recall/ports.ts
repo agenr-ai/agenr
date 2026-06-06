@@ -2,6 +2,7 @@ import type { EmbeddingPort, EpisodeDatabasePort, ProcedureDatabasePort, RecallP
 import type { Durable, Procedure } from "../../../core/types.js";
 import type { SessionStartRepository } from "../../session-start/index.js";
 import type { EvalProfileSnapshotFixture } from "../ablation-arm.js";
+import type { EvalSandboxBaseContext } from "../sandbox-context.js";
 import type { RecallEvalSnapshotMetadata } from "./contracts.js";
 
 /**
@@ -38,13 +39,7 @@ export interface RecallEvalFixtureStore {
 /**
  * Open isolated sandbox state for one recall eval case.
  */
-export interface RecallEvalSandboxContext {
-  /** Sandbox root directory used for the case execution. */
-  root: string;
-  /** SQLite database path used by the isolated sandbox. */
-  dbPath: string;
-  /** Whether the sandbox should remain on disk after cleanup. */
-  preserved: boolean;
+export interface RecallEvalSandboxContext extends EvalSandboxBaseContext {
   /** Narrow fixture-seeding surface over the isolated database. */
   fixtureStore: RecallEvalFixtureStore;
   /** Episode database surface backed by the isolated sandbox database. */
@@ -87,10 +82,4 @@ export interface RecallEvalSandboxContext {
    * @returns Recall ports backed by the isolated sandbox database.
    */
   createRecallPorts(embedding: EmbeddingPort): RecallPorts;
-  /**
-   * Closes open resources and removes ephemeral sandbox state when needed.
-   *
-   * @returns Promise that resolves after cleanup finishes.
-   */
-  cleanup(): Promise<void>;
 }

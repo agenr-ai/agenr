@@ -13,12 +13,14 @@ The current contract is intentionally shaped around production parity rather tha
 These seams are intentionally small:
 
 - one transport host: the internal eval dev server
-- three routes: `POST /internal/evals/recall/run`, `POST /internal/evals/before-turn/run`, and `POST /internal/evals/session-start/run`
-- three eval families: recall, before-turn, and session-start
+- four routes: `POST /internal/evals/recall/run`, `POST /internal/evals/before-turn/run`, `POST /internal/evals/session-start/run`, and `POST /internal/evals/dreaming-efficiency/run`
+- four eval families: recall, before-turn, session-start, and dreaming-efficiency
 - one case shape per family: one request in, one response out
 - one provisioning mode: exact fixture seeding into an isolated SQLite sandbox
 
 It is not a general eval platform. `agenr-evals` owns manifests, suite orchestration, artifacts, comparisons, summaries, and reporting. `agenr` owns the execution seam.
+
+Dreaming compute-efficiency evals (WS3) use a fourth route that provisions pre-baked completion-summary fixtures (Option A) and derives efficiency from persisted scan/project/stage counters instead of calling live `runDream()`.
 
 This document describes the code as it exists today.
 
@@ -31,12 +33,14 @@ This document describes the code as it exists today.
 - `src/adapters/api/internal-eval-routes.ts` - deterministic route registry for the internal eval server
 - `src/adapters/api/routes/internal-before-turn-eval.ts` - thin `POST /internal/evals/before-turn/run` route and boundary error mapping
 - `src/adapters/api/routes/internal-session-start-eval.ts` - thin `POST /internal/evals/session-start/run` route and boundary error mapping
+- `src/adapters/api/routes/internal-dreaming-efficiency-eval.ts` - thin `POST /internal/evals/dreaming-efficiency/run` route and boundary error mapping
 - `src/adapters/api/routes/internal-recall-eval.ts` - thin `POST /internal/evals/recall/run` route and boundary error mapping
 - `src/adapters/api/validation/before-turn-eval-request.ts` - strict JSON request validation for before-turn eval cases
 - `src/adapters/api/validation/internal-eval-shared.ts` - shared sandbox and fixture validation helpers
 - `src/app/evals/before-turn/contracts.ts` - stable before-turn request, response, output, and timing types
 - `src/app/evals/before-turn/run-before-turn-eval-case.ts` - top-level app service that sets up the sandbox, provisions fixtures, runs `runBeforeTurn()`, and normalizes the response
 - `src/app/evals/session-start/run-session-start-eval-case.ts` - top-level app service that sets up the sandbox, provisions fixtures, runs `runSessionStart()`, and normalizes the response
+- `src/app/evals/dreaming-efficiency/run-dreaming-efficiency-eval-case.ts` - top-level app service that provisions fixtures, seeds pre-baked dreaming run summaries, reads the persisted run, and derives efficiency telemetry
 - `src/app/evals/ablation-arm.ts` - dreaming scoreboard arm resolution (`memory-off`, `store-only`, `dreaming-on`)
 - `src/app/evals/provision-profile-snapshot.ts` - pre-seeds active profile snapshots for dreaming-on eval cases
 - `src/app/evals/before-turn/normalize-response.ts` - stable success and error envelope shaping for before-turn evals
@@ -96,12 +100,13 @@ pnpm run build:root
 node dist/internal-eval-server.js
 ```
 
-The local server exposes exactly three routes:
+The local server exposes exactly four routes:
 
 ```txt
 POST /internal/evals/recall/run
 POST /internal/evals/before-turn/run
 POST /internal/evals/session-start/run
+POST /internal/evals/dreaming-efficiency/run
 ```
 
 Defaults:
@@ -1018,6 +1023,87 @@ Eval-corpus reminder:
   patterns the corpus does not cover, cross-encoder (and MMR, and RRF)
   defaults can overfit to the corpus. Track this explicitly when
   interpreting aggregate pass rates.
+
+## Dreaming compute-efficiency seam (WS3)
+
+The dreaming-efficiency seam returns derived `DreamEfficiencySummary` telemetry for scoreboard and regression cases without invoking live `runDream()`. Harnesses supply a `dreamRunFixture` whose raw `summaryJson` counters are written into isolated `dream_runs` storage. The app seam reads the persisted run and derives efficiency from `scan`, stage mutation counts, `project`, and persisted run cost before returning optional profile token comparison fields.
+
+Local route:
+
+```txt
+POST /internal/evals/dreaming-efficiency/run
+```
+
+Request shape:
+
+```json
+{
+  "caseId": "dreaming.efficiency.light-low-recompute",
+  "memoryPool": [],
+  "dreamRunFixture": {
+    "tier": "light",
+    "summaryJson": {
+      "actions_taken": 0,
+      "durables_skipped": [],
+      "observations": [],
+      "recommendations": [],
+      "scan": {
+        "episodesSinceLastRun": 1,
+        "ingestFilesSinceLastRun": 0,
+        "durablesCreatedSinceLastRun": 0,
+        "evidenceRefs": [],
+        "unsynthesizedImportanceSum": 0
+      },
+      "extract": {
+        "episodesScanned": 1,
+        "candidatesEmitted": 0,
+        "newCandidates": 0,
+        "refineCandidates": 0,
+        "knownCandidates": 0,
+        "durablesInserted": 0
+      },
+      "project": {
+        "profileDurableCount": 1,
+        "directiveCount": 0,
+        "snapshotId": null,
+        "applied": true
+      }
+    }
+  },
+  "sandbox": {
+    "ablationArm": "dreaming-on",
+    "profileSnapshot": {
+      "durableIds": ["fact-1"]
+    }
+  }
+}
+```
+
+Successful responses include:
+
+- `efficiency` - the derived `DreamEfficiencySummary` block from the persisted run summary
+- `profileInjectionTokenEstimate` - derived from the persisted profile projection counters
+- `storeOnlyEquivalentTokenEstimate` - when `memoryPool` is non-empty, `memoryPool.length × 36` (+ directive allowance) for store-only comparison cases
+
+`agenr-evals` adapter: `agenr-dreaming-efficiency-http`
+
+Manifest: `manifests/dreaming/compute-efficiency.json`
+
+Operator sequence:
+
+```bash
+# terminal 1 - agenr eval server
+cd /path/to/agenr
+pnpm internal:eval-server
+
+# terminal 2 - run the compute-efficiency manifest
+cd /path/to/agenr-evals
+npm run evals -- run --manifest dreaming/compute-efficiency --adapter agenr-dreaming-efficiency-http
+```
+
+Field definitions and loose thresholds: [`docs/DREAMING.md` § Compute efficiency](./DREAMING.md#compute-efficiency).
+
+The compute-efficiency manifest is standalone today. Ablation scoreboard manifests remain under `manifests/dreaming/ablation-*.json`; profile-token comparison is covered by `dreaming.efficiency.dreaming-on-profile-tokens` using the same factual `memoryPool` with a bounded profile snapshot versus the store-only token estimate.
 
 ## Dreaming ablation arms (WS1)
 

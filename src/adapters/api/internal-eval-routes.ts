@@ -1,5 +1,6 @@
 import type { CrossEncoderPort } from "../../core/ports.js";
 import { createInternalBeforeTurnEvalRoute } from "./routes/internal-before-turn-eval.js";
+import { createInternalDreamingEfficiencyEvalRoute } from "./routes/internal-dreaming-efficiency-eval.js";
 import { createInternalRecallEvalRoute } from "./routes/internal-recall-eval.js";
 import { createInternalSessionStartEvalRoute } from "./routes/internal-session-start-eval.js";
 import type { InternalApiRoute } from "./internal-api-route.js";
@@ -29,5 +30,6 @@ export function createInternalEvalRoutes(options: InternalEvalRoutesOptions = {}
     createInternalRecallEvalRoute({ crossEncoder: options.crossEncoder }),
     createInternalBeforeTurnEvalRoute({ crossEncoder: options.crossEncoder }),
     createInternalSessionStartEvalRoute(),
+    createInternalDreamingEfficiencyEvalRoute(),
   ];
 }

@@ -40,7 +40,12 @@ describe("createInternalRecallEvalRoute", () => {
   it("keeps the eval HTTP surface to exactly the recall and before-turn route files", async () => {
     const routeFiles = (await readdir(new URL("../../../../src/adapters/api/routes/", import.meta.url))).filter((file) => file.endsWith(".ts")).sort();
 
-    expect(routeFiles).toEqual(["internal-before-turn-eval.ts", "internal-recall-eval.ts", "internal-session-start-eval.ts"]);
+    expect(routeFiles).toEqual([
+      "internal-before-turn-eval.ts",
+      "internal-dreaming-efficiency-eval.ts",
+      "internal-recall-eval.ts",
+      "internal-session-start-eval.ts",
+    ]);
   });
 
   it("exposes the expected internal POST route and returns JSON from the runner", async () => {

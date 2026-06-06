@@ -30,7 +30,7 @@ export async function provisionEvalProfileSnapshot(
     directiveIds,
     asOf,
     contentHash,
-    runId: fixture.runId ?? "eval-fixture",
+    runId: fixture.runId ?? null,
     createdAt,
   });
   await updateDreamState(executor, {

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { createDatabase } from "../../../adapters/db/client.js";
+import { createEvalDreamRunStore } from "../../../adapters/db/eval-dream-run-store.js";
 import { createRecallEvalFixtureStore } from "../../../adapters/db/eval-fixture-store.js";
 import { provisionEvalProfileSnapshot } from "../../../adapters/db/eval-profile-snapshot-store.js";
 import { listActiveAbstainDirectives, listActiveSessionStartProactiveDirectives } from "../../../adapters/db/directives-repository.js";
@@ -60,6 +61,7 @@ export async function setupRecallEvalSandbox(request: RecallEvalSandboxRequest |
       listActiveAbstainDirectives: (now) => listActiveAbstainDirectives(openDatabase, now),
       listActiveSessionStartProactiveDirectives: (now) => listActiveSessionStartProactiveDirectives(openDatabase, now),
       provisionProfileSnapshot: (fixture, provisionedAt) => provisionEvalProfileSnapshot(openDatabase, fixture, provisionedAt),
+      dreamRunStore: createEvalDreamRunStore(openDatabase),
       ...(snapshot ? { snapshot } : {}),
       createRecallPorts: (embedding) => createRecallAdapter(openDatabase, embedding),
       cleanup: async (): Promise<void> => {

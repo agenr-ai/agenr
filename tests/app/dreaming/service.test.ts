@@ -11,6 +11,7 @@ import { getDurable } from "../../../src/adapters/db/queries.js";
 import type { DreamPort } from "../../../src/app/dreaming/ports.js";
 import { backupDatabaseFile, runDream } from "../../../src/app/dreaming/service.js";
 import type { EmbeddingPort, LlmPort } from "../../../src/core/ports.js";
+import { computeNormContentHash } from "../../../src/core/store/hashing.js";
 import { createDeterministicEmbedding, createTestClient, insertDurable } from "../../helpers/dreaming-reconcile.js";
 
 /** Extraction LLM double returning a fixed durable set for pipeline wiring tests. */
@@ -563,7 +564,7 @@ describe("runDream", () => {
     expect(result.completionSummary?.efficiency).toMatchObject({
       synthesizedDurableMutations: 1,
       profileInjectionTokenEstimate: 8 * 36,
-      recomputeRatio: 0,
+      recomputeRatio: 0.111111,
     });
 
     const retired = await client.execute({ sql: `SELECT retired, retired_reason FROM durables WHERE id = ?`, args: ["temporary-low"] });
@@ -630,6 +631,203 @@ describe("runDream", () => {
     expect(lastRun?.summaryJson?.extract?.durablesInserted).toBe(1);
     expect(lastRun?.summaryJson?.temporalize).toBeUndefined();
     expect(lastRun?.error).toBe("Temporalize embedding failed");
+  });
+
+  it("reports a low recomputeRatio for light-tier runs with known extract candidates", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+    const knownContent = "Standups happen every weekday at 9am sharp in the team channel.";
+
+    await insertDurable(client, {
+      id: "known-1",
+      subject: "Standup cadence",
+      content: knownContent,
+      type: "fact",
+      norm_content_hash: computeNormContentHash(knownContent),
+    });
+    await insertEpisode(client, "ep-1", "Session covering standup cadence.");
+
+    const llm = new PipelineExtractLlm([{ type: "fact", subject: "Standup cadence", content: knownContent }]);
+
+    const result = await runDream(
+      {
+        tier: "light",
+        apply: true,
+        verbose: false,
+        json: false,
+        skipBackup: true,
+      },
+      {
+        port,
+        config: null,
+        now: () => new Date("2026-06-05T12:00:00.000Z"),
+        createExtractLlm: () => llm,
+        embedding: createDeterministicEmbedding(),
+      },
+    );
+
+    expect(result.completionSummary?.extract?.knownCandidates).toBe(1);
+    expect(result.completionSummary?.extract?.durablesInserted).toBe(0);
+    expect(result.completionSummary?.efficiency?.synthesizedDurableMutations).toBe(0);
+    expect(result.completionSummary?.efficiency?.recomputeRatio).toBeLessThan(0.5);
+  });
+
+  it("reports higher recomputeRatio on deep tier than incremental standard runs", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+
+    for (let index = 1; index <= 4; index += 1) {
+      await insertEpisode(client, `ep-${index}`, `Session ${index} about project planning.`);
+    }
+
+    const firstRunLlm = new PipelineExtractLlm(
+      [
+        {
+          type: "preference",
+          subject: "Planning",
+          content: "Prefers written plans before implementation.",
+          claim_key: "user/planning_style",
+        },
+      ],
+      0.1,
+    );
+
+    const baseline = await runDream(
+      {
+        tier: "standard",
+        apply: true,
+        verbose: false,
+        json: false,
+        skipBackup: true,
+      },
+      {
+        port,
+        config: null,
+        now: () => new Date("2026-04-04T10:00:00.000Z"),
+        createExtractLlm: () => firstRunLlm,
+        embedding: createDeterministicEmbedding(),
+      },
+    );
+
+    expect(baseline.completionSummary?.efficiency?.recomputeRatio).toBeCloseTo(0.25, 6);
+
+    await insertEpisode(client, "ep-5", "Session 5 about project planning.");
+
+    const incremental = await runDream(
+      {
+        tier: "standard",
+        apply: false,
+        verbose: false,
+        json: false,
+      },
+      {
+        port,
+        config: null,
+        now: () => new Date("2026-04-04T11:00:00.000Z"),
+        createExtractLlm: () => new PipelineExtractLlm([]),
+      },
+    );
+
+    const deep = await runDream(
+      {
+        tier: "deep",
+        apply: true,
+        verbose: false,
+        json: false,
+        skipBackup: true,
+      },
+      {
+        port,
+        config: null,
+        now: () => new Date("2026-04-04T12:00:00.000Z"),
+        createExtractLlm: () =>
+          new PipelineExtractLlm(
+            [
+              {
+                type: "preference",
+                subject: "Review cadence",
+                content: "Prefers Friday design reviews.",
+                claim_key: "user/review_cadence",
+              },
+            ],
+            0.1,
+          ),
+        embedding: createDeterministicEmbedding(),
+      },
+    );
+
+    expect(incremental.completionSummary?.efficiency?.recomputeRatio).toBe(0);
+    expect(deep.completionSummary?.efficiency?.recomputeRatio ?? 0).toBeGreaterThan(incremental.completionSummary?.efficiency?.recomputeRatio ?? 0);
+  });
+
+  it("records costPerSynthesizedDurableUsd when durable mutations occur", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+
+    await insertEpisode(client, "ep-1", "Session about the user's coffee preferences.");
+
+    const llm = new PipelineExtractLlm(
+      [{ type: "preference", subject: "Coffee", content: "Prefers oat milk in coffee.", claim_key: "user/coffee_preference" }],
+      0.2,
+    );
+
+    const result = await runDream(
+      {
+        tier: "standard",
+        apply: true,
+        verbose: false,
+        json: false,
+        skipBackup: true,
+      },
+      {
+        port,
+        config: null,
+        now: () => new Date("2026-04-04T15:00:00.000Z"),
+        createExtractLlm: () => llm,
+        embedding: createDeterministicEmbedding(),
+      },
+    );
+
+    expect(result.completionSummary?.efficiency?.synthesizedDurableMutations).toBeGreaterThan(0);
+    expect(result.completionSummary?.efficiency?.costPerSynthesizedDurableUsd).toBe(0.2);
+  });
+
+  it("does not increment synthesizedDurableMutations for known extract candidates", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+    const knownContent = "Standups happen every weekday at 9am sharp in the team channel.";
+
+    await insertDurable(client, {
+      id: "known-1",
+      subject: "Standup cadence",
+      content: knownContent,
+      type: "fact",
+      norm_content_hash: computeNormContentHash(knownContent),
+    });
+    await insertEpisode(client, "ep-1", "Session covering standup cadence.");
+
+    const llm = new PipelineExtractLlm([{ type: "fact", subject: "Standup cadence", content: knownContent }]);
+
+    const result = await runDream(
+      {
+        tier: "light",
+        apply: true,
+        verbose: false,
+        json: false,
+        skipBackup: true,
+      },
+      {
+        port,
+        config: null,
+        now: () => new Date("2026-06-05T12:00:00.000Z"),
+        createExtractLlm: () => llm,
+        embedding: createDeterministicEmbedding(),
+      },
+    );
+
+    expect(result.completionSummary?.extract?.knownCandidates).toBe(1);
+    expect(result.completionSummary?.extract?.durablesInserted).toBe(0);
+    expect(result.completionSummary?.efficiency?.synthesizedDurableMutations).toBe(0);
   });
 });
 

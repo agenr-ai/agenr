@@ -9,6 +9,7 @@ import {
   DEFAULT_DREAMING_PRUNE_PROTECT_RECALLED_DAYS,
   type AgenrConfig,
 } from "../../config.js";
+import { buildDreamEfficiencySummary } from "../../core/dreaming/efficiency.js";
 import { resolveTierStages } from "../../core/dreaming/domain/tier-plan.js";
 import type { EmbeddingPort } from "../../core/ports.js";
 import type { Logger } from "../../logger.js";
@@ -316,13 +317,12 @@ async function executeDreamRun(options: DreamRunOptions, deps: DreamWorkflowDeps
       stagesSkipped.push({ stage: "prune", reason: "light_tier" });
     }
 
-    efficiencySummary = buildEfficiencySummary({
+    efficiencySummary = buildDreamEfficiencySummary({
       scan,
       estimatedCostUsd,
       synthesizedDurableMutations: extractSummary.durablesInserted + temporalizeSummary.revisionsApplied + (pruneSummary?.durablesRetired ?? 0),
       profileDurableCount: projectSummary.profileDurableCount,
       directiveCount: projectSummary.directiveCount,
-      fullBacklog,
     });
 
     const completionSummary: DreamCompletionSummary = {
@@ -453,38 +453,6 @@ function resolvePruneStageConfig(config: AgenrConfig | null): { protectRecalledD
         ? prune.protectMinImportance
         : DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE,
   };
-}
-
-/** Builds efficiency telemetry for one completed dreaming run. */
-function buildEfficiencySummary(input: {
-  scan: NonNullable<DreamCompletionSummary["scan"]>;
-  estimatedCostUsd: number;
-  synthesizedDurableMutations: number;
-  profileDurableCount: number;
-  directiveCount: number;
-  fullBacklog: boolean;
-}): DreamEfficiencySummary {
-  const evidenceItemsRead = input.scan.episodesSinceLastRun + input.scan.ingestFilesSinceLastRun + input.scan.durablesCreatedSinceLastRun;
-  const profileInjectionTokenEstimate = estimateProfileInjectionTokens(input.profileDurableCount, input.directiveCount);
-  return {
-    evidenceItemsRead,
-    synthesizedDurableMutations: input.synthesizedDurableMutations,
-    costPerSynthesizedDurableUsd: input.synthesizedDurableMutations > 0 ? roundCost(input.estimatedCostUsd / input.synthesizedDurableMutations) : null,
-    profileInjectionTokenEstimate,
-    recomputeRatio: evidenceItemsRead === 0 ? 0 : input.fullBacklog ? 1 : 0,
-  };
-}
-
-/** Estimates prompt tokens needed for profile and directive injection. */
-function estimateProfileInjectionTokens(profileDurableCount: number, directiveCount: number): number {
-  const durableTokenEstimate = 36;
-  const directiveTokenEstimate = 24;
-  return profileDurableCount * durableTokenEstimate + directiveCount * directiveTokenEstimate;
-}
-
-/** Rounds cost telemetry to the persisted precision. */
-function roundCost(value: number): number {
-  return Number(value.toFixed(6));
 }
 
 /**
