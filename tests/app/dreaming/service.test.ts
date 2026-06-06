@@ -204,6 +204,33 @@ describe("runDream", () => {
     ).rejects.toThrow("Daily dreaming cost cap reached");
   });
 
+  it("rejects disabled dreaming tiers before creating run state", async () => {
+    const getDailyCost = vi.fn(async () => 0);
+    const createRun = vi.fn(async () => "run-1");
+    const port = createDreamPortDouble({
+      getDailyCost,
+      createRun,
+    });
+
+    await expect(
+      runDream(
+        {
+          tier: "standard",
+          apply: false,
+          verbose: false,
+          json: false,
+        },
+        {
+          port,
+          config: { dreaming: { tiers: { standard: { enabled: false } } } },
+        },
+      ),
+    ).rejects.toThrow('Dreaming tier "standard" is disabled in config.');
+
+    expect(getDailyCost).not.toHaveBeenCalled();
+    expect(createRun).not.toHaveBeenCalled();
+  });
+
   it("records skipped reconcile and prune stages for light runs", async () => {
     const completeRun = vi.fn(async () => undefined);
     const port = createDreamPortDouble({

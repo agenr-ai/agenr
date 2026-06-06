@@ -69,10 +69,6 @@ export interface DreamingConfig {
   model?: ModelConfig;
   /** Maximum total dreaming cost in the last 24 hours. */
   dailyCostCap?: number;
-  /** Context token limit override. */
-  contextLimitTokens?: number;
-  /** Custom instructions appended to dreaming synthesis prompts. */
-  customInstructions?: string;
   tiers?: {
     light?: { enabled?: boolean };
     standard?: { enabled?: boolean };
@@ -82,8 +78,7 @@ export interface DreamingConfig {
     extract?: {
       maxSessionsPerRun?: number;
       lightMaxSessionsPerRun?: number;
-      maxChunksPerSession?: number;
-      contextLookup?: { enabled?: boolean; maxNeighborsPerCandidate?: number };
+      contextLookup?: { enabled?: boolean };
     };
     project?: { maxProfileDurables?: number };
     prune?: DreamingPruneConfig;
@@ -193,10 +188,6 @@ export interface ResolvedDreamingConfig {
   model?: ModelConfig;
   /** Maximum total dreaming cost in the last 24 hours. */
   dailyCostCap: number;
-  /** Context token limit override. */
-  contextLimitTokens: number;
-  /** Custom instructions appended to dreaming synthesis prompts. */
-  customInstructions?: string;
   tiers: {
     light: { enabled: boolean };
     standard: { enabled: boolean };
@@ -206,8 +197,7 @@ export interface ResolvedDreamingConfig {
     extract: {
       maxSessionsPerRun: number;
       lightMaxSessionsPerRun: number;
-      maxChunksPerSession: number;
-      contextLookup: { enabled: boolean; maxNeighborsPerCandidate: number };
+      contextLookup: { enabled: boolean };
     };
     project: { maxProfileDurables: number };
     prune: ResolvedDreamingPruneConfig;
@@ -241,11 +231,6 @@ export interface ResolvedAgenrConfig extends Omit<AgenrConfigInput, "claimExtrac
 const DEFAULT_DREAMING_DAILY_COST_CAP = 75.0;
 
 /**
- * Default dreaming context limit override. Zero means auto-detect.
- */
-const DEFAULT_DREAMING_CONTEXT_LIMIT_TOKENS = 0;
-
-/**
  * Default prune-stage recall protection window in days.
  */
 const DEFAULT_DREAMING_PRUNE_PROTECT_RECALLED_DAYS = 14;
@@ -259,8 +244,6 @@ const DEFAULT_DREAMING_IMPORTANCE_THRESHOLD = 25;
 const DEFAULT_DREAMING_MIN_INTERVAL_MINUTES = 30;
 const DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS = 8;
 const DEFAULT_DREAMING_LIGHT_MAX_SESSIONS = 2;
-const DEFAULT_DREAMING_EXTRACT_MAX_CHUNKS = 12;
-const DEFAULT_DREAMING_CONTEXT_LOOKUP_MAX_NEIGHBORS = 5;
 const DEFAULT_DREAMING_MAX_PROFILE_DURABLES = 8;
 const DEFAULT_DREAMING_DEEP_INTERVAL_HOURS = 168;
 
@@ -338,11 +321,8 @@ export {
   DEFAULT_CLAIM_EXTRACTION_CONCURRENCY,
   DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD,
   DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES,
-  DEFAULT_DREAMING_CONTEXT_LIMIT_TOKENS,
-  DEFAULT_DREAMING_CONTEXT_LOOKUP_MAX_NEIGHBORS,
   DEFAULT_DREAMING_DAILY_COST_CAP,
   DEFAULT_DREAMING_DEEP_INTERVAL_HOURS,
-  DEFAULT_DREAMING_EXTRACT_MAX_CHUNKS,
   DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS,
   DEFAULT_DREAMING_LIGHT_MAX_SESSIONS,
   DEFAULT_DREAMING_IMPORTANCE_THRESHOLD,

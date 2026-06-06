@@ -7,11 +7,8 @@ import {
   DEFAULT_CLAIM_EXTRACTION_CONCURRENCY,
   DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD,
   DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES,
-  DEFAULT_DREAMING_CONTEXT_LIMIT_TOKENS,
-  DEFAULT_DREAMING_CONTEXT_LOOKUP_MAX_NEIGHBORS,
   DEFAULT_DREAMING_DAILY_COST_CAP,
   DEFAULT_DREAMING_DEEP_INTERVAL_HOURS,
-  DEFAULT_DREAMING_EXTRACT_MAX_CHUNKS,
   DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS,
   DEFAULT_DREAMING_LIGHT_MAX_SESSIONS,
   DEFAULT_DREAMING_IMPORTANCE_THRESHOLD,
@@ -54,7 +51,6 @@ describe("parseAgenrConfig", () => {
         },
         dreaming: {
           dailyCostCap: DEFAULT_DREAMING_DAILY_COST_CAP,
-          contextLimitTokens: DEFAULT_DREAMING_CONTEXT_LIMIT_TOKENS,
           tiers: {
             light: { enabled: true },
             standard: { enabled: true },
@@ -64,11 +60,7 @@ describe("parseAgenrConfig", () => {
             extract: {
               maxSessionsPerRun: DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS,
               lightMaxSessionsPerRun: DEFAULT_DREAMING_LIGHT_MAX_SESSIONS,
-              maxChunksPerSession: DEFAULT_DREAMING_EXTRACT_MAX_CHUNKS,
-              contextLookup: {
-                enabled: true,
-                maxNeighborsPerCandidate: DEFAULT_DREAMING_CONTEXT_LOOKUP_MAX_NEIGHBORS,
-              },
+              contextLookup: { enabled: true },
             },
             project: { maxProfileDurables: DEFAULT_DREAMING_MAX_PROFILE_DURABLES },
             prune: {
@@ -141,11 +133,7 @@ describe("parseAgenrConfig", () => {
             extract: {
               maxSessionsPerRun: 3,
               lightMaxSessionsPerRun: 1,
-              maxChunksPerSession: 5,
-              contextLookup: {
-                enabled: false,
-                maxNeighborsPerCandidate: 2,
-              },
+              contextLookup: { enabled: false },
             },
             project: { maxProfileDurables: 4 },
             prune: { protectRecalledDays: 3, protectMinImportance: 8 },
@@ -173,8 +161,7 @@ describe("parseAgenrConfig", () => {
             extract: {
               maxSessionsPerRun: 3,
               lightMaxSessionsPerRun: 1,
-              maxChunksPerSession: 5,
-              contextLookup: { enabled: false, maxNeighborsPerCandidate: 2 },
+              contextLookup: { enabled: false },
             },
             project: { maxProfileDurables: 4 },
             prune: { protectRecalledDays: 3, protectMinImportance: 8 },
@@ -200,11 +187,7 @@ describe("parseAgenrConfig", () => {
         extract: {
           maxSessionsPerRun: 3,
           lightMaxSessionsPerRun: 1,
-          maxChunksPerSession: 5,
-          contextLookup: {
-            enabled: false,
-            maxNeighborsPerCandidate: 2,
-          },
+          contextLookup: { enabled: false },
         },
         project: { maxProfileDurables: 4 },
         prune: { protectRecalledDays: 3, protectMinImportance: 8 },
@@ -214,6 +197,36 @@ describe("parseAgenrConfig", () => {
         importanceThreshold: 12,
         minIntervalMinutes: 5,
       },
+    });
+  });
+
+  it("rejects dreaming config fields that the runtime no longer consumes", () => {
+    const result = parseAgenrConfig(
+      {
+        dreaming: {
+          contextLimitTokens: 1000,
+          customInstructions: "Prefer cautious synthesis.",
+          stages: {
+            extract: {
+              maxChunksPerSession: 5,
+              contextLookup: {
+                maxNeighborsPerCandidate: 2,
+              },
+            },
+          },
+        },
+      },
+      { defaultDbPath: DEFAULT_DB_PATH },
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        { path: "dreaming.contextLimitTokens", message: "Unexpected field." },
+        { path: "dreaming.customInstructions", message: "Unexpected field." },
+        { path: "dreaming.stages.extract.maxChunksPerSession", message: "Unexpected field." },
+        { path: "dreaming.stages.extract.contextLookup.maxNeighborsPerCandidate", message: "Unexpected field." },
+      ],
     });
   });
 

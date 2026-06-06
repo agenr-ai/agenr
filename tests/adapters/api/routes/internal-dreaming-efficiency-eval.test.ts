@@ -35,6 +35,11 @@ describe("createInternalDreamingEfficiencyEvalRoute", () => {
             tier: "light",
             summaryJson: {
               actions_taken: 0,
+              backupSkipped: true,
+              stages_skipped: [
+                { stage: "reconcile", reason: "light_tier" },
+                { stage: "prune", reason: "light_tier" },
+              ],
               durables_skipped: [],
               observations: [],
               recommendations: [],
@@ -52,6 +57,9 @@ describe("createInternalDreamingEfficiencyEvalRoute", () => {
                 refineCandidates: 0,
                 knownCandidates: 0,
                 durablesInserted: 0,
+              },
+              reconcile: {
+                ignoredByEfficiencyEval: true,
               },
               project: {
                 profileDurableCount: 1,
@@ -74,6 +82,19 @@ describe("createInternalDreamingEfficiencyEvalRoute", () => {
       },
     });
     expect(runner).toHaveBeenCalledOnce();
+    expect(runner).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dreamRunFixture: expect.objectContaining({
+          summaryJson: expect.objectContaining({
+            backupSkipped: true,
+            stages_skipped: [
+              { stage: "reconcile", reason: "light_tier" },
+              { stage: "prune", reason: "light_tier" },
+            ],
+          }),
+        }),
+      }),
+    );
   });
 
   it("returns 400 for invalid requests", async () => {

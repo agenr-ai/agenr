@@ -1,19 +1,8 @@
-import {
-  parseOptionalBoolean,
-  parseOptionalIntegerInRange,
-  parseOptionalTrimmedString,
-  pushIssue,
-  pushUnexpectedFields,
-  isRecord,
-  type ValidationIssue,
-} from "../shared/validation.js";
+import { parseOptionalBoolean, parseOptionalIntegerInRange, pushIssue, pushUnexpectedFields, isRecord, type ValidationIssue } from "../shared/validation.js";
 import { parseModelConfig, hasModelConfig } from "./parse-model-config.js";
 import {
-  DEFAULT_DREAMING_CONTEXT_LIMIT_TOKENS,
-  DEFAULT_DREAMING_CONTEXT_LOOKUP_MAX_NEIGHBORS,
   DEFAULT_DREAMING_DAILY_COST_CAP,
   DEFAULT_DREAMING_DEEP_INTERVAL_HOURS,
-  DEFAULT_DREAMING_EXTRACT_MAX_CHUNKS,
   DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS,
   DEFAULT_DREAMING_LIGHT_MAX_SESSIONS,
   DEFAULT_DREAMING_IMPORTANCE_THRESHOLD,
@@ -46,12 +35,10 @@ export function parseDreamingConfig(value: unknown, path: string, issues: Valida
   }
 
   const startIndex = issues.length;
-  pushUnexpectedFields(value, new Set(["model", "dailyCostCap", "contextLimitTokens", "customInstructions", "tiers", "stages", "triggers"]), path, issues);
+  pushUnexpectedFields(value, new Set(["model", "dailyCostCap", "tiers", "stages", "triggers"]), path, issues);
 
   const model = parseModelConfig(value.model, `${path}.model`, issues);
   const dailyCostCap = parseOptionalNonNegativeNumber(value.dailyCostCap, `${path}.dailyCostCap`, issues);
-  const contextLimitTokens = parseOptionalIntegerInRange(value.contextLimitTokens, `${path}.contextLimitTokens`, issues, { min: 0 });
-  const customInstructions = parseOptionalTrimmedString(value.customInstructions, `${path}.customInstructions`, issues);
   const tiers = parseDreamingTiersConfig(value.tiers, `${path}.tiers`, issues);
   const stages = parseDreamingStagesConfig(value.stages, `${path}.stages`, issues);
   const triggers = parseDreamingTriggersConfig(value.triggers, `${path}.triggers`, issues);
@@ -63,8 +50,6 @@ export function parseDreamingConfig(value: unknown, path: string, issues: Valida
   const input: DreamingConfig = {
     ...(model ? { model } : {}),
     ...(dailyCostCap !== undefined ? { dailyCostCap } : {}),
-    ...(contextLimitTokens !== undefined ? { contextLimitTokens } : {}),
-    ...(customInstructions ? { customInstructions } : {}),
     ...(tiers.input ? { tiers: tiers.input } : {}),
     ...(stages.input ? { stages: stages.input } : {}),
     ...(triggers.input ? { triggers: triggers.input } : {}),
@@ -75,8 +60,6 @@ export function parseDreamingConfig(value: unknown, path: string, issues: Valida
     resolved: {
       ...(model ? { model } : {}),
       dailyCostCap: dailyCostCap ?? defaults.dailyCostCap,
-      contextLimitTokens: contextLimitTokens ?? defaults.contextLimitTokens,
-      ...(customInstructions ? { customInstructions } : {}),
       tiers: tiers.resolved,
       stages: stages.resolved,
       triggers: triggers.resolved,
@@ -241,10 +224,9 @@ function parseDreamingExtractConfig(
   }
 
   const startIndex = issues.length;
-  pushUnexpectedFields(value, new Set(["maxSessionsPerRun", "lightMaxSessionsPerRun", "maxChunksPerSession", "contextLookup"]), path, issues);
+  pushUnexpectedFields(value, new Set(["maxSessionsPerRun", "lightMaxSessionsPerRun", "contextLookup"]), path, issues);
   const maxSessionsPerRun = parseOptionalIntegerInRange(value.maxSessionsPerRun, `${path}.maxSessionsPerRun`, issues, { min: 1 });
   const lightMaxSessionsPerRun = parseOptionalIntegerInRange(value.lightMaxSessionsPerRun, `${path}.lightMaxSessionsPerRun`, issues, { min: 1 });
-  const maxChunksPerSession = parseOptionalIntegerInRange(value.maxChunksPerSession, `${path}.maxChunksPerSession`, issues, { min: 1 });
   const contextLookup = parseDreamingContextLookupConfig(value.contextLookup, `${path}.contextLookup`, issues);
 
   if (issues.length > startIndex) {
@@ -254,7 +236,6 @@ function parseDreamingExtractConfig(
   const input: NonNullable<NonNullable<DreamingConfig["stages"]>["extract"]> = {
     ...(maxSessionsPerRun !== undefined ? { maxSessionsPerRun } : {}),
     ...(lightMaxSessionsPerRun !== undefined ? { lightMaxSessionsPerRun } : {}),
-    ...(maxChunksPerSession !== undefined ? { maxChunksPerSession } : {}),
     ...(contextLookup.input ? { contextLookup: contextLookup.input } : {}),
   };
 
@@ -263,7 +244,6 @@ function parseDreamingExtractConfig(
     resolved: {
       maxSessionsPerRun: maxSessionsPerRun ?? defaults.maxSessionsPerRun,
       lightMaxSessionsPerRun: lightMaxSessionsPerRun ?? defaults.lightMaxSessionsPerRun,
-      maxChunksPerSession: maxChunksPerSession ?? defaults.maxChunksPerSession,
       contextLookup: contextLookup.resolved,
     },
   };
@@ -288,19 +268,16 @@ function parseDreamingContextLookupConfig(
     return { resolved: defaults };
   }
 
-  pushUnexpectedFields(value, new Set(["enabled", "maxNeighborsPerCandidate"]), path, issues);
+  pushUnexpectedFields(value, new Set(["enabled"]), path, issues);
   const enabled = parseOptionalBoolean(value.enabled, `${path}.enabled`, issues);
-  const maxNeighborsPerCandidate = parseOptionalIntegerInRange(value.maxNeighborsPerCandidate, `${path}.maxNeighborsPerCandidate`, issues, { min: 1 });
   const input: NonNullable<NonNullable<NonNullable<DreamingConfig["stages"]>["extract"]>["contextLookup"]> = {
     ...(enabled !== undefined ? { enabled } : {}),
-    ...(maxNeighborsPerCandidate !== undefined ? { maxNeighborsPerCandidate } : {}),
   };
 
   return {
     ...(Object.keys(input).length > 0 ? { input } : {}),
     resolved: {
       enabled: enabled ?? defaults.enabled,
-      maxNeighborsPerCandidate: maxNeighborsPerCandidate ?? defaults.maxNeighborsPerCandidate,
     },
   };
 }
@@ -423,6 +400,14 @@ function parseDreamingTriggersConfig(
     },
   };
 }
+/**
+ * Parses an optional non-negative number.
+ *
+ * @param value - Raw candidate value.
+ * @param path - Stable issue path.
+ * @param issues - Mutable issue collection.
+ * @returns Parsed number, or undefined when absent or invalid.
+ */
 function parseOptionalNonNegativeNumber(value: unknown, path: string, issues: ValidationIssue[]): number | undefined {
   if (value === undefined) {
     return undefined;
@@ -435,10 +420,15 @@ function parseOptionalNonNegativeNumber(value: unknown, path: string, issues: Va
 
   return value;
 }
+
+/**
+ * Builds the fully resolved default dreaming config.
+ *
+ * @returns Default dreaming settings used when config omits the block.
+ */
 export function createDefaultDreamingConfig(): ResolvedDreamingConfig {
   return {
     dailyCostCap: DEFAULT_DREAMING_DAILY_COST_CAP,
-    contextLimitTokens: DEFAULT_DREAMING_CONTEXT_LIMIT_TOKENS,
     tiers: {
       light: { enabled: true },
       standard: { enabled: true },
@@ -448,10 +438,8 @@ export function createDefaultDreamingConfig(): ResolvedDreamingConfig {
       extract: {
         maxSessionsPerRun: DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS,
         lightMaxSessionsPerRun: DEFAULT_DREAMING_LIGHT_MAX_SESSIONS,
-        maxChunksPerSession: DEFAULT_DREAMING_EXTRACT_MAX_CHUNKS,
         contextLookup: {
           enabled: true,
-          maxNeighborsPerCandidate: DEFAULT_DREAMING_CONTEXT_LOOKUP_MAX_NEIGHBORS,
         },
       },
       project: { maxProfileDurables: DEFAULT_DREAMING_MAX_PROFILE_DURABLES },
@@ -487,8 +475,6 @@ function hasDreamingInput(value: DreamingConfig): boolean {
   return (
     hasModelConfig(value.model) ||
     value.dailyCostCap !== undefined ||
-    value.contextLimitTokens !== undefined ||
-    value.customInstructions !== undefined ||
     value.tiers !== undefined ||
     value.stages?.extract !== undefined ||
     value.stages?.project !== undefined ||
@@ -522,14 +508,10 @@ export function toDreamingInput(value: ResolvedDreamingConfig): DreamingConfig |
   const contextLookup = extract.contextLookup;
   const contextLookupInput: NonNullable<NonNullable<NonNullable<DreamingConfig["stages"]>["extract"]>["contextLookup"]> = {
     ...(contextLookup.enabled !== true ? { enabled: contextLookup.enabled } : {}),
-    ...(contextLookup.maxNeighborsPerCandidate !== DEFAULT_DREAMING_CONTEXT_LOOKUP_MAX_NEIGHBORS
-      ? { maxNeighborsPerCandidate: contextLookup.maxNeighborsPerCandidate }
-      : {}),
   };
   const extractInput: NonNullable<NonNullable<DreamingConfig["stages"]>["extract"]> = {
     ...(extract.maxSessionsPerRun !== DEFAULT_DREAMING_EXTRACT_MAX_SESSIONS ? { maxSessionsPerRun: extract.maxSessionsPerRun } : {}),
     ...(extract.lightMaxSessionsPerRun !== DEFAULT_DREAMING_LIGHT_MAX_SESSIONS ? { lightMaxSessionsPerRun: extract.lightMaxSessionsPerRun } : {}),
-    ...(extract.maxChunksPerSession !== DEFAULT_DREAMING_EXTRACT_MAX_CHUNKS ? { maxChunksPerSession: extract.maxChunksPerSession } : {}),
     ...(Object.keys(contextLookupInput).length > 0 ? { contextLookup: contextLookupInput } : {}),
   };
 
@@ -560,8 +542,6 @@ export function toDreamingInput(value: ResolvedDreamingConfig): DreamingConfig |
   const input: DreamingConfig = {
     ...(hasModelConfig(value.model) ? { model: value.model } : {}),
     ...(value.dailyCostCap !== DEFAULT_DREAMING_DAILY_COST_CAP ? { dailyCostCap: value.dailyCostCap } : {}),
-    ...(value.contextLimitTokens !== DEFAULT_DREAMING_CONTEXT_LIMIT_TOKENS ? { contextLimitTokens: value.contextLimitTokens } : {}),
-    ...(value.customInstructions ? { customInstructions: value.customInstructions } : {}),
     ...(Object.keys(tiersInput).length > 0 ? { tiers: tiersInput } : {}),
     ...(Object.keys(stagesInput).length > 0 ? { stages: stagesInput } : {}),
     ...(Object.keys(triggersInput).length > 0 ? { triggers: triggersInput } : {}),

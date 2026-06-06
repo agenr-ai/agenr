@@ -108,7 +108,6 @@ Typical fields:
 
 - `model` - optional LLM override for dreaming stages that call models in later milestones
 - `dailyCostCap` - optional spend guard
-- `customInstructions` - optional operator guidance appended to later LLM stages
 - `tiers.light.enabled`, `tiers.standard.enabled`, `tiers.deep.enabled`, `tiers.deep.intervalHours` - tier availability and operator cadence hints
 - `stages.extract.maxSessionsPerRun` - maximum episode summaries mined per run
 - `stages.extract.lightMaxSessionsPerRun` - optional lower episode-session cap for `light` runs (defaults to 2)

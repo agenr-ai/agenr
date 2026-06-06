@@ -1,6 +1,6 @@
 import { authMethodToProvider, type AgenrAuthMethod, type AgenrConfigInput, type ModelConfig } from "../../../config.js";
 import { formatLabel, type WizardPrompts } from "../../ui.js";
-import { describeAuthMethod, formatModelRef, hasModelOverride, normalizeOptionalString, normalizeProvider, sameModelRef } from "./shared.js";
+import { describeAuthMethod, formatModelRef, hasModelOverride, normalizeProvider, sameModelRef } from "./shared.js";
 import type { SetupModelDescriptor, SetupProvider, SetupRuntime } from "./types.js";
 
 /**
@@ -454,8 +454,6 @@ function hasPersistedDreamingConfig(config: AgenrConfigInput["dreaming"] | undef
   return (
     hasModelOverride(config.model) ||
     config.dailyCostCap !== undefined ||
-    config.contextLimitTokens !== undefined ||
-    normalizeOptionalString(config.customInstructions) !== undefined ||
     pruneConfig?.protectRecalledDays !== undefined ||
     pruneConfig?.protectMinImportance !== undefined
   );

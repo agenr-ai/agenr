@@ -12,7 +12,6 @@ import {
   DEFAULT_CLAIM_EXTRACTION_CONCURRENCY,
   DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD,
   DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES,
-  DEFAULT_DREAMING_CONTEXT_LIMIT_TOKENS,
   DEFAULT_DREAMING_DAILY_COST_CAP,
   DEFAULT_DREAMING_LIGHT_MAX_SESSIONS,
   DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE,
@@ -65,7 +64,6 @@ describe("writeConfig", () => {
       },
       dreaming: {
         dailyCostCap: DEFAULT_DREAMING_DAILY_COST_CAP,
-        contextLimitTokens: DEFAULT_DREAMING_CONTEXT_LIMIT_TOKENS,
         tiers: {
           light: { enabled: true },
           standard: { enabled: true },
@@ -75,8 +73,7 @@ describe("writeConfig", () => {
           extract: {
             maxSessionsPerRun: 8,
             lightMaxSessionsPerRun: DEFAULT_DREAMING_LIGHT_MAX_SESSIONS,
-            maxChunksPerSession: 12,
-            contextLookup: { enabled: true, maxNeighborsPerCandidate: 5 },
+            contextLookup: { enabled: true },
           },
           project: { maxProfileDurables: 8 },
           prune: {

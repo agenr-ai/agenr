@@ -240,12 +240,13 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
       {
         aroundDate,
         rankingProfile: query.rankingProfile,
+        nowMs,
       },
       summary.claimKey,
       slotPolicyConfig,
     );
     const rerankedCandidates = neighborhoodEnabled ? applySeededEntryRerank(historicallyBoosted, summary.neighborhood) : historicallyBoosted;
-    const shaped = applyClaimKeyResultShaping(rerankedCandidates, summary.claimKey, slotPolicyConfig).sort((left, right) => right.score - left.score);
+    const shaped = applyClaimKeyResultShaping(rerankedCandidates, summary.claimKey, nowMs, slotPolicyConfig).sort((left, right) => right.score - left.score);
     // MMR diversifies the final shortlist after claim-key shaping so trust
     // penalties and redundancy shaping still have the last word on which
     // rows dominate. MMR only reorders; it never mutates the composite
@@ -887,6 +888,7 @@ function applyHistoricalLineageBoosts(
   params: {
     aroundDate: Date | null;
     rankingProfile?: RecallRankingProfile;
+    nowMs: number;
   },
   claimKeyTrace: RecallExecutionTraceSummary["claimKey"],
   slotPolicyConfig?: RecallExecutionOptions["slotPolicyConfig"],
@@ -898,7 +900,7 @@ function applyHistoricalLineageBoosts(
   const entries = candidates.map((candidate) => candidate.entry);
   const scoresById = new Map(candidates.map((candidate) => [candidate.entry.id, candidate.score]));
   return candidates.map((candidate) => {
-    const decision = resolveHistoricalLineageBonus(candidate.entry, entries, scoresById, candidate.score, params.aroundDate, slotPolicyConfig);
+    const decision = resolveHistoricalLineageBonus(candidate.entry, entries, scoresById, candidate.score, params.aroundDate, params.nowMs, slotPolicyConfig);
     if (decision.tentativeLineageSuppressed) {
       claimKeyTrace.tentativeLineageSuppressed += 1;
     }
@@ -928,6 +930,7 @@ function applyHistoricalLineageBoosts(
  * @param scoresById - Base score lookup used to shape the proportional bonus.
  * @param candidateScore - Candidate's pre-boost composite score.
  * @param aroundDate - Optional explicit around-date anchor.
+ * @param nowMs - Execution clock shared across recall scoring.
  * @returns Additive historical bonus and any trust-aware suppression facts.
  */
 function resolveHistoricalLineageBonus(
@@ -936,6 +939,7 @@ function resolveHistoricalLineageBonus(
   scoresById: ReadonlyMap<string, number>,
   candidateScore: number,
   aroundDate: Date | null,
+  nowMs: number,
   slotPolicyConfig?: RecallExecutionOptions["slotPolicyConfig"],
 ): {
   bonus: number;
@@ -961,7 +965,7 @@ function resolveHistoricalLineageBonus(
   let bestPeerScore = 0;
   let peerMatched = false;
   for (const peer of entries) {
-    if (peer.id === entry.id || !isPotentialCurrentPeer(peer) || createdAtMs(entry.created_at) >= createdAtMs(peer.created_at)) {
+    if (peer.id === entry.id || !isPotentialCurrentPeer(peer, nowMs) || createdAtMs(entry.created_at) >= createdAtMs(peer.created_at)) {
       continue;
     }
 
@@ -989,7 +993,7 @@ function resolveHistoricalLineageBonus(
     };
   }
 
-  const base = isStalePredecessor(entry) ? HISTORICAL_STALE_PREDECESSOR_BOOST : HISTORICAL_OLDER_STATE_BOOST;
+  const base = isStalePredecessor(entry, nowMs) ? HISTORICAL_STALE_PREDECESSOR_BOOST : HISTORICAL_OLDER_STATE_BOOST;
   return {
     bonus: shapeHistoricalLineageBonus(base, candidateScore, bestPeerScore),
     tentativeLineageSuppressed,
@@ -1023,15 +1027,16 @@ function shapeHistoricalLineageBonus(base: number, candidateScore: number, succe
  * Check whether one candidate is an active-like current-state peer.
  *
  * @param entry - Candidate under evaluation.
+ * @param nowMs - Execution clock shared across recall scoring.
  * @returns True when the entry looks like a current-state peer.
  */
-function isPotentialCurrentPeer(entry: RecallCandidateDurable): boolean {
-  return isCurrentlyValidMemory(entry, Date.now());
+function isPotentialCurrentPeer(entry: RecallCandidateDurable, nowMs: number): boolean {
+  return isCurrentlyValidMemory(entry, nowMs);
 }
 
 /** Returns whether one candidate is a stale predecessor rather than superseded. */
-function isStalePredecessor(entry: RecallCandidateDurable): boolean {
-  return isStaleMemory(entry, Date.now());
+function isStalePredecessor(entry: RecallCandidateDurable, nowMs: number): boolean {
+  return isStaleMemory(entry, nowMs);
 }
 
 /**
@@ -1346,6 +1351,7 @@ function resolveMmrMinPoolSize(policy: RecallRankingPolicy | undefined): number 
 function applyClaimKeyResultShaping(
   candidates: RankedCandidate[],
   claimKeyTrace: RecallExecutionTraceSummary["claimKey"],
+  nowMs: number,
   slotPolicyConfig?: RecallExecutionOptions["slotPolicyConfig"],
 ): RankedCandidate[] {
   if (candidates.length === 0) {
@@ -1357,17 +1363,17 @@ function applyClaimKeyResultShaping(
       .map((candidate) => candidate.entry)
       .filter(
         (entry) =>
-          isPotentialCurrentPeer(entry) &&
+          isPotentialCurrentPeer(entry, nowMs) &&
           entry.claim_key &&
           entry.claim_key_status === "trusted" &&
           resolveClaimSlotPolicy(entry.claim_key, slotPolicyConfig).policy === "exclusive",
       )
       .map((entry) => entry.claim_key!),
   );
-  const trustedSlotRankById = rankTrustedSlotSiblings(candidates, slotPolicyConfig);
+  const trustedSlotRankById = rankTrustedSlotSiblings(candidates, nowMs, slotPolicyConfig);
 
   return candidates.map((candidate) => {
-    const trustPenalty = shouldPenalizeTentativeCurrentSibling(candidate.entry, trustedActiveClaimKeys) ? CLAIM_KEY_TENTATIVE_CURRENT_PENALTY : 0;
+    const trustPenalty = shouldPenalizeTentativeCurrentSibling(candidate.entry, trustedActiveClaimKeys, nowMs) ? CLAIM_KEY_TENTATIVE_CURRENT_PENALTY : 0;
     const redundancyPenalty = resolveTrustedSlotRedundancyPenalty(candidate.entry.id, trustedSlotRankById);
     if (trustPenalty <= 0 && redundancyPenalty <= 0) {
       return candidate;
@@ -1397,9 +1403,14 @@ function applyClaimKeyResultShaping(
  * Rank active trusted siblings within each claim-key slot by current score.
  *
  * @param candidates - Ranked candidates before final sorting.
+ * @param nowMs - Execution clock shared across recall scoring.
  * @returns Candidate-to-rank mapping where zero is the best trusted sibling.
  */
-function rankTrustedSlotSiblings(candidates: RankedCandidate[], slotPolicyConfig?: RecallExecutionOptions["slotPolicyConfig"]): Map<string, number> {
+function rankTrustedSlotSiblings(
+  candidates: RankedCandidate[],
+  nowMs: number,
+  slotPolicyConfig?: RecallExecutionOptions["slotPolicyConfig"],
+): Map<string, number> {
   const candidatesById = new Map(candidates.map((candidate) => [candidate.entry.id, candidate]));
   const trustedByClaimKey = new Map<string, RankedCandidate[]>();
 
@@ -1408,7 +1419,7 @@ function rankTrustedSlotSiblings(candidates: RankedCandidate[], slotPolicyConfig
     if (
       !claimKey ||
       candidate.entry.claim_key_status !== "trusted" ||
-      !isPotentialCurrentPeer(candidate.entry) ||
+      !isPotentialCurrentPeer(candidate.entry, nowMs) ||
       resolveClaimSlotPolicy(claimKey, slotPolicyConfig).policy !== "exclusive"
     ) {
       continue;
@@ -1450,10 +1461,13 @@ function compareCandidatesForTrustedSlotRank(left: RankedCandidate, right: Ranke
  *
  * @param entry - Candidate under evaluation.
  * @param trustedActiveClaimKeys - Claim-key slots that already have a trusted active sibling.
+ * @param nowMs - Execution clock shared across recall scoring.
  * @returns True when a trust penalty should be applied.
  */
-function shouldPenalizeTentativeCurrentSibling(entry: RecallCandidateDurable, trustedActiveClaimKeys: Set<string>): boolean {
-  return isPotentialCurrentPeer(entry) && entry.claim_key !== undefined && entry.claim_key_status !== "trusted" && trustedActiveClaimKeys.has(entry.claim_key);
+function shouldPenalizeTentativeCurrentSibling(entry: RecallCandidateDurable, trustedActiveClaimKeys: Set<string>, nowMs: number): boolean {
+  return (
+    isPotentialCurrentPeer(entry, nowMs) && entry.claim_key !== undefined && entry.claim_key_status !== "trusted" && trustedActiveClaimKeys.has(entry.claim_key)
+  );
 }
 
 /**

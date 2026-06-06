@@ -122,6 +122,7 @@ export async function runDreamWithHeldLock(options: DreamRunOptions, deps: Dream
  */
 async function executeDreamRun(options: DreamRunOptions, deps: DreamWorkflowDeps): Promise<DreamRunResult> {
   const now = deps.now ?? (() => new Date());
+  assertDreamTierEnabled(options.tier, deps.config);
   const dailyCost = await deps.port.getDailyCost(now());
   const dailyCap = deps.config?.dreaming?.dailyCostCap ?? DEFAULT_DREAMING_DAILY_COST_CAP;
   if (dailyCost >= dailyCap) {
@@ -415,6 +416,18 @@ async function executeDreamRun(options: DreamRunOptions, deps: DreamWorkflowDeps
       error: message,
     });
     throw error;
+  }
+}
+
+/**
+ * Enforces operator tier availability before any dreaming run state is created.
+ *
+ * @param tier - Requested dreaming tier.
+ * @param config - Optional runtime config.
+ */
+function assertDreamTierEnabled(tier: DreamTier, config: AgenrConfig | null): void {
+  if (config?.dreaming?.tiers?.[tier]?.enabled === false) {
+    throw new Error(`Dreaming tier "${tier}" is disabled in config.`);
   }
 }
 

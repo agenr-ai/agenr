@@ -1,15 +1,24 @@
-import type { DreamCompletionSummary, DreamEfficiencySummary, DreamEvidenceRef } from "../../../core/dreaming/types.js";
+import {
+  DREAM_STAGES,
+  type DreamCompletionSummary,
+  type DreamEfficiencySummary,
+  type DreamEvidenceRef,
+  type DreamStage,
+} from "../../../core/dreaming/types.js";
 import type { ValidationIssue } from "../../shared/validation.js";
 import { parseOptionalTrimmedString, parseRequiredTrimmedString, pushIssue, pushUnexpectedFields } from "../../shared/validation.js";
 import { parseObject } from "./internal-eval-shared.js";
 
 const DREAM_COMPLETION_SUMMARY_KEYS = new Set<string>([
   "actions_taken",
+  "backupSkipped",
+  "stages_skipped",
   "durables_skipped",
   "observations",
   "recommendations",
   "scan",
   "extract",
+  "reconcile",
   "temporalize",
   "project",
   "prune",
@@ -42,7 +51,9 @@ const DREAM_EFFICIENCY_KEYS = new Set<string>([
   "recomputeRatio",
 ]);
 const DURABLE_SKIP_KEYS = new Set<string>(["durable_id", "reason"]);
+const DREAM_STAGE_SKIP_KEYS = new Set<string>(["stage", "reason"]);
 const DREAM_EVIDENCE_KINDS = ["episode", "ingest_log", "durable", "transcript"] as const;
+const DREAM_STAGE_SKIP_REASONS = ["light_tier"] as const;
 
 /** Parses a dreaming completion summary fixture used for efficiency derivation. */
 export function parseDreamCompletionSummary(value: unknown, path: string, issues: ValidationIssue[]): DreamCompletionSummary | undefined {
@@ -54,14 +65,19 @@ export function parseDreamCompletionSummary(value: unknown, path: string, issues
   pushUnexpectedFields(summary, DREAM_COMPLETION_SUMMARY_KEYS, path, issues);
 
   const actionsTaken = parseRequiredNonNegativeInteger(summary.actions_taken, `${path}.actions_taken`, issues);
+  const backupSkipped = parseOptionalBoolean(summary.backupSkipped, `${path}.backupSkipped`, issues);
+  const stagesSkipped = parseDreamStageSkips(summary.stages_skipped, `${path}.stages_skipped`, issues);
   const durablesSkipped = parseDurablesSkipped(summary.durables_skipped, `${path}.durables_skipped`, issues);
   const observations = parseRequiredStringArray(summary.observations, `${path}.observations`, issues);
   const recommendations = parseRequiredStringArray(summary.recommendations, `${path}.recommendations`, issues);
   const scan = parseDreamScanSummary(summary.scan, `${path}.scan`, issues);
   const project = parseDreamProjectSummary(summary.project, `${path}.project`, issues);
+  parseOptionalObject(summary.reconcile, `${path}.reconcile`, issues);
 
   return {
     actions_taken: actionsTaken ?? 0,
+    ...(backupSkipped !== undefined ? { backupSkipped } : {}),
+    ...(stagesSkipped !== undefined ? { stages_skipped: stagesSkipped } : {}),
     durables_skipped: durablesSkipped ?? [],
     observations: observations ?? [],
     recommendations: recommendations ?? [],
@@ -72,6 +88,36 @@ export function parseDreamCompletionSummary(value: unknown, path: string, issues
     ...(parseDreamPruneSummary(summary.prune, `${path}.prune`, issues) ?? {}),
     ...(parseDreamEfficiencySummary(summary.efficiency, `${path}.efficiency`, issues) ?? {}),
   };
+}
+
+/** Parses optional stage-skipped summaries emitted by tier policies. */
+function parseDreamStageSkips(value: unknown, path: string, issues: ValidationIssue[]): DreamCompletionSummary["stages_skipped"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value)) {
+    pushIssue(issues, path, "Expected an array.");
+    return undefined;
+  }
+
+  return value.flatMap((item, index) => {
+    const itemPath = `${path}[${index}]`;
+    const record = parseObject(item, itemPath, issues);
+    if (record === undefined) {
+      return [];
+    }
+
+    pushUnexpectedFields(record, DREAM_STAGE_SKIP_KEYS, itemPath, issues);
+    const stage = parseDreamStage(record.stage, `${itemPath}.stage`, issues);
+    const reason = parseDreamStageSkipReason(record.reason, `${itemPath}.reason`, issues);
+    return [
+      {
+        stage: stage ?? "scan",
+        reason: reason ?? "light_tier",
+      },
+    ];
+  });
 }
 
 /** Parses the scan summary required for efficiency derivation. */
@@ -270,6 +316,35 @@ function parseEvidenceKind(value: unknown, path: string, issues: ValidationIssue
   return value as DreamEvidenceRef["kind"];
 }
 
+/** Parses a supported dreaming stage. */
+function parseDreamStage(value: unknown, path: string, issues: ValidationIssue[]): DreamStage | undefined {
+  if (typeof value !== "string" || !DREAM_STAGES.includes(value as DreamStage)) {
+    pushIssue(issues, path, `stage must be one of: ${DREAM_STAGES.join(", ")}.`);
+    return undefined;
+  }
+
+  return value as DreamStage;
+}
+
+/** Parses a supported skipped-stage reason. */
+function parseDreamStageSkipReason(value: unknown, path: string, issues: ValidationIssue[]): "light_tier" | undefined {
+  if (typeof value !== "string" || !DREAM_STAGE_SKIP_REASONS.includes(value as "light_tier")) {
+    pushIssue(issues, path, `reason must be one of: ${DREAM_STAGE_SKIP_REASONS.join(", ")}.`);
+    return undefined;
+  }
+
+  return value as "light_tier";
+}
+
+/** Parses one optional object. */
+function parseOptionalObject(value: unknown, path: string, issues: ValidationIssue[]): Record<string, unknown> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  return parseObject(value, path, issues);
+}
+
 /** Parses one required object. */
 function parseRequiredObject(value: unknown, path: string, issues: ValidationIssue[]): Record<string, unknown> | undefined {
   if (value === undefined) {
@@ -300,13 +375,13 @@ function parseRequiredNonNegativeNumber(value: unknown, path: string, issues: Va
   return value;
 }
 
-/** Parses an optional non-negative finite number. */
-function parseOptionalNonNegativeNumber(value: unknown, path: string, issues: ValidationIssue[]): number | undefined {
+/** Parses an optional boolean. */
+function parseOptionalBoolean(value: unknown, path: string, issues: ValidationIssue[]): boolean | undefined {
   if (value === undefined) {
     return undefined;
   }
 
-  return parseRequiredNonNegativeNumber(value, path, issues);
+  return parseRequiredBoolean(value, path, issues);
 }
 
 /** Parses a required boolean. */

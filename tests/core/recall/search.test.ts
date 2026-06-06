@@ -999,6 +999,53 @@ describe("recall raw evidence gating", () => {
     expect((predecessor?.score ?? 0) - (successor?.score ?? 0)).toBeGreaterThanOrEqual(0.02);
   });
 
+  it("uses the injected recall clock for historical lineage current-state checks", async () => {
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "approach-old",
+          type: "decision",
+          subject: "deployment approach",
+          content: "Webpack was the deployment approach before the April migration.",
+          claim_key: "deployment/approach",
+          claim_key_status: "trusted",
+          valid_from: "2026-02-01T00:00:00.000Z",
+          valid_to: "2026-04-01T00:00:00.000Z",
+          created_at: "2026-02-01T00:00:00.000Z",
+        }),
+        buildEntry({
+          id: "approach-new",
+          type: "decision",
+          subject: "deployment approach",
+          content: "Vite is the deployment approach after the April migration.",
+          claim_key: "deployment/approach",
+          claim_key_status: "trusted",
+          valid_from: "2026-04-01T00:00:00.000Z",
+          created_at: "2026-04-01T00:00:00.000Z",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "approach-new", vectorSim: 0.72 },
+        { id: "approach-old", vectorSim: 0.7 },
+      ],
+    });
+
+    const results = await recall(
+      {
+        text: "what was the previous deployment approach",
+        limit: 2,
+        rankingProfile: "historical_state",
+      },
+      fixture.ports,
+      {
+        now: new Date("2026-05-01T00:00:00.000Z"),
+      },
+    );
+
+    const predecessor = results.find((result) => result.entry.id === "approach-old");
+    expect(predecessor?.scores.historicalLineage).toBeGreaterThan(0);
+  });
+
   it("keeps the current entry first under the default profile even when the pool has a direct predecessor", async () => {
     const fixture = createRecallPortsFixture({
       entries: [
