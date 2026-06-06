@@ -15,6 +15,7 @@ import {
   runRecallMemoryTool,
   sanitizeRecallToolParams,
 } from "../../shared/memory-tools.js";
+import { buildOpenClawRecallToolDescription } from "../../shared/memory-prompt-doctrine.js";
 import { buildLiveRecallDebugArtifact } from "../debug/index.js";
 import type { AgenrOpenClawServices } from "../types.js";
 import { OPENCLAW_PARAM_READER, logToolCall, logToolFailure, toolFailureResult } from "./shared.js";
@@ -31,8 +32,7 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
   return {
     name: "agenr_recall",
     label: "Agenr Recall",
-    description:
-      "Retrieve knowledge from agenr long-term memory. Use mode=auto for the normal path, including historical-state questions like what was the previous approach or what changed from X to Y and procedural questions like how to do something or what steps to follow; use mode=durables for exact facts and decisions; use mode=episodes for time-bounded 'what happened' questions; use mode=procedures for canonical methods and checklists. Time periods are parsed from the query text. Session-start recall is already handled automatically.",
+    description: buildOpenClawRecallToolDescription(),
     parameters: RECALL_TOOL_PARAMETERS,
     async execute(_toolCallId, rawParams) {
       try {

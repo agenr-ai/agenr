@@ -3,6 +3,8 @@ import { formatErrorMessage } from "./errors.js";
 import { truncate } from "./memory-tool-format.js";
 import { readBooleanParam } from "./resolve-target.js";
 
+export { CLAIM_KEY_DESCRIPTION } from "./memory-prompt-doctrine.js";
+
 export { formatErrorMessage };
 
 /**
@@ -23,17 +25,11 @@ const EXPIRY_DESCRIPTION =
 const UPDATE_EXPIRY_DESCRIPTION = `${EXPIRY_DESCRIPTION} Accepted values: ${EXPIRY_LEVELS.join(", ")}.`;
 
 /**
- * Human-readable guidance shown in claimKey-related tool schemas and prompts.
- */
-const CLAIM_KEY_DESCRIPTION =
-  'Slot key with exactly two segments: entity/attribute. Use one slash only - never nested paths like project/category/item. Put multi-word concepts in snake_case on either side, for example "skeln/codebase_layout", "postgres/max_connections", or "project_name/deploy_strategy". Directive rows must use user/memory_directive/<name>. Entries with the same claim key are candidates for supersession.';
-
-/**
  * Supported recall-mode values accepted by host memory tools.
  */
 const RECALL_MODES = ["auto", "durables", "episodes", "procedures"] as const;
 
-export { CLAIM_KEY_DESCRIPTION, ENTRY_TYPE_DESCRIPTION, EXPIRY_DESCRIPTION, RECALL_MODES, UPDATE_EXPIRY_DESCRIPTION };
+export { ENTRY_TYPE_DESCRIPTION, EXPIRY_DESCRIPTION, RECALL_MODES, UPDATE_EXPIRY_DESCRIPTION };
 
 /**
  * Guards untrusted tool parameters and narrows them to a string-keyed object.

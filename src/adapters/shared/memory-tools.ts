@@ -11,7 +11,6 @@ import type { PluginClaimExtractionRuntime, PluginEmbeddingStatus, PluginMemoryR
 import { runUnifiedRecall, type UnifiedRecallMode, type UnifiedRecallResult } from "../../app/recall/index.js";
 import { buildSessionSourceFile, buildToolCallClaimSupport, type SessionSourcePrefix, type ToolSessionLike } from "./claim-support.js";
 import {
-  CLAIM_KEY_DESCRIPTION,
   ENTRY_TYPE_DESCRIPTION,
   EXPIRY_DESCRIPTION,
   RECALL_MODES,
@@ -23,8 +22,15 @@ import {
   parseExpiry,
   parseRecallMode,
 } from "./entry-tools.js";
+import { CLAIM_KEY_DESCRIPTION, RECALL_MODE_SCHEMA_DESCRIPTION } from "./memory-prompt-doctrine.js";
 import { buildEntryMemoryResolverPorts, resolveTargetDurable } from "./resolve-target.js";
-import { assertEntryFetchableContentLength, buildFetchToolDetails, formatFetchedEntryText } from "./memory-tool-format.js";
+import {
+  assertEntryFetchableContentLength,
+  buildFetchToolDetails,
+  buildMemoryToolWarningDetails,
+  formatFetchedEntryText,
+  formatMemoryToolOutcomeText,
+} from "./memory-tool-format.js";
 
 export {
   buildRecallToolDetails,
@@ -217,8 +223,7 @@ const RECALL_TOOL_PARAMETERS = {
     mode: {
       type: "string",
       enum: [...RECALL_MODES],
-      description:
-        "Recall mode: auto routes between exact durable recall, historical-state recall, procedural recall, and episodes; durables forces exact durable recall; episodes forces temporal or semantic session recall; procedures forces procedural recall.",
+      description: RECALL_MODE_SCHEMA_DESCRIPTION,
     },
     limit: {
       type: "integer",
@@ -454,37 +459,45 @@ export async function runStoreMemoryTool(
     },
   );
   const storedEntry = await services.memory.findEntryBySubject(params.subject);
-  const warningDetails = buildMemoryToolWarningDetails(warnings);
 
   if (result.stored > 0) {
-    return okOutcome(formatMemoryToolOutcomeText(`Stored "${params.subject}".`, warnings), {
-      status: "stored",
-      subject: params.subject,
-      entryId: storedEntry?.id,
-      result,
-      ...warningDetails,
-      ...options.extraDetails,
-    });
+    return okOutcome(
+      `Stored "${params.subject}".`,
+      {
+        status: "stored",
+        subject: params.subject,
+        entryId: storedEntry?.id,
+        result,
+        ...options.extraDetails,
+      },
+      warnings,
+    );
   }
 
   if (result.skipped > 0) {
-    return okOutcome(formatMemoryToolOutcomeText(`Skipped "${params.subject}" because an active duplicate already exists.`, warnings), {
-      status: "skipped",
-      subject: params.subject,
-      entryId: storedEntry?.id,
-      result,
-      ...warningDetails,
-      ...options.extraDetails,
-    });
+    return okOutcome(
+      `Skipped "${params.subject}" because an active duplicate already exists.`,
+      {
+        status: "skipped",
+        subject: params.subject,
+        entryId: storedEntry?.id,
+        result,
+        ...options.extraDetails,
+      },
+      warnings,
+    );
   }
 
-  return failedOutcome(formatMemoryToolOutcomeText(`Rejected "${params.subject}". Check the supplied type, content, and metadata.`, warnings), {
-    status: "failed",
-    subject: params.subject,
-    result,
-    ...warningDetails,
-    ...options.extraDetails,
-  });
+  return failedOutcome(
+    `Rejected "${params.subject}". Check the supplied type, content, and metadata.`,
+    {
+      status: "failed",
+      subject: params.subject,
+      result,
+      ...options.extraDetails,
+    },
+    warnings,
+  );
 }
 
 /** Executes the host-neutral agenr_recall business flow. */
@@ -654,43 +667,25 @@ function projectDetailValue(project: string): { project: string | null } {
 }
 
 /**
- * Appends non-fatal pipeline warnings to the agent-visible tool text.
- *
- * @param baseText - Primary success or failure message.
- * @param warnings - Non-fatal warnings collected during tool execution.
- * @returns Combined tool text with a warnings section when needed.
- */
-function formatMemoryToolOutcomeText(baseText: string, warnings: string[]): string {
-  if (warnings.length === 0) {
-    return baseText;
-  }
-
-  const warningLines = warnings.map((warning) => `- ${warning}`).join("\n");
-  return `${baseText}\n\nWarnings:\n${warningLines}`;
-}
-
-/**
- * Builds optional structured warning details for tool outcomes.
- *
- * @param warnings - Non-fatal warnings collected during tool execution.
- * @returns Details payload fragment when warnings were emitted.
- */
-function buildMemoryToolWarningDetails(warnings: string[]): Record<string, unknown> {
-  return warnings.length > 0 ? { warnings } : {};
-}
-
-/**
  * Builds a successful host-neutral memory tool outcome.
  */
-function okOutcome(text: string, details: Record<string, unknown>): MemoryToolOutcome {
-  return { text, details, failed: false };
+function okOutcome(text: string, details: Record<string, unknown>, warnings: string[] = []): MemoryToolOutcome {
+  return {
+    text: formatMemoryToolOutcomeText(text, warnings),
+    details: { ...details, ...buildMemoryToolWarningDetails(warnings) },
+    failed: false,
+  };
 }
 
 /**
  * Builds a failed host-neutral memory tool outcome.
  */
-function failedOutcome(text: string, details: Record<string, unknown>): MemoryToolOutcome {
-  return { text, details, failed: true };
+function failedOutcome(text: string, details: Record<string, unknown>, warnings: string[] = []): MemoryToolOutcome {
+  return {
+    text: formatMemoryToolOutcomeText(text, warnings),
+    details: { ...details, ...buildMemoryToolWarningDetails(warnings) },
+    failed: true,
+  };
 }
 
 /** Parses a directive polarity string from memory-tool input. */

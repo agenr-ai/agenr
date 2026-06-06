@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "../skeln-types.js";
 
 import { formatUnifiedRecallResults } from "../../shared/recall-format.js";
+import { buildSkelnRecallToolDescription, buildSkelnRecallToolGuidelines } from "../../shared/memory-prompt-doctrine.js";
 import {
   RECALL_TOOL_PARAMETERS,
   buildRecallToolDetails,
@@ -21,14 +22,9 @@ export function registerAgenrSkelnRecallTool(
   skeln.registerTool({
     name: "agenr_recall",
     label: "Agenr Recall",
-    description:
-      "Retrieve knowledge from agenr long-term memory. Use mode=auto for normal use, including exact facts, historical-state questions, time-bounded episode questions, and procedural questions.",
+    description: buildSkelnRecallToolDescription(),
     promptSnippet: "Use agenr_recall to retrieve durable memory, prior episode summaries, or canonical procedures from agenr.",
-    promptGuidelines: [
-      "Use focused natural-language queries instead of broad 'everything' searches.",
-      "Use mode=procedures for how-to or checklist questions, and mode=episodes for what-happened questions tied to time or sessions.",
-      "Use asOf when the user asks what was true at an earlier point in time.",
-    ],
+    promptGuidelines: buildSkelnRecallToolGuidelines(),
     parameters: toolSchema(RECALL_TOOL_PARAMETERS),
     execute: async (_toolCallId, rawParams, _signal, _onUpdate, context) => {
       try {

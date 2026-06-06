@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildAgenrMemoryPromptSection } from "../../../src/adapters/openclaw/format/prompt-section.js";
+import { MEMORY_DOCTRINE } from "../../../src/adapters/shared/memory-prompt-doctrine.js";
 
 describe("buildAgenrMemoryPromptSection", () => {
   it("returns empty guidance when recall is unavailable", () => {
@@ -35,6 +36,9 @@ describe("buildAgenrMemoryPromptSection", () => {
     expect(lines.join("\n")).toContain("Do not store progress snapshots");
     expect(lines.join("\n")).toContain("Do not store plans, checklists, or speculative future state");
     expect(lines.join("\n")).toContain("Importance is 1 to 10");
+    expect(lines.join("\n")).toContain(MEMORY_DOCTRINE.store.claimKeyPromptLine);
+    expect(lines.join("\n")).toContain(MEMORY_DOCTRINE.update.vsSupersedes);
+    expect(lines.join("\n")).not.toContain("Do not store progress logs");
     expect(lines.join("\n")).toContain("contradicted by live evidence");
     expect(lines.join("\n")).toContain("Use agenr_trace");
     expect(lines.join("\n")).not.toContain("unfinished background work");

@@ -1,3 +1,5 @@
+import { MEMORY_DOCTRINE, MEMORY_RECALL_SECTION_HEADER } from "../../shared/memory-prompt-doctrine.js";
+
 /**
  * Builds the static memory doctrine appended to the Skeln system prompt.
  *
@@ -5,14 +7,14 @@
  */
 export function buildAgenrSkelnMemoryPromptSection(): string[] {
   return [
-    "## Memory Recall",
-    "Before answering anything about prior work, decisions, preferences, people, dates, unfinished work, or past sessions, call agenr_recall first. Session-start recall is automatic, and conservative before-turn recall may also appear as injected background context; use agenr_recall mid-session when you need context you do not already have.",
-    "agenr_recall supports exact fact recall plus historical and episodic recall behind one tool: use mode=durables for exact facts, decisions, thresholds, and versions; use mode=auto for prior-state questions like what was the previous approach, what did we use before, or what changed from X to Y; use mode=episodes when you explicitly want session narrative recall.",
-    "agenr_recall returns truncated durable previews with ids, scores, and preview_truncated flags. Call agenr_fetch with id when preview_truncated=true or exact stored wording is required.",
-    "When Agenr injects memory automatically, treat it as non-user background context and use it silently when relevant rather than forcing it into the reply.",
-    "Use agenr_store for durable memory, not for logging. Store only the durable takeaway, standing rule, preference, risk, lesson, or relationship - not progress logs or data already canonical elsewhere.",
-    "When storing slot-like facts, pass claimKey as exactly two segments with one slash: entity/attribute. Do not use nested paths like project/category/item; collapse extra words into snake_case on either side, for example skeln/codebase_layout.",
-    "Use agenr_update to correct metadata on an existing durable. Use agenr_store with supersedes for substantive content replacement.",
+    MEMORY_RECALL_SECTION_HEADER,
+    MEMORY_DOCTRINE.recall.first,
+    MEMORY_DOCTRINE.recall.modes,
+    MEMORY_DOCTRINE.recall.truncatedPreviewsWithFetch,
+    MEMORY_DOCTRINE.recall.injectedContext,
+    MEMORY_DOCTRINE.store.skelnNotLogging,
+    MEMORY_DOCTRINE.store.claimKeyPromptLine,
+    MEMORY_DOCTRINE.update.vsSupersedes,
     "",
   ];
 }

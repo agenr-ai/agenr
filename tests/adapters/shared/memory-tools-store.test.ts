@@ -5,8 +5,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
 import { createMemoryRepository } from "../../../src/adapters/db/memory-repository.js";
+import { buildAgenrMemoryPromptSection } from "../../../src/adapters/openclaw/format/prompt-section.js";
 import { buildAgenrSkelnMemoryPromptSection } from "../../../src/adapters/skeln/format/prompt-section.js";
-import { CLAIM_KEY_DESCRIPTION } from "../../../src/adapters/shared/entry-tools.js";
+import { CLAIM_KEY_DESCRIPTION, MEMORY_DOCTRINE } from "../../../src/adapters/shared/memory-prompt-doctrine.js";
 import { runStoreMemoryTool, STORE_TOOL_PARAMETERS } from "../../../src/adapters/shared/memory-tools.js";
 import type { EmbeddingPort } from "../../../src/core/ports.js";
 import { closeTestDatabases, removeTestPath } from "../../helpers/temp-paths.js";
@@ -23,16 +24,28 @@ afterEach(async () => {
   }
 });
 
-describe("agenr_store shared tool flow", () => {
-  it("documents the two-segment claimKey format in the shared schema", () => {
+describe("claimKey doctrine", () => {
+  it("uses one canonical source across schema and host prompt surfaces", () => {
     const claimKey = STORE_TOOL_PARAMETERS.properties.claimKey as { description?: string };
+    const skelnPrompt = buildAgenrSkelnMemoryPromptSection().join("\n");
+    const openClawPrompt = buildAgenrMemoryPromptSection({
+      availableTools: new Set(["agenr_recall", "agenr_store"]),
+      citationsMode: "off",
+    }).join("\n");
+    const promptLine = MEMORY_DOCTRINE.store.claimKeyPromptLine;
+    const storeGuideline = MEMORY_DOCTRINE.store.claimKeyStoreGuideline;
 
     expect(claimKey.description).toBe(CLAIM_KEY_DESCRIPTION);
-    expect(claimKey.description).toContain("exactly two segments");
-    expect(claimKey.description).toContain("one slash only");
-    expect(claimKey.description).toContain("never nested paths");
+    expect(CLAIM_KEY_DESCRIPTION).toContain("Slot-like durables use");
+    expect(CLAIM_KEY_DESCRIPTION).toContain("type=directive");
+    expect(CLAIM_KEY_DESCRIPTION).toContain("user/memory_directive/<name>");
+    expect(skelnPrompt).toContain(promptLine);
+    expect(openClawPrompt).toContain(promptLine);
+    expect(storeGuideline).toContain("skeln/codebase_layout");
   });
+});
 
+describe("agenr_store shared tool flow", () => {
   it("surfaces dropped claim-key warnings in the tool response text", async () => {
     const database = await createTestDatabase();
     const onWarning = vi.fn();
@@ -79,14 +92,42 @@ describe("agenr_store shared tool flow", () => {
     expect(onWarning).toHaveBeenCalledTimes(1);
     expect(onWarning.mock.calls[0]?.[0]).toMatch(/invalid claim key/i);
   });
-});
 
-describe("Skeln memory prompt doctrine", () => {
-  it("documents the two-segment claimKey format", () => {
-    const prompt = buildAgenrSkelnMemoryPromptSection().join("\n");
+  it("omits warning text when the store pipeline emits no warnings", async () => {
+    const database = await createTestDatabase();
+    const outcome = await runStoreMemoryTool(
+      {
+        type: "fact",
+        subject: "Office Wi-Fi name",
+        content: "The office Wi-Fi network name is Acorn-5G.",
+        importance: undefined,
+        expiry: undefined,
+        tags: [],
+        sourceContext: undefined,
+        supersedes: undefined,
+        claimKey: "office/wifi_name",
+        polarity: undefined,
+        trigger: undefined,
+        validFrom: undefined,
+        validTo: undefined,
+        project: undefined,
+      },
+      buildServices(database),
+      {
+        session: {
+          sessionId: "session-2",
+          agentId: "main",
+          channel: "webchat",
+          chatType: "direct",
+        },
+        sourcePrefix: "skeln-session",
+        defaultSourceContext: "Stored via agenr_store from Skeln.",
+      },
+    );
 
-    expect(prompt).toContain("claimKey as exactly two segments with one slash");
-    expect(prompt).toContain("skeln/codebase_layout");
+    expect(outcome.failed).toBe(false);
+    expect(outcome.text).toBe('Stored "Office Wi-Fi name".');
+    expect(outcome.details.warnings).toBeUndefined();
   });
 });
 

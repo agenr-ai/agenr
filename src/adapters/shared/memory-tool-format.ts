@@ -283,6 +283,32 @@ export function formatFetchedEntryText(entry: Durable): string {
   return [...metadata, "", entry.content.trim()].join("\n");
 }
 
+/**
+ * Appends non-fatal pipeline warnings to the agent-visible tool text.
+ *
+ * @param baseText - Primary success or failure message.
+ * @param warnings - Non-fatal warnings collected during tool execution.
+ * @returns Combined tool text with a warnings section when needed.
+ */
+export function formatMemoryToolOutcomeText(baseText: string, warnings: string[]): string {
+  if (warnings.length === 0) {
+    return baseText;
+  }
+
+  const warningLines = warnings.map((warning) => `- ${warning}`).join("\n");
+  return `${baseText}\n\nWarnings:\n${warningLines}`;
+}
+
+/**
+ * Builds optional structured warning details for tool outcomes.
+ *
+ * @param warnings - Non-fatal warnings collected during tool execution.
+ * @returns Details payload fragment when warnings were emitted.
+ */
+export function buildMemoryToolWarningDetails(warnings: string[]): Record<string, unknown> {
+  return warnings.length > 0 ? { warnings } : {};
+}
+
 /** Builds shared structured details for a successful fetch result. */
 export function buildFetchToolDetails(entry: Durable, extraDetails: Record<string, unknown> = {}): Record<string, unknown> {
   return {

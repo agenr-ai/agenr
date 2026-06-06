@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "../skeln-types.js";
 
 import { formatTargetSelector, sanitizeFetchToolParams } from "../../shared/entry-tools.js";
+import { MEMORY_DOCTRINE } from "../../shared/memory-prompt-doctrine.js";
 import { FETCH_TOOL_PARAMETERS, parseFetchToolParams, runFetchMemoryTool } from "../../shared/memory-tools.js";
 import type { AgenrSkelnServices } from "../runtime.js";
 import type { AgenrSkelnSessionScope } from "../types.js";
@@ -17,10 +18,7 @@ export function registerAgenrSkelnFetchTool(
     label: "Agenr Fetch",
     description: "Fetch the full body and metadata for one durable memory entry by id or subject.",
     promptSnippet: "Use agenr_fetch after agenr_recall when you need the full entry body for an id shown in recall results.",
-    promptGuidelines: [
-      "Provide exactly one target selector: id or subject.",
-      "Prefer id from agenr_recall when preview_truncated=true or when exact wording matters.",
-    ],
+    promptGuidelines: [MEMORY_DOCTRINE.update.targetSelector, MEMORY_DOCTRINE.fetch.preferId],
     parameters: toolSchema(FETCH_TOOL_PARAMETERS),
     execute: async (_toolCallId, rawParams, _signal, _onUpdate, context) => {
       try {

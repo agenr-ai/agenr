@@ -1,6 +1,7 @@
 import type { AnyAgentTool } from "openclaw/plugin-sdk/agent-runtime";
 import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sdk/core";
 
+import { buildUpdateToolDescription } from "../../shared/memory-prompt-doctrine.js";
 import { UPDATE_TOOL_PARAMETERS, parseUpdateToolParams, runUpdateMemoryTool } from "../../shared/memory-tools.js";
 import type { AgenrOpenClawServices } from "../types.js";
 import {
@@ -25,7 +26,7 @@ export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPr
   return {
     name: "agenr_update",
     label: "Agenr Update",
-    description: "Update an existing memory entry in place. Supports metadata corrections: importance, expiry, claimKey, validFrom, validTo, and project.",
+    description: buildUpdateToolDescription(),
     parameters: UPDATE_TOOL_PARAMETERS,
     async execute(_toolCallId, rawParams) {
       try {
