@@ -5,6 +5,48 @@ import { createProfileSnapshot, updateDreamState } from "./dreaming-run-lifecycl
 import type { SqlExecutor } from "./queries.js";
 
 /**
+ * Ensures one completed dreaming run row exists before profile snapshots reference it.
+ *
+ * @param executor - SQL executor for the isolated eval sandbox database.
+ * @param runId - Dreaming run identifier referenced by the profile snapshot fixture.
+ * @param provisionedAt - Timestamp used when seeding the eval run row.
+ */
+async function ensureEvalDreamRunExists(executor: SqlExecutor, runId: string, provisionedAt: string): Promise<void> {
+  const normalizedRunId = runId.trim();
+  if (normalizedRunId.length === 0) {
+    return;
+  }
+
+  const existing = await executor.execute({
+    sql: `
+      SELECT id
+      FROM dream_runs
+      WHERE id = ?
+      LIMIT 1
+    `,
+    args: [normalizedRunId],
+  });
+  if (existing.rows[0]) {
+    return;
+  }
+
+  await executor.execute({
+    sql: `
+      INSERT INTO dream_runs (
+        id,
+        tier,
+        started_at,
+        completed_at,
+        status,
+        dry_run
+      )
+      VALUES (?, 'light', ?, ?, 'completed', 0)
+    `,
+    args: [normalizedRunId, provisionedAt, provisionedAt],
+  });
+}
+
+/**
  * Seeds one active profile snapshot row plus dream_state activation for eval cases.
  *
  * @param executor - SQL executor for the isolated eval sandbox database.
@@ -23,6 +65,11 @@ export async function provisionEvalProfileSnapshot(
   const createdAt = fixture.createdAt ?? provisionedAt;
   const asOf = fixture.asOf ?? createdAt;
   const contentHash = createHash("sha256").update(JSON.stringify({ durableIds, directiveIds, asOf })).digest("hex");
+  const runId = fixture.runId?.trim();
+
+  if (runId) {
+    await ensureEvalDreamRunExists(executor, runId, createdAt);
+  }
 
   await createProfileSnapshot(executor, {
     id: snapshotId,
@@ -30,7 +77,7 @@ export async function provisionEvalProfileSnapshot(
     directiveIds,
     asOf,
     contentHash,
-    runId: fixture.runId ?? null,
+    runId: runId ?? null,
     createdAt,
   });
   await updateDreamState(executor, {
