@@ -62,10 +62,10 @@ export function deriveDreamEfficiencySummary(summary: DreamCompletionSummary, es
  * Counts durable mutations synthesized by one persisted dreaming summary.
  *
  * @param summary - Persisted dreaming completion summary.
- * @returns Durable writes and retirements emitted by the run.
+ * @returns Durable writes and stale actions emitted by the run.
  */
 export function countSynthesizedDurableMutations(summary: DreamCompletionSummary): number {
-  return (summary.extract?.durablesInserted ?? 0) + (summary.temporalize?.revisionsApplied ?? 0) + (summary.prune?.durablesRetired ?? 0);
+  return (summary.extract?.durablesInserted ?? 0) + (summary.temporalize?.revisionsApplied ?? 0) + (summary.prune?.durablesStaled ?? 0);
 }
 
 /**

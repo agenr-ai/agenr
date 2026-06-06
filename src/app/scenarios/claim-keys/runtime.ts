@@ -8,6 +8,7 @@ import { DURABLE_SELECT_COLUMNS, mapDurableRow } from "../../../adapters/db/row-
 import { localTranscriptFiles } from "../../../adapters/files/transcript-files.js";
 import { openClawTranscriptParser } from "../../../adapters/openclaw/transcript/parser.js";
 import { resolveClaimExtractionConfig } from "../../../config.js";
+import { isCurrentlyValidMemory } from "../../../core/temporal-validity.js";
 import { ingestPath } from "../../ingestion/index.js";
 import { storeDurablesDetailed } from "../../../core/store/pipeline.js";
 import type { Durable, StoreResult } from "../../../core/types.js";
@@ -450,7 +451,7 @@ async function captureActualState(
     rows,
     rowCount: {
       durables: rows.length,
-      activeDurables: rows.filter((row) => row.retired !== true && !row.superseded_by).length,
+      activeDurables: rows.filter((row) => isCurrentlyValidMemory(row, Date.now())).length,
       entriesWithClaimKey: rows.filter((row) => typeof row.claim_key === "string" && row.claim_key.length > 0).length,
       proposals: proposals.length,
     },

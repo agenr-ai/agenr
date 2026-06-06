@@ -10,11 +10,12 @@ import { compileLexicalTier } from "./fts-compile.js";
 import { recordRecallEvent, type SqlExecutor } from "./queries.js";
 import {
   buildActiveDurableClause,
+  buildHistoricalMemoryClause,
+  buildStaleMemoryClause,
   buildValidAsOfClause,
   cosineSimilarity,
   DURABLE_SELECT_COLUMNS,
   mapDurableRow,
-  readBoolean,
   readEmbedding,
   readNumber,
   readOptionalString,
@@ -35,7 +36,6 @@ const RECALL_CANDIDATE_SELECT_COLUMNS = `
   e.claim_support_observed_at,
   e.valid_from,
   e.valid_to,
-  e.retired,
   e.created_at
 `;
 
@@ -91,6 +91,7 @@ class LibsqlRecallAdapter implements RecallPorts {
     }
 
     const filters = buildEntryFilterClause(params.filters, "e");
+    const activityClause = buildRecallActivityClause(params.filters, "e");
     let result: ResultSet;
 
     try {
@@ -100,7 +101,7 @@ class LibsqlRecallAdapter implements RecallPorts {
             ${RECALL_CANDIDATE_SELECT_COLUMNS}
           FROM vector_top_k('idx_durables_embedding', vector32(?), ?) AS v
           JOIN durables AS e ON e.rowid = v.id
-          WHERE ${buildActiveDurableClause("e")}
+          WHERE ${activityClause}
             ${filters.sql}
           LIMIT ?
         `,
@@ -132,6 +133,7 @@ class LibsqlRecallAdapter implements RecallPorts {
     }
 
     const filters = buildEntryFilterClause(params.filters, "e");
+    const activityClause = buildRecallActivityClause(params.filters, "e");
     const matches = new Map<string, FtsCandidate>();
 
     for (const tier of plan) {
@@ -146,7 +148,7 @@ class LibsqlRecallAdapter implements RecallPorts {
             FROM durables_fts
             JOIN durables AS e ON e.rowid = durables_fts.rowid
             WHERE durables_fts MATCH ?
-              AND ${buildActiveDurableClause("e")}
+              AND ${activityClause}
               ${filters.sql}
             ORDER BY bm25(durables_fts, 1.0, 2.0)
             LIMIT ?
@@ -183,8 +185,8 @@ class LibsqlRecallAdapter implements RecallPorts {
    * that either supersede or are superseded by a seed. `claim_key_sibling`
    * adds rows sharing a claim key with any seed. `topic_family` adds rows
    * that share an exact subject with a seed and is the weakest fallback.
-   * `includeRetired` is applied as a hard gate so the default ranking
-   * profile never pulls retired rows into its candidate pool.
+   * `includeHistorical` is applied as a hard gate so the default ranking
+   * profile never pulls historical rows into its candidate pool.
    */
   public async expandNeighborhood(request: DurableNeighborhoodRequest): Promise<RecallCandidateDurable[]> {
     const normalizedIds = normalizeStrings(request.seedIds);
@@ -197,11 +199,11 @@ class LibsqlRecallAdapter implements RecallPorts {
       return [];
     }
 
-    const includeRetired = request.includeRetired === true;
+    const includeHistorical = request.includeHistorical === true;
     const budget = normalizeNeighborhoodBudget(request.budget, normalizedIds.length);
     const placeholders = normalizedIds.map(() => "?").join(", ");
-    const retiredGate = includeRetired ? "" : "AND e.retired = 0";
-    const priorityExpression = buildNeighborhoodPriorityExpression(families, includeRetired);
+    const historicalGate = includeHistorical ? "" : `AND ${buildActiveDurableClause("e")}`;
+    const priorityExpression = buildNeighborhoodPriorityExpression(families, includeHistorical);
     const membershipExpression = buildNeighborhoodMembershipExpression(families);
     const result = await this.executor.execute({
       sql: `
@@ -231,7 +233,7 @@ class LibsqlRecallAdapter implements RecallPorts {
             ${priorityExpression} AS family_priority
           FROM durables AS e
           WHERE e.id NOT IN (SELECT id FROM seed)
-            ${retiredGate}
+            ${historicalGate}
             AND (${membershipExpression})
         )
         SELECT *
@@ -285,6 +287,21 @@ class LibsqlRecallAdapter implements RecallPorts {
     this.pendingWrites = task.catch(() => undefined);
     await this.pendingWrites;
   }
+}
+
+/**
+ * Builds the recall activity gate for vector and lexical candidate queries.
+ *
+ * Default recall excludes superseded and stale rows using the live clock.
+ * As-of recall replaces the live stale gate with supersession-only filtering
+ * because temporal bounds come from {@link buildValidAsOfClause}.
+ */
+function buildRecallActivityClause(filters: DurableFilters | undefined, alias: string): string {
+  if (filters?.validAsOf) {
+    return `${alias}.superseded_by IS NULL`;
+  }
+
+  return buildActiveDurableClause(alias);
 }
 
 /**
@@ -390,7 +407,6 @@ function mapRecallCandidateRow(row: Row): RecallCandidateDurable {
     claim_support_observed_at: readOptionalString(row, "claim_support_observed_at"),
     valid_from: readOptionalString(row, "valid_from"),
     valid_to: readOptionalString(row, "valid_to"),
-    retired: readBoolean(row, "retired"),
     created_at: readRequiredString(row, "created_at"),
   };
 }
@@ -438,9 +454,9 @@ function dedupeFamilies(families: readonly NeighborhoodFamily[]): NeighborhoodFa
  *
  * Lower priorities win. The ordering matches the plan's lineage strength
  * preference: direct supersessions, then trusted same-slot siblings, then
- * untrusted same-slot siblings, then retired same-subject fallbacks.
+ * untrusted same-slot siblings, then stale same-subject fallbacks.
  */
-function buildNeighborhoodPriorityExpression(families: readonly NeighborhoodFamily[], includeRetired: boolean): string {
+function buildNeighborhoodPriorityExpression(families: readonly NeighborhoodFamily[], includeHistorical: boolean): string {
   const branches: string[] = [];
   if (families.includes("supersession_chain")) {
     branches.push(`WHEN e.superseded_by IN (SELECT id FROM seed) THEN 0`);
@@ -448,12 +464,12 @@ function buildNeighborhoodPriorityExpression(families: readonly NeighborhoodFami
   }
 
   if (families.includes("claim_key_sibling")) {
-    const retiredOrReplacedGuard = includeRetired ? "(e.retired = 1 OR e.superseded_by IS NOT NULL)" : "e.superseded_by IS NOT NULL";
+    const historicalOrReplacedGuard = includeHistorical ? buildHistoricalMemoryClause("e") : "e.superseded_by IS NOT NULL";
     branches.push(
       `WHEN e.claim_key IS NOT NULL
          AND e.claim_key IN (SELECT claim_key FROM seed_claim_keys)
          AND e.claim_key_status = 'trusted'
-         AND ${retiredOrReplacedGuard} THEN 2`,
+         AND ${historicalOrReplacedGuard} THEN 2`,
     );
     branches.push(
       `WHEN e.claim_key IS NOT NULL
@@ -463,7 +479,7 @@ function buildNeighborhoodPriorityExpression(families: readonly NeighborhoodFami
     branches.push(
       `WHEN e.claim_key IS NOT NULL
          AND e.claim_key IN (SELECT claim_key FROM seed_claim_keys)
-         AND ${retiredOrReplacedGuard} THEN 4`,
+         AND ${historicalOrReplacedGuard} THEN 4`,
     );
     branches.push(
       `WHEN e.claim_key IS NOT NULL
@@ -472,8 +488,8 @@ function buildNeighborhoodPriorityExpression(families: readonly NeighborhoodFami
   }
 
   if (families.includes("topic_family")) {
-    if (includeRetired) {
-      branches.push(`WHEN e.retired = 1 AND e.subject IN (SELECT subject FROM seed_subjects) THEN 6`);
+    if (includeHistorical) {
+      branches.push(`WHEN ${buildStaleMemoryClause("e")} AND e.subject IN (SELECT subject FROM seed_subjects) THEN 6`);
     } else {
       branches.push(`WHEN e.subject IN (SELECT subject FROM seed_subjects) THEN 6`);
     }

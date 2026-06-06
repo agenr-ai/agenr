@@ -5,7 +5,6 @@ const MEMORY_TOOL_NAMES = {
   fetch: "agenr_fetch",
   store: "agenr_store",
   update: "agenr_update",
-  retire: "agenr_retire",
   trace: "agenr_trace",
 } as const;
 
@@ -72,8 +71,8 @@ export function buildAgenrMemoryPromptSection({
     );
   }
 
-  if (availableTools.has(MEMORY_TOOL_NAMES.update) || availableTools.has(MEMORY_TOOL_NAMES.retire)) {
-    lines.push("When memory is contradicted by live evidence, fix it with agenr_update or agenr_retire instead of silently working around it.");
+  if (availableTools.has(MEMORY_TOOL_NAMES.update)) {
+    lines.push("When memory is contradicted by live evidence, fix it with agenr_update instead of silently working around it.");
   }
 
   if (availableTools.has(MEMORY_TOOL_NAMES.fetch)) {

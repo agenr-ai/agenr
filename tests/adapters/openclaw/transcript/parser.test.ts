@@ -776,22 +776,22 @@ describe("OpenClawTranscriptParser", () => {
   it("throws a typed error when the transcript file is missing", async () => {
     const missingPath = path.join(tmpdir(), `agenr-openclaw-missing-${Date.now()}.jsonl`);
 
-    await expect(parser.parseFile(missingPath)).rejects.toMatchObject<Partial<OpenClawTranscriptParseError>>({
+    await expect(parser.parseFile(missingPath)).rejects.toMatchObject({
       name: "OpenClawTranscriptParseError",
       kind: "missing_file",
       filePath: missingPath,
-    });
+    } satisfies Partial<OpenClawTranscriptParseError>);
   });
 
   it("throws a typed error when the transcript path cannot be read as a file", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "agenr-openclaw-unreadable-"));
     tempDirectories.push(directory);
 
-    await expect(parser.parseFile(directory)).rejects.toMatchObject<Partial<OpenClawTranscriptParseError>>({
+    await expect(parser.parseFile(directory)).rejects.toMatchObject({
       name: "OpenClawTranscriptParseError",
       kind: "unreadable_file",
       filePath: directory,
-    });
+    } satisfies Partial<OpenClawTranscriptParseError>);
   });
 });
 

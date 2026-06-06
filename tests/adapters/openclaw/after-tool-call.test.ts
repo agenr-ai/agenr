@@ -118,7 +118,7 @@ describe("handleAgenrAfterToolCall", () => {
     });
   });
 
-  it("treats update and retire as explicit memory maintenance even on failed results", () => {
+  it("treats update with valid_to as explicit memory maintenance even on failed results", () => {
     const tracker = createMidSessionTracker();
     const logger = createLogger();
 

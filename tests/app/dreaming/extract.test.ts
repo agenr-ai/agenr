@@ -46,8 +46,8 @@ async function insertEpisode(
 ): Promise<void> {
   await client.execute({
     sql: `
-      INSERT INTO episodes (id, source, source_id, started_at, ended_at, summary, project, retired, created_at, updated_at)
-      VALUES (?, 'openclaw', ?, ?, ?, ?, ?, 0, ?, ?)
+      INSERT INTO episodes (id, source, source_id, started_at, ended_at, summary, project, created_at, updated_at)
+      VALUES (?, 'openclaw', ?, ?, ?, ?, ?, ?, ?)
     `,
     args: [
       overrides.id,

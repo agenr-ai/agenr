@@ -43,8 +43,8 @@ afterEach(async () => {
 async function insertEpisode(client: Client, id: string, summary: string): Promise<void> {
   await client.execute({
     sql: `
-      INSERT INTO episodes (id, source, source_id, started_at, ended_at, summary, retired, created_at, updated_at)
-      VALUES (?, 'openclaw', ?, '2026-04-04T10:00:00.000Z', '2026-04-04T11:00:00.000Z', ?, 0, '2026-04-04T11:00:00.000Z', '2026-04-04T11:00:00.000Z')
+      INSERT INTO episodes (id, source, source_id, started_at, ended_at, summary, created_at, updated_at)
+      VALUES (?, 'openclaw', ?, '2026-04-04T10:00:00.000Z', '2026-04-04T11:00:00.000Z', ?, '2026-04-04T11:00:00.000Z', '2026-04-04T11:00:00.000Z')
     `,
     args: [id, `session-${id}`, summary],
   });
@@ -83,7 +83,7 @@ function createDreamPortDouble(overrides: Partial<DreamPort> = {}): DreamPort {
     supersedeDurable: vi.fn(async () => true),
     getDurable: vi.fn(async () => null),
     getDurables: vi.fn(async () => []),
-    retireDurable: vi.fn(async () => false),
+    closeDurableValidity: vi.fn(async () => false),
     updateDurable: vi.fn(async () => false),
     logRunProposal: vi.fn(async () => undefined),
     countEpisodesSince: vi.fn(async () => 0),
@@ -558,7 +558,7 @@ describe("runDream", () => {
     expect(result.completionSummary?.prune).toMatchObject({
       candidatesIdentified: 1,
       candidatesRetirable: 1,
-      durablesRetired: 1,
+      durablesStaled: 1,
       dryRun: false,
     });
     expect(result.completionSummary?.efficiency).toMatchObject({
@@ -567,9 +567,10 @@ describe("runDream", () => {
       recomputeRatio: 0.111111,
     });
 
-    const retired = await client.execute({ sql: `SELECT retired, retired_reason FROM durables WHERE id = ?`, args: ["temporary-low"] });
-    expect(Number(retired.rows[0]?.retired)).toBe(1);
-    expect(retired.rows[0]?.retired_reason).toBe("Dream prune retired a temporary durable after synthesis.");
+    const staled = await client.execute({ sql: `SELECT valid_to, supersession_kind, supersession_reason FROM durables WHERE id = ?`, args: ["temporary-low"] });
+    expect(staled.rows[0]?.valid_to).toBeTruthy();
+    expect(staled.rows[0]?.supersession_kind).toBe("stale");
+    expect(staled.rows[0]?.supersession_reason).toBe("Dream prune staled a temporary durable after synthesis.");
 
     const activeProfile = await port.getActiveProfileSnapshot();
     expect(activeProfile?.durableIds).not.toContain("temporary-low");

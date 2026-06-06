@@ -139,12 +139,6 @@ export interface RecallEvalFixtureEntry {
   created_at?: string;
   /** Optional update timestamp for deterministic temporal behavior. */
   updated_at?: string;
-  /** Optional retirement flag for explicit inactive fixture entries. */
-  retired?: boolean;
-  /** Optional retirement timestamp when the fixture is retired. */
-  retired_at?: string;
-  /** Optional retirement reason attached to the fixture. */
-  retired_reason?: string;
   /** Optional successor entry ID when the fixture is superseded. */
   superseded_by?: string;
   /** Optional canonical claim key for deterministic lineage scenarios. */
@@ -203,14 +197,16 @@ export interface RecallEvalFixtureProcedure {
   sources?: ProcedureSource[];
   /** Optional source file path attached to the stored procedure. */
   source_file?: string;
-  /** Optional retirement flag for inactive procedure fixtures. */
-  retired?: boolean;
-  /** Optional retirement timestamp when the fixture is retired. */
-  retired_at?: string;
-  /** Optional retirement reason attached to the fixture. */
-  retired_reason?: string;
   /** Optional successor procedure ID when the fixture is superseded. */
   superseded_by?: string;
+  /** Optional validity lower bound for deterministic ordering. */
+  valid_from?: string;
+  /** Optional validity upper bound for deterministic ordering. */
+  valid_to?: string;
+  /** Optional explicit supersession relationship kind. */
+  supersession_kind?: string;
+  /** Optional explicit supersession rationale. */
+  supersession_reason?: string;
   /** Optional creation timestamp for deterministic ordering. */
   created_at?: string;
   /** Optional update timestamp for deterministic ordering. */
@@ -515,8 +511,6 @@ export interface RecallEvalProvisionedEntrySummary {
   created_at: string;
   /** Seeded updated-at timestamp before recall telemetry runs. */
   updated_at: string;
-  /** Whether the seeded fixture entry was retired. */
-  retired: boolean;
   /** Optional successor entry ID preserved during exact seeding. */
   superseded_by?: string;
   /** Optional canonical claim key preserved during exact seeding. */
@@ -541,8 +535,8 @@ export interface RecallEvalProvisionDiagnostics {
   providedIdCount: number;
   /** Number of fixtures that received deterministic generated IDs. */
   generatedIdCount: number;
-  /** Number of retired fixtures seeded into isolated storage. */
-  retiredCount: number;
+  /** Number of stale fixtures seeded into isolated storage. */
+  staleCount: number;
   /** Number of fixtures that reference a successor entry. */
   supersededCount: number;
   /** Number of fixtures that defaulted `created_at` during seeding. */

@@ -1082,7 +1082,7 @@ class MockDatabase implements DatabasePort {
     return new Set(hashes.filter((hash) => this.existingNormHashes.has(hash)));
   }
 
-  public async retireDurable(): Promise<boolean> {
+  public async closeDurableValidity(): Promise<boolean> {
     return false;
   }
 
@@ -1218,9 +1218,6 @@ function createExistingEntry(overrides: Partial<Durable> & Pick<Durable, "claim_
     cluster_id: overrides.cluster_id,
     user_id: overrides.user_id,
     project: overrides.project,
-    retired: overrides.retired ?? false,
-    retired_at: overrides.retired_at,
-    retired_reason: overrides.retired_reason,
     created_at: overrides.created_at ?? now,
     updated_at: overrides.updated_at ?? now,
   };

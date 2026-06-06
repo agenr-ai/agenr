@@ -305,7 +305,7 @@ describe("ingestPath", () => {
     const filePath = "/tmp/session-dedup-concurrency.jsonl";
     const { entries, vectors } = createPairedClusterScenario(3);
     const responses = [deferred<string>(), deferred<string>(), deferred<string>()];
-    let dedupLlm: MockDedupLlm | null = null;
+    let dedupLlm: MockDedupLlm | undefined;
 
     const ingestPromise = ingestPath(
       "/tmp",
@@ -346,7 +346,7 @@ describe("ingestPath", () => {
     const filePath = "/tmp/session-dedup-default-concurrency.jsonl";
     const { entries, vectors } = createPairedClusterScenario(11);
     const responses = Array.from({ length: 11 }, () => deferred<string>());
-    let dedupLlm: MockDedupLlm | null = null;
+    let dedupLlm: MockDedupLlm | undefined;
 
     const ingestPromise = ingestPath(
       "/tmp",
@@ -390,7 +390,7 @@ describe("ingestPath", () => {
       deferred<{ entity: string; attribute: string; confidence: number }>(),
       deferred<{ entity: string; attribute: string; confidence: number }>(),
     ];
-    let claimLlm: MockClaimExtractionLlm | null = null;
+    let claimLlm: MockClaimExtractionLlm | undefined;
 
     const ingestPromise = ingestPath(
       "/tmp",
@@ -929,7 +929,7 @@ class MockDatabase implements DatabasePort {
     return new Set();
   }
 
-  public async retireDurable(): Promise<boolean> {
+  public async closeDurableValidity(): Promise<boolean> {
     return false;
   }
 

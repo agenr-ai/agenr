@@ -122,7 +122,7 @@ export async function runReconcilePass(options: ReconcileRunOptions, deps: Recon
     status: ctx.telemetry.terminalStatus,
     error: ctx.telemetry.terminalError,
     completion,
-    durablesRetired: 0,
+    durablesStaled: 0,
     usage: getClaimExtractionUsage(ctx),
   };
 }

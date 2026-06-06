@@ -117,6 +117,61 @@ export function isWithinValidityWindow(validFrom: string | undefined | null, val
 }
 
 /**
+ * Returns whether one memory row is current at a reference instant.
+ *
+ * A row is current when it has no successor and its `valid_to` bound has not
+ * passed. The bound is exclusive: a row whose `valid_to` equals the instant is
+ * already historical. A future `valid_from` does not make a row non-current
+ * here, which keeps the definition aligned with the SQL active gate and lets
+ * direct retrieval reach scheduled memories. Excluding not-yet-valid rows from
+ * recall is owned by {@link isWithinValidityWindow} on the as-of path.
+ *
+ * @param row - Memory row with optional supersession and valid-time fields.
+ * @param nowMs - Reference instant in epoch milliseconds.
+ * @returns True when the row is the current value at the reference instant.
+ */
+export function isCurrentlyValidMemory(row: { superseded_by?: string | null; valid_to?: string | null }, nowMs: number): boolean {
+  const supersededBy = row.superseded_by?.trim();
+  if (supersededBy) {
+    return false;
+  }
+
+  const toMs = parseInstantMs(row.valid_to);
+  if (toMs !== null && nowMs >= toMs) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Returns whether one memory row is stale at a reference instant.
+ *
+ * A row is stale when it has no successor and its `valid_to` bound has
+ * passed. Superseded rows are not stale here; they are offline through
+ * supersession instead. The bound is exclusive on the current side, matching
+ * {@link isCurrentlyValidMemory}. This is the core mirror of
+ * {@link buildStaleMemoryClause} in the database adapter.
+ *
+ * @param row - Memory row with optional supersession and valid-time fields.
+ * @param nowMs - Reference instant in epoch milliseconds.
+ * @returns True when the row is stale at the reference instant.
+ */
+export function isStaleMemory(row: { superseded_by?: string | null; valid_to?: string | null }, nowMs: number): boolean {
+  const supersededBy = row.superseded_by?.trim();
+  if (supersededBy) {
+    return false;
+  }
+
+  const toMs = parseInstantMs(row.valid_to);
+  if (toMs === null) {
+    return false;
+  }
+
+  return nowMs >= toMs;
+}
+
+/**
  * Parses an optional ISO timestamp into epoch milliseconds.
  *
  * @param value - Raw optional timestamp input.

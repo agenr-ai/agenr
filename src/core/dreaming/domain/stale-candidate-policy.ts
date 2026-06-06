@@ -6,29 +6,29 @@ import type { DreamRunAction } from "./action-types.js";
 const STATUS_ARTIFACT_SUBJECT_HINTS = ["session handoff", "status update", "progress snapshot", "session summary", "next steps", "in progress"] as const;
 
 /**
- * Action types that suppress same-run retirement reconsideration.
+ * Action types that suppress same-run stale reconsideration.
  */
-const DREAM_PRUNE_SAME_RUN_SUPPRESSION_ACTION_TYPES: Array<Extract<DreamRunAction["actionType"], "skip" | "retire" | "update_durable">> = [
+const DREAM_PRUNE_SAME_RUN_SUPPRESSION_ACTION_TYPES: Array<Extract<DreamRunAction["actionType"], "skip" | "stale" | "update_durable">> = [
   "skip",
-  "retire",
+  "stale",
   "update_durable",
 ];
 
 /**
- * Action types that mark a candidate as recently evaluated for later retirement runs.
+ * Action types that mark a candidate as recently evaluated for later stale runs.
  */
-const DREAM_PRUNE_RECENT_EVALUATION_ACTION_TYPES: Array<Extract<DreamRunAction["actionType"], "skip" | "retire" | "update_durable">> = [
+const DREAM_PRUNE_RECENT_EVALUATION_ACTION_TYPES: Array<Extract<DreamRunAction["actionType"], "skip" | "stale" | "update_durable">> = [
   "skip",
-  "retire",
+  "stale",
   "update_durable",
 ];
 
 export { DREAM_PRUNE_RECENT_EVALUATION_ACTION_TYPES, DREAM_PRUNE_SAME_RUN_SUPPRESSION_ACTION_TYPES };
 
 /**
- * Minimal candidate fields used by retirement selection policy.
+ * Minimal candidate fields used by stale selection policy.
  */
-export interface DreamRetirementPolicyCandidate {
+export interface DreamStaleCandidatePolicyCandidate {
   id: string;
   subject: string;
   type: string;
@@ -40,12 +40,12 @@ export interface DreamRetirementPolicyCandidate {
 }
 
 /**
- * Returns whether one candidate belongs to the high-yield actionable retirement scope.
+ * Returns whether one candidate belongs to the high-yield actionable stale scope.
  *
- * @param candidate - Candidate summary evaluated by retirement policy.
+ * @param candidate - Candidate summary evaluated by stale policy.
  * @returns True when the candidate belongs to the actionable subset.
  */
-export function isActionableRetirementCandidate(candidate: Pick<DreamRetirementPolicyCandidate, "type" | "importance" | "expiry" | "recallCount">): boolean {
+export function isActionableStaleCandidate(candidate: Pick<DreamStaleCandidatePolicyCandidate, "type" | "importance" | "expiry" | "recallCount">): boolean {
   return (
     candidate.expiry === "temporary" ||
     (candidate.type === "milestone" && (candidate.importance <= 6 || candidate.expiry === "permanent")) ||
@@ -54,14 +54,14 @@ export function isActionableRetirementCandidate(candidate: Pick<DreamRetirementP
 }
 
 /**
- * Compares two retirement candidates using the current prioritization rules.
+ * Compares two stale candidates using the current prioritization rules.
  *
  * @param left - Left candidate.
  * @param right - Right candidate.
  * @returns Sort comparator value.
  */
-export function compareRetirementCandidates(left: DreamRetirementPolicyCandidate, right: DreamRetirementPolicyCandidate): number {
-  const tierDelta = getRetirementCandidatePriorityTier(left) - getRetirementCandidatePriorityTier(right);
+export function compareStaleCandidates(left: DreamStaleCandidatePolicyCandidate, right: DreamStaleCandidatePolicyCandidate): number {
+  const tierDelta = getStaleCandidatePriorityTier(left) - getStaleCandidatePriorityTier(right);
   if (tierDelta !== 0) {
     return tierDelta;
   }
@@ -95,18 +95,18 @@ export function compareRetirementCandidates(left: DreamRetirementPolicyCandidate
  * @param subject - Candidate subject text.
  * @returns True when the subject matches status-artifact heuristics.
  */
-export function looksLikeRetirementStatusArtifact(subject: string): boolean {
+export function looksLikeStaleStatusArtifact(subject: string): boolean {
   const normalized = subject.trim().toLowerCase();
   return normalized.startsWith("handoff") || STATUS_ARTIFACT_SUBJECT_HINTS.some((hint) => normalized.includes(hint));
 }
 
 /**
- * Assigns the current retirement priority tier for one candidate.
+ * Assigns the current stale priority tier for one candidate.
  *
  * @param candidate - Candidate to classify.
  * @returns Tier number where lower values sort first.
  */
-export function getRetirementCandidatePriorityTier(candidate: Pick<DreamRetirementPolicyCandidate, "subject" | "type" | "importance" | "expiry">): number {
+export function getStaleCandidatePriorityTier(candidate: Pick<DreamStaleCandidatePolicyCandidate, "subject" | "type" | "importance" | "expiry">): number {
   if (candidate.expiry === "temporary") {
     return 0;
   }
@@ -115,7 +115,7 @@ export function getRetirementCandidatePriorityTier(candidate: Pick<DreamRetireme
     return 1;
   }
 
-  if (looksLikeRetirementStatusArtifact(candidate.subject)) {
+  if (looksLikeStaleStatusArtifact(candidate.subject)) {
     return 2;
   }
 

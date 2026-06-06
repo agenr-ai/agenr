@@ -204,17 +204,21 @@ describe("procedure sync service", () => {
     expect(releaseRow.rows[0]?.updated_at).not.toBe(releaseStored.updated_at);
 
     const openclawOldRow = await database.execute({
-      sql: "SELECT superseded_by FROM procedures WHERE id = ?",
+      sql: "SELECT superseded_by, supersession_kind, valid_to FROM procedures WHERE id = ?",
       args: [openclawStored.id],
     });
     expect(openclawOldRow.rows[0]?.superseded_by).toBe(openclawActive?.id);
+    // A superseded revision records an "update" supersession, not a "stale"
+    // close, and keeps an open validity window to match the durable model.
+    expect(openclawOldRow.rows[0]?.supersession_kind).toBe("update");
+    expect(openclawOldRow.rows[0]?.valid_to).toBeNull();
 
     const activeCount = await database.execute({
       sql: `
         SELECT COUNT(*) AS count
         FROM procedures
         WHERE procedure_key = ?
-          AND retired = 0
+          AND (valid_to IS NULL OR datetime(valid_to) >= datetime('now'))
           AND superseded_by IS NULL
       `,
       args: ["agenr/openclaw-local-plugin-check"],
@@ -309,9 +313,6 @@ function createStoredProcedureFromYaml(yaml: string, filePath: string, overrides
     source_hash: computeProcedureSourceHash(yaml),
     source_file: filePath,
     embedding: overrides.embedding,
-    retired: overrides.retired ?? false,
-    retired_at: overrides.retired_at,
-    retired_reason: overrides.retired_reason,
     superseded_by: overrides.superseded_by,
     created_at: now,
     updated_at: overrides.updated_at ?? now,

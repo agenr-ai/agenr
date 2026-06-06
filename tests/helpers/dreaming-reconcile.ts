@@ -121,13 +121,10 @@ export async function insertDurable(client: Client, overrides: Partial<Durable> 
         cluster_id,
         user_id,
         project,
-        retired,
-        retired_at,
-        retired_reason,
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     args: [
       durable.id,
@@ -166,9 +163,6 @@ export async function insertDurable(client: Client, overrides: Partial<Durable> 
       durable.cluster_id ?? null,
       durable.user_id ?? null,
       durable.project ?? null,
-      durable.retired ? 1 : 0,
-      durable.retired_at ?? null,
-      durable.retired_reason ?? null,
       durable.created_at,
       durable.updated_at,
     ],
@@ -203,9 +197,6 @@ export function buildDurable(overrides: Partial<Durable> & Pick<Durable, "id" | 
     cluster_id: overrides.cluster_id,
     user_id: overrides.user_id,
     project: overrides.project,
-    retired: overrides.retired ?? false,
-    retired_at: overrides.retired_at,
-    retired_reason: overrides.retired_reason,
     created_at: overrides.created_at ?? "2026-01-01T00:00:00.000Z",
     updated_at: overrides.updated_at ?? "2026-01-01T00:00:00.000Z",
   };

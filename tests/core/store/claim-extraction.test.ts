@@ -1155,7 +1155,7 @@ class MockDatabasePort implements DatabasePort {
     return new Set();
   }
 
-  public async retireDurable(): Promise<boolean> {
+  public async closeDurableValidity(): Promise<boolean> {
     return false;
   }
 

@@ -2,9 +2,8 @@ import type { Row } from "@libsql/client";
 
 import { normalizeProcedureDefinition } from "../../core/procedures/normalization.js";
 import type { Procedure, ProcedureDefinition } from "../../core/types.js";
-import { readBoolean, readEmbedding, readOptionalString, readRequiredString } from "./row-mapping.js";
+import { ACTIVE_PROCEDURE_CLAUSE, buildCurrentMemoryClause, readEmbedding, readOptionalString, readRequiredString } from "./row-mapping.js";
 
-const ACTIVE_PROCEDURE_CLAUSE = "retired = 0 AND superseded_by IS NULL";
 const PROCEDURE_SELECT_COLUMNS = `
   id,
   procedure_key,
@@ -16,9 +15,10 @@ const PROCEDURE_SELECT_COLUMNS = `
   source_hash,
   revision_hash,
   embedding,
-  retired,
-  retired_at,
-  retired_reason,
+  valid_from,
+  valid_to,
+  supersession_kind,
+  supersession_reason,
   superseded_by,
   created_at,
   updated_at
@@ -27,17 +27,19 @@ const PROCEDURE_SELECT_COLUMNS = `
 export { ACTIVE_PROCEDURE_CLAUSE, PROCEDURE_SELECT_COLUMNS };
 
 /**
- * Builds the SQL predicate that filters out retired and superseded procedures.
+ * Builds the SQL predicate that filters out superseded and stale procedures.
+ *
+ * Procedures share the canonical current-memory predicate, so this delegates to
+ * {@link buildCurrentMemoryClause} instead of carrying a separate copy of the
+ * SQL. A local copy previously drifted to an inclusive `valid_to` boundary while
+ * the canonical predicate is exclusive; delegating keeps procedures in lockstep
+ * with durables and episodes.
  *
  * @param alias - Optional table alias to prefix column references.
  * @returns Active-procedure predicate for raw SQL fragments.
  */
 export function buildActiveProcedureClause(alias?: string): string {
-  if (!alias) {
-    return ACTIVE_PROCEDURE_CLAUSE;
-  }
-
-  return `${alias}.retired = 0 AND ${alias}.superseded_by IS NULL`;
+  return buildCurrentMemoryClause(alias);
 }
 
 /**
@@ -76,9 +78,10 @@ export function mapProcedureRow(row: Row): Procedure {
     source_hash: readRequiredString(row, "source_hash"),
     source_file: readOptionalString(row, "source_file"),
     embedding: readEmbedding(row, "embedding"),
-    retired: readBoolean(row, "retired"),
-    retired_at: readOptionalString(row, "retired_at"),
-    retired_reason: readOptionalString(row, "retired_reason"),
+    valid_from: readOptionalString(row, "valid_from"),
+    valid_to: readOptionalString(row, "valid_to"),
+    supersession_kind: readOptionalString(row, "supersession_kind"),
+    supersession_reason: readOptionalString(row, "supersession_reason"),
     superseded_by: readOptionalString(row, "superseded_by"),
     created_at: readRequiredString(row, "created_at"),
     updated_at: readRequiredString(row, "updated_at"),

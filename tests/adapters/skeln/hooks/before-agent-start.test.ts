@@ -560,7 +560,6 @@ function createEntry(overrides: Partial<Durable> & Pick<Durable, "id" | "subject
     norm_content_hash: "norm-hash",
     quality_score: 1,
     recall_count: 0,
-    retired: false,
     created_at: "2026-01-01T00:00:00.000Z",
     updated_at: "2026-01-01T00:00:00.000Z",
     ...overrides,

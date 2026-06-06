@@ -8,7 +8,7 @@ const SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR = 4;
 export { SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR };
 
 /**
- * Durable fields used by retirement protection guards.
+ * Durable fields used by stale protection guards.
  */
 export interface DreamProtectionDurable {
   expiry: Expiry;
@@ -17,22 +17,22 @@ export interface DreamProtectionDurable {
 }
 
 /**
- * Configuration for retirement protection guards.
+ * Configuration for stale protection guards.
  */
-export interface DreamRetirementProtectionConfig {
+export interface DreamStaleProtectionConfig {
   now: Date;
   protectRecalledDays: number;
   protectMinImportance: number;
 }
 
 /**
- * Determines whether an entry is protected from retirement.
+ * Determines whether an entry is protected from staleness.
  *
  * @param entry - Durable fields evaluated by the hard protection guards.
- * @param config - Active retirement protection configuration.
+ * @param config - Active stale protection configuration.
  * @returns Protection status and an optional explanation when protected.
  */
-export function isProtectedFromRetirement(entry: DreamProtectionDurable, config: DreamRetirementProtectionConfig): { protected: boolean; reason?: string } {
+export function isProtectedFromStaleness(entry: DreamProtectionDurable, config: DreamStaleProtectionConfig): { protected: boolean; reason?: string } {
   if (entry.expiry === "core") {
     return { protected: true, reason: "Durable expiry is core." };
   }

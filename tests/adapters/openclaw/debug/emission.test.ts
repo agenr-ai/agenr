@@ -52,7 +52,6 @@ describe("agenr debug sink event emission", () => {
       {
         sessionId: openClawSessionId,
         sessionKey: openClawSessionKey,
-        cwd: tempRoot,
         agentId: "main",
       },
       Promise.resolve(services),
@@ -62,7 +61,7 @@ describe("agenr debug sink event emission", () => {
     const result = await tool.execute("tool-1", { query: "what are my preferences" });
     await sink.close();
 
-    expect(result.details?.status).toBe("ok");
+    expect((result.details as { status?: unknown }).status).toBe("ok");
     const lines = (await readFile(logPath, "utf8")).trim().split("\n");
     const events = lines.map((line) => JSON.parse(line));
     const emittedTypes = events.map((event) => event.type);
@@ -151,7 +150,6 @@ describe("agenr debug sink event emission", () => {
       {
         sessionId: openClawSessionId,
         sessionKey: openClawSessionKey,
-        cwd: tempRoot,
         agentId: "main",
       },
       Promise.resolve(services),

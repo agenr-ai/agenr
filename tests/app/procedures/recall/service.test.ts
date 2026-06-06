@@ -359,8 +359,9 @@ function createProcedureDatabase(
     procedureVectorSearch: overrides.procedureVectorSearch ?? vi.fn(async () => []),
     listProceduresWithoutEmbeddings: vi.fn(),
     updateProcedureEmbedding: vi.fn(),
-    retireProcedure: vi.fn(),
+    closeProcedureValidity: vi.fn(),
     supersedeProcedure: vi.fn(),
+    replaceProcedureRevision: vi.fn(),
   };
 }
 
@@ -408,9 +409,6 @@ function createProcedure(overrides: Partial<Procedure> = {}): Procedure {
     source_hash: overrides.source_hash ?? computeProcedureSourceHash(JSON.stringify(body)),
     source_file: overrides.source_file,
     embedding: overrides.embedding,
-    retired: overrides.retired ?? false,
-    retired_at: overrides.retired_at,
-    retired_reason: overrides.retired_reason,
     superseded_by: overrides.superseded_by,
     created_at: now,
     updated_at: overrides.updated_at ?? now,

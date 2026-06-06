@@ -11,7 +11,7 @@ Dreaming is agenr's background corpus maintenance pipeline. It replaces the reti
 - `src/app/dreaming/reconcile/**` - deterministic reconcile pass (claim-key quality)
 - `src/app/dreaming/temporalize.ts` - supersession-based revision of `refines` candidates
 - `src/app/dreaming/project.ts` - deterministic profile snapshot projection
-- `src/app/dreaming/prune.ts` - deterministic, conservative durable retirement
+- `src/app/dreaming/prune.ts` - deterministic, conservative durable staleness via `valid_to`
 - `src/app/dreaming/background-triggers.ts` - post-session and accumulated-importance light-run gates
 - `src/app/dreaming/concurrency.ts` - process-wide dreaming run lock and episode-write serialization guards
 - `src/app/dreaming/proposal-review.ts` - apply or reject one open proposal
@@ -130,7 +130,7 @@ Dreaming state is stored in:
 - `dream_state` - lightweight cross-run bookkeeping
 - `profile_snapshots` - ordered profile durable ids, directive ids, as-of time, content hash, run id, and creation time
 
-These tables ship in the greenfield schema version `4` alongside `durables`. There is no migration path from pre-dreaming databases.
+These tables ship in schema version `5` alongside `durables`. This build can migrate from schema version `4`; older databases still require `agenr db reset`.
 
 ## Pipeline
 
@@ -142,8 +142,8 @@ These tables ship in the greenfield schema version `4` alongside `durables`. The
 3. **Reconcile** - run deterministic claim-key quality maintenance (missing-key backfill, malformed-key normalization, and related structural fixes covered by scenario fixtures).
 4. **Temporalize** - apply supersession-based revision to each `refines` candidate. The stage never rewrites content in place: it inserts a successor durable that inherits the predecessor's canonical claim key, closes the predecessor's valid-time window at the revision instant, and links the predecessor to the successor through `superseded_by`. Point-in-time recall before the revision still surfaces the predecessor; current-state recall surfaces the successor.
 5. **Project** - rank current active durables into a bounded profile snapshot candidate and keep directive ids separate. Dry runs and project-scoped runs report the projected bundle without writing or globally activating it. Successful unscoped apply runs insert a `profile_snapshots` row and mark it active in `dream_state` in the final workflow transaction.
-6. **Prune** - on `standard` and `deep`, retire only active low-signal candidates after applying protections for current and projected profile ids, directives, `core` expiry, high importance, and recent recall. The stage is deterministic and writes `retire` actions only for actual apply mutations.
-7. **Apply** - when `--apply` is set, persist accepted extract inserts, reconcile mutations, temporalize revisions, prune retirements, and successful unscoped profile projection; otherwise emit a dry-run summary only.
+6. **Prune** - on `standard` and `deep`, close validity on only active low-signal candidates after applying protections for current and projected profile ids, directives, `core` expiry, high importance, and recent recall. The stage is deterministic and writes `stale` actions only for actual apply mutations.
+7. **Apply** - when `--apply` is set, persist accepted extract inserts, reconcile mutations, temporalize revisions, prune staleness closes, and successful unscoped profile projection; otherwise emit a dry-run summary only.
 
 The extract and temporalize stages call models only through injected factories, so deterministic-only runs (no mining LLM) skip extract and temporalize without error. Both stages respect the daily cost cap shared across the run.
 
@@ -160,7 +160,7 @@ Dreaming completion summaries expose a bounded telemetry block so `agenr-evals` 
 | Field                           | Definition                                                                                                                                                                                          |
 | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `evidenceItemsRead`             | Count of episode, ingest-log, and durable-create signals scanned during the run (`scan.episodesSinceLastRun + scan.ingestFilesSinceLastRun + scan.durablesCreatedSinceLastRun`).                    |
-| `synthesizedDurableMutations`   | Count of durable writes produced by the run: extract inserts, temporalize revisions, and prune retirements. Known extract candidates (content-hash match) do **not** increment this counter.        |
+| `synthesizedDurableMutations`   | Count of durable writes produced by the run: extract inserts, temporalize revisions, and prune staleness closes. Known extract candidates (content-hash match) do **not** increment this counter.   |
 | `recomputeRatio`                | `synthesizedDurableMutations / evidenceItemsRead`, rounded to six decimals. `0` when no evidence was read. Lower is better for incremental/light maintenance.                                       |
 | `costPerSynthesizedDurableUsd`  | `estimatedCostUsd / synthesizedDurableMutations`, rounded to six decimals. `null` when no mutations occurred.                                                                                       |
 | `profileInjectionTokenEstimate` | Rough prompt-token estimate for the active profile bundle (`36` tokens × profile durables + `24` tokens × directives). Used to compare dreaming-on profile projection against store-only injection. |

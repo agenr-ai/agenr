@@ -166,9 +166,9 @@ describe("createRecallAdapter historical expansion", () => {
       content: "Retire the local express proxy bridge for recall evals.",
       claim_key: "recall_eval/local_workflow",
       created_at: "2026-01-02T00:00:00.000Z",
-      retired: true,
-      retired_at: "2026-01-20T00:00:00.000Z",
-      retired_reason: "replaced by the manual shim",
+      valid_to: "2026-01-20T00:00:00.000Z",
+      supersession_kind: "stale",
+      supersession_reason: "replaced by the manual shim",
     });
     const activeSibling = createEntry({
       id: "cli-wrapper",
@@ -188,9 +188,9 @@ describe("createRecallAdapter historical expansion", () => {
       subject: "memory freshness work tracking",
       content: "Track memory freshness eval work on the kanban board.",
       created_at: "2026-01-05T00:00:00.000Z",
-      retired: true,
-      retired_at: "2026-02-10T00:00:00.000Z",
-      retired_reason: "superseded by GitHub issues",
+      valid_to: "2026-02-10T00:00:00.000Z",
+      supersession_kind: "stale",
+      supersession_reason: "superseded by GitHub issues",
     });
     const unrelated = createEntry({
       id: "artifact-inspection",
@@ -211,11 +211,11 @@ describe("createRecallAdapter historical expansion", () => {
       seedIds: [currentWorkflow.id, currentTracking.id],
       budget: 40,
       families: ["supersession_chain", "claim_key_sibling", "topic_family"],
-      includeRetired: true,
+      includeHistorical: true,
     });
 
     expect(predecessors.map((entry) => entry.id)).toEqual(["manual-http-shim", "express-proxy-bridge", "cli-wrapper", "kanban-tracking"]);
-    expect(predecessors.map((entry) => entry.retired)).toEqual([false, true, false, true]);
+    expect(predecessors.map((entry) => entry.valid_to !== undefined)).toEqual([false, true, false, true]);
     expect(predecessors[0]?.superseded_by).toBe("dev-recall-command");
     expect(predecessors[0]?.claim_key).toBe("recall_eval/local_workflow");
     expect(predecessors[1]?.claim_key).toBe("recall_eval/local_workflow");
@@ -259,7 +259,7 @@ describe("createRecallAdapter historical expansion", () => {
       seedIds: [current.id],
       budget: 40,
       families: ["supersession_chain", "claim_key_sibling", "topic_family"],
-      includeRetired: true,
+      includeHistorical: true,
     });
 
     expect(predecessors.map((entry) => entry.id)).toEqual(["trusted-older", "tentative-older"]);
@@ -297,7 +297,7 @@ describe("createRecallAdapter historical expansion", () => {
       seedIds: [current.id],
       budget: 40,
       families: ["supersession_chain", "claim_key_sibling", "topic_family"],
-      includeRetired: true,
+      includeHistorical: true,
     });
 
     expect(predecessors).toHaveLength(8);
@@ -325,9 +325,9 @@ describe("createRecallAdapter historical expansion", () => {
       id: "kanban-tracking",
       subject: "memory freshness work tracking",
       content: "Track work on the kanban board.",
-      retired: true,
-      retired_at: "2026-02-10T00:00:00.000Z",
-      retired_reason: "superseded by GitHub issues",
+      valid_to: "2026-02-10T00:00:00.000Z",
+      supersession_kind: "stale",
+      supersession_reason: "superseded by GitHub issues",
     });
 
     await database.insertDurable(current, createEmbedding(0, 1), "tracking-current");
@@ -336,7 +336,7 @@ describe("createRecallAdapter historical expansion", () => {
     const hydrated = await adapter.hydrateEntries([retired.id, current.id]);
 
     expect(hydrated.map((entry) => entry.id)).toEqual(expect.arrayContaining([retired.id, current.id]));
-    expect(hydrated.find((entry) => entry.id === retired.id)?.retired).toBe(true);
+    expect(hydrated.find((entry) => entry.id === retired.id)?.valid_to).toBe("2026-02-10T00:00:00.000Z");
   });
 });
 
@@ -377,9 +377,6 @@ function createEntry(overrides: Partial<Durable> = {}): Durable {
     cluster_id: overrides.cluster_id,
     user_id: overrides.user_id,
     project: overrides.project,
-    retired: overrides.retired ?? false,
-    retired_at: overrides.retired_at,
-    retired_reason: overrides.retired_reason,
     created_at: overrides.created_at ?? now,
     updated_at: overrides.updated_at ?? overrides.created_at ?? now,
   };

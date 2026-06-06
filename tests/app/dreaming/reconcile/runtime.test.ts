@@ -3,6 +3,7 @@ import type { Client } from "@libsql/client";
 import { createTestClient, insertDurable, MockClaimLlm, runClaimKeyPass } from "../../../helpers/dreaming-reconcile.js";
 
 import { getLastDreamRun } from "../../../../src/adapters/db/dreaming-run-log.js";
+import type { DreamProgressEvent } from "../../../../src/app/dreaming/progress.js";
 
 describe("reconcile dreaming pass - runtime", () => {
   const clients: Client[] = [];

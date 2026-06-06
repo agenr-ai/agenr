@@ -36,8 +36,8 @@ const ROW_ASSERT_KEYS = new Set([
   "claim_support_observed_at",
   "claim_support_mode",
   "superseded_by",
-  "retired",
-  "retired_reason",
+  "valid_to",
+  "supersession_reason",
   "subject",
   "content",
 ]);
@@ -278,8 +278,10 @@ function readRowAssert(value: unknown, label: string): ClaimKeyScenarioRowAssert
       ? { claim_support_mode: readNullableClaimSupportMode(record.claim_support_mode, `${label}.assert.claim_support_mode`, label) }
       : {}),
     ...(record.superseded_by !== undefined ? { superseded_by: readNullableString(record.superseded_by, `${label}.assert.superseded_by`, label) } : {}),
-    ...(record.retired !== undefined ? { retired: readRequiredBoolean(record.retired, `${label}.assert.retired`, label) } : {}),
-    ...(record.retired_reason !== undefined ? { retired_reason: readNullableString(record.retired_reason, `${label}.assert.retired_reason`, label) } : {}),
+    ...(record.valid_to !== undefined ? { valid_to: readNullableString(record.valid_to, `${label}.assert.valid_to`, label) } : {}),
+    ...(record.supersession_reason !== undefined
+      ? { supersession_reason: readNullableString(record.supersession_reason, `${label}.assert.supersession_reason`, label) }
+      : {}),
     ...(record.subject !== undefined ? { subject: readRequiredString(record.subject, `${label}.assert.subject`, label) } : {}),
     ...(record.content !== undefined ? { content: readRequiredString(record.content, `${label}.assert.content`, label) } : {}),
   };

@@ -29,7 +29,7 @@ What makes agenr different is the combination of local-first storage, semantic e
 - Semantic deduplication using exact hashes, normalized hashes, embeddings, and within-run clustering.
 - Session continuity with predecessor resolution, recent transcript tails, and LLM-generated continuity summaries.
 - Dreaming maintenance pipeline for corpus health: tiered scan, deterministic reconcile, and apply with audit history.
-- Agent tools for durable memory through the OpenClaw plugin (`store`, `recall`, `retire`, `update`, and `trace`) and the Skeln plugin (`store`, `recall`, `update`, `work`, and goal aliases).
+- Agent tools for durable memory through the OpenClaw plugin (`store`, `recall`, `fetch`, `update`, and `trace`) and the Skeln plugin (`store`, `recall`, `update`, `work`, and goal aliases).
 - Native OpenClaw memory plugin that replaces OpenClaw's built-in memory slot.
 - Skeln extension with working-memory tools, goal aliases, and shared recall/store semantics.
 - Local-first storage with SQLite/libSQL. Memory stays on your machine; only model and embedding calls leave it.
@@ -169,9 +169,9 @@ The CLI surface is still intentionally compact, but it now covers setup, recall,
 | `agenr scenarios run`            | Run one or more claim-key sandbox scenarios.                                                                                           |
 | `agenr db reset`                 | Delete and recreate the knowledge database.                                                                                            |
 
-The OpenClaw plugin gives the agent six tools directly inside the runtime: `agenr_store`, `agenr_recall`, `agenr_fetch`, `agenr_retire`, `agenr_update`, and `agenr_trace`.
+The OpenClaw plugin gives the agent five tools directly inside the runtime: `agenr_store`, `agenr_recall`, `agenr_fetch`, `agenr_update`, and `agenr_trace`.
 
-The Skeln plugin exposes eight tools: `agenr_store`, `agenr_recall`, `agenr_fetch`, `agenr_update`, `agenr_work`, `get_goal`, `create_goal`, and `update_goal`. It does not expose `agenr_retire` or `agenr_trace`.
+The Skeln plugin exposes eight tools: `agenr_store`, `agenr_recall`, `agenr_fetch`, `agenr_update`, `agenr_work`, `get_goal`, `create_goal`, and `update_goal`. It does not expose `agenr_trace`.
 
 Examples:
 

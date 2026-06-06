@@ -313,7 +313,6 @@ function buildEntry(preparedEntry: PreparedEntry, embedding: number[]): Durable 
     claim_support_locator: acceptedClaimKey?.claim_support_locator,
     claim_support_observed_at: acceptedClaimKey?.claim_support_observed_at,
     claim_support_mode: acceptedClaimKey?.claim_support_mode,
-    retired: false,
     created_at: preparedEntry.input.created_at ?? now,
     updated_at: now,
   };

@@ -157,7 +157,7 @@ Important fields:
 - identity: `id`, `procedure_key`, `title`
 - authored body: `goal`, `when_to_use`, `when_not_to_use`, `prerequisites`, `steps`, `verification`, `failure_modes`, `sources`
 - derived storage fields: `recall_text`, `revision_hash`, `source_hash`
-- provenance and lifecycle: `source_file`, `retired`, `retired_at`, `retired_reason`, `superseded_by`, `created_at`, `updated_at`
+- provenance and lifecycle: `source_file`, `valid_from`, `valid_to`, `supersession_kind`, `supersession_reason`, `superseded_by`, `created_at`, `updated_at`
 - retrieval support: optional `embedding`
 
 The database stores procedures in a dedicated `procedures` table, not in `entries`.
@@ -165,7 +165,7 @@ The database stores procedures in a dedicated `procedures` table, not in `entrie
 Current storage rules:
 
 - only one active row may exist per `procedure_key`
-- active means not retired and not superseded
+- active means `valid_to` is open and the row is not superseded
 - `procedures_fts` indexes active procedure `title` and `recall_text`
 - the procedure vector index supports optional semantic reranking for dedicated procedure recall
 
@@ -240,9 +240,9 @@ If formatting or other non-semantic authoring changes only affect raw YAML and `
 
 If the normalized body changes, `revision_hash` changes. That is treated as a real procedure revision and results in a supersession write.
 
-### Missing files are not auto-retired
+### Missing files are not auto-staled
 
-The sync command intentionally does not prune missing procedures. Because the CLI accepts an optional target path, a partial sync must not retire unrelated procedures accidentally.
+The sync command intentionally does not prune missing procedures. Because the CLI accepts an optional target path, a partial sync must not close validity on unrelated procedures accidentally.
 
 If prune or delete semantics are needed later, they should arrive through an explicit command or flag.
 

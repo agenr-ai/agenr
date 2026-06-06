@@ -19,7 +19,7 @@ const DIRECTIVE_POLARITIES = ["abstain", "proactive"] as const;
 const DIRECTIVE_BASE_TRIGGERS = ["session_start", "always"] as const;
 
 /** Ordered list of supported explicit supersession relationships. */
-const SUPERSESSION_KINDS = ["update", "correction", "duplicate", "merge", "refinement"] as const;
+const SUPERSESSION_KINDS = ["update", "correction", "duplicate", "merge", "refinement", "stale"] as const;
 
 /** Ordered list of supported recall durability levels. */
 const EXPIRY_LEVELS = ["core", "permanent", "temporary"] as const;
@@ -176,9 +176,6 @@ export interface Durable extends ClaimKeyLifecycleMetadata {
   cluster_id?: string;
   user_id?: string;
   project?: string;
-  retired: boolean;
-  retired_at?: string;
-  retired_reason?: string;
   created_at: string;
   updated_at: string;
 }
@@ -231,9 +228,10 @@ export interface Episode {
   genVersion?: string;
   messageCount?: number;
   embedding?: number[];
-  retired: boolean;
-  retiredAt?: string;
-  retiredReason?: string;
+  validFrom?: string;
+  validTo?: string;
+  supersessionKind?: string;
+  supersessionReason?: string;
   supersededBy?: string;
   createdAt: string;
   updatedAt: string;
@@ -430,9 +428,10 @@ export interface ProcedureLifecycleMetadata {
   recall_text: string;
   revision_hash: string;
   source_hash: string;
-  retired: boolean;
-  retired_at?: string;
-  retired_reason?: string;
+  valid_from?: string;
+  valid_to?: string;
+  supersession_kind?: string;
+  supersession_reason?: string;
   superseded_by?: string;
   created_at: string;
   updated_at: string;

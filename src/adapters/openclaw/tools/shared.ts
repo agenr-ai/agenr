@@ -2,6 +2,7 @@ import { failedTextResult, readNumberParam, readStringArrayParam, readStringPara
 import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sdk/core";
 
 import { resolveClaimSlotPolicy } from "../../../core/claim-slot-policy.js";
+import { describeDurableLineageState, formatDurableClaimLifecycle, summarizeClaimFamilyTransition } from "../../../core/recall/entry-lineage.js";
 import type { Durable } from "../../../core/types.js";
 import { formatErrorMessage } from "../../shared/errors.js";
 import { truncate } from "../../shared/memory-tool-format.js";
@@ -118,20 +119,6 @@ export function logToolFailure(logger: PluginLogger, toolName: string, ctx: Open
 }
 
 /**
- * Sanitizes retire parameters before debug logging.
- *
- * @param params - Parsed retire-tool parameters.
- * @returns Redacted log payload.
- */
-export function sanitizeRetireToolParams(params: { id: string | undefined; subject: string | undefined; reason: string | undefined }): Record<string, unknown> {
-  return {
-    ...(params.id ? { id: params.id } : {}),
-    ...(params.subject ? { subject: params.subject } : {}),
-    ...(params.reason !== undefined ? { reasonLength: params.reason.length } : {}),
-  };
-}
-
-/**
  * Sanitizes trace parameters before debug logging.
  *
  * @param params - Parsed trace-tool parameters.
@@ -161,6 +148,7 @@ export function formatTrace(
   claimFamily: { claimKey: string; slotPolicy?: "exclusive" | "multivalued"; slotPolicyReason?: string; entries: Durable[] } | undefined,
   recallEvents: Array<{ query?: string; sessionKey?: string; recalledAt: string }>,
 ): string {
+  const nowMs = Date.now();
   const slotPolicy = entry.claim_key
     ? claimFamily
       ? {
@@ -171,7 +159,7 @@ export function formatTrace(
     : undefined;
   const lines = [
     `Trace for ${entry.id} | ${entry.subject}`,
-    `type=${entry.type} expiry=${entry.expiry} importance=${entry.importance} retired=${entry.retired}`,
+    `type=${entry.type} expiry=${entry.expiry} importance=${entry.importance} memory_state=${describeDurableLineageState(entry, nowMs)}`,
     `content=${truncate(entry.content, 220)}`,
   ];
 
@@ -194,13 +182,13 @@ export function formatTrace(
   if (claimFamily && claimFamily.entries.length > 0) {
     lines.push(
       `claim_family=${claimFamily.claimKey} | slot_policy=${slotPolicy?.policy ?? "exclusive"} | ${claimFamily.entries
-        .map((item) => `${item.id}:${describeTraceEntryState(item)}:${formatClaimLifecycleLabel(item)}`)
+        .map((item) => `${item.id}:${describeDurableLineageState(item, nowMs)}:${formatDurableClaimLifecycle(item)}`)
         .join(", ")}`,
     );
     if (slotPolicy) {
       lines.push(`claim_family_policy_reason=${slotPolicy.reason}`);
     }
-    const transitionSummary = summarizeTraceClaimFamilyTransition(claimFamily.entries);
+    const transitionSummary = summarizeClaimFamilyTransition(claimFamily.entries, nowMs);
     if (transitionSummary) {
       lines.push(`transition=${transitionSummary}`);
     }
@@ -260,54 +248,4 @@ function formatToolSessionContext(ctx: OpenClawPluginToolContext): string {
   }
 
   return "session=unknown";
-}
-
-/**
- * Formats one entry state label for trace lineage output.
- *
- * @param entry - Trace entry to describe.
- * @returns Narrow state label for lineage inspection.
- */
-function describeTraceEntryState(entry: Durable): string {
-  if (entry.superseded_by) {
-    return "superseded";
-  }
-
-  if (entry.retired || entry.valid_to) {
-    return "historical";
-  }
-
-  return "current";
-}
-
-/**
- * Formats the claim-key lifecycle label for trace lineage output.
- *
- * @param entry - Trace entry to describe.
- * @returns Lifecycle label used in lineage inspection.
- */
-function formatClaimLifecycleLabel(entry: Durable): string {
-  if (!entry.claim_key) {
-    return "no-key";
-  }
-
-  return entry.claim_key_status ?? "legacy";
-}
-
-/** Builds a compact change summary from a traced claim family when possible. */
-function summarizeTraceClaimFamilyTransition(entries: Durable[]): string | undefined {
-  const current = entries.find((entry) => !entry.retired && !entry.superseded_by);
-  const prior = [...entries]
-    .reverse()
-    .find((entry) => entry.id !== current?.id && (entry.superseded_by !== undefined || entry.retired || entry.valid_to !== undefined));
-  if (current && prior) {
-    return `${prior.id} -> ${current.id}`;
-  }
-  if (prior) {
-    return `${prior.id} is historical with no current sibling in the traced family`;
-  }
-  if (current) {
-    return `${current.id} is the only current sibling in the traced family`;
-  }
-  return undefined;
 }

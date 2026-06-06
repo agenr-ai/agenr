@@ -64,7 +64,7 @@ export async function runTemporalizeStage(options: DreamTemporalizeOptions, deps
 
     const predecessor = await deps.port.getDurable(candidate.refinesDurableId);
     if (!predecessor) {
-      // The predecessor was retired or superseded between extract and temporalize.
+      // The predecessor was staled or superseded between extract and temporalize.
       revisionsSkipped += 1;
       continue;
     }
@@ -129,13 +129,13 @@ async function applyRevision(
   await deps.port.withTransaction(async (tx) => {
     await tx.insertDurable(successor, successorEmbedding, contentHash);
 
-    // Close the predecessor's validity window before it leaves the active set so
-    // point-in-time recall before the revision still surfaces the old belief.
-    if (canCloseValidityWindow(predecessor.valid_from, nowIso)) {
-      await tx.updateDurable(predecessor.id, { valid_to: nowIso });
-    }
-
     await tx.supersedeDurable(predecessor.id, successorId, "update", "Temporal revision from dreaming evidence.");
+
+    // Close the predecessor's validity window after supersession so point-in-time
+    // recall before the revision still surfaces the old belief.
+    if (canCloseValidityWindow(predecessor.valid_from, nowIso)) {
+      await tx.updateDurable(predecessor.id, { valid_to: nowIso }, { includeInactive: true });
+    }
 
     await tx.logRunAction({
       id: randomUUID(),

@@ -33,7 +33,7 @@ export function parseSkelnMemoryPolicyJson(raw: string): SkelnMemoryPolicySettin
  * @param skeln - Skeln extension API for the active runtime.
  * @returns Normalized memory policy or a stable validation error.
  */
-export function readSkelnMemoryPolicySetting(skeln: ExtensionAPI): SkelnMemoryPolicySettingResult {
+export function readSkelnMemoryPolicySetting(skeln: Pick<ExtensionAPI, "getSetting">): SkelnMemoryPolicySettingResult {
   const value = skeln.getSetting("memoryPolicy");
   if (value === undefined) {
     return { ok: true, value: undefined };

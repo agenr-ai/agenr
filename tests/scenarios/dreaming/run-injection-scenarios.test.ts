@@ -40,7 +40,6 @@ interface ScenarioDurable {
   valid_from?: string;
   valid_to?: string;
   superseded_by?: string;
-  retired?: boolean;
   created_at?: string;
   directive_polarity?: Durable["directive_polarity"];
   directive_trigger?: Durable["directive_trigger"];
@@ -226,7 +225,6 @@ function toDurable(durable: ScenarioDurable): Durable {
     claim_key_status: durable.claim_key_status,
     directive_polarity: durable.directive_polarity,
     directive_trigger: durable.directive_trigger,
-    retired: durable.retired ?? false,
     created_at: createdAt,
     updated_at: createdAt,
   };

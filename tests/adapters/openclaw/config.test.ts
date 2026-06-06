@@ -205,7 +205,7 @@ describe("agenr OpenClaw plugin config", () => {
   it("accepts an empty object during schema validation", () => {
     const schema = createAgenrOpenClawPluginConfigSchema();
 
-    expect(schema.validate({})).toEqual({
+    expect(schema.validate?.({})).toEqual({
       ok: true,
       value: {},
     });

@@ -78,9 +78,9 @@ describe("runRecallEvalCase", () => {
           content: "Pat covered the old pager rotation.",
           importance: 4,
           expiry: "temporary",
-          retired: true,
-          retired_at: "2026-03-09T00:00:00.000Z",
-          retired_reason: "obsolete",
+          valid_to: "2026-03-09T00:00:00.000Z",
+          supersession_kind: "stale",
+          supersession_reason: "obsolete",
           created_at: "2026-03-08T00:00:00.000Z",
         },
       ],
@@ -128,7 +128,7 @@ describe("runRecallEvalCase", () => {
           provisionedCount: 3,
           providedIdCount: 3,
           generatedIdCount: 0,
-          retiredCount: 1,
+          staleCount: 1,
           supersededCount: 1,
           createdAtDefaultedCount: 0,
           updatedAtDefaultedCount: 2,
@@ -137,20 +137,18 @@ describe("runRecallEvalCase", () => {
               id: "policy-old",
               created_at: "2026-03-10T00:00:00.000Z",
               updated_at: "2026-03-10T00:00:00.000Z",
-              retired: false,
               superseded_by: "policy-new",
             },
             {
               id: "policy-new",
               created_at: "2026-03-11T00:00:00.000Z",
               updated_at: "2026-03-12T00:00:00.000Z",
-              retired: false,
             },
             {
               id: "policy-retired",
               created_at: "2026-03-08T00:00:00.000Z",
               updated_at: "2026-03-08T00:00:00.000Z",
-              retired: true,
+              valid_to: "2026-03-09T00:00:00.000Z",
             },
           ],
         },
@@ -219,7 +217,7 @@ describe("runRecallEvalCase", () => {
     try {
       const rows = await sandboxDatabase.execute({
         sql: `
-          SELECT id, retired, retired_at, retired_reason, superseded_by, created_at, updated_at, last_recalled_at
+          SELECT id, valid_to, supersession_kind, supersession_reason, superseded_by, created_at, updated_at, last_recalled_at
           FROM durables
           ORDER BY id
         `,
@@ -228,9 +226,9 @@ describe("runRecallEvalCase", () => {
       expect(
         rows.rows.map((row) => ({
           id: String(row.id),
-          retired: Number(row.retired),
-          retired_at: typeof row.retired_at === "string" ? row.retired_at : undefined,
-          retired_reason: typeof row.retired_reason === "string" ? row.retired_reason : undefined,
+          valid_to: typeof row.valid_to === "string" ? row.valid_to : undefined,
+          supersession_kind: typeof row.supersession_kind === "string" ? row.supersession_kind : undefined,
+          supersession_reason: typeof row.supersession_reason === "string" ? row.supersession_reason : undefined,
           superseded_by: typeof row.superseded_by === "string" ? row.superseded_by : undefined,
           created_at: String(row.created_at),
           updated_at: String(row.updated_at),
@@ -239,9 +237,6 @@ describe("runRecallEvalCase", () => {
       ).toEqual([
         {
           id: "policy-new",
-          retired: 0,
-          retired_at: undefined,
-          retired_reason: undefined,
           superseded_by: undefined,
           created_at: "2026-03-11T00:00:00.000Z",
           updated_at: expect.any(String),
@@ -249,9 +244,6 @@ describe("runRecallEvalCase", () => {
         },
         {
           id: "policy-old",
-          retired: 0,
-          retired_at: undefined,
-          retired_reason: undefined,
           superseded_by: "policy-new",
           created_at: "2026-03-10T00:00:00.000Z",
           updated_at: "2026-03-10T00:00:00.000Z",
@@ -259,9 +251,9 @@ describe("runRecallEvalCase", () => {
         },
         {
           id: "policy-retired",
-          retired: 1,
-          retired_at: "2026-03-09T00:00:00.000Z",
-          retired_reason: "obsolete",
+          valid_to: "2026-03-09T00:00:00.000Z",
+          supersession_kind: "stale",
+          supersession_reason: "obsolete",
           superseded_by: undefined,
           created_at: "2026-03-08T00:00:00.000Z",
           updated_at: "2026-03-08T00:00:00.000Z",
@@ -276,7 +268,6 @@ describe("runRecallEvalCase", () => {
         id: "policy-new",
         created_at: "2026-03-11T00:00:00.000Z",
         updated_at: "2026-03-12T00:00:00.000Z",
-        retired: false,
         superseded_by: undefined,
       });
       expect(typeof storedPolicyNew?.updated_at).toBe("string");
@@ -991,7 +982,7 @@ describe("runRecallEvalCase", () => {
       expansionRequested: expect.any(Boolean),
       expansionAvailable: expect.any(Boolean),
       familiesRequested: expect.any(Array),
-      includeRetired: expect.any(Boolean),
+      includeHistorical: expect.any(Boolean),
       seedIds: expect.any(Array),
       expansionCandidates: expect.any(Number),
       strongSeedIds: expect.any(Array),

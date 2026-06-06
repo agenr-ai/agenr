@@ -2,7 +2,7 @@
  * Supported dreaming action identifiers.
  */
 export type DreamActionType =
-  | "retire"
+  | "stale"
   | "merge"
   | "log_conflict"
   | "resolve_conflict"

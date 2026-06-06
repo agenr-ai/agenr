@@ -17,7 +17,7 @@ Current production behavior covers OpenClaw and Skeln sessions:
 | ----------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
 | Granularity | Atomic facts, decisions, preferences, lessons, relationships, milestones | One narrative summary for one completed session                                   |
 | Authority   | Canonical durable memory                                                 | Historical context only                                                           |
-| Lifecycle   | May be updated, superseded, or retired                                   | May be regenerated, updated, superseded, or retired                               |
+| Lifecycle   | May be updated, superseded, or staled via `valid_to`                     | May be regenerated, updated, superseded, or staled via `validTo`                  |
 | Retrieval   | Semantic similarity, lexical FTS, importance and recency shaping         | Temporal overlap, semantic vector search, or hybrid temporal + semantic reranking |
 | Source      | LLM extraction from transcripts and other inputs                         | LLM summary generation from normalized session transcripts                        |
 | Storage     | `entries` plus `durables_fts`                                            | `episodes`                                                                        |
@@ -35,7 +35,7 @@ The stored `Episode` shape in `src/core/types.ts` includes:
 - summary payload: `summary`, `tags`, `activityLevel`, optional `project`
 - generation metadata: `genModel`, `genVersion`
 - retrieval fields: optional `embedding`
-- lifecycle fields: `retired`, `retiredAt`, `retiredReason`, `supersededBy`, `createdAt`, `updatedAt`
+- lifecycle fields: `validFrom`, `validTo`, `supersessionKind`, `supersessionReason`, `supersededBy`, `createdAt`, `updatedAt`
 
 The schema supports episode sources `openclaw`, `skeln`, `codex`, `cli`, and `synthesis`. OpenClaw session ingest writes `source: "openclaw"` and Skeln shutdown ingest writes `source: "skeln"`.
 
@@ -45,7 +45,7 @@ Episode writes are idempotent:
 - fallback identity is `(source, transcript_hash)` when it does not
 - normalized payload hashing drives `inserted`, `updated`, or `unchanged` write outcomes
 
-Episode recall and embedding backfill operate on active episodes only, meaning rows that are not retired and not superseded.
+Episode recall and embedding backfill operate on active episodes only, meaning rows whose `validTo` window is still open and that are not superseded.
 
 ## How Episodes Are Generated
 

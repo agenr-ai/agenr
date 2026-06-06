@@ -1,4 +1,5 @@
 import { resolveClaimSlotPolicy, type ClaimSlotPolicy, type ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
+import { isCurrentlyValidMemory } from "../../core/temporal-validity.js";
 import type { ClaimKeyStatus, ClaimSupportMode } from "../../core/types.js";
 import type { RecallOutput } from "../../core/recall/types.js";
 
@@ -201,6 +202,7 @@ export function projectClaimCentricRecallEntry(
  */
 function resolveMemoryState(recall: RecallOutput, asOfResolution?: ClaimCentricAsOfResolution): ClaimCentricMemoryState {
   const entry = recall.entry;
+  const referenceMs = asOfResolution ? (parseTimestamp(asOfResolution.asOf)?.getTime() ?? Date.now()) : Date.now();
   if (asOfResolution) {
     if (asOfResolution.clock === "validity") {
       if (asOfResolution.relation === "active") {
@@ -218,7 +220,7 @@ function resolveMemoryState(recall: RecallOutput, asOfResolution?: ClaimCentricA
       return "superseded";
     }
 
-    if (entry.retired || normalizeOptionalString(entry.valid_to)) {
+    if (!isCurrentlyValidMemory(entry, referenceMs)) {
       return "historical";
     }
 
@@ -229,7 +231,7 @@ function resolveMemoryState(recall: RecallOutput, asOfResolution?: ClaimCentricA
     return "superseded";
   }
 
-  if (entry.retired || normalizeOptionalString(entry.valid_to)) {
+  if (!isCurrentlyValidMemory(entry, referenceMs)) {
     return "historical";
   }
 

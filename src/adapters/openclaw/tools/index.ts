@@ -4,12 +4,11 @@ import type { PluginLogger } from "openclaw/plugin-sdk/core";
 import type { AgenrOpenClawServices } from "../types.js";
 import { createAgenrFetchTool } from "./fetch.js";
 import { createAgenrRecallTool } from "./recall.js";
-import { createAgenrRetireTool } from "./retire.js";
 import { createAgenrStoreTool } from "./store.js";
 import { createAgenrTraceTool } from "./trace.js";
 import { createAgenrUpdateTool } from "./update.js";
 
-export { createAgenrFetchTool, createAgenrRecallTool, createAgenrRetireTool, createAgenrStoreTool, createAgenrTraceTool, createAgenrUpdateTool };
+export { createAgenrFetchTool, createAgenrRecallTool, createAgenrStoreTool, createAgenrTraceTool, createAgenrUpdateTool };
 
 /**
  * Registers the Phase 1 agenr tools with the OpenClaw plugin API.
@@ -23,7 +22,6 @@ export function registerAgenrOpenClawTools(api: OpenClawPluginApi, servicesPromi
   api.registerTool((ctx) => createAgenrStoreTool(ctx, servicesPromise, logger), { names: ["agenr_store"] });
   api.registerTool((ctx) => createAgenrRecallTool(ctx, servicesPromise, logger), { names: ["agenr_recall"] });
   api.registerTool((ctx) => createAgenrFetchTool(ctx, servicesPromise, logger), { names: ["agenr_fetch"] });
-  api.registerTool((ctx) => createAgenrRetireTool(ctx, servicesPromise, logger), { names: ["agenr_retire"] });
   api.registerTool((ctx) => createAgenrUpdateTool(ctx, servicesPromise, logger), { names: ["agenr_update"] });
   api.registerTool((ctx) => createAgenrTraceTool(ctx, servicesPromise, logger), { names: ["agenr_trace"] });
 }

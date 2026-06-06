@@ -2,13 +2,21 @@ import type { Client } from "@libsql/client";
 
 import type { SqlExecutor } from "./queries.js";
 import { DREAMING_SCHEMA_STATEMENTS } from "./schema/dreaming.js";
+import { migrateSchemaV4ToV5 } from "./schema/migrate-v5.js";
 import { SESSION_MEMORY_SCHEMA_STATEMENTS } from "./schema/session-memory.js";
 import { WORKING_MEMORY_SCHEMA_STATEMENTS } from "./schema/working-memory.js";
+import { runImmediateTransaction } from "./transaction.js";
 
 /**
  * Logical schema version stored in the metadata table.
  */
-const SCHEMA_VERSION = "4";
+const SCHEMA_VERSION = "5";
+
+/** FTS indexes non-superseded rows; query-time filters exclude stale rows from live recall. */
+const FTS_DURABLE_INSERT_WHEN = "new.superseded_by IS NULL";
+const FTS_DURABLE_OLD_WHEN = "old.superseded_by IS NULL";
+const FTS_PROCEDURE_INSERT_WHEN = FTS_DURABLE_INSERT_WHEN;
+const FTS_PROCEDURE_OLD_WHEN = FTS_DURABLE_OLD_WHEN;
 
 /**
  * libSQL vector index name for durable embeddings.
@@ -74,9 +82,6 @@ const CREATE_DURABLES_TABLE_SQL = `
     cluster_id TEXT,
     user_id TEXT,
     project TEXT,
-    retired INTEGER NOT NULL DEFAULT 0,
-    retired_at TEXT,
-    retired_reason TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )
@@ -95,7 +100,7 @@ const CREATE_DURABLES_FTS_TABLE_SQL = `
 /** SQL statement that recreates the FTS insert trigger for active durables. */
 const CREATE_DURABLES_FTS_INSERT_TRIGGER_SQL = `
   CREATE TRIGGER IF NOT EXISTS durables_ai AFTER INSERT ON durables
-  WHEN new.retired = 0 AND new.superseded_by IS NULL BEGIN
+  WHEN ${FTS_DURABLE_INSERT_WHEN} BEGIN
     INSERT INTO durables_fts(rowid, content, subject)
     VALUES (new.rowid, new.content, new.subject);
   END
@@ -104,7 +109,7 @@ const CREATE_DURABLES_FTS_INSERT_TRIGGER_SQL = `
 /** SQL statement that recreates the FTS delete trigger for active durables. */
 const CREATE_DURABLES_FTS_DELETE_TRIGGER_SQL = `
   CREATE TRIGGER IF NOT EXISTS durables_ad AFTER DELETE ON durables
-  WHEN old.retired = 0 AND old.superseded_by IS NULL BEGIN
+  WHEN ${FTS_DURABLE_OLD_WHEN} BEGIN
     INSERT INTO durables_fts(durables_fts, rowid, content, subject)
     VALUES ('delete', old.rowid, old.content, old.subject);
   END
@@ -115,11 +120,11 @@ const CREATE_DURABLES_FTS_UPDATE_TRIGGER_SQL = `
   CREATE TRIGGER IF NOT EXISTS durables_au AFTER UPDATE ON durables BEGIN
     INSERT INTO durables_fts(durables_fts, rowid, content, subject)
     SELECT 'delete', old.rowid, old.content, old.subject
-    WHERE old.retired = 0 AND old.superseded_by IS NULL;
+    WHERE ${FTS_DURABLE_OLD_WHEN};
 
     INSERT INTO durables_fts(rowid, content, subject)
     SELECT new.rowid, new.content, new.subject
-    WHERE new.retired = 0 AND new.superseded_by IS NULL;
+    WHERE ${FTS_DURABLE_INSERT_WHEN};
   END
 `;
 
@@ -155,9 +160,10 @@ const CREATE_EPISODES_TABLE_SQL = `
     gen_version TEXT,
     message_count INTEGER,
     embedding F32_BLOB(1024),
-    retired INTEGER NOT NULL DEFAULT 0,
-    retired_at TEXT,
-    retired_reason TEXT,
+    valid_from TEXT,
+    valid_to TEXT,
+    supersession_kind TEXT,
+    supersession_reason TEXT,
     superseded_by TEXT REFERENCES episodes(id),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -177,9 +183,10 @@ const CREATE_PROCEDURES_TABLE_SQL = `
     source_hash TEXT NOT NULL,
     revision_hash TEXT NOT NULL,
     embedding F32_BLOB(1024),
-    retired INTEGER NOT NULL DEFAULT 0,
-    retired_at TEXT,
-    retired_reason TEXT,
+    valid_from TEXT,
+    valid_to TEXT,
+    supersession_kind TEXT,
+    supersession_reason TEXT,
     superseded_by TEXT REFERENCES procedures(id),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -199,7 +206,7 @@ const CREATE_PROCEDURES_FTS_TABLE_SQL = `
 /** SQL statement that recreates the FTS insert trigger for active procedures. */
 const CREATE_PROCEDURES_FTS_INSERT_TRIGGER_SQL = `
   CREATE TRIGGER IF NOT EXISTS procedures_ai AFTER INSERT ON procedures
-  WHEN new.retired = 0 AND new.superseded_by IS NULL BEGIN
+  WHEN ${FTS_PROCEDURE_INSERT_WHEN} BEGIN
     INSERT INTO procedures_fts(rowid, title, recall_text)
     VALUES (new.rowid, new.title, new.recall_text);
   END
@@ -208,7 +215,7 @@ const CREATE_PROCEDURES_FTS_INSERT_TRIGGER_SQL = `
 /** SQL statement that recreates the FTS delete trigger for active procedures. */
 const CREATE_PROCEDURES_FTS_DELETE_TRIGGER_SQL = `
   CREATE TRIGGER IF NOT EXISTS procedures_ad AFTER DELETE ON procedures
-  WHEN old.retired = 0 AND old.superseded_by IS NULL BEGIN
+  WHEN ${FTS_PROCEDURE_OLD_WHEN} BEGIN
     INSERT INTO procedures_fts(procedures_fts, rowid, title, recall_text)
     VALUES ('delete', old.rowid, old.title, old.recall_text);
   END
@@ -219,11 +226,11 @@ const CREATE_PROCEDURES_FTS_UPDATE_TRIGGER_SQL = `
   CREATE TRIGGER IF NOT EXISTS procedures_au AFTER UPDATE ON procedures BEGIN
     INSERT INTO procedures_fts(procedures_fts, rowid, title, recall_text)
     SELECT 'delete', old.rowid, old.title, old.recall_text
-    WHERE old.retired = 0 AND old.superseded_by IS NULL;
+    WHERE ${FTS_PROCEDURE_OLD_WHEN};
 
     INSERT INTO procedures_fts(rowid, title, recall_text)
     SELECT new.rowid, new.title, new.recall_text
-    WHERE new.retired = 0 AND new.superseded_by IS NULL;
+    WHERE ${FTS_PROCEDURE_INSERT_WHEN};
   END
 `;
 
@@ -264,11 +271,6 @@ const CREATE_DURABLES_TYPE_INDEX_SQL = `
 const CREATE_DURABLES_EXPIRY_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_durables_expiry
   ON durables(expiry)
-`;
-
-const CREATE_DURABLES_RETIRED_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_durables_retired
-  ON durables(retired)
 `;
 
 const CREATE_DURABLES_CREATED_AT_INDEX_SQL = `
@@ -314,9 +316,16 @@ const CREATE_EPISODES_SOURCE_ID_INDEX_SQL = `
   ON episodes(source_id)
 `;
 
-const CREATE_EPISODES_RETIRED_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_episodes_retired
-  ON episodes(retired)
+const CREATE_EPISODES_VALID_FROM_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_episodes_valid_from
+  ON episodes(valid_from)
+  WHERE valid_from IS NOT NULL
+`;
+
+const CREATE_EPISODES_VALID_TO_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_episodes_valid_to
+  ON episodes(valid_to)
+  WHERE valid_to IS NOT NULL
 `;
 
 const CREATE_EPISODES_SOURCE_SOURCE_ID_UNIQUE_INDEX_SQL = `
@@ -340,9 +349,16 @@ const CREATE_PROCEDURES_SOURCE_HASH_INDEX_SQL = `
   ON procedures(source_hash)
 `;
 
-const CREATE_PROCEDURES_RETIRED_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_procedures_retired
-  ON procedures(retired)
+const CREATE_PROCEDURES_VALID_FROM_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_procedures_valid_from
+  ON procedures(valid_from)
+  WHERE valid_from IS NOT NULL
+`;
+
+const CREATE_PROCEDURES_VALID_TO_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_procedures_valid_to
+  ON procedures(valid_to)
+  WHERE valid_to IS NOT NULL
 `;
 
 const CREATE_PROCEDURES_CREATED_AT_INDEX_SQL = `
@@ -353,8 +369,8 @@ const CREATE_PROCEDURES_CREATED_AT_INDEX_SQL = `
 const CREATE_PROCEDURES_ACTIVE_KEY_UNIQUE_INDEX_SQL = `
   CREATE UNIQUE INDEX IF NOT EXISTS idx_procedures_active_procedure_key
   ON procedures(procedure_key)
-  WHERE retired = 0
-    AND superseded_by IS NULL
+  WHERE superseded_by IS NULL
+    AND valid_to IS NULL
 `;
 
 const CREATE_RECALL_EVENTS_DURABLE_ID_INDEX_SQL = `
@@ -378,7 +394,6 @@ const CREATE_DURABLES_EMBEDDING_INDEX_SQL = `
     )
   )
   WHERE embedding IS NOT NULL
-    AND retired = 0
     AND superseded_by IS NULL
 `;
 
@@ -393,7 +408,6 @@ const CREATE_EPISODES_EMBEDDING_INDEX_SQL = `
     )
   )
   WHERE embedding IS NOT NULL
-    AND retired = 0
     AND superseded_by IS NULL
 `;
 
@@ -408,7 +422,6 @@ const CREATE_PROCEDURES_EMBEDDING_INDEX_SQL = `
     )
   )
   WHERE embedding IS NOT NULL
-    AND retired = 0
     AND superseded_by IS NULL
 `;
 
@@ -434,7 +447,6 @@ const SCHEMA_STATEMENTS = [
   CREATE_DURABLES_NORM_CONTENT_HASH_INDEX_SQL,
   CREATE_DURABLES_TYPE_INDEX_SQL,
   CREATE_DURABLES_EXPIRY_INDEX_SQL,
-  CREATE_DURABLES_RETIRED_INDEX_SQL,
   CREATE_DURABLES_CREATED_AT_INDEX_SQL,
   CREATE_DURABLES_CLAIM_KEY_INDEX_SQL,
   CREATE_DURABLES_VALID_FROM_INDEX_SQL,
@@ -443,12 +455,14 @@ const SCHEMA_STATEMENTS = [
   CREATE_EPISODES_ENDED_AT_INDEX_SQL,
   CREATE_EPISODES_SOURCE_INDEX_SQL,
   CREATE_EPISODES_SOURCE_ID_INDEX_SQL,
-  CREATE_EPISODES_RETIRED_INDEX_SQL,
+  CREATE_EPISODES_VALID_FROM_INDEX_SQL,
+  CREATE_EPISODES_VALID_TO_INDEX_SQL,
   CREATE_EPISODES_SOURCE_SOURCE_ID_UNIQUE_INDEX_SQL,
   CREATE_PROCEDURES_PROCEDURE_KEY_INDEX_SQL,
   CREATE_PROCEDURES_REVISION_HASH_INDEX_SQL,
   CREATE_PROCEDURES_SOURCE_HASH_INDEX_SQL,
-  CREATE_PROCEDURES_RETIRED_INDEX_SQL,
+  CREATE_PROCEDURES_VALID_FROM_INDEX_SQL,
+  CREATE_PROCEDURES_VALID_TO_INDEX_SQL,
   CREATE_PROCEDURES_CREATED_AT_INDEX_SQL,
   CREATE_PROCEDURES_ACTIVE_KEY_UNIQUE_INDEX_SQL,
   CREATE_RECALL_EVENTS_DURABLE_ID_INDEX_SQL,
@@ -480,6 +494,10 @@ export async function initSchema(db: Client): Promise<void> {
   const currentVersion = await getSchemaVersion(db);
   await assertSupportedSchemaState(db, currentVersion);
 
+  if (currentVersion === "4") {
+    await migrateSchemaV4ToV5(db);
+  }
+
   const hadDurablesFts = await tableExists(db, "durables_fts");
   const hadProceduresFts = await tableExists(db, "procedures_fts");
 
@@ -503,6 +521,8 @@ export async function initSchema(db: Client): Promise<void> {
     return;
   }
 
+  // A v4 database lands here with currentVersion "4", which already differs from
+  // SCHEMA_VERSION, so the migration path rebuilds FTS without a special case.
   if (currentVersion !== SCHEMA_VERSION || !hadDurablesFts || !hadProceduresFts) {
     await rebuildFts(db);
   }
@@ -517,10 +537,10 @@ export async function initSchema(db: Client): Promise<void> {
  * @param currentVersion - Stored schema version, when present.
  */
 async function assertSupportedSchemaState(db: Client, currentVersion: string | null): Promise<void> {
-  if (currentVersion && currentVersion !== SCHEMA_VERSION) {
+  if (currentVersion && currentVersion !== SCHEMA_VERSION && currentVersion !== "4") {
     throw new Error(
       `Unsupported agenr database schema version "${currentVersion}". ` +
-        `This build only supports schema version ${SCHEMA_VERSION}. ` +
+        `This build supports schema version ${SCHEMA_VERSION} and can migrate from version 4. ` +
         "Create a fresh database with `agenr db reset` or manually migrate the data into a new database.",
     );
   }
@@ -734,22 +754,6 @@ async function dropVectorIndexes(db: Client): Promise<void> {
     if (!isVectorUnavailableError(error)) {
       throw error;
     }
-  }
-}
-
-/** Runs a callback inside a `BEGIN IMMEDIATE` transaction. */
-async function runImmediateTransaction(db: Client, fn: () => Promise<void>): Promise<void> {
-  await db.execute("BEGIN IMMEDIATE");
-  try {
-    await fn();
-    await db.execute("COMMIT");
-  } catch (error) {
-    try {
-      await db.execute("ROLLBACK");
-    } catch {
-      // Ignore rollback failures.
-    }
-    throw error;
   }
 }
 

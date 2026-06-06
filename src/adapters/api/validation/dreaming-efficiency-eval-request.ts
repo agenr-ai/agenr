@@ -40,14 +40,7 @@ const DREAM_EXTRACT_KEYS = new Set<string>([
 ]);
 const DREAM_TEMPORALIZE_KEYS = new Set<string>(["revisionsIdentified", "revisionsApplied", "revisionsSkipped"]);
 const DREAM_PROJECT_KEYS = new Set<string>(["profileDurableCount", "directiveCount", "snapshotId", "applied"]);
-const DREAM_PRUNE_KEYS = new Set<string>([
-  "durablesScanned",
-  "candidatesIdentified",
-  "candidatesProtected",
-  "candidatesRetirable",
-  "durablesRetired",
-  "dryRun",
-]);
+const DREAM_PRUNE_KEYS = new Set<string>(["durablesScanned", "candidatesIdentified", "candidatesProtected", "candidatesRetirable", "durablesStaled", "dryRun"]);
 const DREAM_EFFICIENCY_KEYS = new Set<string>([
   "evidenceItemsRead",
   "synthesizedDurableMutations",
@@ -329,7 +322,7 @@ function parseDreamPruneSummary(value: unknown, path: string, issues: Validation
       candidatesIdentified: parseRequiredNonNegativeInteger(prune.candidatesIdentified, `${path}.candidatesIdentified`, issues) ?? 0,
       candidatesProtected: parseRequiredNonNegativeInteger(prune.candidatesProtected, `${path}.candidatesProtected`, issues) ?? 0,
       candidatesRetirable: parseRequiredNonNegativeInteger(prune.candidatesRetirable, `${path}.candidatesRetirable`, issues) ?? 0,
-      durablesRetired: parseRequiredNonNegativeInteger(prune.durablesRetired, `${path}.durablesRetired`, issues) ?? 0,
+      durablesStaled: parseRequiredNonNegativeInteger(prune.durablesStaled, `${path}.durablesStaled`, issues) ?? 0,
       dryRun: parseRequiredBoolean(prune.dryRun, `${path}.dryRun`, issues) ?? false,
     },
   };

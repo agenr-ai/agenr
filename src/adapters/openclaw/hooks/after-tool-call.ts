@@ -6,7 +6,6 @@ import type { AgenrOpenClawAfterToolCallEvent, AgenrOpenClawHookContext, MidSess
 
 const STORE_TOOL_NAME = "agenr_store";
 const UPDATE_TOOL_NAME = "agenr_update";
-const RETIRE_TOOL_NAME = "agenr_retire";
 
 /**
  * Updates mid-session nudge state from OpenClaw's fire-and-forget tool hook.
@@ -27,7 +26,7 @@ export function handleAgenrAfterToolCall(
     midSessionTracker: MidSessionTracker;
   },
 ): void {
-  if (event.toolName !== STORE_TOOL_NAME && event.toolName !== UPDATE_TOOL_NAME && event.toolName !== RETIRE_TOOL_NAME) {
+  if (event.toolName !== STORE_TOOL_NAME && event.toolName !== UPDATE_TOOL_NAME) {
     return;
   }
 

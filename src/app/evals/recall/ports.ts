@@ -1,4 +1,4 @@
-import type { EmbeddingPort, EpisodeDatabasePort, ProcedureDatabasePort, RecallPorts } from "../../../core/ports.js";
+import type { DatabasePort, EmbeddingPort, EpisodeDatabasePort, ProcedureDatabasePort, RecallPorts } from "../../../core/ports.js";
 import type { Durable, Procedure } from "../../../core/types.js";
 import type { SessionStartRepository } from "../../session-start/index.js";
 import type { EvalProfileSnapshotFixture } from "../ablation-arm.js";
@@ -42,8 +42,8 @@ export interface RecallEvalFixtureStore {
 export interface RecallEvalSandboxContext extends EvalSandboxBaseContext {
   /** Narrow fixture-seeding surface over the isolated database. */
   fixtureStore: RecallEvalFixtureStore;
-  /** Episode database surface backed by the isolated sandbox database. */
-  episodeDatabase: EpisodeDatabasePort;
+  /** Durable and episode database surface backed by the isolated sandbox database. */
+  episodeDatabase: DatabasePort & EpisodeDatabasePort;
   /** Procedure database surface backed by the isolated sandbox database. */
   procedureDatabase: ProcedureDatabasePort;
   /** Feature-scoped repository for session-start selection against the sandbox. */

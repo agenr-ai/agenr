@@ -1,3 +1,4 @@
+import type { Row } from "@libsql/client";
 import { describe, expect, it } from "vitest";
 
 import { mapDurableRow } from "../../../src/adapters/db/row-mapping.js";
@@ -6,6 +7,7 @@ describe("mapDurableRow", () => {
   it("rejects invalid lifecycle enum values from database rows", () => {
     expect(() =>
       mapDurableRow({
+        length: 0,
         id: "entry-1",
         type: "fact",
         subject: "Jim timezone",
@@ -39,12 +41,9 @@ describe("mapDurableRow", () => {
         cluster_id: null,
         user_id: null,
         project: null,
-        retired: 0,
-        retired_at: null,
-        retired_reason: null,
         created_at: "2026-04-01T10:00:00.000Z",
         updated_at: "2026-04-01T10:00:00.000Z",
-      }),
+      } as Row),
     ).toThrow(/claim_key_status/i);
   });
 });

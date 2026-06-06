@@ -229,8 +229,14 @@ export interface DreamPruneSummary {
   durablesScanned: number;
   candidatesIdentified: number;
   candidatesProtected: number;
+  /**
+   * Count of unprotected candidates eligible to be staled this run. The field
+   * keeps the `candidatesRetirable` name for backward compatibility with the
+   * dreaming-efficiency eval wire contract consumed by `agenr-evals`; it counts
+   * stale-eligible candidates and does not imply a separate retirement concept.
+   */
   candidatesRetirable: number;
-  durablesRetired: number;
+  durablesStaled: number;
   dryRun: boolean;
 }
 

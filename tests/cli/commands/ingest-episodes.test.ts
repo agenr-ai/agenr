@@ -50,7 +50,6 @@ describe("registerIngestEpisodesCommand", () => {
             endedAt: "2026-03-30T09:30:00.000Z",
             summary: "Missing embedding",
             tags: [],
-            retired: false,
             createdAt: "2026-03-30T09:30:00.000Z",
             updatedAt: "2026-03-30T09:30:00.000Z",
             embedding: [],

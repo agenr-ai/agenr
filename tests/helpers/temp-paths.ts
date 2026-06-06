@@ -9,13 +9,13 @@ export function resolveTestPath(unixStylePath: string): string {
 }
 
 /** Closes one temp database and waits for Windows file-handle release. */
-export async function closeTestDatabase(database: { close(): Promise<void> }): Promise<void> {
+export async function closeTestDatabase(database: { close(): void | Promise<void> }): Promise<void> {
   await database.close();
   await waitForDatabaseRelease();
 }
 
 /** Closes tracked databases, then waits once before temp-path cleanup. */
-export async function closeTestDatabases(databases: Array<{ close(): Promise<void> }>): Promise<void> {
+export async function closeTestDatabases(databases: Array<{ close(): void | Promise<void> }>): Promise<void> {
   while (databases.length > 0) {
     await databases.pop()!.close();
   }

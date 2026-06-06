@@ -119,9 +119,6 @@ describe("initSchema", () => {
       "cluster_id",
       "user_id",
       "project",
-      "retired",
-      "retired_at",
-      "retired_reason",
       "created_at",
       "updated_at",
     ]);
@@ -145,9 +142,10 @@ describe("initSchema", () => {
       "gen_version",
       "message_count",
       "embedding",
-      "retired",
-      "retired_at",
-      "retired_reason",
+      "valid_from",
+      "valid_to",
+      "supersession_kind",
+      "supersession_reason",
       "superseded_by",
       "created_at",
       "updated_at",
@@ -163,9 +161,10 @@ describe("initSchema", () => {
       "source_hash",
       "revision_hash",
       "embedding",
-      "retired",
-      "retired_at",
-      "retired_reason",
+      "valid_from",
+      "valid_to",
+      "supersession_kind",
+      "supersession_reason",
       "superseded_by",
       "created_at",
       "updated_at",
@@ -199,7 +198,7 @@ describe("initSchema", () => {
       "model",
       "actions_taken",
       "actions_skipped",
-      "durables_retired",
+      "durables_staled",
       "summary",
       "summary_json",
       "error",
@@ -335,12 +334,12 @@ describe("initSchema", () => {
     expect(await indexExists(client, "idx_episodes_ended_at")).toBe(true);
     expect(await indexExists(client, "idx_episodes_source")).toBe(true);
     expect(await indexExists(client, "idx_episodes_source_id")).toBe(true);
-    expect(await indexExists(client, "idx_episodes_retired")).toBe(true);
+    expect(await indexExists(client, "idx_episodes_valid_to")).toBe(true);
     expect(await indexExists(client, "idx_episodes_source_source_id")).toBe(true);
     expect(await indexExists(client, "idx_procedures_procedure_key")).toBe(true);
     expect(await indexExists(client, "idx_procedures_revision_hash")).toBe(true);
     expect(await indexExists(client, "idx_procedures_source_hash")).toBe(true);
-    expect(await indexExists(client, "idx_procedures_retired")).toBe(true);
+    expect(await indexExists(client, "idx_procedures_valid_to")).toBe(true);
     expect(await indexExists(client, "idx_procedures_created_at")).toBe(true);
     expect(await indexExists(client, "idx_procedures_active_procedure_key")).toBe(true);
   });
@@ -353,7 +352,7 @@ describe("initSchema", () => {
     await expect(initSchema(client)).resolves.toBeUndefined();
 
     const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("4");
+    expect(version.rows[0]?.value).toBe("5");
     expect(await indexExists(client, "idx_episodes_started_at")).toBe(true);
   });
 
@@ -378,7 +377,7 @@ describe("initSchema", () => {
     await expect(insertTestWorkingSet(client, "working-c", "scope:one", "closed")).resolves.toBeUndefined();
   });
 
-  for (const version of ["1", "2", "3", "5", "7", "9", "11", "12"] as const) {
+  for (const version of ["1", "2", "3", "7", "9", "11", "12"] as const) {
     it(`rejects unsupported schema version ${version}`, async () => {
       const client = createClient({ url: ":memory:" });
       clients.push(client);
@@ -456,7 +455,7 @@ describe("initSchema", () => {
       "model",
       "actions_taken",
       "actions_skipped",
-      "durables_retired",
+      "durables_staled",
       "summary",
       "summary_json",
       "error",
@@ -647,13 +646,10 @@ async function insertTestEntry(client: Client, id: string, content: string): Pro
         last_recalled_at,
         superseded_by,
         cluster_id,
-        retired,
-        retired_at,
-        retired_reason,
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     args: [
       id,
@@ -672,9 +668,6 @@ async function insertTestEntry(client: Client, id: string, content: string): Pro
       0.5,
       0,
       null,
-      null,
-      null,
-      0,
       null,
       null,
       "2026-03-26T00:00:00.000Z",
@@ -697,14 +690,11 @@ async function insertTestProcedure(client: Client, id: string, content: string, 
         source_hash,
         revision_hash,
         embedding,
-        retired,
-        retired_at,
-        retired_reason,
         superseded_by,
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     args: [
       id,
@@ -734,9 +724,6 @@ async function insertTestProcedure(client: Client, id: string, content: string, 
       "/tmp/procedures/bulk.yaml",
       `source-${id}`,
       `revision-${id}`,
-      null,
-      0,
-      null,
       null,
       null,
       "2026-03-26T00:00:00.000Z",

@@ -12,7 +12,7 @@ This document describes the current codebase, not an aspirational design.
 The OpenClaw plugin is a translator around agenr's existing core and app workflows. It currently does all of the following:
 
 - registers agenr as an OpenClaw memory plugin
-- exposes six agent tools: `agenr_store`, `agenr_recall`, `agenr_fetch`, `agenr_update`, `agenr_retire`, and `agenr_trace`
+- exposes five agent tools: `agenr_store`, `agenr_recall`, `agenr_fetch`, `agenr_update`, and `agenr_trace`
 - injects session-start context into the prompt from agenr core memory plus predecessor continuity
 - tracks mid-session memory activity and can inject `[MEMORY CHECK]` nudges after long gaps without memory actions
 - generates or reuses predecessor continuity summaries from OpenClaw transcript JSONL files
@@ -42,7 +42,7 @@ The adapter is intentionally not a second memory brain. Durable memory, recall r
 - `src/adapters/openclaw/format/nudge-format.ts` - mid-session `[MEMORY CHECK]` prompt generation.
 - `src/adapters/openclaw/debug/` - adapter-owned JSONL debug sink (opt-in), event types, and live artifact builders shared with the eval seams.
 - `src/adapters/openclaw/hooks/before-prompt-build.ts` - session-start recall, before-turn recall, predecessor continuity injection, background predecessor episode write, and mid-session store nudge logic.
-- `src/adapters/openclaw/hooks/after-tool-call.ts` - mid-session tracker updates after `agenr_store`, `agenr_update`, and `agenr_retire`.
+- `src/adapters/openclaw/hooks/after-tool-call.ts` - mid-session tracker updates after `agenr_store` and `agenr_update` (including `validTo` closes).
 - `src/app/plugin-runtime/session-tracking.ts` - in-process session-start dedup shared by host plugins.
 - `src/adapters/openclaw/session/state.ts` - per-session mid-session store-nudge state.
 - `src/adapters/openclaw/session/continuity/` - predecessor resolution, continuity summary read/write, and recent-session tail rendering.
@@ -87,7 +87,7 @@ The plugin manifest declares:
 
 - `id: "agenr"`
 - `kind: "memory"`
-- tool contracts for `agenr_store`, `agenr_recall`, `agenr_fetch`, `agenr_retire`, `agenr_update`, and `agenr_trace`
+- tool contracts for `agenr_store`, `agenr_recall`, `agenr_fetch`, `agenr_update`, and `agenr_trace`
 
 The runtime config is currently:
 
@@ -201,7 +201,7 @@ Current guidance covers:
 - memory authority ordering: durable entries, then episodes, then continuity/handoffs, then live verification
 - automatically injected Agenr memory is background context, not user text, and should be used silently when relevant
 - storage doctrine, type boundaries, and what not to store when `agenr_store` is available
-- fix contradicted memory with `agenr_update` or `agenr_retire`
+- fix contradicted memory with `agenr_update`, including closing `validTo` when a durable should stop being current
 - use `agenr_trace` for provenance or supersession questions
 - avoid overstating unfinished delegated work when non-memory orchestration tools are present
 - citation behavior based on `citationsMode`
@@ -309,13 +309,12 @@ The nudge is a prompt reminder only. It does not write memory on its own.
 
 - `agenr_store`
 - `agenr_update`
-- `agenr_retire`
 
 Current behavior:
 
 - successful `agenr_store` resets the successful-store and memory-action timers
 - skipped `agenr_store` resets only memory-action timers
-- `agenr_update` and `agenr_retire` reset memory-action timers
+- `agenr_update` resets memory-action timers, including updates that close `validTo`
 - explicit claim-bearing store attempts also update explicit-memory-action timing
 - a bounded recent subject list is maintained for nudge copy
 
@@ -418,7 +417,7 @@ All tool calls log info-level summaries plus sanitized params. Raw user content 
 Current sanitization examples:
 
 - store logs `contentLength`, not raw content
-- retire logs `reasonLength`, not raw reason text
+- update logs `validTo` when present, never raw durable body text
 - recall logs the query for tool usefulness, but summary text stays compact
 
 ### `agenr_store`
@@ -498,17 +497,6 @@ When `claimKey` is updated, the tool writes the shared normalized manual claim-k
 
 When `validFrom` or `validTo` are updated, the tool applies the same strict range validation used by the core store path: both bounds must parse, and `validFrom` must be earlier than `validTo` when both are present.
 
-### `agenr_retire`
-
-`agenr_retire` soft-deletes an active entry.
-
-Current request fields:
-
-- exactly one of `id` or `subject`
-- optional `reason`
-
-Retired entries are excluded from recall.
-
 ### `agenr_trace`
 
 `agenr_trace` exposes the current provenance view plus a narrow claim-family lineage view.
@@ -536,7 +524,7 @@ The tool helper layer currently enforces these semantics:
 - exact matches rank ahead of substring matches
 - the most recent matching entry wins
 - trace can resolve inactive entries
-- update and retire can resolve inactive entries for error reporting, but they still fail to mutate inactive entries
+- update can resolve inactive entries for error reporting, but it still fails to mutate inactive entries
 
 ## Transcript parsing
 

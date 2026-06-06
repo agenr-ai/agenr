@@ -33,9 +33,6 @@ const FIXTURE_ENTRY_KEYS = new Set<string>([
   "source_context",
   "created_at",
   "updated_at",
-  "retired",
-  "retired_at",
-  "retired_reason",
   "superseded_by",
   "claim_key",
   "claim_key_status",
@@ -64,9 +61,10 @@ const FIXTURE_PROCEDURE_KEYS = new Set<string>([
   "failure_modes",
   "sources",
   "source_file",
-  "retired",
-  "retired_at",
-  "retired_reason",
+  "valid_from",
+  "valid_to",
+  "supersession_kind",
+  "supersession_reason",
   "superseded_by",
   "created_at",
   "updated_at",
@@ -166,12 +164,6 @@ export interface InternalEvalFixtureEntryDto {
   created_at?: string;
   /** Optional update timestamp. */
   updated_at?: string;
-  /** Optional retired state. */
-  retired?: boolean;
-  /** Optional retirement timestamp. */
-  retired_at?: string;
-  /** Optional retirement reason. */
-  retired_reason?: string;
   /** Optional successor entry identifier. */
   superseded_by?: string;
   /** Optional canonical claim key. */
@@ -230,12 +222,14 @@ export interface InternalEvalFixtureProcedureDto {
   sources?: ProcedureSource[];
   /** Optional source file path attached to the stored procedure. */
   source_file?: string;
-  /** Optional retirement flag for inactive procedure fixtures. */
-  retired?: boolean;
-  /** Optional retirement timestamp when the fixture is retired. */
-  retired_at?: string;
-  /** Optional retirement reason attached to the fixture. */
-  retired_reason?: string;
+  /** Optional validity lower bound. */
+  valid_from?: string;
+  /** Optional validity upper bound. */
+  valid_to?: string;
+  /** Optional explicit supersession kind. */
+  supersession_kind?: string;
+  /** Optional explicit supersession rationale. */
+  supersession_reason?: string;
   /** Optional successor procedure ID when the fixture is superseded. */
   superseded_by?: string;
   /** Optional creation timestamp for deterministic ordering. */
@@ -448,9 +442,6 @@ export function mapFixtureEntryDto(dto: InternalEvalFixtureEntryDto): InternalEv
     source_context: dto.source_context,
     created_at: dto.created_at,
     updated_at: dto.updated_at,
-    retired: dto.retired,
-    retired_at: dto.retired_at,
-    retired_reason: dto.retired_reason,
     superseded_by: dto.superseded_by,
     claim_key: dto.claim_key,
     claim_key_status: dto.claim_key_status,
@@ -488,9 +479,10 @@ export function mapFixtureProcedureDto(dto: InternalEvalFixtureProcedureDto): In
     failure_modes: dto.failure_modes,
     sources: dto.sources,
     source_file: dto.source_file,
-    retired: dto.retired,
-    retired_at: dto.retired_at,
-    retired_reason: dto.retired_reason,
+    valid_from: dto.valid_from,
+    valid_to: dto.valid_to,
+    supersession_kind: dto.supersession_kind,
+    supersession_reason: dto.supersession_reason,
     superseded_by: dto.superseded_by,
     created_at: dto.created_at,
     updated_at: dto.updated_at,
@@ -612,9 +604,6 @@ function parseFixtureEntry(value: unknown, index: number, issues: ValidationIssu
     source_context: parseOptionalTrimmedString(fixture.source_context, `${basePath}.source_context`, issues),
     created_at: parseOptionalTimestampString(fixture.created_at, `${basePath}.created_at`, issues),
     updated_at: parseOptionalTimestampString(fixture.updated_at, `${basePath}.updated_at`, issues),
-    retired: parseOptionalBoolean(fixture.retired, `${basePath}.retired`, issues),
-    retired_at: parseOptionalTimestampString(fixture.retired_at, `${basePath}.retired_at`, issues),
-    retired_reason: parseOptionalTrimmedString(fixture.retired_reason, `${basePath}.retired_reason`, issues),
     superseded_by: parseOptionalTrimmedString(fixture.superseded_by, `${basePath}.superseded_by`, issues),
     claim_key: parseOptionalTrimmedString(fixture.claim_key, `${basePath}.claim_key`, issues),
     claim_key_status: parseOptionalClaimKeyStatus(fixture.claim_key_status, `${basePath}.claim_key_status`, issues),
@@ -777,9 +766,10 @@ function parseFixtureProcedure(value: unknown, index: number, issues: Validation
       failure_modes: normalized.failure_modes,
       sources: normalized.sources,
       source_file: parseOptionalTrimmedString(fixture.source_file, `${basePath}.source_file`, issues),
-      retired: parseOptionalBoolean(fixture.retired, `${basePath}.retired`, issues),
-      retired_at: parseOptionalTimestampString(fixture.retired_at, `${basePath}.retired_at`, issues),
-      retired_reason: parseOptionalTrimmedString(fixture.retired_reason, `${basePath}.retired_reason`, issues),
+      valid_from: parseOptionalTimestampString(fixture.valid_from, `${basePath}.valid_from`, issues),
+      valid_to: parseOptionalTimestampString(fixture.valid_to, `${basePath}.valid_to`, issues),
+      supersession_kind: parseOptionalTrimmedString(fixture.supersession_kind, `${basePath}.supersession_kind`, issues),
+      supersession_reason: parseOptionalTrimmedString(fixture.supersession_reason, `${basePath}.supersession_reason`, issues),
       superseded_by: parseOptionalTrimmedString(fixture.superseded_by, `${basePath}.superseded_by`, issues),
       created_at: parseOptionalTimestampString(fixture.created_at, `${basePath}.created_at`, issues),
       updated_at: parseOptionalTimestampString(fixture.updated_at, `${basePath}.updated_at`, issues),

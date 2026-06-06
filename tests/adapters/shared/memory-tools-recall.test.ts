@@ -92,7 +92,7 @@ describe("agenr_recall shared tool params", () => {
         episodes: {} as never,
         procedures: {} as never,
         recall: {} as never,
-        embeddingStatus: { available: true },
+        embeddingStatus: { available: true, provider: "openai", requestedProvider: "openai", model: "text-embedding-3-small" },
       },
       { sessionKey: "session:test" },
     );

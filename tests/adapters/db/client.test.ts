@@ -237,7 +237,7 @@ describe("createDatabase", () => {
     });
 
     await database.insertDurable(entry, createEmbedding(0, 1), "retired-hash");
-    await database.retireDurable(entry.id, "superseded");
+    await database.closeDurableValidity(entry.id, "superseded");
 
     expect(await database.getDurable(entry.id)).toBeNull();
     expect(await database.findExistingHashes(["retired-hash"])).toEqual(new Set());
@@ -286,8 +286,8 @@ describe("createDatabase", () => {
       claim_support_locator: "openclaw-session:agent:main:webchat:test#agenr_update",
       claim_support_observed_at: "2026-03-15T12:00:00.000Z",
       claim_support_mode: "explicit",
-      valid_from: "2026-03-01T00:00:00.000Z",
-      valid_to: "2026-03-15T00:00:00.000Z",
+      valid_from: "2027-03-01T00:00:00.000Z",
+      valid_to: "2027-03-15T00:00:00.000Z",
     });
     const stored = await database.getDurable(entry.id);
     const claimMatches = await database.findActiveDurablesByClaimKey("jim/home_city");
@@ -305,8 +305,8 @@ describe("createDatabase", () => {
     expect(stored?.claim_support_locator).toBe("openclaw-session:agent:main:webchat:test#agenr_update");
     expect(stored?.claim_support_observed_at).toBe("2026-03-15T12:00:00.000Z");
     expect(stored?.claim_support_mode).toBe("explicit");
-    expect(stored?.valid_from).toBe("2026-03-01T00:00:00.000Z");
-    expect(stored?.valid_to).toBe("2026-03-15T00:00:00.000Z");
+    expect(stored?.valid_from).toBe("2027-03-01T00:00:00.000Z");
+    expect(stored?.valid_to).toBe("2027-03-15T00:00:00.000Z");
     expect(claimMatches.map((candidate) => candidate.id)).toEqual([entry.id]);
     expect(claimPrefixes).toEqual(["agenr", "jim"]);
     expect(claimKeyExamples).toEqual(["agenr/default_model", "jim/home_city"]);
@@ -362,7 +362,7 @@ describe("createDatabase", () => {
     await expect(
       database.updateDurable(entry.id, {
         claim_key: "jim/home_city",
-        claim_key_status: "legacy" as Entry["claim_key_status"],
+        claim_key_status: "legacy" as Durable["claim_key_status"],
         claim_key_source: "manual",
         claim_key_confidence: 1,
         claim_key_rationale: "manual claim key supplied by caller",
@@ -380,7 +380,7 @@ describe("createDatabase", () => {
       database.updateDurable(entry.id, {
         claim_key: "jim/home_city",
         claim_key_status: "trusted",
-        claim_key_source: "handwritten" as Entry["claim_key_source"],
+        claim_key_source: "handwritten" as Durable["claim_key_source"],
         claim_key_confidence: 1,
         claim_key_rationale: "manual claim key supplied by caller",
       }),
@@ -400,7 +400,7 @@ describe("createDatabase", () => {
         claim_key_source: "manual",
         claim_key_confidence: 1,
         claim_key_rationale: "manual claim key supplied by caller",
-        claim_support_mode: "copied" as Entry["claim_support_mode"],
+        claim_support_mode: "copied" as Durable["claim_support_mode"],
       }),
     ).rejects.toThrow(/claim_support_mode/i);
   });
@@ -463,13 +463,13 @@ describe("createDatabase", () => {
 
     await expect(
       database.updateDurable(entry.id, {
-        valid_from: "2026-03-01T00:00:00.000Z",
-        valid_to: "2026-03-31T00:00:00.000Z",
+        valid_from: "2027-03-01T00:00:00.000Z",
+        valid_to: "2027-03-31T00:00:00.000Z",
       }),
     ).resolves.toBe(true);
     expect(await database.getDurable(entry.id)).toMatchObject({
-      valid_from: "2026-03-01T00:00:00.000Z",
-      valid_to: "2026-03-31T00:00:00.000Z",
+      valid_from: "2027-03-01T00:00:00.000Z",
+      valid_to: "2027-03-31T00:00:00.000Z",
     });
   });
 
@@ -490,15 +490,15 @@ describe("createDatabase", () => {
   it("rejects one-sided validity updates that would invert an existing persisted range", async () => {
     const database = await createTestDatabase();
     const entry = createEntry({
-      valid_from: "2026-03-01T00:00:00.000Z",
-      valid_to: "2026-03-31T00:00:00.000Z",
+      valid_from: "2027-03-01T00:00:00.000Z",
+      valid_to: "2027-03-31T00:00:00.000Z",
     });
 
     await database.insertDurable(entry, createEmbedding(0, 1), "existing-validity-range-hash");
 
     await expect(
       database.updateDurable(entry.id, {
-        valid_from: "2026-04-15T00:00:00.000Z",
+        valid_from: "2027-04-15T00:00:00.000Z",
       }),
     ).rejects.toThrow("valid_from must be earlier than valid_to.");
   });
@@ -792,8 +792,9 @@ describe("createDatabase", () => {
     await database.execute({
       sql: `
         UPDATE episodes
-        SET retired = 1,
-            retired_at = ?,
+        SET valid_to = ?,
+            supersession_kind = 'stale',
+            supersession_reason = 'no longer relevant',
             updated_at = ?
         WHERE id = ?
       `,
@@ -1042,7 +1043,7 @@ describe("createDatabase", () => {
     await database.upsertProcedure(superseded);
     await database.upsertProcedure(replacement);
 
-    expect(await database.retireProcedure(retired.id, "obsolete")).toBe(true);
+    expect(await database.closeProcedureValidity(retired.id, "obsolete")).toBe(true);
     expect(await database.supersedeProcedure(superseded.id, replacement.id, "new revision")).toBe(true);
 
     expect(await database.getProcedure(retired.id)).toBeNull();
@@ -1097,9 +1098,6 @@ function createEntry(overrides: Partial<Durable> = {}): Durable {
     cluster_id: overrides.cluster_id,
     user_id: overrides.user_id,
     project: overrides.project,
-    retired: overrides.retired ?? false,
-    retired_at: overrides.retired_at,
-    retired_reason: overrides.retired_reason,
     created_at: overrides.created_at ?? now,
     updated_at: overrides.updated_at ?? now,
   };
@@ -1149,9 +1147,6 @@ function createProcedure(overrides: Partial<Procedure> = {}): Procedure {
     source_hash: overrides.source_hash ?? computeProcedureSourceHash(JSON.stringify(body)),
     source_file: overrides.source_file,
     embedding: overrides.embedding,
-    retired: overrides.retired ?? false,
-    retired_at: overrides.retired_at,
-    retired_reason: overrides.retired_reason,
     superseded_by: overrides.superseded_by,
     created_at: overrides.created_at ?? now,
     updated_at: overrides.updated_at ?? now,

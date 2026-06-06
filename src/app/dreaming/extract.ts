@@ -322,7 +322,6 @@ export function buildDurableFromCandidate(
     recall_count: 0,
     content_hash: contentHash,
     norm_content_hash: normContentHash,
-    retired: false,
     created_at: lifecycle.createdAt,
     updated_at: lifecycle.createdAt,
   };

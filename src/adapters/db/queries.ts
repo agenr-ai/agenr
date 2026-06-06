@@ -87,16 +87,13 @@ export async function insertDurable(executor: SqlExecutor, entry: Durable, embed
         cluster_id,
         user_id,
         project,
-        retired,
-        retired_at,
-        retired_reason,
         created_at,
         updated_at
       )
       VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?,
         CASE WHEN ? IS NULL THEN NULL ELSE vector32(?) END,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
     `,
     args: [
@@ -137,9 +134,6 @@ export async function insertDurable(executor: SqlExecutor, entry: Durable, embed
       normalizeOptionalString(entry.cluster_id),
       normalizeOptionalString(entry.user_id),
       normalizeOptionalString(entry.project),
-      entry.retired ? 1 : 0,
-      normalizeOptionalString(entry.retired_at),
-      normalizeOptionalString(entry.retired_reason),
       createdAt,
       updatedAt,
     ],
@@ -265,21 +259,21 @@ export async function findExistingNormHashes(executor: SqlExecutor, hashes: stri
 }
 
 /**
- * Marks an active entry as retired.
+ * Closes the valid-time window for one active entry, making it stale for current recall.
  *
  * @param executor - SQL executor used for the update.
- * @param id - Entry ID to retire.
- * @param reason - Optional retirement reason.
+ * @param id - Entry ID to stale.
+ * @param reason - Optional explanation recorded on the entry.
  * @returns True when an active row was updated.
  */
-export async function retireDurable(executor: SqlExecutor, id: string, reason?: string): Promise<boolean> {
+export async function closeDurableValidity(executor: SqlExecutor, id: string, reason?: string): Promise<boolean> {
   const now = new Date().toISOString();
   const result = await executor.execute({
     sql: `
       UPDATE durables
-      SET retired = 1,
-          retired_at = ?,
-          retired_reason = ?,
+      SET valid_to = ?,
+          supersession_kind = 'stale',
+          supersession_reason = ?,
           updated_at = ?
       WHERE id = ?
         AND ${ACTIVE_DURABLE_CLAUSE}
@@ -331,7 +325,7 @@ export async function supersedeDurable(executor: SqlExecutor, oldId: string, new
           supersession_reason = ?,
           updated_at = ?
       WHERE id = ?
-        AND ${ACTIVE_DURABLE_CLAUSE}
+        AND superseded_by IS NULL
     `,
     args: [normalizedNewId, normalizeOptionalString(kind) ?? "update", normalizeOptionalString(reason), now, normalizedOldId],
   });

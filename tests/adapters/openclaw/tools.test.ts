@@ -27,7 +27,6 @@ import { composeProcedureRecallText } from "../../../src/core/procedures/recall-
 import {
   createAgenrFetchTool,
   createAgenrRecallTool,
-  createAgenrRetireTool,
   createAgenrStoreTool,
   createAgenrTraceTool,
   createAgenrUpdateTool,
@@ -128,20 +127,19 @@ describe("agenr OpenClaw tools", () => {
       entryId: stored?.id,
       content: expectedContent,
     });
-    expect(result.content[0]?.text).toContain(expectedContent);
+    expect(expectTextContent(result.content[0])).toContain(expectedContent);
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([expect.stringContaining("[agenr] tool=agenr_fetch session=session-1 key=agent:main:webchat:test target=id:")]),
     );
   });
 
-  it("stores, updates, traces, and retires entries", async () => {
+  it("stores, updates, traces, and closes validity via valid_to", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
     const services = createDatabaseBackedServices(database);
     const storeTool = createAgenrStoreTool(createToolContext(), Promise.resolve(services), logger);
     const updateTool = createAgenrUpdateTool(createToolContext(), Promise.resolve(services), logger);
     const traceTool = createAgenrTraceTool(createToolContext(), Promise.resolve(services), logger);
-    const retireTool = createAgenrRetireTool(createToolContext(), Promise.resolve(services), logger);
 
     const storeResult = await storeTool.execute("tool-1", {
       type: "decision",
@@ -161,9 +159,9 @@ describe("agenr OpenClaw tools", () => {
     const traceResult = await traceTool.execute("tool-3", {
       id: storedEntry?.id,
     });
-    const retireResult = await retireTool.execute("tool-4", {
+    const staleResult = await updateTool.execute("tool-4", {
       subject: "feature flag policy",
-      reason: "Superseded by rollout checklist v2.",
+      validTo: "2026-01-01T00:00:00.000Z",
     });
 
     expect(storeResult.details).toMatchObject({
@@ -176,9 +174,10 @@ describe("agenr OpenClaw tools", () => {
       expiry: "core",
     });
     expect(traceResult.content[0]?.type).toBe("text");
-    expect(traceResult.content[0]?.text).toContain("Trace for");
-    expect(retireResult.details).toMatchObject({
-      status: "retired",
+    expect(expectTextContent(traceResult.content[0])).toContain("Trace for");
+    expect(staleResult.details).toMatchObject({
+      status: "updated",
+      validTo: "2026-01-01T00:00:00.000Z",
     });
     expect(storedEntry).not.toBeNull();
     expect(await database.getDurable(storedEntry?.id ?? "")).toBeNull();
@@ -187,7 +186,7 @@ describe("agenr OpenClaw tools", () => {
         '[agenr] tool=agenr_store session=session-1 key=agent:main:webchat:test store 1 entry subject="feature flag policy" type=decision',
         expect.stringContaining("[agenr] tool=agenr_update session=session-1 key=agent:main:webchat:test target=id:"),
         expect.stringContaining("[agenr] tool=agenr_trace session=session-1 key=agent:main:webchat:test target=id:"),
-        '[agenr] tool=agenr_retire session=session-1 key=agent:main:webchat:test target=subject:"feature flag policy"',
+        expect.stringContaining('[agenr] tool=agenr_update session=session-1 key=agent:main:webchat:test target=subject:"feature flag policy"'),
       ]),
     );
     const storeParamsMessage = getMessages(logger.info).find((message) => message.includes("tool=agenr_store") && message.includes("params="));
@@ -256,7 +255,6 @@ describe("agenr OpenClaw tools", () => {
                 created_at: entry.created_at,
                 embedding: createEmbedding(0, 1),
                 superseded_by: entry.superseded_by,
-                retired: entry.retired,
               },
               rank: 0,
               tier: "exact",
@@ -294,14 +292,15 @@ describe("agenr OpenClaw tools", () => {
         }),
       ],
     });
-    expect(result.content[0]?.text).toContain("Recall Route");
-    expect(result.content[0]?.text).toContain("Durable Matches");
-    expect(result.content[0]?.text).toContain("session recall");
-    expect(result.content[0]?.text).toContain("state=current");
-    expect(result.content[0]?.text).toContain("why_surfaced=");
-    expect(result.content[0]?.text).toContain("preview_truncated=");
-    expect(result.content[0]?.text).not.toContain("Structured Details");
-    expect(result.details?.entries).toEqual([
+    expect(expectTextContent(result.content[0])).toContain("Recall Route");
+    expect(expectTextContent(result.content[0])).toContain("Durable Matches");
+    expect(expectTextContent(result.content[0])).toContain("session recall");
+    expect(expectTextContent(result.content[0])).toContain("state=current");
+    expect(expectTextContent(result.content[0])).toContain("why_surfaced=");
+    expect(expectTextContent(result.content[0])).toContain("preview_truncated=");
+    expect(expectTextContent(result.content[0])).not.toContain("Structured Details");
+    const recallDetails = result.details as { entries?: Array<Record<string, unknown>> };
+    expect(recallDetails.entries).toEqual([
       expect.objectContaining({
         id: entry.id,
         previewTruncated: expect.any(Boolean),
@@ -309,7 +308,7 @@ describe("agenr OpenClaw tools", () => {
         contentChars: entry.content.length,
       }),
     ]);
-    expect((result.details?.entries as Array<Record<string, unknown>>)[0]).not.toHaveProperty("content");
+    expect((recallDetails.entries as Array<Record<string, unknown>>)[0]).not.toHaveProperty("content");
     expect(recordedRecallEvents).toBe(1);
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
@@ -360,7 +359,7 @@ describe("agenr OpenClaw tools", () => {
                 created_at: distractorEntry.created_at,
                 embedding: createEmbedding(0, 1),
                 superseded_by: distractorEntry.superseded_by,
-                retired: distractorEntry.retired,
+                valid_to: distractorEntry.valid_to,
               },
               vectorSim: 0.87,
             },
@@ -374,7 +373,7 @@ describe("agenr OpenClaw tools", () => {
                 created_at: locationEntry.created_at,
                 embedding: createEmbedding(1, 1),
                 superseded_by: locationEntry.superseded_by,
-                retired: locationEntry.retired,
+                valid_to: locationEntry.valid_to,
               },
               vectorSim: 0.81,
             },
@@ -392,7 +391,7 @@ describe("agenr OpenClaw tools", () => {
                 created_at: distractorEntry.created_at,
                 embedding: createEmbedding(0, 1),
                 superseded_by: distractorEntry.superseded_by,
-                retired: distractorEntry.retired,
+                valid_to: distractorEntry.valid_to,
               },
               rank: 0,
               tier: "any_tokens",
@@ -407,7 +406,7 @@ describe("agenr OpenClaw tools", () => {
                 created_at: locationEntry.created_at,
                 embedding: createEmbedding(1, 1),
                 superseded_by: locationEntry.superseded_by,
-                retired: locationEntry.retired,
+                valid_to: locationEntry.valid_to,
               },
               rank: 1,
               tier: "all_tokens",
@@ -441,8 +440,8 @@ describe("agenr OpenClaw tools", () => {
       },
       entries: [expect.objectContaining({ subject: "Jim Martin dad location" })],
     });
-    expect(result.content[0]?.text).toContain("Jim Martin dad location");
-    expect(result.content[0]?.text).not.toContain("Jim Martin work email");
+    expect(expectTextContent(result.content[0])).toContain("Jim Martin dad location");
+    expect(expectTextContent(result.content[0])).not.toContain("Jim Martin work email");
     expect(getMessages(logger.debug)).toEqual(
       expect.arrayContaining([expect.stringContaining('unified recall matched entity-attribute kind="location" entity="Jim Martin\'s dad"')]),
     );
@@ -487,9 +486,9 @@ describe("agenr OpenClaw tools", () => {
       ],
       entries: [],
     });
-    expect(result.content[0]?.text).toContain("Episode Matches");
-    expect(result.content[0]?.text).toContain("episodic recall");
-    expect(result.content[0]?.text).not.toContain("Durable recall was skipped");
+    expect(expectTextContent(result.content[0])).toContain("Episode Matches");
+    expect(expectTextContent(result.content[0])).toContain("episodic recall");
+    expect(expectTextContent(result.content[0])).not.toContain("Durable recall was skipped");
   });
 
   it("routes mixed temporal narrative queries to episodes and entries", async () => {
@@ -538,10 +537,10 @@ describe("agenr OpenClaw tools", () => {
       episodes: [expect.objectContaining({ sourceId: "episode-session-2" })],
       entries: [expect.objectContaining({ subject: "agenr episode recall" })],
     });
-    expect(result.content[0]?.text).toContain("Resolved Time Window");
-    expect(result.content[0]?.text).toContain("Episode Matches");
-    expect(result.content[0]?.text).toContain("Durable Matches");
-    expect(result.content[0]?.text).toContain("Type and tag filters were applied to durables only.");
+    expect(expectTextContent(result.content[0])).toContain("Resolved Time Window");
+    expect(expectTextContent(result.content[0])).toContain("Episode Matches");
+    expect(expectTextContent(result.content[0])).toContain("Durable Matches");
+    expect(expectTextContent(result.content[0])).toContain("Type and tag filters were applied to durables only.");
   });
 
   it("renders a structured canonical procedure block for procedural recall", async () => {
@@ -580,11 +579,11 @@ describe("agenr OpenClaw tools", () => {
       ],
       procedureNotices: [expect.stringContaining("lexical-only procedure ranking")],
     });
-    expect(result.content[0]?.text).toContain("Procedure Matches");
-    expect(result.content[0]?.text).toContain("Canonical Procedure. security/signing-key-rotation | Rotate the production signing key");
-    expect(result.content[0]?.text).toContain("goal=Rotate the production signing key safely.");
-    expect(result.content[0]?.text).toContain("steps");
-    expect(result.content[0]?.text).toContain("[inspect_state] Inspect the current signing key state before rotating it.");
+    expect(expectTextContent(result.content[0])).toContain("Procedure Matches");
+    expect(expectTextContent(result.content[0])).toContain("Canonical Procedure. security/signing-key-rotation | Rotate the production signing key");
+    expect(expectTextContent(result.content[0])).toContain("goal=Rotate the production signing key safely.");
+    expect(expectTextContent(result.content[0])).toContain("steps");
+    expect(expectTextContent(result.content[0])).toContain("[inspect_state] Inspect the current signing key state before rotating it.");
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
         expect.stringContaining(
@@ -620,7 +619,7 @@ describe("agenr OpenClaw tools", () => {
         queried: ["durables", "episodes"],
       },
     });
-    expect(result.content[0]?.text).toContain("requested=auto detected=mixed queried=durables, episodes");
+    expect(expectTextContent(result.content[0])).toContain("requested=auto detected=mixed queried=durables, episodes");
   });
 
   it("uses semantic episode search when mode=episodes has no time window", async () => {
@@ -677,9 +676,9 @@ describe("agenr OpenClaw tools", () => {
       entries: [],
       notices: [expect.stringContaining("Episodes cover consolidated prior sessions only")],
     });
-    expect(result.content[0]?.text).toContain("Episode Matches");
-    expect(result.content[0]?.text).toContain("We added semantic episode search for recall without a time window.");
-    expect(result.content[0]?.text).toContain("Semantic match to the episode summary.");
+    expect(expectTextContent(result.content[0])).toContain("Episode Matches");
+    expect(expectTextContent(result.content[0])).toContain("We added semantic episode search for recall without a time window.");
+    expect(expectTextContent(result.content[0])).toContain("Semantic match to the episode summary.");
   });
 
   it("renders historical-state results entry-first and logs the matched pattern at debug level", async () => {
@@ -736,7 +735,7 @@ describe("agenr OpenClaw tools", () => {
         }),
       ],
     });
-    const text = result.content[0]?.text ?? "";
+    const text = expectTextContent(result.content[0]);
     expect(text).toContain("requested=auto detected=historical_state queried=durables, episodes");
     expect(text.indexOf("Durable Matches")).toBeLessThan(text.indexOf("Episode Matches"));
     expect(text).toContain("Claim Transitions");
@@ -770,7 +769,7 @@ describe("agenr OpenClaw tools", () => {
     });
 
     expect(result.content[0]?.type).toBe("text");
-    expect(result.content[0]?.text).toContain("newest memory");
+    expect(expectTextContent(result.content[0])).toContain("newest memory");
     expect(getMessages(logger.info)).toContain("[agenr] tool=agenr_trace session=session-1 key=agent:main:webchat:test target=last");
   });
 
@@ -818,10 +817,10 @@ describe("agenr OpenClaw tools", () => {
     });
     expect(replacementEntry?.claim_support_locator).toContain("#agenr_store");
     expect(replacementEntry?.claim_support_observed_at).toMatch(/^20\d\d-/);
-    expect(traceResult.content[0]?.text).toContain("superseded_by=");
-    expect(traceResult.content[0]?.text).toContain("supersession_kind=update");
-    expect(traceResult.content[0]?.text).toContain("claim_key=jim/home_city");
-    expect(traceResult.content[0]?.text).toContain("claim_family=jim/home_city");
+    expect(expectTextContent(traceResult.content[0])).toContain("superseded_by=");
+    expect(expectTextContent(traceResult.content[0])).toContain("supersession_kind=update");
+    expect(expectTextContent(traceResult.content[0])).toContain("claim_key=jim/home_city");
+    expect(expectTextContent(traceResult.content[0])).toContain("claim_family=jim/home_city");
 
     const storeParamsMessages = getMessages(logger.info).filter((message) => message.includes("tool=agenr_store") && message.includes("params="));
     expect(storeParamsMessages.join("\n")).toContain('"hasSupersedes":true');
@@ -847,8 +846,8 @@ describe("agenr OpenClaw tools", () => {
     const updateResult = await updateTool.execute("tool-17", {
       id: storedEntry?.id,
       claimKey: " Jim / Timezone ",
-      validFrom: "2026-03-01T00:00:00.000Z",
-      validTo: "2026-03-31T00:00:00.000Z",
+      validFrom: "2027-03-01T00:00:00.000Z",
+      validTo: "2027-03-31T00:00:00.000Z",
     });
     const traceResult = await traceTool.execute("tool-18", {
       id: storedEntry?.id,
@@ -858,8 +857,8 @@ describe("agenr OpenClaw tools", () => {
     expect(updateResult.details).toMatchObject({
       status: "updated",
       claimKey: "jim/timezone",
-      validFrom: "2026-03-01T00:00:00.000Z",
-      validTo: "2026-03-31T00:00:00.000Z",
+      validFrom: "2027-03-01T00:00:00.000Z",
+      validTo: "2027-03-31T00:00:00.000Z",
     });
     expect(updatedEntry).toMatchObject({
       claim_key: "jim/timezone",
@@ -870,14 +869,14 @@ describe("agenr OpenClaw tools", () => {
       claim_key_rationale: "manual claim key supplied by caller",
       claim_support_source_kind: "tool_call",
       claim_support_mode: "explicit",
-      valid_from: "2026-03-01T00:00:00.000Z",
-      valid_to: "2026-03-31T00:00:00.000Z",
+      valid_from: "2027-03-01T00:00:00.000Z",
+      valid_to: "2027-03-31T00:00:00.000Z",
     });
     expect(updatedEntry?.claim_support_locator).toContain("#agenr_update");
     expect(updatedEntry?.claim_support_observed_at).toMatch(/^20\d\d-/);
-    expect(traceResult.content[0]?.text).toContain("claim_key=jim/timezone");
-    expect(traceResult.content[0]?.text).toContain("claim_family=jim/timezone");
-    expect(traceResult.content[0]?.text).toContain("validity=2026-03-01T00:00:00.000Z -> 2026-03-31T00:00:00.000Z");
+    expect(expectTextContent(traceResult.content[0])).toContain("claim_key=jim/timezone");
+    expect(expectTextContent(traceResult.content[0])).toContain("claim_family=jim/timezone");
+    expect(expectTextContent(traceResult.content[0])).toContain("validity=2027-03-01T00:00:00.000Z -> 2027-03-31T00:00:00.000Z");
 
     const updateParamsMessage = getMessages(logger.info).find((message) => message.includes("tool=agenr_update") && message.includes("params="));
     expect(updateParamsMessage).toContain('"hasClaimKey":true');
@@ -905,7 +904,7 @@ describe("agenr OpenClaw tools", () => {
     });
 
     expect(updateResult.content[0]?.type).toBe("text");
-    expect(updateResult.content[0]?.text).toContain("claimKey must use canonical entity/attribute format.");
+    expect(expectTextContent(updateResult.content[0])).toContain("claimKey must use canonical entity/attribute format.");
     expect(updateResult.details).toMatchObject({
       status: "failed",
     });
@@ -922,17 +921,17 @@ describe("agenr OpenClaw tools", () => {
       type: "fact",
       subject: "Jim timezone",
       content: "Jim's timezone is America/Chicago.",
-      validTo: "2026-03-31T00:00:00.000Z",
+      validTo: "2027-03-31T00:00:00.000Z",
     });
     const storedEntry = await createMemoryRepository(database).findEntryBySubject("Jim timezone");
 
     const updateResult = await updateTool.execute("tool-17b", {
       id: storedEntry?.id,
-      validFrom: "2026-04-01T00:00:00.000Z",
+      validFrom: "2027-04-01T00:00:00.000Z",
     });
 
     expect(updateResult.content[0]?.type).toBe("text");
-    expect(updateResult.content[0]?.text).toContain("valid_from must be earlier than valid_to.");
+    expect(expectTextContent(updateResult.content[0])).toContain("valid_from must be earlier than valid_to.");
     expect(updateResult.details).toMatchObject({
       status: "failed",
     });
@@ -1149,7 +1148,6 @@ function createVectorRecallPorts(entries: Durable[]): RecallPorts {
           created_at: entry.created_at,
           embedding: createEmbedding(index, 1),
           superseded_by: entry.superseded_by,
-          retired: entry.retired,
         },
         vectorSim: 0.95 - index * 0.05,
       }));
@@ -1185,7 +1183,6 @@ function createExactRecallPorts(entries: Durable[]): RecallPorts {
           created_at: entry.created_at,
           embedding: createEmbedding(0, 1),
           superseded_by: entry.superseded_by,
-          retired: entry.retired,
         },
         rank: 0,
         tier: "exact" as const,
@@ -1219,6 +1216,15 @@ function createLogger() {
 
 function getMessages(logFn: ReturnType<typeof vi.fn>): string[] {
   return logFn.mock.calls.map(([message]) => message as string);
+}
+
+/** Asserts a tool result content block is text and returns its body. */
+function expectTextContent(content: { type: string; text?: string } | undefined): string {
+  if (!content || content.type !== "text" || content.text === undefined) {
+    throw new Error("Expected a text content block.");
+  }
+
+  return content.text;
 }
 
 function truncateForLog(value: string, maxChars: number): string {
@@ -1265,9 +1271,6 @@ function createEntry(overrides: Partial<Durable> = {}): Durable {
     cluster_id: overrides.cluster_id,
     user_id: overrides.user_id,
     project: overrides.project,
-    retired: overrides.retired ?? false,
-    retired_at: overrides.retired_at,
-    retired_reason: overrides.retired_reason,
     created_at: overrides.created_at ?? now,
     updated_at: overrides.updated_at ?? now,
   };
@@ -1303,9 +1306,6 @@ function createProcedure(overrides: Partial<Procedure> = {}): Procedure {
     source_hash: overrides.source_hash ?? computeProcedureSourceHash(JSON.stringify(body)),
     source_file: overrides.source_file,
     embedding: overrides.embedding,
-    retired: overrides.retired ?? false,
-    retired_at: overrides.retired_at,
-    retired_reason: overrides.retired_reason,
     superseded_by: overrides.superseded_by,
     created_at: now,
     updated_at: overrides.updated_at ?? now,

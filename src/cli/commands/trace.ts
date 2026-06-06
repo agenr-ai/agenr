@@ -3,6 +3,7 @@ import { Option, type Command } from "commander";
 import { loadEntryTraceRuntime } from "../../app/memory/inspect.js";
 import type { EntryTrace } from "../../app/memory/ports.js";
 import { resolveClaimSlotPolicy } from "../../core/claim-slot-policy.js";
+import { describeDurableLineageState, formatDurableClaimLifecycle, summarizeClaimFamilyTransition } from "../../core/recall/entry-lineage.js";
 import type { Durable } from "../../core/types.js";
 
 /** Commander options accepted by the `agenr trace` command. */
@@ -49,10 +50,11 @@ export function registerTraceCommand(program: Command): void {
  * @returns Human-readable trace output block.
  */
 function renderTrace(trace: EntryTrace): string {
+  const nowMs = Date.now();
   const entrySlotPolicy = resolveTraceSlotPolicy(trace);
   const lines = [
     `Trace for ${trace.entry.id} | ${trace.entry.subject}`,
-    `type=${trace.entry.type} expiry=${trace.entry.expiry} importance=${trace.entry.importance} retired=${trace.entry.retired}`,
+    `type=${trace.entry.type} expiry=${trace.entry.expiry} importance=${trace.entry.importance} memory_state=${describeDurableLineageState(trace.entry, nowMs)}`,
     `content=${truncate(trace.entry.content, 220)}`,
   ];
 
@@ -73,11 +75,11 @@ function renderTrace(trace: EntryTrace): string {
   if (trace.claimFamily && trace.claimFamily.entries.length > 0) {
     lines.push(
       `claim_family=${trace.claimFamily.claimKey} | slot_policy=${entrySlotPolicy.policy} | ${trace.claimFamily.entries
-        .map((entry) => `${entry.id}:${describeEntryState(entry)}:${formatClaimLifecycle(entry)}`)
+        .map((entry) => `${entry.id}:${describeDurableLineageState(entry, nowMs)}:${formatDurableClaimLifecycle(entry)}`)
         .join(", ")}`,
     );
     lines.push(`claim_family_policy_reason=${entrySlotPolicy.reason}`);
-    const transitionSummary = summarizeClaimFamilyTransition(trace.claimFamily.entries);
+    const transitionSummary = summarizeClaimFamilyTransition(trace.claimFamily.entries, nowMs);
     if (transitionSummary) {
       lines.push(`transition=${transitionSummary}`);
     }
@@ -111,14 +113,15 @@ function renderTrace(trace: EntryTrace): string {
  * @returns Pretty-printed JSON output.
  */
 function renderTraceJson(trace: EntryTrace): string {
+  const nowMs = Date.now();
   const slotPolicy = resolveTraceSlotPolicy(trace);
-  const transitionSummary = trace.claimFamily ? summarizeClaimFamilyTransition(trace.claimFamily.entries) : undefined;
+  const transitionSummary = trace.claimFamily ? summarizeClaimFamilyTransition(trace.claimFamily.entries, nowMs) : undefined;
 
   return `${JSON.stringify(
     {
-      entry: serializeTraceEntry(trace.entry, slotPolicy),
-      ...(trace.supersededBy ? { supersededBy: serializeTraceEntry(trace.supersededBy) } : {}),
-      supersedes: trace.supersedes.map((entry) => serializeTraceEntry(entry)),
+      entry: serializeTraceEntry(trace.entry, nowMs, slotPolicy),
+      ...(trace.supersededBy ? { supersededBy: serializeTraceEntry(trace.supersededBy, nowMs) } : {}),
+      supersedes: trace.supersedes.map((entry) => serializeTraceEntry(entry, nowMs)),
       ...(trace.claimFamily
         ? {
             claimFamily: {
@@ -126,7 +129,7 @@ function renderTraceJson(trace: EntryTrace): string {
               slotPolicy: slotPolicy.policy,
               slotPolicyReason: slotPolicy.reason,
               ...(transitionSummary ? { transition: transitionSummary } : {}),
-              entries: trace.claimFamily.entries.map((entry) => serializeTraceEntry(entry)),
+              entries: trace.claimFamily.entries.map((entry) => serializeTraceEntry(entry, nowMs)),
             },
           }
         : {}),
@@ -135,56 +138,6 @@ function renderTraceJson(trace: EntryTrace): string {
     null,
     2,
   )}\n`;
-}
-
-/**
- * Formats one narrow memory-state label for lineage inspection.
- *
- * @param entry - Entry to describe.
- * @returns Narrow state label.
- */
-function describeEntryState(entry: Durable): string {
-  if (entry.superseded_by) {
-    return "superseded";
-  }
-
-  if (entry.retired || entry.valid_to) {
-    return "historical";
-  }
-
-  return "current";
-}
-
-/**
- * Formats the claim-key lifecycle label for lineage inspection.
- *
- * @param entry - Entry to describe.
- * @returns Lifecycle label text.
- */
-function formatClaimLifecycle(entry: Durable): string {
-  if (!entry.claim_key) {
-    return "no-key";
-  }
-
-  return entry.claim_key_status ?? "legacy";
-}
-
-/** Builds a compact change summary from one traced claim family. */
-function summarizeClaimFamilyTransition(entries: Durable[]): string | undefined {
-  const current = entries.find((entry) => !entry.retired && !entry.superseded_by);
-  const prior = [...entries]
-    .reverse()
-    .find((entry) => entry.id !== current?.id && (entry.superseded_by !== undefined || entry.retired || entry.valid_to !== undefined));
-  if (current && prior) {
-    return `${prior.id} -> ${current.id}`;
-  }
-  if (prior) {
-    return `${prior.id} is historical with no current sibling in the traced family`;
-  }
-  if (current) {
-    return `${current.id} is the only current sibling in the traced family`;
-  }
-  return undefined;
 }
 
 /**
@@ -220,10 +173,11 @@ function resolveTraceSlotPolicy(trace: EntryTrace): { policy: string; reason: st
  * Converts one trace entry into a structured inspection payload.
  *
  * @param entry - Entry to serialize.
+ * @param nowMs - Reference instant in epoch milliseconds for lineage state.
  * @param slotPolicy - Optional slot-policy metadata when the entry has a claim key.
  * @returns Structured trace entry payload.
  */
-function serializeTraceEntry(entry: Durable, slotPolicy?: { policy: string; reason: string }): Record<string, unknown> {
+function serializeTraceEntry(entry: Durable, nowMs: number, slotPolicy?: { policy: string; reason: string }): Record<string, unknown> {
   return {
     id: entry.id,
     subject: entry.subject,
@@ -231,11 +185,10 @@ function serializeTraceEntry(entry: Durable, slotPolicy?: { policy: string; reas
     type: entry.type,
     expiry: entry.expiry,
     importance: entry.importance,
-    retired: entry.retired,
     createdAt: entry.created_at,
     updatedAt: entry.updated_at,
-    memoryState: describeEntryState(entry),
-    claimLifecycle: formatClaimLifecycle(entry),
+    memoryState: describeDurableLineageState(entry, nowMs),
+    claimLifecycle: formatDurableClaimLifecycle(entry),
     ...(entry.claim_key ? { claimKey: entry.claim_key } : {}),
     ...(entry.claim_key && slotPolicy ? { slotPolicy: slotPolicy.policy, slotPolicyReason: slotPolicy.reason } : {}),
     ...(entry.valid_from || entry.valid_to

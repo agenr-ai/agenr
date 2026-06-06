@@ -25,9 +25,10 @@ const EPISODE_SELECT_COLUMNS = `
   gen_version,
   message_count,
   embedding,
-  retired,
-  retired_at,
-  retired_reason,
+  valid_from,
+  valid_to,
+  supersession_kind,
+  supersession_reason,
   superseded_by,
   created_at,
   updated_at
@@ -157,9 +158,10 @@ export async function upsertEpisode(executor: SqlExecutor, input: EpisodeInput):
           gen_version,
           message_count,
           embedding,
-          retired,
-          retired_at,
-          retired_reason,
+          valid_from,
+          valid_to,
+          supersession_kind,
+          supersession_reason,
           superseded_by,
           created_at,
           updated_at
@@ -167,7 +169,7 @@ export async function upsertEpisode(executor: SqlExecutor, input: EpisodeInput):
         VALUES (
           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
           CASE WHEN ? IS NULL THEN NULL ELSE vector32(?) END,
-          0, NULL, NULL, NULL, ?, ?
+          NULL, NULL, NULL, NULL, NULL, ?, ?
         )
       `,
       args: [
@@ -264,7 +266,7 @@ export async function upsertEpisode(executor: SqlExecutor, input: EpisodeInput):
 }
 
 /**
- * Lists non-retired episodes whose time range overlaps the requested temporal
+ * Lists active episodes whose time range overlaps the requested temporal
  * window.
  *
  * @param executor - SQL executor used for the lookup.

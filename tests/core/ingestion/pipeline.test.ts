@@ -939,7 +939,7 @@ class MockDatabase implements DatabasePort {
     return new Set(hashes.filter((hash) => this.existingNormHashes.has(hash)));
   }
 
-  public async retireDurable(): Promise<boolean> {
+  public async closeDurableValidity(): Promise<boolean> {
     return false;
   }
 

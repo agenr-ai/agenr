@@ -1,6 +1,14 @@
 import type { Durable } from "../../core/types.js";
 import type { DreamEpisodeEvidence, DreamHealthStats } from "../../app/dreaming/ports.js";
-import { buildActiveDurableClause, DURABLE_SELECT_COLUMNS, mapDurableRow, readNumber, readOptionalString, readRequiredString } from "./row-mapping.js";
+import {
+  buildActiveDurableClause,
+  buildActiveEpisodeClause,
+  DURABLE_SELECT_COLUMNS,
+  mapDurableRow,
+  readNumber,
+  readOptionalString,
+  readRequiredString,
+} from "./row-mapping.js";
 import type { SqlExecutor } from "./queries.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -194,7 +202,7 @@ export async function listReconcileDurables(
       FROM durables AS e
       WHERE ${whereClauses.join("\n        AND ")}
       ORDER BY
-        CASE WHEN e.retired = 0 AND e.superseded_by IS NULL THEN 0 ELSE 1 END ASC,
+        CASE WHEN ${buildActiveDurableClause("e")} THEN 0 ELSE 1 END ASC,
         COALESCE(e.claim_key, '') ASC,
         e.created_at ASC,
         e.id ASC
@@ -244,8 +252,7 @@ export async function listEpisodeEvidenceSince(
         project
       FROM episodes
       WHERE created_at >= ?
-        AND retired = 0
-        AND superseded_by IS NULL
+        AND ${buildActiveEpisodeClause()}
         ${projectClause}
       ORDER BY started_at ASC, id ASC
       LIMIT ?
@@ -284,7 +291,7 @@ export async function countEpisodesSince(executor: SqlExecutor, since: string, p
       SELECT COUNT(*) AS total
       FROM episodes
       WHERE created_at >= ?
-        AND retired = 0
+        AND ${buildActiveEpisodeClause()}
         ${projectClause}
     `,
     args,

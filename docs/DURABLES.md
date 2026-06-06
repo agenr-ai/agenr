@@ -266,10 +266,10 @@ At each stage, the first surviving entry wins and later collisions are marked `s
 
 Database lookups only consider active entries:
 
-- `retired = 0`
+- `valid_to IS NULL OR datetime(valid_to) > datetime('now')`
 - `superseded_by IS NULL`
 
-So retired or superseded rows do not block a new store operation.
+So stale or superseded rows do not block a new store operation.
 
 The skip reasons are intentionally coarse:
 
@@ -353,8 +353,8 @@ Persistence behavior:
 - `updated_at` is always set to `now`
 - `quality_score` is initialized to `0.5`
 - `recall_count` is initialized to `0`
-- `retired` is initialized to `false`
 - `user_id`, `project`, `valid_from`, `valid_to`, `content_hash`, and `norm_content_hash` are copied through when present
+- stale rows are represented by a closed `valid_to` plus optional `supersession_kind` / `supersession_reason`, not a separate retirement flag
 - accepted claim-key lifecycle metadata is persisted when available
 
 Explicit supersession behavior:

@@ -2790,9 +2790,6 @@ function createEntry(overrides: Partial<Durable> = {}): Durable {
     last_recalled_at: overrides.last_recalled_at,
     superseded_by: overrides.superseded_by,
     cluster_id: overrides.cluster_id,
-    retired: overrides.retired ?? false,
-    retired_at: overrides.retired_at,
-    retired_reason: overrides.retired_reason,
     created_at: overrides.created_at ?? now,
     updated_at: overrides.updated_at ?? now,
   };
@@ -2836,9 +2833,6 @@ function createProcedure(overrides: Partial<Procedure> = {}): Procedure {
     source_hash: overrides.source_hash ?? computeProcedureSourceHash(JSON.stringify(body)),
     source_file: overrides.source_file,
     embedding: overrides.embedding,
-    retired: overrides.retired ?? false,
-    retired_at: overrides.retired_at,
-    retired_reason: overrides.retired_reason,
     superseded_by: overrides.superseded_by,
     created_at: now,
     updated_at: overrides.updated_at ?? now,
@@ -2860,7 +2854,6 @@ function toRecallCandidateDurable(entry: Durable): RecallCandidateDurable {
     claim_support_observed_at: entry.claim_support_observed_at,
     valid_from: entry.valid_from,
     valid_to: entry.valid_to,
-    retired: entry.retired,
   };
 }
 

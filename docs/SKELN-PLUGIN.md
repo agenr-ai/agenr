@@ -26,7 +26,7 @@ The Skeln integration is deliberately scoped down from [`docs/OPENCLAW-PLUGIN.md
 
 Current Skeln omissions:
 
-- no `agenr_retire` or `agenr_trace`
+- no `agenr_trace`
 - no predecessor continuity summaries
 - no background predecessor episode ingest
 - no OpenClaw transcript parsing or episode writer
@@ -427,7 +427,7 @@ Current behavior:
 - supports metadata updates including `importance`, `expiry`, `claimKey`, `validFrom`, and `validTo`
 - writes normalized claim-key lifecycle metadata when `claimKey` is updated
 
-There is no Skeln `agenr_retire` tool in the first deliverable. Retire flows must go through the OpenClaw plugin, surgeon maintenance, or another host surface.
+There is no `agenr_retire` tool on any host. Taking a memory offline now happens through valid-time staleness (closing `validTo` via `agenr_update`), explicit supersession, or dreaming maintenance.
 
 ### `agenr_work` and Goal Aliases
 

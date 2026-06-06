@@ -99,7 +99,6 @@ export type RecallCandidateDurable = Pick<
   | "claim_support_observed_at"
   | "valid_from"
   | "valid_to"
-  | "retired"
 >;
 
 /**

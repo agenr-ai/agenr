@@ -13,7 +13,7 @@ describe("resolveSessionFile", () => {
             throw new Error("missing session file");
           },
         },
-      } as ExtensionContext),
+      } as unknown as ExtensionContext),
     ).toBeUndefined();
   });
 
@@ -23,7 +23,7 @@ describe("resolveSessionFile", () => {
         sessionManager: {
           getSessionFile: () => "   ",
         },
-      } as ExtensionContext),
+      } as unknown as ExtensionContext),
     ).toBeUndefined();
   });
 });

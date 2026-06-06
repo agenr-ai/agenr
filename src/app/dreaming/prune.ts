@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 
 import {
-  compareRetirementCandidates,
-  isActionableRetirementCandidate,
-  type DreamRetirementPolicyCandidate,
-} from "../../core/dreaming/domain/retirement-policy.js";
+  compareStaleCandidates,
+  isActionableStaleCandidate,
+  type DreamStaleCandidatePolicyCandidate,
+} from "../../core/dreaming/domain/stale-candidate-policy.js";
 import type { DreamPruneSummary } from "../../core/dreaming/types.js";
+import { isStaleMemory } from "../../core/temporal-validity.js";
 import type { Durable } from "../../core/types.js";
 import type { DreamPort } from "./ports.js";
 
@@ -32,7 +33,7 @@ export interface DreamPruneDeps {
 }
 
 /**
- * Runs conservative durable retirement after synthesis and projection.
+ * Runs conservative durable staleness after synthesis and projection.
  *
  * @param options - Prune scope, protection thresholds, and run metadata.
  * @param deps - Persistence port used to read and mutate durables.
@@ -54,27 +55,27 @@ export async function runPruneStage(options: DreamPruneOptions, deps: DreamPrune
       }),
     )
     .filter((candidate): candidate is PruneCandidateEvaluation => candidate !== null)
-    .sort((left, right) => compareRetirementCandidates(toRetirementPolicyCandidate(left.durable), toRetirementPolicyCandidate(right.durable)));
+    .sort((left, right) => compareStaleCandidates(toStaleCandidatePolicyCandidate(left.durable), toStaleCandidatePolicyCandidate(right.durable)));
 
   const protectedCount = evaluated.filter((candidate) => candidate.protectionReason !== null).length;
-  const retirable = evaluated.filter((candidate) => candidate.protectionReason === null);
-  let durablesRetired = 0;
+  const stalable = evaluated.filter((candidate) => candidate.protectionReason === null);
+  let durablesStaled = 0;
 
-  if (options.apply && retirable.length > 0) {
+  if (options.apply && stalable.length > 0) {
     await deps.port.withTransaction(async (tx) => {
-      for (const candidate of retirable) {
-        const retired = await tx.retireDurable(candidate.durable.id, candidate.retirementReason);
-        if (!retired) {
+      for (const candidate of stalable) {
+        const staled = await tx.closeDurableValidity(candidate.durable.id, candidate.staleReason);
+        if (!staled) {
           continue;
         }
-        durablesRetired += 1;
+        durablesStaled += 1;
 
         await tx.logRunAction({
           id: randomUUID(),
           runId: options.runId,
-          actionType: "retire",
+          actionType: "stale",
           durableIds: [candidate.durable.id],
-          reasoning: candidate.retirementReason,
+          reasoning: candidate.staleReason,
           recallDelta: null,
           details: {
             stage: "prune",
@@ -92,8 +93,8 @@ export async function runPruneStage(options: DreamPruneOptions, deps: DreamPrune
     durablesScanned: durables.length,
     candidatesIdentified: evaluated.length,
     candidatesProtected: protectedCount,
-    candidatesRetirable: retirable.length,
-    durablesRetired,
+    candidatesRetirable: stalable.length,
+    durablesStaled,
     dryRun: !options.apply,
   };
 }
@@ -102,10 +103,10 @@ export async function runPruneStage(options: DreamPruneOptions, deps: DreamPrune
 interface PruneCandidateEvaluation {
   durable: Durable;
   protectionReason: string | null;
-  retirementReason: string;
+  staleReason: string;
 }
 
-/** Evaluates whether one durable is retirable or protected during pruning. */
+/** Evaluates whether one durable is stalable or protected during pruning. */
 function evaluatePruneCandidate(
   durable: Durable,
   options: {
@@ -115,14 +116,14 @@ function evaluatePruneCandidate(
     protectRecalledDays: number;
   },
 ): PruneCandidateEvaluation | null {
-  if (!isActionableRetirementCandidate(toRetirementPolicyCandidate(durable)) && !isExpiredByValidTo(durable, options.now)) {
+  if (!isActionableStaleCandidate(toStaleCandidatePolicyCandidate(durable)) && !isStaleMemory(durable, options.now.getTime())) {
     return null;
   }
 
   return {
     durable,
     protectionReason: resolveProtectionReason(durable, options),
-    retirementReason: buildRetirementReason(durable, options.now),
+    staleReason: buildStaleReason(durable, options.now),
   };
 }
 
@@ -188,31 +189,21 @@ function wasRecentlyRecalled(durable: Durable, now: Date, protectRecalledDays: n
   return recalledAt >= cutoff;
 }
 
-/** Returns whether a durable's valid-to timestamp has expired. */
-function isExpiredByValidTo(durable: Durable, now: Date): boolean {
-  if (!durable.valid_to) {
-    return false;
-  }
-
-  const validTo = Date.parse(durable.valid_to);
-  return Number.isFinite(validTo) && validTo <= now.getTime();
-}
-
-/** Builds the persisted retirement reason for a prune action. */
-function buildRetirementReason(durable: Durable, now: Date): string {
-  if (isExpiredByValidTo(durable, now)) {
-    return "Dream prune retired an expired valid-time durable.";
+/** Builds the persisted stale reason for a prune action. */
+function buildStaleReason(durable: Durable, now: Date): string {
+  if (isStaleMemory(durable, now.getTime())) {
+    return "Dream prune staled an expired valid-time durable.";
   }
 
   if (durable.expiry === "temporary") {
-    return "Dream prune retired a temporary durable after synthesis.";
+    return "Dream prune staled a temporary durable after synthesis.";
   }
 
-  return "Dream prune retired a low-signal durable after synthesis.";
+  return "Dream prune staled a low-signal durable after synthesis.";
 }
 
-/** Adapts a durable to the core retirement-policy candidate shape. */
-function toRetirementPolicyCandidate(durable: Durable): DreamRetirementPolicyCandidate {
+/** Adapts a durable to the core stale-candidate policy shape. */
+function toStaleCandidatePolicyCandidate(durable: Durable): DreamStaleCandidatePolicyCandidate {
   return {
     id: durable.id,
     subject: durable.subject,

@@ -38,8 +38,8 @@ export interface DatabasePort {
   /** Check if normalized content hashes already exist. Returns the set of existing hashes. */
   findExistingNormHashes(hashes: string[]): Promise<Set<string>>;
 
-  /** Mark an entry as retired. */
-  retireDurable(id: string, reason?: string): Promise<boolean>;
+  /** Close one entry's valid-time window so it becomes stale for current recall. */
+  closeDurableValidity(id: string, reason?: string): Promise<boolean>;
 
   /** Supersede an active entry, linking it to the new entry that replaces it. */
   supersedeDurable(oldId: string, newId: string, kind?: string, reason?: string): Promise<boolean>;
@@ -85,13 +85,13 @@ export interface EpisodeDatabasePort {
   /** Insert or update an episode using `summaryHash` change detection. */
   upsertEpisode(input: EpisodeInput): Promise<EpisodeUpsertResult>;
 
-  /** List non-retired episodes whose time range overlaps the requested window. */
+  /** List active episodes whose time range overlaps the requested window. */
   listEpisodesByTimeWindow(window: TemporalWindow, limit?: number): Promise<Episode[]>;
 
   /** Find episodes by vector similarity to a query embedding. */
   episodeVectorSearch(params: { embedding: number[]; limit: number }): Promise<Array<{ episode: Episode; vectorSim: number }>>;
 
-  /** List non-retired episodes that still need embeddings. */
+  /** List active episodes that still need embeddings. */
   listEpisodesWithoutEmbeddings(limit?: number): Promise<Episode[]>;
 
   /** Update only the embedding payload for an existing episode row. */
@@ -126,11 +126,20 @@ export interface ProcedureDatabasePort {
   /** Update only the embedding payload for an existing procedure row. */
   updateProcedureEmbedding(id: string, embedding: number[]): Promise<void>;
 
-  /** Mark one active procedure revision as retired. */
-  retireProcedure(id: string, reason?: string): Promise<boolean>;
+  /** Close one active procedure revision's valid-time window. */
+  closeProcedureValidity(id: string, reason?: string): Promise<boolean>;
 
   /** Supersede one active procedure revision with a new revision. */
   supersedeProcedure(oldId: string, newId: string, reason?: string): Promise<boolean>;
+
+  /**
+   * Replace one active procedure revision with a new revision atomically.
+   *
+   * Owns the active-key unique-index and `superseded_by` foreign-key ordering so
+   * callers do not reimplement the close-insert-link sequence. Must run inside a
+   * write transaction.
+   */
+  replaceProcedureRevision(existingId: string, replacement: Procedure, reason?: string): Promise<Procedure>;
 }
 
 // ── Embeddings ───────────────────────────────────────────────────────
@@ -159,11 +168,11 @@ export interface RecallPorts {
   /**
    * Expand a typed neighborhood of entries around the provided seed IDs.
    *
-   * The adapter honors `families` exactly and treats `includeRetired` as a
+   * The adapter honors `families` exactly and treats `includeHistorical` as a
    * hard gate. This is the generalized successor of the phase 1
    * `fetchPredecessors` lookup and is used by every entry ranking profile.
-   * The default profile passes `includeRetired: false`; historical-state
-   * passes `includeRetired: true` with a wider family set.
+   * The default profile passes `includeHistorical: false`; historical-state
+   * passes `includeHistorical: true` with a wider family set.
    */
   expandNeighborhood?(request: DurableNeighborhoodRequest): Promise<RecallCandidateDurable[]>;
 

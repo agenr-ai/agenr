@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Breaking
+
+- **Retirement flags removed; staleness uses `valid_to`.** `durables`, `episodes`, and `procedures` no longer store `retired`, `retired_at`, or `retired_reason`. Close validity with `valid_to` plus optional `supersession_kind: "stale"` and `supersession_reason` instead. Schema version is now `5` (migrates from `4`).
+- **`agenr_retire` removed.** Use `agenr_update` with `validTo` to close durable validity from OpenClaw hosts.
+- **Dreaming prune actions renamed.** Run summaries and `dream_runs.durables_staled` replace `durables_retired`; audit actions use `stale` instead of `retire`.
+- **Neighborhood expansion flag renamed.** Recall adapters accept `includeHistorical` instead of `includeRetired`.
+
+### Changed
+
+- **Database ports** expose `closeDurableValidity` and `closeProcedureValidity` instead of `retireDurable` and `retireProcedure`.
+- **Docs and tests** updated for the staleness model across durables, episodes, procedures, dreaming, and the OpenClaw plugin.
+
 ## [4.0.0] - 2026-06-05
 
 ### Breaking
@@ -16,7 +30,7 @@
 - **Dreaming proposal review surface.** New `agenr dream actions`, `agenr dream proposals`, `agenr dream backlog`, and `agenr dream review` commands, with backed-up transactional proposal apply.
 - **Session-end episode boundaries.** OpenClaw now writes the current session's episode from its `session_end` hook so dreaming has fresh evidence before the next session starts; the write is best-effort and idempotent by session id. Skeln's shutdown chain writes through the same bounded episode contract.
 - **Dreaming pipeline scenario fixtures.** New fixtures under `tests/scenarios/dreaming/pipeline/` cover implicit-preference capture, trip-lifecycle revision, point-in-time recall, and the no-overconsolidation guard.
-- **Dreaming Milestone 5 release path.** The `prune` stage now retires protected low-signal durables on `standard` and `deep` runs, background `light` runs fire after host session-end episode writes, successful `agenr_store` calls can trigger `light` runs when accumulated durable importance crosses the configured threshold, and completion summaries include compute-efficiency counters for the eval scoreboard.
+- **Dreaming Milestone 5 release path.** The `prune` stage now closes validity on protected low-signal durables on `standard` and `deep` runs, background `light` runs fire after host session-end episode writes, successful `agenr_store` calls can trigger `light` runs when accumulated durable importance crosses the configured threshold, and completion summaries include compute-efficiency counters for the eval scoreboard.
 - **Dreaming ops hardening (WS6).** A process-wide dreaming lease prevents overlapping CLI, background, store-triggered runs, and host episode writes; the lock heartbeat reclaims rows orphaned by a crashed process after a stale timeout without stealing active long-running runs; episode writes serialize through the same lock before post-session light dreaming; background apply runs record `backupSkipped` in completion summaries; `agenr dream status` warns when recent applied `light` runs skipped backup; and `procedures/agenr-dream-deep-maintenance.yaml` documents weekly deep maintenance.
 - **Dreaming compute-efficiency suite (WS3).** `recomputeRatio` is now `synthesizedDurableMutations / evidenceItemsRead`; a new `POST /internal/evals/dreaming-efficiency/run` seam provisions pre-baked completion summaries and derives efficiency from persisted scan/project/stage counters (Option A); `agenr-evals` ships `manifests/dreaming/compute-efficiency.json` with three regression cases via the `agenr-dreaming-efficiency-http` adapter.
 - **Directive topic triggers (WS4).** Proactive `topic:<term>` directives now surface during before-turn when the current user turn mentions the topic; abstain directives still run last and suppress conflicting topic directives. Session-start behavior for `topic:` triggers is unchanged in v1.

@@ -87,7 +87,7 @@ As a quick rule:
 
 1. Shared durable-memory, recall, working-memory, and claim-key logic belongs in `core/` or `app/`.
 2. Skeln hook wiring, tool schemas, session scope helpers, working-context injection, and goal aliases belong in `src/adapters/skeln/`.
-3. OpenClaw-only continuity, transcript parsing, retire/trace tools, and memory-runtime bridges stay out of the Skeln adapter unless the behavior is genuinely host-neutral.
+3. OpenClaw-only continuity, transcript parsing, trace tools, and memory-runtime bridges stay out of the Skeln adapter unless the behavior is genuinely host-neutral.
 
 ## Recall-Eval Guardrails
 
@@ -132,7 +132,6 @@ OpenClaw exposes these runtime tools:
 agenr_store
 agenr_recall
 agenr_fetch
-agenr_retire
 agenr_update
 agenr_trace
 ```

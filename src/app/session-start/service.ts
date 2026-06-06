@@ -1,5 +1,5 @@
 import { recall, type RecallExecutionTraceSummary, type RecallOutput } from "../../core/recall/index.js";
-import { isWithinValidityWindow } from "../../core/temporal-validity.js";
+import { isCurrentlyValidMemory, isWithinValidityWindow } from "../../core/temporal-validity.js";
 import type { Durable } from "../../core/types.js";
 
 import { parseDirectiveMetadata } from "../../core/directives/model.js";
@@ -360,10 +360,7 @@ function normalizeThreshold(value: number | undefined): number {
  *
  * A bounded `valid_to` alone does not make an entry historical: a row stays
  * current until its valid-time window actually closes. Only a `valid_to` that
- * has already passed relative to `nowMs` (or an explicit retirement) demotes
- * the entry to historical. Automatic injection filters expired rows out before
- * they reach this label, so a surviving core item with a future `valid_to`
- * correctly reads as current.
+ * has already passed relative to `nowMs` demotes the entry to historical.
  *
  * @param entry - Durable entry being surfaced at session start.
  * @param nowMs - Reference instant used to resolve valid-time freshness.
@@ -374,12 +371,7 @@ function resolveMemoryState(entry: Durable, nowMs: number): SessionStartPatchIte
     return "superseded";
   }
 
-  if (entry.retired) {
-    return "historical";
-  }
-
-  const validTo = normalizeOptionalString(entry.valid_to);
-  if (validTo && !isWithinValidityWindow(undefined, validTo, nowMs)) {
+  if (!isCurrentlyValidMemory(entry, nowMs)) {
     return "historical";
   }
 

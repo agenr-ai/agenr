@@ -61,7 +61,7 @@ export interface DreamRunResult {
   tier: DreamTier;
   actionsTaken: number;
   actionsSkipped: number;
-  durablesRetired: number;
+  durablesStaled: number;
   inputTokens: number;
   outputTokens: number;
   estimatedCostUsd: number;
@@ -182,7 +182,7 @@ async function executeDreamRun(options: DreamRunOptions, deps: DreamWorkflowDeps
   let estimatedCostUsd = 0;
   let actionsTaken = 0;
   let actionsSkipped = 0;
-  let durablesRetired = 0;
+  let durablesStaled = 0;
   let reconcileStatus: DreamRunStatus;
   let reconcileError: string | undefined;
 
@@ -247,7 +247,7 @@ async function executeDreamRun(options: DreamRunOptions, deps: DreamWorkflowDeps
       durablesSkipped = reconcile.completion.durables_skipped;
       recommendations = reconcile.completion.recommendations;
       reconcileSummary = reconcile.completion.reconcile;
-      durablesRetired = reconcile.durablesRetired;
+      durablesStaled = reconcile.durablesStaled;
       inputTokens = reconcile.usage.inputTokens + extract.usage.inputTokens;
       outputTokens = reconcile.usage.outputTokens + extract.usage.outputTokens;
       estimatedCostUsd = reconcile.usage.estimatedCostUsd + extract.usage.estimatedCostUsd;
@@ -310,9 +310,9 @@ async function executeDreamRun(options: DreamRunOptions, deps: DreamWorkflowDeps
         },
         { port: deps.port },
       );
-      actionsTaken += pruneSummary.durablesRetired;
+      actionsTaken += pruneSummary.durablesStaled;
       actionsSkipped += pruneSummary.candidatesProtected + (options.apply ? 0 : pruneSummary.candidatesRetirable);
-      durablesRetired += pruneSummary.durablesRetired;
+      durablesStaled += pruneSummary.durablesStaled;
     } else {
       stagesSkipped.push({ stage: "prune", reason: "light_tier" });
     }
@@ -320,7 +320,7 @@ async function executeDreamRun(options: DreamRunOptions, deps: DreamWorkflowDeps
     efficiencySummary = buildDreamEfficiencySummary({
       scan,
       estimatedCostUsd,
-      synthesizedDurableMutations: extractSummary.durablesInserted + temporalizeSummary.revisionsApplied + (pruneSummary?.durablesRetired ?? 0),
+      synthesizedDurableMutations: extractSummary.durablesInserted + temporalizeSummary.revisionsApplied + (pruneSummary?.durablesStaled ?? 0),
       profileDurableCount: projectSummary.profileDurableCount,
       directiveCount: projectSummary.directiveCount,
     });
@@ -348,7 +348,7 @@ async function executeDreamRun(options: DreamRunOptions, deps: DreamWorkflowDeps
       estimatedCostUsd,
       actionsTaken,
       actionsSkipped,
-      durablesRetired,
+      durablesStaled,
       summaryJson: completionSummary,
       error: reconcileError,
     };
@@ -375,7 +375,7 @@ async function executeDreamRun(options: DreamRunOptions, deps: DreamWorkflowDeps
       tier: options.tier,
       actionsTaken,
       actionsSkipped,
-      durablesRetired,
+      durablesStaled,
       inputTokens,
       outputTokens,
       estimatedCostUsd,
@@ -410,7 +410,7 @@ async function executeDreamRun(options: DreamRunOptions, deps: DreamWorkflowDeps
       estimatedCostUsd,
       actionsTaken,
       actionsSkipped,
-      durablesRetired,
+      durablesStaled,
       summaryJson: failureSummary,
       error: message,
     });

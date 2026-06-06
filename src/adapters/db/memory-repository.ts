@@ -173,7 +173,7 @@ async function probeVectorAvailability(executor: SqlExecutor): Promise<boolean> 
 }
 
 /**
- * Looks up an entry by ID without filtering out retired or superseded rows.
+ * Looks up an entry by ID without filtering out stale or superseded rows.
  *
  * @param executor - SQL executor used for the lookup.
  * @param entryId - Entry identifier to resolve.

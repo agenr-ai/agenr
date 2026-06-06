@@ -54,13 +54,13 @@ describe("parseWorkToolParams", () => {
           actor: "user",
           source: "goal_command",
         },
-        { sessionKey: "skeln:session:1", cwd: "/tmp/project" },
+        { sessionId: "skeln:session:1", cwd: "/tmp/project" },
         READER,
       ),
     ).toEqual({
       action: "list",
       scope: {
-        sessionKey: "skeln:session:1",
+        sessionId: "skeln:session:1",
         cwd: "/tmp/project",
       },
       listLimit: 10,
@@ -81,7 +81,7 @@ describe("parseWorkToolParams", () => {
             title: "Working memory",
           },
         },
-        { sessionKey: "skeln:session:1" },
+        { sessionId: "skeln:session:1" },
         READER,
       ),
     ).toMatchObject({
@@ -112,7 +112,7 @@ describe("parseWorkToolParams", () => {
             },
           },
         },
-        { sessionKey: "skeln:session:1" },
+        { sessionId: "skeln:session:1" },
         READER,
       ),
     ).toMatchObject({
@@ -140,7 +140,7 @@ describe("parseWorkToolParams", () => {
             status: "complete",
           },
         },
-        { sessionKey: "skeln:session:1" },
+        { sessionId: "skeln:session:1" },
         READER,
       ),
     ).toThrow('Unsupported agenr_work operation "set_status".');
@@ -155,7 +155,7 @@ describe("parseWorkToolParams", () => {
           expectedRevision: 1,
           source: "goal_command",
         },
-        { sessionKey: "skeln:session:1" },
+        { sessionId: "skeln:session:1" },
         READER,
       ),
     ).toThrow('Unsupported agenr_work action "close".');
@@ -175,7 +175,7 @@ describe("parseWorkToolParams", () => {
             },
           },
         },
-        { sessionKey: "skeln:session:1" },
+        { sessionId: "skeln:session:1" },
         READER,
       ),
     ).toThrow("type is required.");

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { ENTRY_FETCH_MAX_CONTENT_CHARS } from "../../../src/adapters/shared/memory-tool-format.js";
 import { parseFetchToolParams, runFetchMemoryTool } from "../../../src/adapters/shared/memory-tools.js";
 import type { MemoryToolParamReader } from "../../../src/adapters/shared/memory-tools.js";
+import type { DatabasePort } from "../../../src/core/ports.js";
 import type { Durable } from "../../../src/core/types.js";
 
 const READER: MemoryToolParamReader = {
@@ -37,7 +38,6 @@ const entry: Durable = {
   tags: ["skeln"],
   quality_score: 0.5,
   recall_count: 0,
-  retired: false,
   created_at: "2026-05-31T00:00:00.000Z",
   updated_at: "2026-05-31T00:00:00.000Z",
 };
@@ -53,13 +53,13 @@ describe("agenr_fetch shared tool flow", () => {
       { id: "entry-1", subject: undefined },
       {
         entries: {
-          getDurable: async (entryId) => (entryId === entry.id ? entry : null),
-        },
+          getDurable: async (entryId: string) => (entryId === entry.id ? entry : null),
+        } as DatabasePort,
         embedding: {} as never,
         memory: {
           findEntryBySubject: async () => entry,
           findMostRecentEntry: async () => entry,
-          getDurableTrace: async () => null,
+          getEntryTrace: async () => null,
         },
       },
     );
@@ -84,13 +84,13 @@ describe("agenr_fetch shared tool flow", () => {
         { id: "entry-1", subject: undefined },
         {
           entries: {
-            getDurable: async () => oversizedEntry,
-          },
+            getDurable: async (_id: string): Promise<Durable | null> => oversizedEntry,
+          } as DatabasePort,
           embedding: {} as never,
           memory: {
             findEntryBySubject: async () => oversizedEntry,
             findMostRecentEntry: async () => oversizedEntry,
-            getDurableTrace: async () => null,
+            getEntryTrace: async () => null,
           },
         },
       ),

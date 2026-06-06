@@ -124,7 +124,6 @@ describe("sharesEntryLineage", () => {
     importance: 5,
     expiry: "permanent",
     created_at: "2026-01-01T00:00:00.000Z",
-    retired: false,
   };
 
   it("matches when two entries share a claim key", () => {
@@ -167,7 +166,6 @@ describe("sharesEpisodeLineage", () => {
     summary: "",
     tags: [],
     startedAt: "2026-01-01T00:00:00.000Z",
-    retired: false,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
   };
@@ -207,7 +205,6 @@ describe("sharesProcedureLineage", () => {
     recall_text: "",
     revision_hash: "",
     source_hash: "",
-    retired: false,
     created_at: "2026-01-01T00:00:00.000Z",
     updated_at: "2026-01-01T00:00:00.000Z",
   };

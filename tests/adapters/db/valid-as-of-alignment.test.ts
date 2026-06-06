@@ -22,6 +22,8 @@ const CASES = [
   { id: "future", valid_from: "2026-03-20T00:00:00.000Z", valid_to: null, expected: false },
   { id: "boundary-to", valid_from: null, valid_to: AS_OF_ISO, expected: true },
   { id: "boundary-from", valid_from: AS_OF_ISO, valid_to: null, expected: true },
+  { id: "offset-boundary-to", valid_from: null, valid_to: "2026-03-15T12:00:00+00:00", expected: true },
+  { id: "offset-window", valid_from: "2026-03-01T00:00:00+00:00", valid_to: "2026-03-31T00:00:00+00:00", expected: true },
 ] as const;
 
 describe("buildValidAsOfClause alignment with isWithinValidityWindow", () => {
@@ -87,7 +89,6 @@ function createEntry(overrides: Partial<Durable> & Pick<Durable, "id">): Durable
     tags: [],
     quality_score: 0.5,
     recall_count: 0,
-    retired: false,
     created_at: AS_OF_ISO,
     updated_at: AS_OF_ISO,
     ...overrides,

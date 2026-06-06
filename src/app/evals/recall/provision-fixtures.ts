@@ -20,8 +20,8 @@ export interface RecallEvalProvisioningResult {
   providedIdCount: number;
   /** Number of fixture entries that received generated IDs. */
   generatedIdCount: number;
-  /** Number of retired fixture entries seeded into storage. */
-  retiredCount: number;
+  /** Number of stale fixture entries seeded into storage. */
+  staleCount: number;
   /** Number of fixture entries that reference a successor entry. */
   supersededCount: number;
   /** Number of fixture entries that defaulted `created_at` during seeding. */
@@ -45,7 +45,7 @@ interface PreparedFixtureBatch {
   insertionOrder: PreparedFixture[];
   providedIdCount: number;
   generatedIdCount: number;
-  retiredCount: number;
+  staleCount: number;
   supersededCount: number;
   createdAtDefaultedCount: number;
   updatedAtDefaultedCount: number;
@@ -56,7 +56,7 @@ interface PreparedFixtureBatch {
  * Provisions the eval memory pool directly into isolated storage.
  *
  * This path intentionally bypasses the normal store pipeline so fixture IDs,
- * timestamps, retirement flags, and supersession metadata remain exact when
+ * timestamps, valid-time staleness, and supersession metadata remain exact when
  * the request provides them.
  *
  * @param params - Case-local fixture data plus isolated database dependencies.
@@ -75,7 +75,7 @@ export async function provisionRecallEvalFixtures(params: {
       provisionedCount: 0,
       providedIdCount: 0,
       generatedIdCount: 0,
-      retiredCount: 0,
+      staleCount: 0,
       supersededCount: 0,
       createdAtDefaultedCount: 0,
       updatedAtDefaultedCount: 0,
@@ -98,7 +98,7 @@ export async function provisionRecallEvalFixtures(params: {
     provisionedCount: preparedBatch.insertionOrder.length,
     providedIdCount: preparedBatch.providedIdCount,
     generatedIdCount: preparedBatch.generatedIdCount,
-    retiredCount: preparedBatch.retiredCount,
+    staleCount: preparedBatch.staleCount,
     supersededCount: preparedBatch.supersededCount,
     createdAtDefaultedCount: preparedBatch.createdAtDefaultedCount,
     updatedAtDefaultedCount: preparedBatch.updatedAtDefaultedCount,
@@ -134,7 +134,7 @@ function prepareFixtures(caseId: string, fixtures: RecallEvalFixtureEntry[], pro
     insertionOrder: topologicallySortFixtures(prepared),
     providedIdCount: fixtures.filter((fixture) => fixture.id !== undefined).length,
     generatedIdCount: fixtures.filter((fixture) => fixture.id === undefined).length,
-    retiredCount: prepared.filter((fixture) => fixture.entry.retired).length,
+    staleCount: prepared.filter((fixture) => fixture.entry.valid_to !== undefined).length,
     supersededCount: prepared.filter((fixture) => fixture.entry.superseded_by !== undefined).length,
     createdAtDefaultedCount: fixtures.filter((fixture) => fixture.created_at === undefined).length,
     updatedAtDefaultedCount: fixtures.filter((fixture) => fixture.updated_at === undefined).length,
@@ -173,9 +173,6 @@ function buildEntry(fixture: RecallEvalFixtureEntry, id: string, provisionedAt: 
     supersession_reason: fixture.supersession_reason,
     directive_polarity: fixture.directive_polarity,
     directive_trigger: fixture.directive_trigger,
-    retired: fixture.retired ?? false,
-    retired_at: fixture.retired_at,
-    retired_reason: fixture.retired_reason,
     created_at: createdAt,
     updated_at: updatedAt,
   };
@@ -187,7 +184,6 @@ function summarizePreparedFixture(entry: Durable): RecallEvalProvisionedEntrySum
     id: entry.id,
     created_at: entry.created_at,
     updated_at: entry.updated_at,
-    retired: entry.retired,
     superseded_by: entry.superseded_by,
     claim_key: entry.claim_key,
     claim_key_status: entry.claim_key_status,

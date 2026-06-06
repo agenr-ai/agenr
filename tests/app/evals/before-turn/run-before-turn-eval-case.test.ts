@@ -424,7 +424,6 @@ describe("runBeforeTurnEvalCase", () => {
       tags: ["dogs", "identity"],
       quality_score: 0.5,
       recall_count: 0,
-      retired: false,
       created_at: "2026-04-18T00:00:00.000Z",
       updated_at: "2026-04-18T00:00:00.000Z",
     });
@@ -490,7 +489,6 @@ describe("runBeforeTurnEvalCase", () => {
       tags: ["dogs", "identity"],
       quality_score: 0.5,
       recall_count: 0,
-      retired: false,
       created_at: "2026-04-18T00:00:00.000Z",
       updated_at: "2026-04-18T00:00:00.000Z",
     });
@@ -623,7 +621,6 @@ describe("runBeforeTurnEvalCase", () => {
       tags: [],
       quality_score: 0.8,
       recall_count: 0,
-      retired: false,
       created_at: "2026-04-01T00:00:00.000Z",
       updated_at: "2026-04-01T00:00:00.000Z",
     });

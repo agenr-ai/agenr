@@ -22,9 +22,6 @@ describe("createInstrumentedRecallPorts", () => {
       last_recalled_at: undefined,
       superseded_by: undefined,
       cluster_id: undefined,
-      retired: false,
-      retired_at: undefined,
-      retired_reason: undefined,
       created_at: "2026-03-01T00:00:00.000Z",
       updated_at: "2026-03-01T00:00:00.000Z",
     };
@@ -38,7 +35,6 @@ describe("createInstrumentedRecallPorts", () => {
           expiry: "permanent" as const,
           embedding: [0.1, 0.2],
           superseded_by: undefined,
-          retired: false,
           created_at: "2026-03-01T00:00:00.000Z",
         },
         vectorSim: 0.9,
@@ -54,7 +50,6 @@ describe("createInstrumentedRecallPorts", () => {
           expiry: "permanent" as const,
           embedding: [0.1, 0.2],
           superseded_by: undefined,
-          retired: false,
           created_at: "2026-03-01T00:00:00.000Z",
         },
         rank: 0.1,
@@ -65,7 +60,7 @@ describe("createInstrumentedRecallPorts", () => {
       seedIds: ["entry-1"],
       budget: 24,
       families: ["supersession_chain"],
-      includeRetired: false,
+      includeHistorical: false,
     };
     const basePorts: RecallPorts = {
       embed: vi.fn(async () => [0.1, 0.2]),

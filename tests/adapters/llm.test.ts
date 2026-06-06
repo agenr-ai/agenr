@@ -60,7 +60,7 @@ function buildAssistantMessage(text: string): AssistantMessage {
 }
 
 function buildUsage(
-  overrides: Partial<AssistantMessage["usage"]> & {
+  overrides: Omit<Partial<AssistantMessage["usage"]>, "cost"> & {
     cost?: Partial<AssistantMessage["usage"]["cost"]>;
   } = {},
 ): AssistantMessage["usage"] {

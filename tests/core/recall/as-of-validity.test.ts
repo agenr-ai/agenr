@@ -12,7 +12,6 @@ function buildCandidate(overrides: Partial<RecallCandidateDurable> & Pick<Recall
     content: "content",
     importance: 5,
     expiry: "permanent",
-    retired: false,
     created_at: "2026-03-01T00:00:00.000Z",
     ...overrides,
   };
@@ -29,7 +28,7 @@ function buildTraceSummary(): RecallExecutionTraceSummary {
       expansionRequested: false,
       expansionAvailable: false,
       familiesRequested: [],
-      includeRetired: false,
+      includeHistorical: false,
       seedIds: [],
       expansionCandidates: 0,
       strongSeedIds: [],

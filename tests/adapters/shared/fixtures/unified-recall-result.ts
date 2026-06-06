@@ -13,6 +13,8 @@ export function createRecallOutput(content: string): RecallOutput {
       importance: 8,
       expiry: "permanent",
       tags: ["skeln"],
+      quality_score: 0.5,
+      recall_count: 0,
       created_at: "2026-05-31T00:00:00.000Z",
       updated_at: "2026-05-31T00:00:00.000Z",
     },

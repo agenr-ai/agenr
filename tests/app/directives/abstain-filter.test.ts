@@ -18,7 +18,6 @@ function buildDurable(overrides: Partial<Durable> & Pick<Durable, "id" | "subjec
     embedding: [],
     quality_score: 0.5,
     recall_count: 0,
-    retired: false,
     created_at: "2026-03-01T00:00:00.000Z",
     updated_at: "2026-03-01T00:00:00.000Z",
     ...overrides,

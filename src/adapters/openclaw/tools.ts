@@ -1,7 +1,6 @@
 export {
   createAgenrFetchTool,
   createAgenrRecallTool,
-  createAgenrRetireTool,
   createAgenrStoreTool,
   createAgenrTraceTool,
   createAgenrUpdateTool,

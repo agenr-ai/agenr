@@ -234,7 +234,7 @@ function buildCloseResult(
       id: "event-1",
       workingSetId: "ws-1",
       sequence: 2,
-      type: "closed",
+      eventType: "closed",
       payload: {},
       createdAt: "2026-05-31T00:00:00.000Z",
     },

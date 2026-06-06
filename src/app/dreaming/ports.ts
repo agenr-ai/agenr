@@ -44,7 +44,7 @@ export interface DreamRunRecord {
   model: string | null;
   actionsTaken: number;
   actionsSkipped: number;
-  durablesRetired: number;
+  durablesStaled: number;
   summaryJson: DreamCompletionSummary | null;
   error: string | null;
   dryRun: boolean;
@@ -148,7 +148,7 @@ export interface DreamPort {
       estimatedCostUsd: number;
       actionsTaken: number;
       actionsSkipped: number;
-      durablesRetired: number;
+      durablesStaled: number;
       summaryJson?: DreamCompletionSummary | null;
       error?: string | null;
       completedAt?: string;
@@ -173,7 +173,7 @@ export interface DreamPort {
   getHealthStats(now?: Date): Promise<DreamHealthStats>;
   getDurable(durableId: string): Promise<Durable | null>;
   getDurables(durableIds: string[]): Promise<Durable[]>;
-  retireDurable(durableId: string, reason?: string): Promise<boolean>;
+  closeDurableValidity(durableId: string, reason?: string): Promise<boolean>;
   updateDurable(
     durableId: string,
     fields: DurableUpdateInput,

@@ -283,7 +283,6 @@ describe("registerRecallCommand", () => {
             claim_key_status: "trusted",
             superseded_by: "entry-2",
             valid_to: "2026-03-20T00:00:00.000Z",
-            retired: false,
           },
           score: 0.88,
           scores: {

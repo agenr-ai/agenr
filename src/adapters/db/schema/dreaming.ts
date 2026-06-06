@@ -13,7 +13,7 @@ const CREATE_DREAM_RUNS_TABLE_SQL = `
     model TEXT,
     actions_taken INTEGER DEFAULT 0,
     actions_skipped INTEGER DEFAULT 0,
-    durables_retired INTEGER DEFAULT 0,
+    durables_staled INTEGER DEFAULT 0,
     summary TEXT,
     summary_json TEXT,
     error TEXT,

@@ -5,7 +5,7 @@ import {
   getDurable,
   getDurables,
   insertDurable,
-  retireDurable,
+  closeDurableValidity,
   supersedeDurable,
   updateDurable,
 } from "./queries.js";
@@ -38,6 +38,7 @@ import {
   sumDurableImportanceCreatedSince,
 } from "./dreaming-queries.js";
 import type { SqlExecutor } from "./queries.js";
+import { runImmediateTransaction } from "./transaction.js";
 
 /**
  * Creates the DB-backed dreaming persistence boundary.
@@ -70,7 +71,7 @@ export function createDreamPort(executor: SqlExecutor): DreamPort {
     supersedeDurable: async (oldDurableId, newDurableId, kind, reason) => supersedeDurable(executor, oldDurableId, newDurableId, kind, reason),
     getDurable: async (durableId) => getDurable(executor, durableId),
     getDurables: async (durableIds) => getDurables(executor, durableIds),
-    retireDurable: async (durableId, reason) => retireDurable(executor, durableId, reason),
+    closeDurableValidity: async (durableId, reason) => closeDurableValidity(executor, durableId, reason),
     updateDurable: async (durableId, fields, options) => updateDurable(executor, durableId, fields, options),
     countEpisodesSince: async (since, project) => countEpisodesSince(executor, since, project),
     countIngestFilesSince: async (since) => countIngestFilesSince(executor, since),
@@ -99,22 +100,5 @@ export function createDreamPort(executor: SqlExecutor): DreamPort {
  * @returns Callback result after the transaction commits.
  */
 async function runInDreamTransaction<T>(executor: SqlExecutor, fn: (tx: DreamPort) => Promise<T>): Promise<T> {
-  await executor.execute("BEGIN IMMEDIATE");
-  try {
-    const result = await fn(createDreamPort(executor));
-    await executor.execute("COMMIT");
-    return result;
-  } catch (error) {
-    await rollbackQuietly(executor);
-    throw error;
-  }
-}
-
-/** Rolls back the active transaction, ignoring the error when none is open. */
-async function rollbackQuietly(executor: SqlExecutor): Promise<void> {
-  try {
-    await executor.execute("ROLLBACK");
-  } catch {
-    // A failed statement may have already aborted the transaction; nothing to roll back.
-  }
+  return runImmediateTransaction(executor, () => fn(createDreamPort(executor)));
 }

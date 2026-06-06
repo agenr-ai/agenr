@@ -1,4 +1,5 @@
 import type { RecallPorts } from "../ports.js";
+import { isCurrentlyValidMemory, isStaleMemory } from "../temporal-validity.js";
 import { resolveClaimSlotPolicy } from "../claim-slot-policy.js";
 
 import { applyCrossEncoderRerank, DEFAULT_CROSS_ENCODER_ALPHA, DEFAULT_CROSS_ENCODER_TOP_K } from "./cross-encoder.js";
@@ -47,7 +48,7 @@ const HISTORICAL_NEIGHBORHOOD_FAMILIES: readonly NeighborhoodFamily[] = ["supers
 const MIN_VECTOR_ONLY_EVIDENCE = 0.3;
 const HISTORICAL_STATE_FLAT_RECENCY = 0.5;
 const HISTORICAL_PREDECESSOR_BOOST = 0.08;
-const HISTORICAL_RETIRED_PREDECESSOR_BOOST = 0.06;
+const HISTORICAL_STALE_PREDECESSOR_BOOST = 0.06;
 const HISTORICAL_OLDER_STATE_BOOST = 0.08;
 /**
  * Extra score margin the historical-state lineage bonus must clear over the
@@ -386,7 +387,7 @@ function buildRecallTraceSummary(params: {
       expansionRequested: false,
       expansionAvailable: false,
       familiesRequested: [],
-      includeRetired: false,
+      includeHistorical: false,
       seedIds: [],
       expansionCandidates: 0,
       strongSeedIds: [],
@@ -652,10 +653,10 @@ function resolveRrfRankConstant(policy: RecallRankingPolicy | undefined, fusedPo
  * This is the generalized successor of the original historical-state
  * predecessor expansion. Only the `historical_state` ranking profile
  * asks the adapter for expansion today, since the default profile's
- * vector and FTS retrieval already excludes superseded and retired
+ * vector and FTS retrieval already excludes superseded and stale
  * rows, and therefore has nothing active left to expand to. Keeping
  * expansion historical-only preserves the phase 1 behavior that default
- * recall never surfaces retired or predecessor material while still
+ * recall never surfaces stale or predecessor material while still
  * routing the historical profile through the generalized port.
  *
  * Returned candidates are ranked by cosine similarity against the query
@@ -685,19 +686,19 @@ async function expandEntryNeighborhood(
   }
 
   const families = HISTORICAL_NEIGHBORHOOD_FAMILIES;
-  const includeRetired = true;
+  const includeHistorical = true;
   const seedIds = Array.from(mergedCandidates.keys());
 
   trace.expansionRequested = true;
   trace.familiesRequested = [...families];
-  trace.includeRetired = includeRetired;
+  trace.includeHistorical = includeHistorical;
   trace.seedIds = seedIds;
 
   const expanded = await ports.expandNeighborhood({
     seedIds,
     budget: DEFAULT_NEIGHBORHOOD_BUDGET,
     families,
-    includeRetired,
+    includeHistorical,
   });
   // Rank the adapter-returned rows by cosine similarity against the
   // query so the expansion channel contributes a meaningful order to
@@ -873,7 +874,7 @@ function resolveAsOfScore(entry: RecallCandidateDurable, asOfDate: Date): number
  * relation, so the predecessor always edges the successor by
  * `HISTORICAL_LINEAGE_GAP_MARGIN`. The floor (`HISTORICAL_PREDECESSOR_BOOST`
  * for direct supersession, `HISTORICAL_OLDER_STATE_BOOST` /
- * `HISTORICAL_RETIRED_PREDECESSOR_BOOST` otherwise) still applies when the
+ * `HISTORICAL_STALE_PREDECESSOR_BOOST` otherwise) still applies when the
  * pool's RRF layout already puts the predecessor close enough that the
  * fixed delta was sufficient.
  *
@@ -988,7 +989,7 @@ function resolveHistoricalLineageBonus(
     };
   }
 
-  const base = entry.retired ? HISTORICAL_RETIRED_PREDECESSOR_BOOST : HISTORICAL_OLDER_STATE_BOOST;
+  const base = isStalePredecessor(entry) ? HISTORICAL_STALE_PREDECESSOR_BOOST : HISTORICAL_OLDER_STATE_BOOST;
   return {
     bonus: shapeHistoricalLineageBonus(base, candidateScore, bestPeerScore),
     tentativeLineageSuppressed,
@@ -998,7 +999,7 @@ function resolveHistoricalLineageBonus(
 /**
  * Shape the additive historical-state lineage bonus.
  *
- * Starts from a fixed floor (direct predecessor, retired predecessor, or
+ * Starts from a fixed floor (direct predecessor, stale predecessor, or
  * older-state) so candidates that already outrank their successor keep the
  * previously validated delta. When the successor's composite dominates the
  * predecessor's composite, the bonus expands to close that gap plus
@@ -1025,7 +1026,12 @@ function shapeHistoricalLineageBonus(base: number, candidateScore: number, succe
  * @returns True when the entry looks like a current-state peer.
  */
 function isPotentialCurrentPeer(entry: RecallCandidateDurable): boolean {
-  return !entry.retired && entry.superseded_by === undefined;
+  return isCurrentlyValidMemory(entry, Date.now());
+}
+
+/** Returns whether one candidate is a stale predecessor rather than superseded. */
+function isStalePredecessor(entry: RecallCandidateDurable): boolean {
+  return isStaleMemory(entry, Date.now());
 }
 
 /**

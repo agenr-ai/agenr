@@ -98,9 +98,6 @@ function createEntry(overrides: Partial<Durable> = {}): Durable {
     cluster_id: overrides.cluster_id,
     user_id: overrides.user_id,
     project: overrides.project,
-    retired: overrides.retired ?? false,
-    retired_at: overrides.retired_at,
-    retired_reason: overrides.retired_reason,
     created_at: overrides.created_at ?? now,
     updated_at: overrides.updated_at ?? overrides.created_at ?? now,
   };

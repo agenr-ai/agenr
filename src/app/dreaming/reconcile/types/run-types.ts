@@ -42,7 +42,7 @@ export interface ReconcileRunResult {
   status: DreamRunStatus;
   error: string | null;
   completion: DreamCompletionSummary;
-  durablesRetired: number;
+  durablesStaled: number;
   usage: {
     inputTokens: number;
     outputTokens: number;

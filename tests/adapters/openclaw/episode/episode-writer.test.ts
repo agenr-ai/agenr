@@ -490,18 +490,12 @@ describe("writeOpenClawPredecessorEpisode", () => {
         await new Promise((resolve) => {
           setTimeout(resolve, 60_000);
         });
-        return {
-          payloads: [
-            {
-              text: JSON.stringify({
-                summary: "Too late.",
-                tags: ["late"],
-                activityLevel: "minimal",
-                project: null,
-              }),
-            },
-          ],
-        };
+        return JSON.stringify({
+          summary: "Too late.",
+          tags: ["late"],
+          activityLevel: "minimal",
+          project: null,
+        });
       },
     });
 

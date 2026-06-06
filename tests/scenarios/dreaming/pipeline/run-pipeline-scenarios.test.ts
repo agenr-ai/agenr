@@ -60,7 +60,6 @@ interface PipelineScenarioDurable {
   valid_from?: string;
   valid_to?: string;
   superseded_by?: string;
-  retired?: boolean;
   created_at?: string;
 }
 
@@ -199,7 +198,7 @@ async function runPipeline(scenario: PipelineScenario, client: Client, port: Dre
 /** Asserts the post-pipeline corpus state for one scenario. */
 async function assertCorpus(client: Client, expectations: PipelineScenarioExpect): Promise<void> {
   const rows = await readAllDurables(client);
-  const active = rows.filter((row) => !row.retired && !row.superseded_by);
+  const active = rows.filter((row) => !row.valid_to && !row.superseded_by);
 
   if (typeof expectations.durablesInserted === "number") {
     const inserted = rows.filter((row) => row.claim_key_source === "dreaming_extract");
@@ -321,7 +320,6 @@ async function seedDurable(client: Client, seed: PipelineScenarioDurable): Promi
     valid_to: seed.valid_to,
     claim_key: seed.claim_key,
     claim_key_status: seed.claim_key_status,
-    retired: seed.retired ?? false,
     created_at: createdAt,
     updated_at: createdAt,
   };
@@ -333,8 +331,8 @@ async function seedDurable(client: Client, seed: PipelineScenarioDurable): Promi
 async function seedEpisode(client: Client, episode: PipelineScenarioEpisode): Promise<void> {
   await client.execute({
     sql: `
-      INSERT INTO episodes (id, source, source_id, started_at, ended_at, summary, project, retired, created_at, updated_at)
-      VALUES (?, 'openclaw', ?, ?, ?, ?, ?, 0, ?, ?)
+      INSERT INTO episodes (id, source, source_id, started_at, ended_at, summary, project, created_at, updated_at)
+      VALUES (?, 'openclaw', ?, ?, ?, ?, ?, ?, ?)
     `,
     args: [
       episode.id,
@@ -357,12 +355,11 @@ interface RawDurableRow {
   claim_key_source: string | null;
   superseded_by: string | null;
   valid_to: string | null;
-  retired: boolean;
 }
 
-/** Reads every durable row, including superseded and retired lineage. */
+/** Reads every durable row, including superseded and stale lineage. */
 async function readAllDurables(client: Client): Promise<RawDurableRow[]> {
-  const result = await client.execute("SELECT id, content, claim_key, claim_key_source, superseded_by, valid_to, retired FROM durables");
+  const result = await client.execute("SELECT id, content, claim_key, claim_key_source, superseded_by, valid_to FROM durables");
   return result.rows.map((row) => ({
     id: String(row.id),
     content: String(row.content),
@@ -370,6 +367,5 @@ async function readAllDurables(client: Client): Promise<RawDurableRow[]> {
     claim_key_source: row.claim_key_source === null ? null : String(row.claim_key_source),
     superseded_by: row.superseded_by === null ? null : String(row.superseded_by),
     valid_to: row.valid_to === null ? null : String(row.valid_to),
-    retired: Number(row.retired) === 1,
   }));
 }

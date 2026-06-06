@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { parseDirectiveMetadata } from "../../core/directives/model.js";
 import type { DreamProjectSummary } from "../../core/dreaming/types.js";
-import { isWithinValidityWindow } from "../../core/temporal-validity.js";
+import { isCurrentlyValidMemory } from "../../core/temporal-validity.js";
 import type { Durable } from "../../core/types.js";
 import type { DreamPort, DreamProfileSnapshot } from "./ports.js";
 
@@ -83,7 +83,7 @@ export function normalizeMaxProfileDurables(value: number | undefined): number {
 
 /** Returns whether a durable is active and valid at the profile snapshot time. */
 function isCurrentDurable(durable: Durable, asOfMs: number): boolean {
-  return !durable.retired && !durable.superseded_by && isWithinValidityWindow(durable.valid_from, durable.valid_to, asOfMs);
+  return isCurrentlyValidMemory(durable, asOfMs);
 }
 
 /** Sorts profile durables by expiry, importance, quality, and recency. */

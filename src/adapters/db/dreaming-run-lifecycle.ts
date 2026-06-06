@@ -73,7 +73,7 @@ export async function completeDreamRun(
     estimatedCostUsd: number;
     actionsTaken: number;
     actionsSkipped: number;
-    durablesRetired: number;
+    durablesStaled: number;
     summaryJson?: DreamCompletionSummary | null;
     error?: string | null;
     completedAt?: string;
@@ -89,7 +89,7 @@ export async function completeDreamRun(
           estimated_cost_usd = ?,
           actions_taken = ?,
           actions_skipped = ?,
-          durables_retired = ?,
+          durables_staled = ?,
           summary_json = ?,
           error = ?
       WHERE id = ?
@@ -102,7 +102,7 @@ export async function completeDreamRun(
       normalizeNumber(result.estimatedCostUsd),
       normalizeInteger(result.actionsTaken),
       normalizeInteger(result.actionsSkipped),
-      normalizeInteger(result.durablesRetired),
+      normalizeInteger(result.durablesStaled),
       JSON.stringify(result.summaryJson ?? null),
       normalizeOptionalString(result.error ?? undefined),
       runId.trim(),

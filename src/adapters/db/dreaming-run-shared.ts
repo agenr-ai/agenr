@@ -28,7 +28,7 @@ export interface DreamRun {
   model: string | null;
   actionsTaken: number;
   actionsSkipped: number;
-  durablesRetired: number;
+  durablesStaled: number;
   summaryJson: DreamCompletionSummary | null;
   error: string | null;
   dryRun: boolean;
@@ -75,7 +75,7 @@ export function mapRunRow(row: Row): DreamRun {
     model: readOptionalString(row, "model") ?? null,
     actionsTaken: readNumber(row, "actions_taken", 0),
     actionsSkipped: readNumber(row, "actions_skipped", 0),
-    durablesRetired: readNumber(row, "durables_retired", 0),
+    durablesStaled: readNumber(row, "durables_staled", readNumber(row, "durables_retired", 0)),
     summaryJson: parseJsonValue<DreamCompletionSummary | null>(readOptionalString(row, "summary_json"), null),
     error: readOptionalString(row, "error") ?? null,
     dryRun: readBoolean(row, "dry_run"),

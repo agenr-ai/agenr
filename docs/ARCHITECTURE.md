@@ -157,7 +157,7 @@ The CLI currently exposes:
 - `agenr scenarios list|run`
 - `agenr db reset`
 
-There are still no standalone CLI commands for `store`, `retire`, or `update`. Those remain host-plugin tool surfaces rather than first-class CLI commands.
+There are still no standalone CLI commands for `store` or `update`. Those remain host-plugin tool surfaces rather than first-class CLI commands.
 
 The OpenClaw adapter also exposes a deliberately narrow `memoryPolicy.slotPolicies.attributeHeads` config seam so claim-aware read behavior can override slot-policy classes without turning the plugin config into a broad platform API.
 
@@ -171,7 +171,7 @@ Current durable characteristics:
 
 - supported durable types: `fact`, `decision`, `preference`, `lesson`, `relationship`, `milestone`, `directive`
 - supported expiry levels: `core`, `permanent`, `temporary`
-- lifecycle fields for retirement and explicit supersession
+- lifecycle fields for valid-time staleness and explicit supersession
 - temporal validity via `valid_from` and `valid_to`
 - first-class claim-key lifecycle metadata
 
@@ -279,7 +279,7 @@ Key tables:
 - `session_artifacts`
 - `_meta`
 
-The `durables` table carries claim-key lifecycle fields, validity windows, supersession metadata, quality and recall tracking, project and user scoping, and retirement state. The `episodes` table carries source identity, transcript and summary hashes, timing, summary metadata, embeddings, and lifecycle state. The `procedures` table carries canonical normalized body JSON, deterministic recall text, authored-source and revision hashes, optional embeddings, and lifecycle state. The working-memory tables store scoped active-task snapshots, ordered working events, checkpoint mirrors, budget counters, continuation policy, and host runtime lease metadata. The session-memory tables store host-neutral lineage edges and bounded session artifacts such as continuity summaries, recent-session tails, compaction checkpoints, branch-abandonment summaries, and episode pointers.
+The `durables` table carries claim-key lifecycle fields, validity windows, supersession metadata, quality and recall tracking, and project and user scoping. A row goes offline either by supersession (`superseded_by`) or by a closed valid-time window (`valid_to`); there is no separate retirement flag. The `episodes` table carries source identity, transcript and summary hashes, timing, summary metadata, embeddings, and lifecycle state. The `procedures` table carries canonical normalized body JSON, deterministic recall text, authored-source and revision hashes, optional embeddings, and lifecycle state. The working-memory tables store scoped active-task snapshots, ordered working events, checkpoint mirrors, budget counters, continuation policy, and host runtime lease metadata. The session-memory tables store host-neutral lineage edges and bounded session artifacts such as continuity summaries, recent-session tails, compaction checkpoints, branch-abandonment summaries, and episode pointers.
 
 ### 6.3 Search and indexing
 
@@ -287,8 +287,8 @@ Current indexing behavior:
 
 - active durables participate in FTS5 through `durables_fts`
 - active procedures participate in FTS5 through `procedures_fts`
-- retired or superseded durables are excluded from active FTS triggers
-- retired or superseded procedures are excluded from active FTS triggers
+- superseded durables are excluded from the FTS triggers; stale durables (a closed `valid_to`) stay indexed and are filtered out at query time by the live-clock active gate, because a time-based predicate cannot live in a SQLite trigger or partial index
+- superseded procedures are excluded from the FTS triggers; stale procedures are filtered out the same way at query time
 - durables, episodes, and procedures all store embeddings as `F32_BLOB(1024)`
 - libSQL vector indexes are created for durables, episodes, and procedures when vector support is available
 - the code tolerates missing vector support and degrades gracefully
@@ -467,7 +467,7 @@ Current plugin registration includes:
 - memory flush-plan registration
 - memory runtime registration
 - hooks for `before_prompt_build`, `session_start`, `after_tool_call`, `session_end`, and `gateway_stop`
-- tools `agenr_store`, `agenr_recall`, `agenr_retire`, `agenr_update`, and `agenr_trace`
+- tools `agenr_store`, `agenr_recall`, `agenr_fetch`, `agenr_update`, and `agenr_trace`
 
 Implemented behaviors include:
 
@@ -508,7 +508,7 @@ Implemented behaviors include:
 - transient working-context injection when `features.workingMemory` is enabled
 - trusted Skeln work commands and goal aliases for working-memory lifecycle control
 
-Skeln deliberately omits OpenClaw-only surfaces such as `agenr_retire`, `agenr_trace`, predecessor continuity summaries, background predecessor episode ingest, and mid-session store nudges. See [`docs/SKELN-PLUGIN.md`](./SKELN-PLUGIN.md) for the full adapter map.
+Skeln deliberately omits OpenClaw-only surfaces such as `agenr_trace`, predecessor continuity summaries, background predecessor episode ingest, and mid-session store nudges. See [`docs/SKELN-PLUGIN.md`](./SKELN-PLUGIN.md) for the full adapter map.
 
 ### 7.8 Dreaming
 
@@ -527,7 +527,7 @@ The dreaming pipeline includes:
 - `reconcile` runs deterministic claim-key quality maintenance
 - `temporalize` revises stale beliefs through supersession
 - `project` builds a bounded session-start profile snapshot
-- `prune` retires protected, low-signal residue on `standard` and `deep`
+- `prune` stales low-signal residue while protecting high-signal durables on `standard` and `deep`
 - `apply` persists accepted mutations when `--apply` is set
 
 OpenClaw and Skeln host hooks can launch bounded `light` runs after session-end episode writes or after accumulated durable importance crosses the configured threshold.

@@ -315,9 +315,6 @@ function buildEntry(overrides: Partial<Durable> & Pick<Durable, "id" | "subject"
     cluster_id: overrides.cluster_id,
     user_id: overrides.user_id,
     project: overrides.project,
-    retired: overrides.retired ?? false,
-    retired_at: overrides.retired_at,
-    retired_reason: overrides.retired_reason,
     created_at: overrides.created_at ?? "2026-04-01T00:00:00.000Z",
     updated_at: overrides.updated_at ?? "2026-04-01T00:00:00.000Z",
   };

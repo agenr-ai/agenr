@@ -45,9 +45,10 @@ export async function upsertProcedure(executor: SqlExecutor, procedure: Procedur
         source_hash,
         revision_hash,
         embedding,
-        retired,
-        retired_at,
-        retired_reason,
+        valid_from,
+        valid_to,
+        supersession_kind,
+        supersession_reason,
         superseded_by,
         created_at,
         updated_at
@@ -55,7 +56,7 @@ export async function upsertProcedure(executor: SqlExecutor, procedure: Procedur
       VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?,
         CASE WHEN ? IS NULL THEN NULL ELSE vector32(?) END,
-        ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?
       )
       ON CONFLICT(id) DO UPDATE SET
         procedure_key = excluded.procedure_key,
@@ -67,9 +68,10 @@ export async function upsertProcedure(executor: SqlExecutor, procedure: Procedur
         source_hash = excluded.source_hash,
         revision_hash = excluded.revision_hash,
         embedding = excluded.embedding,
-        retired = excluded.retired,
-        retired_at = excluded.retired_at,
-        retired_reason = excluded.retired_reason,
+        valid_from = excluded.valid_from,
+        valid_to = excluded.valid_to,
+        supersession_kind = excluded.supersession_kind,
+        supersession_reason = excluded.supersession_reason,
         superseded_by = excluded.superseded_by,
         updated_at = excluded.updated_at
     `,
@@ -85,9 +87,10 @@ export async function upsertProcedure(executor: SqlExecutor, procedure: Procedur
       payload.revision_hash,
       vectorJson,
       vectorJson,
-      payload.retired ? 1 : 0,
-      toNullableString(payload.retired_at),
-      toNullableString(payload.retired_reason),
+      toNullableString(payload.valid_from),
+      toNullableString(payload.valid_to),
+      toNullableString(payload.supersession_kind),
+      toNullableString(payload.supersession_reason),
       toNullableString(payload.superseded_by),
       createdAt,
       updatedAt,
@@ -346,21 +349,21 @@ export async function updateProcedureEmbedding(executor: SqlExecutor, id: string
 }
 
 /**
- * Marks one active procedure revision as retired.
+ * Closes the valid-time window for one active procedure revision.
  *
  * @param executor - SQL executor used for the update.
  * @param id - Procedure identifier.
- * @param reason - Optional retirement reason.
+ * @param reason - Optional supersession reason.
  * @returns True when an active row was updated.
  */
-export async function retireProcedure(executor: SqlExecutor, id: string, reason?: string): Promise<boolean> {
+export async function closeProcedureValidity(executor: SqlExecutor, id: string, reason?: string): Promise<boolean> {
   const now = new Date().toISOString();
   const result = await executor.execute({
     sql: `
       UPDATE procedures
-      SET retired = 1,
-          retired_at = ?,
-          retired_reason = ?,
+      SET valid_to = ?,
+          supersession_kind = 'stale',
+          supersession_reason = ?,
           updated_at = ?
       WHERE id = ?
         AND ${ACTIVE_PROCEDURE_CLAUSE}
@@ -388,19 +391,58 @@ export async function supersedeProcedure(executor: SqlExecutor, oldId: string, n
   }
 
   const now = new Date().toISOString();
+  // Reopen valid_to so a superseded revision matches the durable model, where a
+  // row is taken offline either by supersession or by a closed validity window,
+  // never both. The sync flow closes validity first only to vacate the active-key
+  // unique-index slot before the replacement row exists.
   const result = await executor.execute({
     sql: `
       UPDATE procedures
       SET superseded_by = ?,
-          retired_reason = COALESCE(?, retired_reason),
+          supersession_kind = 'update',
+          supersession_reason = COALESCE(?, supersession_reason),
+          valid_to = NULL,
           updated_at = ?
       WHERE id = ?
-        AND ${ACTIVE_PROCEDURE_CLAUSE}
+        AND superseded_by IS NULL
     `,
     args: [normalizedNewId, toNullableString(normalizeOptionalString(reason)), now, normalizedOldId],
   });
 
   return result.rowsAffected > 0;
+}
+
+/**
+ * Replaces one active procedure revision with a new revision in a single flow.
+ *
+ * The active-key unique index forbids two live revisions of one procedure key at
+ * once, and the `superseded_by` foreign key requires the replacement row to exist
+ * before the old row can reference it. This vacates the active-key slot by closing
+ * the old revision's validity, inserts the replacement, then links the old
+ * revision to it. `supersedeProcedure` restores the canonical superseded state
+ * (open validity, "update" kind). Callers must run this inside a write
+ * transaction so the three writes commit atomically.
+ *
+ * @param executor - SQL executor used for the writes.
+ * @param existingId - Active procedure revision being replaced.
+ * @param replacement - Fully built replacement procedure row to insert.
+ * @param reason - Optional human-readable supersession reason.
+ * @returns Stored replacement procedure row.
+ */
+export async function replaceProcedureRevision(executor: SqlExecutor, existingId: string, replacement: Procedure, reason?: string): Promise<Procedure> {
+  const vacated = await closeProcedureValidity(executor, existingId, reason);
+  if (!vacated) {
+    throw new Error(`Failed to close validity for active procedure ${existingId} before replacement.`);
+  }
+
+  const stored = await upsertProcedure(executor, replacement);
+
+  const superseded = await supersedeProcedure(executor, existingId, replacement.id, reason);
+  if (!superseded) {
+    throw new Error(`Failed to supersede active procedure ${existingId} with ${replacement.id}.`);
+  }
+
+  return stored;
 }
 
 /**
@@ -460,8 +502,10 @@ function normalizeStoredProcedure(procedure: Procedure): Procedure & { body: Pro
     revision_hash: normalizeRequiredText(procedure.revision_hash, "revision_hash"),
     source_hash: normalizeRequiredText(procedure.source_hash, "source_hash"),
     source_file: normalizeOptionalString(procedure.source_file),
-    retired_at: normalizeOptionalString(procedure.retired_at),
-    retired_reason: normalizeOptionalString(procedure.retired_reason),
+    valid_from: normalizeOptionalString(procedure.valid_from),
+    valid_to: normalizeOptionalString(procedure.valid_to),
+    supersession_kind: normalizeOptionalString(procedure.supersession_kind),
+    supersession_reason: normalizeOptionalString(procedure.supersession_reason),
     superseded_by: normalizeOptionalString(procedure.superseded_by),
     embedding: normalizeEmbedding(procedure.embedding),
   };

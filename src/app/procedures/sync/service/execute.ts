@@ -61,7 +61,6 @@ export async function executeProcedureSync(
               createdAt: now,
               updatedAt: now,
               embedding: embeddingByFilePath.get(item.candidate.filePath),
-              retired: false,
             }),
           );
           executionItems.push({
@@ -81,7 +80,6 @@ export async function executeProcedureSync(
               createdAt: item.existing.created_at,
               updatedAt: new Date().toISOString(),
               embedding: item.existing.embedding,
-              retired: false,
             }),
           );
           executionItems.push({
@@ -95,33 +93,22 @@ export async function executeProcedureSync(
         case "supersede": {
           const now = new Date().toISOString();
           const replacementId = randomUUID();
-          const staged = buildProcedureRecord({
+          const replacement = buildProcedureRecord({
             candidate: item.candidate,
             id: replacementId,
             createdAt: now,
             updatedAt: now,
             embedding: embeddingByFilePath.get(item.candidate.filePath),
-            retired: true,
           });
-          await db.upsertProcedure(staged);
-          const superseded = await db.supersedeProcedure(item.existing.id, replacementId, "procedure revision updated");
-          if (!superseded) {
-            throw new Error(`Failed to supersede active procedure ${item.existing.id} for ${item.candidate.procedure.procedure_key}.`);
-          }
+          // The adapter owns the active-key unique-index and foreign-key ordering
+          // required to swap one live revision for another within this transaction.
+          await db.replaceProcedureRevision(item.existing.id, replacement, "procedure revision updated");
 
-          const activated = await db.upsertProcedure({
-            ...staged,
-            retired: false,
-            retired_at: undefined,
-            retired_reason: undefined,
-            superseded_by: undefined,
-            updated_at: new Date().toISOString(),
-          });
           executionItems.push({
             action: "superseded",
             filePath: item.candidate.filePath,
             procedureKey: item.candidate.procedure.procedure_key,
-            procedureId: activated.id,
+            procedureId: replacement.id,
             previousProcedureId: item.existing.id,
           });
           break;
@@ -162,7 +149,6 @@ function buildProcedureRecord(params: {
   updatedAt: string;
   embedding?: number[];
   existing?: Procedure;
-  retired: boolean;
 }): Procedure {
   const { candidate, existing } = params;
   return {
@@ -173,9 +159,10 @@ function buildProcedureRecord(params: {
     source_hash: candidate.sourceHash,
     source_file: candidate.filePath,
     embedding: params.embedding ?? existing?.embedding,
-    retired: params.retired,
-    retired_at: existing?.retired_at,
-    retired_reason: existing?.retired_reason,
+    valid_from: existing?.valid_from,
+    valid_to: existing?.valid_to,
+    supersession_kind: existing?.supersession_kind,
+    supersession_reason: existing?.supersession_reason,
     superseded_by: existing?.superseded_by,
     created_at: params.createdAt,
     updated_at: params.updatedAt,

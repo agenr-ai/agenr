@@ -221,8 +221,8 @@ Hard filters:
 
 Active entry filtering is always applied on the default path:
 
-- `retired = 0`
 - `superseded_by IS NULL`
+- `valid_to IS NULL OR datetime(valid_to) > datetime('now')` (stale rows whose validity window has closed are excluded by the live clock)
 
 ### 3. Query embedding
 
@@ -418,7 +418,7 @@ The expansion request carries:
 
 - requested families
 - a hard budget
-- whether retired rows are allowed
+- whether historical (superseded or stale) rows are allowed
 
 ### Seeded rerank
 
@@ -440,7 +440,7 @@ Historical-state recall is a ranking variant for questions such as:
 
 When `rankingProfile: "historical_state"` is active, durable recall changes behavior in a few ways:
 
-1. it expands into supersession chains, claim-key siblings, and retired topic-family candidates
+1. it expands into supersession chains, claim-key siblings, and stale topic-family candidates
 2. it flattens default recency to a neutral value when there is no explicit time anchor
 3. it applies lineage bonuses for plausible prior-state matches
 4. it applies claim-key trust and redundancy penalties to reduce current-state dominance

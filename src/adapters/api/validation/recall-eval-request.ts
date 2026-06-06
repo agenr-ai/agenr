@@ -127,12 +127,6 @@ export interface RecallEvalFixtureEntryDto {
   created_at?: string;
   /** Optional update timestamp. */
   updated_at?: string;
-  /** Optional retired state. */
-  retired?: boolean;
-  /** Optional retirement timestamp. */
-  retired_at?: string;
-  /** Optional retirement reason. */
-  retired_reason?: string;
   /** Optional successor entry identifier. */
   superseded_by?: string;
   /** Optional canonical claim key. */

@@ -45,15 +45,20 @@ export interface ClaimKeyScenarioSeedEntry extends Partial<
     | "superseded_by"
     | "valid_from"
     | "valid_to"
+    | "supersession_kind"
+    | "supersession_reason"
     | "user_id"
     | "project"
-    | "retired"
-    | "retired_at"
-    | "retired_reason"
     | "created_at"
     | "updated_at"
   >
 > {
+  /** @deprecated Legacy scenario input mapped to valid-time staleness during seeding. */
+  retired?: boolean;
+  /** @deprecated Legacy scenario input mapped to valid_to during seeding. */
+  retired_at?: string;
+  /** @deprecated Legacy scenario input mapped to supersession_reason during seeding. */
+  retired_reason?: string;
   type: Durable["type"];
   subject: Durable["subject"];
   content: Durable["content"];
@@ -158,8 +163,8 @@ export interface ClaimKeyScenarioRowAssert {
   claim_support_observed_at?: string | null;
   claim_support_mode?: string | null;
   superseded_by?: string | null;
-  retired?: boolean;
-  retired_reason?: string | null;
+  valid_to?: string | null;
+  supersession_reason?: string | null;
   subject?: string;
   content?: string;
 }

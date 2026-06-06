@@ -33,7 +33,7 @@ import type { RecallCandidateDurable } from "./types.js";
  * - `session_family` reaches across episodes originating in the same
  *   session identity (same `source` plus `sourceId`).
  * - `topic_family` reaches across rows sharing a strong subject prefix and
- *   is the weakest, retired-only fallback for entries.
+ *   is the weakest, historical-only fallback for entries.
  */
 export type NeighborhoodFamily = "supersession_chain" | "claim_key_sibling" | "procedure_revision" | "session_family" | "topic_family";
 
@@ -42,8 +42,8 @@ export type NeighborhoodFamily = "supersession_chain" | "claim_key_sibling" | "p
  *
  * This is the generalized successor of the phase 1 `fetchPredecessors`
  * lookup. The adapter should honor the requested `families` exactly and
- * respect `includeRetired` as a hard gate so the default entry profile
- * never pulls retired rows into the candidate pool.
+ * respect `includeHistorical` as a hard gate so the default entry profile
+ * never pulls historical rows into the candidate pool.
  */
 export interface DurableNeighborhoodRequest {
   /** Seed entry IDs to expand around. */
@@ -52,8 +52,8 @@ export interface DurableNeighborhoodRequest {
   budget: number;
   /** Families the adapter should traverse. */
   families: readonly NeighborhoodFamily[];
-  /** When true, retired rows are eligible; when false, only active rows. */
-  includeRetired?: boolean;
+  /** When true, historical rows are eligible; when false, only active rows. */
+  includeHistorical?: boolean;
 }
 
 /** Default total-rows budget for one neighborhood expansion call. */

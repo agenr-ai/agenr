@@ -5,8 +5,30 @@ import { parseClaimKeySource, parseClaimKeyStatus, parseClaimSupportMode } from 
 import type { Durable, Episode } from "../../core/types.js";
 
 const DEFAULT_QUALITY_SCORE = 0.5;
-const ACTIVE_DURABLE_CLAUSE = "retired = 0 AND superseded_by IS NULL";
-const ACTIVE_EPISODE_CLAUSE = "retired = 0 AND superseded_by IS NULL";
+
+/**
+ * Builds the SQL predicate that selects rows current at the live clock.
+ *
+ * A row is current when it has no successor and its `valid_to` bound has not
+ * passed. The bound is exclusive so a row closed at the current instant is
+ * already historical. Not-yet-valid rows (a future `valid_from`) stay current
+ * here so direct retrieval and updates can reach scheduled memories; excluding
+ * them is owned solely by the as-of validity filter on recall. This is the SQL
+ * mirror of {@link isCurrentlyValidMemory}; keep the two in lockstep.
+ *
+ * @param alias - Optional table alias to prefix column references.
+ * @returns Current-memory predicate for raw SQL fragments.
+ */
+export function buildCurrentMemoryClause(alias?: string): string {
+  const supersededBy = alias ? `${alias}.superseded_by` : "superseded_by";
+  const validTo = alias ? `${alias}.valid_to` : "valid_to";
+  return `${supersededBy} IS NULL AND (${validTo} IS NULL OR datetime(${validTo}) > datetime('now'))`;
+}
+
+const CURRENT_MEMORY_SQL = buildCurrentMemoryClause();
+const ACTIVE_DURABLE_CLAUSE = CURRENT_MEMORY_SQL;
+const ACTIVE_EPISODE_CLAUSE = CURRENT_MEMORY_SQL;
+const ACTIVE_PROCEDURE_CLAUSE = CURRENT_MEMORY_SQL;
 const DURABLE_SELECT_COLUMNS = `
   id,
   type,
@@ -43,27 +65,57 @@ const DURABLE_SELECT_COLUMNS = `
   cluster_id,
   user_id,
   project,
-  retired,
-  retired_at,
-  retired_reason,
   created_at,
   updated_at
 `;
 
-export { ACTIVE_DURABLE_CLAUSE, ACTIVE_EPISODE_CLAUSE, DURABLE_SELECT_COLUMNS };
+export { ACTIVE_DURABLE_CLAUSE, ACTIVE_EPISODE_CLAUSE, ACTIVE_PROCEDURE_CLAUSE, CURRENT_MEMORY_SQL, DURABLE_SELECT_COLUMNS };
 
 /**
- * Builds the SQL predicate that filters out retired and superseded entries.
+ * Builds the SQL predicate that filters out superseded and stale durables.
+ *
+ * Delegates to {@link buildCurrentMemoryClause}. Not-yet-valid rows (a future
+ * `valid_from`) remain eligible here so direct retrieval can reach scheduled
+ * memories; excluding them from recall is owned by {@link buildValidAsOfClause}.
  *
  * @param alias - Optional table alias to prefix column references.
  * @returns Active-entry predicate for raw SQL fragments.
  */
 export function buildActiveDurableClause(alias?: string): string {
-  if (!alias) {
-    return ACTIVE_DURABLE_CLAUSE;
-  }
+  return buildCurrentMemoryClause(alias);
+}
 
-  return `${alias}.retired = 0 AND ${alias}.superseded_by IS NULL`;
+/**
+ * Builds the SQL predicate that selects unsuperseded rows with a closed
+ * valid-time window at the live clock.
+ *
+ * This is the stale half of the current-memory contract: a row is stale when it
+ * has no successor and its `valid_to` bound has passed. The bound is exclusive
+ * on the current side and inclusive here, so a row closed at the current instant
+ * is stale. This is the SQL mirror of {@link isStaleMemory}; keep it in lockstep
+ * with {@link buildCurrentMemoryClause}.
+ *
+ * @param alias - Optional table alias to prefix column references.
+ * @returns Stale-memory predicate for raw SQL fragments.
+ */
+export function buildStaleMemoryClause(alias?: string): string {
+  const supersededBy = alias ? `${alias}.superseded_by` : "superseded_by";
+  const validTo = alias ? `${alias}.valid_to` : "valid_to";
+  return `${supersededBy} IS NULL AND ${validTo} IS NOT NULL AND datetime(${validTo}) <= datetime('now')`;
+}
+
+/**
+ * Builds the SQL predicate that matches superseded or stale durables.
+ *
+ * Used by historical neighborhood expansion to admit replaced rows and rows
+ * closed through valid-time staleness without reimplementing the stale gate.
+ *
+ * @param alias - Optional table alias to prefix column references.
+ * @returns Historical-memory predicate for raw SQL fragments.
+ */
+export function buildHistoricalMemoryClause(alias?: string): string {
+  const supersededBy = alias ? `${alias}.superseded_by` : "superseded_by";
+  return `(${supersededBy} IS NOT NULL OR (${buildStaleMemoryClause(alias)}))`;
 }
 
 /**
@@ -90,17 +142,17 @@ export function buildValidAsOfClause(alias?: string): string {
 }
 
 /**
- * Builds the SQL predicate that filters out retired and superseded episodes.
+ * Builds the SQL predicate that filters out superseded and stale episodes.
+ *
+ * Delegates to {@link buildCurrentMemoryClause}. Not-yet-valid rows (a future
+ * `valid_from`) remain eligible here; excluding them from recall is owned by
+ * {@link buildValidAsOfClause}.
  *
  * @param alias - Optional table alias to prefix column references.
  * @returns Active-episode predicate for raw SQL fragments.
  */
 export function buildActiveEpisodeClause(alias?: string): string {
-  if (!alias) {
-    return ACTIVE_EPISODE_CLAUSE;
-  }
-
-  return `${alias}.retired = 0 AND ${alias}.superseded_by IS NULL`;
+  return buildCurrentMemoryClause(alias);
 }
 
 /**
@@ -332,9 +384,6 @@ export function mapDurableRow(row: Row): Durable {
     cluster_id: readOptionalString(row, "cluster_id"),
     user_id: readOptionalString(row, "user_id"),
     project: readOptionalString(row, "project"),
-    retired: readBoolean(row, "retired"),
-    retired_at: readOptionalString(row, "retired_at"),
-    retired_reason: readOptionalString(row, "retired_reason"),
     created_at: readRequiredString(row, "created_at"),
     updated_at: readRequiredString(row, "updated_at"),
   };
@@ -392,9 +441,10 @@ export function mapEpisodeRow(row: Row): Episode {
     genVersion: readOptionalString(row, "gen_version"),
     messageCount: readOptionalNumber(row, "message_count"),
     embedding: readEmbedding(row, "embedding"),
-    retired: readBoolean(row, "retired"),
-    retiredAt: readOptionalString(row, "retired_at"),
-    retiredReason: readOptionalString(row, "retired_reason"),
+    validFrom: readOptionalString(row, "valid_from"),
+    validTo: readOptionalString(row, "valid_to"),
+    supersessionKind: readOptionalString(row, "supersession_kind"),
+    supersessionReason: readOptionalString(row, "supersession_reason"),
     supersededBy: readOptionalString(row, "superseded_by"),
     createdAt: readRequiredString(row, "created_at"),
     updatedAt: readRequiredString(row, "updated_at"),

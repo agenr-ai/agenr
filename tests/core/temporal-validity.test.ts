@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isWithinValidityWindow, validateTemporalValidityRange } from "../../src/core/temporal-validity.js";
+import { isCurrentlyValidMemory, isStaleMemory, isWithinValidityWindow, validateTemporalValidityRange } from "../../src/core/temporal-validity.js";
 
 describe("validateTemporalValidityRange", () => {
   it("accepts an open-ended lower bound", () => {
@@ -78,5 +78,56 @@ describe("isWithinValidityWindow", () => {
   it("ignores unparseable bounds rather than excluding the row", () => {
     expect(isWithinValidityWindow("not-a-date", "also-bad", asOf)).toBe(true);
     expect(isWithinValidityWindow("   ", "", asOf)).toBe(true);
+  });
+});
+
+describe("isCurrentlyValidMemory", () => {
+  const now = Date.parse("2026-03-15T00:00:00.000Z");
+
+  it("treats open, unsuperseded rows as current", () => {
+    expect(isCurrentlyValidMemory({}, now)).toBe(true);
+    expect(isCurrentlyValidMemory({ valid_to: null, superseded_by: null }, now)).toBe(true);
+  });
+
+  it("excludes superseded rows regardless of validity window", () => {
+    expect(isCurrentlyValidMemory({ superseded_by: "newer" }, now)).toBe(false);
+    expect(isCurrentlyValidMemory({ superseded_by: "newer", valid_to: "2026-12-01T00:00:00.000Z" }, now)).toBe(false);
+  });
+
+  it("excludes closed rows at and after the valid_to boundary", () => {
+    expect(isCurrentlyValidMemory({ valid_to: "2026-03-15T00:00:00.000Z" }, now)).toBe(false);
+    expect(isCurrentlyValidMemory({ valid_to: "2026-03-20T00:00:00.000Z" }, now)).toBe(true);
+  });
+
+  it("ignores valid_from so scheduled memories stay reachable for direct retrieval", () => {
+    expect(isCurrentlyValidMemory({ valid_to: null }, now)).toBe(true);
+  });
+
+  it("ignores an unparseable valid_to rather than excluding the row", () => {
+    expect(isCurrentlyValidMemory({ valid_to: "also-bad" }, now)).toBe(true);
+    expect(isCurrentlyValidMemory({ valid_to: "" }, now)).toBe(true);
+  });
+});
+
+describe("isStaleMemory", () => {
+  const now = Date.parse("2026-03-15T00:00:00.000Z");
+
+  it("treats open unsuperseded rows as not stale", () => {
+    expect(isStaleMemory({}, now)).toBe(false);
+    expect(isStaleMemory({ valid_to: "2026-03-20T00:00:00.000Z" }, now)).toBe(false);
+  });
+
+  it("treats closed rows at and after the valid_to boundary as stale", () => {
+    expect(isStaleMemory({ valid_to: "2026-03-15T00:00:00.000Z" }, now)).toBe(true);
+    expect(isStaleMemory({ valid_to: "2026-03-10T00:00:00.000Z" }, now)).toBe(true);
+  });
+
+  it("does not treat superseded rows as stale", () => {
+    expect(isStaleMemory({ superseded_by: "newer", valid_to: "2026-03-10T00:00:00.000Z" }, now)).toBe(false);
+  });
+
+  it("ignores an unparseable valid_to rather than marking the row stale", () => {
+    expect(isStaleMemory({ valid_to: "also-bad" }, now)).toBe(false);
+    expect(isStaleMemory({ valid_to: "" }, now)).toBe(false);
   });
 });

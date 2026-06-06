@@ -587,7 +587,7 @@ describe("recall raw evidence gating", () => {
       seedIds: ["dev-recall-command"],
       budget: expect.any(Number),
       families: ["supersession_chain", "claim_key_sibling", "topic_family"],
-      includeRetired: true,
+      includeHistorical: true,
     });
   });
 
@@ -599,9 +599,9 @@ describe("recall raw evidence gating", () => {
           subject: "memory freshness work tracking",
           content: "Track memory freshness eval work on the kanban board.",
           created_at: "2026-01-05T00:00:00.000Z",
-          retired: true,
-          retired_at: "2026-02-10T00:00:00.000Z",
-          retired_reason: "superseded by GitHub issues",
+          valid_to: "2026-02-10T00:00:00.000Z",
+          supersession_kind: "stale",
+          supersession_reason: "superseded by GitHub issues",
         }),
         buildEntry({
           id: "github-issues-tracking",
@@ -2162,7 +2162,6 @@ function toRecallCandidateDurable(entry: Durable): RecallCandidateDurable {
     claim_support_observed_at: entry.claim_support_observed_at,
     valid_from: entry.valid_from,
     valid_to: entry.valid_to,
-    retired: entry.retired,
   };
 }
 
@@ -2215,9 +2214,6 @@ function buildEntry(overrides: Partial<Durable> & Pick<Durable, "id" | "subject"
     claim_key_status: overrides.claim_key_status,
     claim_support_observed_at: overrides.claim_support_observed_at,
     cluster_id: overrides.cluster_id,
-    retired: overrides.retired ?? false,
-    retired_at: overrides.retired_at,
-    retired_reason: overrides.retired_reason,
     created_at: createdAt,
     updated_at: updatedAt,
   };

@@ -17,18 +17,20 @@ import {
   upsertEpisode,
 } from "./episode-queries.js";
 import {
+  closeProcedureValidity,
   findActiveProcedureByKey,
   getProcedure,
   hydrateProcedures,
   listProceduresWithoutEmbeddings,
   procedureFtsSearch,
   procedureVectorSearch,
-  retireProcedure,
+  replaceProcedureRevision,
   supersedeProcedure,
   updateProcedureEmbedding,
   upsertProcedure,
 } from "./procedure-queries.js";
 import {
+  closeDurableValidity,
   findActiveDurablesByClaimKey,
   getClaimKeyEntityPrefixStats,
   findExistingHashes,
@@ -40,7 +42,6 @@ import {
   getIngestLogEntry,
   insertDurable,
   insertIngestLogEntry,
-  retireDurable,
   supersedeDurable,
   type SqlExecutor,
   updateDurable,
@@ -193,9 +194,9 @@ class LibsqlDatabase implements SqlDatabase {
     await updateProcedureEmbedding(this.executor, id, embedding);
   }
 
-  /** Marks one active procedure revision as retired. */
-  public async retireProcedure(id: string, reason?: string): Promise<boolean> {
-    return retireProcedure(this.executor, id, reason);
+  /** Closes one active procedure revision's valid-time window. */
+  public async closeProcedureValidity(id: string, reason?: string): Promise<boolean> {
+    return closeProcedureValidity(this.executor, id, reason);
   }
 
   /** Marks one active procedure revision as superseded by a newer revision. */
@@ -203,14 +204,19 @@ class LibsqlDatabase implements SqlDatabase {
     return supersedeProcedure(this.executor, oldId, newId, reason);
   }
 
+  /** Replaces one active procedure revision with a new revision atomically. */
+  public async replaceProcedureRevision(existingId: string, replacement: Procedure, reason?: string): Promise<Procedure> {
+    return replaceProcedureRevision(this.executor, existingId, replacement, reason);
+  }
+
   /** Finds which normalized content hashes already exist in storage. */
   public async findExistingNormHashes(hashes: string[]): Promise<Set<string>> {
     return findExistingNormHashes(this.executor, hashes);
   }
 
-  /** Marks an entry as retired with an optional reason. */
-  public async retireDurable(id: string, reason?: string): Promise<boolean> {
-    return retireDurable(this.executor, id, reason);
+  /** Closes one entry's valid-time window so it becomes stale for current recall. */
+  public async closeDurableValidity(id: string, reason?: string): Promise<boolean> {
+    return closeDurableValidity(this.executor, id, reason);
   }
 
   /** Marks one active entry as superseded by a newer entry. */

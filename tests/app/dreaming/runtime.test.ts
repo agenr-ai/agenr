@@ -139,8 +139,8 @@ async function insertEpisode(dbPath: string, id: string, summary: string): Promi
   try {
     await database.execute({
       sql: `
-        INSERT INTO episodes (id, source, source_id, started_at, ended_at, summary, retired, created_at, updated_at)
-        VALUES (?, 'openclaw', ?, '2026-04-04T10:00:00.000Z', '2026-04-04T11:00:00.000Z', ?, 0, '2026-04-04T11:00:00.000Z', '2026-04-04T11:00:00.000Z')
+        INSERT INTO episodes (id, source, source_id, started_at, ended_at, summary, created_at, updated_at)
+        VALUES (?, 'openclaw', ?, '2026-04-04T10:00:00.000Z', '2026-04-04T11:00:00.000Z', ?, '2026-04-04T11:00:00.000Z', '2026-04-04T11:00:00.000Z')
       `,
       args: [id, `session-${id}`, summary],
     });

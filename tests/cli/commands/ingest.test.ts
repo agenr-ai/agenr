@@ -352,7 +352,7 @@ describe("registerIngestCommand", () => {
     });
 
     const spinnerInstance = (clackMock.spinner as ReturnType<typeof vi.fn>).mock.results[0]?.value;
-    const messages = (spinnerInstance?.message as ReturnType<typeof vi.fn>).mock.calls.map(([message]: [string]) => message);
+    const messages = (spinnerInstance?.message as ReturnType<typeof vi.fn>).mock.calls.map((call: unknown[]) => call[0] as string);
 
     expect(messages).toEqual(
       expect.arrayContaining([

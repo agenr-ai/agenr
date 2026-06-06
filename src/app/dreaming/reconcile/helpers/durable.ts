@@ -1,3 +1,4 @@
+import { isCurrentlyValidMemory } from "../../../../core/temporal-validity.js";
 import { isTrustedClaimKeyForCleanup } from "../../../../core/claim-key.js";
 import type { Durable } from "../../../../core/types.js";
 import type { ClaimKeyLifecycleSnapshot, TrustedGroupReuseCandidate } from "../types.js";
@@ -14,7 +15,7 @@ export function cloneDurable(durable: Durable): Durable {
 
 /** Returns whether a durable is active for reconcile collision checks. */
 export function isDurableActive(durable: Durable): boolean {
-  return durable.retired === false && !durable.superseded_by;
+  return isCurrentlyValidMemory(durable, Date.now());
 }
 
 /** Finds durables that already occupy a claim key, excluding one durable id. */

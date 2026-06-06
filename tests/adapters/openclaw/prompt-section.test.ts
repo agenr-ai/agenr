@@ -9,7 +9,7 @@ describe("buildAgenrMemoryPromptSection", () => {
 
   it("renders guidance for the agenr toolset", () => {
     const lines = buildAgenrMemoryPromptSection({
-      availableTools: new Set(["agenr_recall", "agenr_store", "agenr_update", "agenr_retire", "agenr_trace"]),
+      availableTools: new Set(["agenr_recall", "agenr_store", "agenr_update", "agenr_update", "agenr_trace"]),
       citationsMode: "off",
     });
 

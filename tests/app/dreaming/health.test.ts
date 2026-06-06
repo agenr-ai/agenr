@@ -7,10 +7,11 @@ function buildDurable(overrides: Partial<Durable> & Pick<Durable, "id" | "type" 
   return {
     importance: 5,
     expiry: "permanent",
+    quality_score: 0.5,
+    recall_count: 0,
     created_at: "2026-01-01T00:00:00.000Z",
     updated_at: "2026-01-01T00:00:00.000Z",
     tags: [],
-    retired: false,
     ...overrides,
   };
 }
@@ -33,7 +34,7 @@ describe("summarizeClaimKeyHealth", () => {
       }),
       buildDurable({
         id: "ineligible-missing",
-        type: "note",
+        type: "lesson",
         subject: "Scratch",
         content: "Temporary scratch note without a claim key.",
       }),

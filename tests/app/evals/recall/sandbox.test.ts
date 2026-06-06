@@ -212,7 +212,6 @@ function buildEntryFixture(id: string, content: string): Durable {
     importance: 6,
     expiry: "permanent",
     tags: [],
-    retired: false,
     quality_score: 0.5,
     recall_count: 0,
     created_at: "2026-04-18T00:00:00.000Z",

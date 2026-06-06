@@ -277,7 +277,7 @@ describe("recall integration", () => {
     expect(results).toHaveLength(1);
   });
 
-  it("never returns retired entries", async () => {
+  it("never returns stale entries", async () => {
     const fixture = await createRecallFixture();
 
     const results = await recall(
@@ -288,7 +288,7 @@ describe("recall integration", () => {
       fixture.adapter,
     );
 
-    expect(results.map((result) => result.entry.id)).not.toContain(fixture.seed.retiredId);
+    expect(results.map((result) => result.entry.id)).not.toContain(fixture.seed.staleId);
   });
 
   it("never returns superseded entries", async () => {
@@ -516,9 +516,9 @@ async function seedEntries(database: SqlDatabase): Promise<SeedMetadata> {
       type: "milestone",
       importance: 4,
       expiry: "temporary",
-      retired: true,
-      retired_at: daysAgo(1).toISOString(),
-      retired_reason: "obsolete",
+      valid_to: daysAgo(1).toISOString(),
+      supersession_kind: "stale",
+      supersession_reason: "obsolete",
       created_at: daysAgo(2).toISOString(),
     }),
     buildEntry({
@@ -596,7 +596,7 @@ async function seedEntries(database: SqlDatabase): Promise<SeedMetadata> {
   }
 
   return {
-    retiredId: entries[5]!.id,
+    staleId: entries[5]!.id,
     supersededId: entries[6]!.id,
   };
 }
@@ -651,10 +651,11 @@ function buildEntry(overrides: Partial<Durable>): Durable {
     recall_count: overrides.recall_count ?? 0,
     last_recalled_at: overrides.last_recalled_at,
     superseded_by: overrides.superseded_by,
+    valid_from: overrides.valid_from,
+    valid_to: overrides.valid_to,
+    supersession_kind: overrides.supersession_kind,
+    supersession_reason: overrides.supersession_reason,
     cluster_id: overrides.cluster_id,
-    retired: overrides.retired ?? false,
-    retired_at: overrides.retired_at,
-    retired_reason: overrides.retired_reason,
     created_at: createdAt,
     updated_at: updatedAt,
   };
@@ -720,7 +721,7 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
 /** Empty seed metadata used by tests that intentionally skip fixture seeding. */
 function emptySeedMetadata(): SeedMetadata {
   return {
-    retiredId: "",
+    staleId: "",
     supersededId: "",
   };
 }
@@ -754,6 +755,6 @@ function projectRecallResults(results: Awaited<ReturnType<typeof recall>>): Arra
  * IDs of seeded entries that specific tests need to reference.
  */
 interface SeedMetadata {
-  retiredId: string;
+  staleId: string;
   supersededId: string;
 }

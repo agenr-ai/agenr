@@ -209,8 +209,8 @@ export interface RecallNeighborhoodTrace {
   expansionAvailable: boolean;
   /** Family kinds requested from the adapter for this execution. */
   familiesRequested: string[];
-  /** Whether retired rows were allowed into the expansion. */
-  includeRetired: boolean;
+  /** Whether historical rows were allowed into the expansion. */
+  includeHistorical: boolean;
   /** Seed entry IDs chosen before the adapter expansion. */
   seedIds: string[];
   /** Unique candidates returned by the adapter expansion. */

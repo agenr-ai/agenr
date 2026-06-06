@@ -40,7 +40,7 @@ export async function provisionEvalDreamRun(executor: SqlExecutor, fixture: Eval
     estimatedCostUsd,
     actionsTaken: fixture.summaryJson.actions_taken ?? 0,
     actionsSkipped: 0,
-    durablesRetired: fixture.summaryJson.prune?.durablesRetired ?? 0,
+    durablesStaled: fixture.summaryJson.prune?.durablesStaled ?? 0,
     summaryJson: fixture.summaryJson,
     completedAt,
   });
@@ -71,7 +71,7 @@ export async function getEvalDreamRun(executor: SqlExecutor, runId: string): Pro
         model,
         actions_taken,
         actions_skipped,
-        durables_retired,
+        durables_staled,
         summary_json,
         error,
         dry_run,

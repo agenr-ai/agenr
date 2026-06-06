@@ -378,9 +378,6 @@ Each `memoryPool` item supports these fields:
 - `source_context`
 - `created_at`
 - `updated_at`
-- `retired`
-- `retired_at`
-- `retired_reason`
 - `superseded_by`
 - `claim_key`
 - `claim_key_status`
@@ -399,7 +396,7 @@ Boundary validation details:
 - `type` must be one of the live `DurableKind` values
 - `expiry` must be one of the live `Expiry` values
 - `importance` must be an integer from `1-10`
-- `created_at`, `updated_at`, `retired_at`, `claim_support_observed_at`, `valid_from`, and `valid_to` must be parseable timestamps
+- `created_at`, `updated_at`, `claim_support_observed_at`, `valid_from`, and `valid_to` must be parseable timestamps
 - `tags` must be a string array
 - claim-key enums must match the live lifecycle/source/mode unions
 - unsupported fields are rejected
@@ -603,7 +600,7 @@ This path intentionally bypasses the normal store pipeline so the eval harness c
 
 - explicit IDs stay as given
 - explicit timestamps stay as given
-- retirement metadata stays as given
+- validity-window metadata stays as given
 - supersession metadata stays as given
 
 Current provisioning behavior:
