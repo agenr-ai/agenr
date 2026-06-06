@@ -251,26 +251,15 @@ describe("detectClaimKeySingletonAliasCandidates", () => {
     ]);
   });
 
-  it("skips keyed observations that are missing lifecycle status", () => {
-    const stats = summarizeClaimKeyEntityPrefixStats([
-      {
-        claim_key: "jim/timezone",
-        claim_key_source: "manual",
-      },
-      {
-        claim_key: "jim/language",
-        claim_key_status: "trusted",
-        claim_key_source: "manual",
-      },
-    ]);
-
-    expect(stats).toEqual([
-      expect.objectContaining({
-        entityPrefix: "jim",
-        activeEntryCount: 1,
-        trustedEntryCount: 1,
-      }),
-    ]);
+  it("rejects keyed observations that are missing lifecycle status", () => {
+    expect(() =>
+      summarizeClaimKeyEntityPrefixStats([
+        {
+          claim_key: "jim/timezone",
+          claim_key_source: "manual",
+        },
+      ]),
+    ).toThrow(/claim_key_status/i);
   });
 
   it("does not treat intentional scope nesting as a singleton alias family", () => {

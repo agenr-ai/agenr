@@ -1,4 +1,4 @@
-import { resolveKeyedDurableLifecycleStatus } from "../claim-key-lifecycle.js";
+import { resolveKeyedDurableLifecycleStatus } from "../keyed-durable-lifecycle.js";
 import { isCurrentlyValidMemory } from "../temporal-validity.js";
 import type { Durable } from "../types.js";
 

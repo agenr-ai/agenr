@@ -1,4 +1,4 @@
-import { resolveKeyedDurableLifecycleStatus } from "../../core/claim-key-lifecycle.js";
+import { resolveKeyedDurableLifecycleStatus } from "../../core/keyed-durable-lifecycle.js";
 import { resolveClaimSlotPolicy, type ClaimSlotPolicy, type ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
 import { isCurrentlyValidMemory } from "../../core/temporal-validity.js";
 import type { ClaimKeyStatus, ClaimSupportMode } from "../../core/types.js";

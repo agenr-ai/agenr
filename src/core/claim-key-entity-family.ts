@@ -1,6 +1,7 @@
 /* eslint-disable jsdoc/require-jsdoc -- private scoring helpers are intentionally dense; exported API is documented. */
 
 import { inspectClaimKey, normalizeClaimKeySegment } from "./claim-key.js";
+import { assertKeyedDurableHasLifecycle } from "./keyed-durable-lifecycle.js";
 import type { ClaimKeySource, ClaimKeyStatus, Durable } from "./types.js";
 
 const ENTITY_FAMILY_GROUNDING_STOP_TOKENS = new Set([
@@ -318,9 +319,7 @@ export function summarizeClaimKeyEntityPrefixStats(observations: ClaimKeyEntityP
       continue;
     }
 
-    if (!observation.claim_key_status) {
-      continue;
-    }
+    assertKeyedDurableHasLifecycle(observation);
 
     const entityPrefix = inspection.normalized.entity;
     const existing =

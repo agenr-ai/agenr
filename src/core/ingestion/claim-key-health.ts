@@ -1,6 +1,7 @@
 import type { ClaimExtractionDiagnostic, ClaimExtractionDiagnosticOutcome } from "../store/claim-extraction.js";
 import type { ClaimKeySource, DurableKind, StoreDurableInput } from "../types.js";
-import { detectClaimKeySingletonAliasCandidates } from "../claim-key-entity-family.js";
+import { detectClaimKeySingletonAliasCandidates, type ClaimKeyEntityPrefixObservation } from "../claim-key-entity-family.js";
+import { hasKeyedDurableLifecycleStatus } from "../keyed-durable-lifecycle.js";
 import { isSnapshotStyleSourceFile } from "./source-metadata.js";
 
 /**
@@ -70,6 +71,7 @@ export interface IngestClaimKeyHealthSummary {
     unresolved: number;
   };
   keyedRows: number;
+  keyedMissingLifecycleStatus: number;
   keyedWithSupportCount: number;
   keyedMissingSupportCount: number;
   supportFillRate: number;
@@ -115,12 +117,18 @@ export function summarizeIngestClaimKeyHealth(
     unresolved: 0,
   };
   let keyedRows = 0;
+  let keyedMissingLifecycleStatus = 0;
   let keyedWithSupportCount = 0;
   let keyedMissingSupportCount = 0;
   const supportBySource = new Map<ClaimKeySource | "unknown", { keyed: number; withSupport: number }>();
 
   for (const entry of entries) {
     if (!hasClaimKey(entry)) {
+      continue;
+    }
+
+    if (!entry.claim_key_status) {
+      keyedMissingLifecycleStatus += 1;
       continue;
     }
 
@@ -207,7 +215,7 @@ export function summarizeIngestClaimKeyHealth(
       return left.subject.localeCompare(right.subject);
     });
 
-  const suspiciousSingletonAliases = detectClaimKeySingletonAliasCandidates(entries);
+  const suspiciousSingletonAliases = detectClaimKeySingletonAliasCandidates(toKeyedLifecycleObservations(entries));
 
   return {
     totalRows: entries.length,
@@ -230,6 +238,7 @@ export function summarizeIngestClaimKeyHealth(
     byType,
     lifecycle,
     keyedRows,
+    keyedMissingLifecycleStatus,
     keyedWithSupportCount,
     keyedMissingSupportCount,
     supportFillRate: keyedRows > 0 ? keyedWithSupportCount / keyedRows : 0,
@@ -255,6 +264,11 @@ export function summarizeIngestClaimKeyHealth(
     reviewCandidates: unresolvedRows.filter((row) => row.reviewable).slice(0, 10),
     unresolvedRows: unresolvedRows.slice(0, 10),
   };
+}
+
+/** Narrows ingest store candidates to keyed rows that already carry lifecycle status. */
+function toKeyedLifecycleObservations(entries: StoreDurableInput[]): ClaimKeyEntityPrefixObservation[] {
+  return entries.filter((entry): entry is StoreDurableInput & ClaimKeyEntityPrefixObservation => hasKeyedDurableLifecycleStatus(entry));
 }
 
 /** Returns whether one store candidate already carries a non-empty claim key. */

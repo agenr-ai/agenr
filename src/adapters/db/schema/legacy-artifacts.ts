@@ -1,3 +1,7 @@
+import { REQUIRED_INITIALIZED_TABLES } from "./canonical-tables.js";
+
+export { REQUIRED_INITIALIZED_TABLES };
+
 /** Legacy tables that require database rejection when present. */
 export const LEGACY_DB_TABLES = ["entries"] as const;
 
@@ -13,27 +17,6 @@ export const LEGACY_DB_COLUMNS = [
   { table: "durables", column: "cluster_id" },
   { table: "dream_runs", column: "durables_retired" },
   { table: "dream_run_actions", column: "recall_delta" },
-] as const;
-
-/** Canonical tables that must all exist before initSchema may run against a persisted database. */
-export const REQUIRED_INITIALIZED_TABLES = [
-  "durables",
-  "_meta",
-  "durables_fts",
-  "dream_proposals",
-  "dream_run_actions",
-  "dream_runs",
-  "dream_state",
-  "episodes",
-  "ingest_log",
-  "procedures",
-  "procedures_fts",
-  "profile_snapshots",
-  "recall_events",
-  "session_artifacts",
-  "session_lineage_edges",
-  "working_events",
-  "working_sets",
 ] as const;
 
 /** Builds the unsupported-database reason for one legacy table. */

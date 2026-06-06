@@ -1,3 +1,6 @@
+/** Canonical working-memory tables created during database initialization. */
+export const WORKING_MEMORY_TABLE_NAMES = ["working_sets", "working_events"] as const;
+
 export /** SQL statement that creates lean working sets for fresh database setup. */
 const CREATE_WORKING_SETS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS working_sets (

@@ -7,7 +7,6 @@ import {
   type ClaimKeySource,
   type ClaimKeyStatus,
   type ClaimSupportMode,
-  type Durable,
   type DurableUpdateInput,
   type StoreDurableInput,
 } from "./types.js";
@@ -154,43 +153,6 @@ const PRECOMPUTED_LIFECYCLE_FIELDS = ["claim_key_status", "claim_key_source", "c
  */
 export function parseClaimKeyStatus(value: unknown): ClaimKeyStatus | undefined {
   return parseStringEnum(value, CLAIM_KEY_STATUSES);
-}
-
-/** Minimal durable shape used to validate keyed lifecycle metadata. */
-type KeyedDurableLifecycleSubject = Pick<Durable, "claim_key" | "claim_key_status"> & {
-  id?: string;
-};
-
-/**
- * Asserts that keyed durables carry a persisted lifecycle status.
- *
- * @param entry - Durable row or observation carrying claim-key lifecycle fields.
- * @throws Error When a non-empty claim key is missing lifecycle status.
- */
-export function assertKeyedDurableHasLifecycle(entry: KeyedDurableLifecycleSubject): void {
-  if (!entry.claim_key?.trim()) {
-    return;
-  }
-
-  if (!entry.claim_key_status) {
-    const idSuffix = entry.id ? ` "${entry.id}"` : "";
-    throw new Error(`Missing claim_key_status for keyed durable${idSuffix}.`);
-  }
-}
-
-/**
- * Resolves the claim-key lifecycle label for one durable-like row.
- *
- * @param entry - Durable row carrying claim-key lifecycle fields.
- * @returns `no_key` when no claim key is stored, otherwise the persisted status.
- */
-export function resolveKeyedDurableLifecycleStatus(entry: KeyedDurableLifecycleSubject): ClaimKeyStatus | "no_key" {
-  if (!entry.claim_key?.trim()) {
-    return "no_key";
-  }
-
-  assertKeyedDurableHasLifecycle(entry);
-  return entry.claim_key_status as ClaimKeyStatus;
 }
 
 /**

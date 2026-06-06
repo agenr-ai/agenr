@@ -1,7 +1,8 @@
 import type { Row } from "@libsql/client";
 
 export { cosineSimilarity } from "../../core/recall/scoring.js";
-import { assertKeyedDurableHasLifecycle, parseClaimKeySource, parseClaimKeyStatus, parseClaimSupportMode } from "../../core/claim-key-lifecycle.js";
+import { parseClaimKeySource, parseClaimKeyStatus, parseClaimSupportMode } from "../../core/claim-key-lifecycle.js";
+import { assertKeyedDurableHasLifecycle } from "../../core/keyed-durable-lifecycle.js";
 import type { Durable, Episode } from "../../core/types.js";
 
 const DEFAULT_QUALITY_SCORE = 0.5;

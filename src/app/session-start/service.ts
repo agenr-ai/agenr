@@ -2,7 +2,7 @@ import { recall, type RecallExecutionTraceSummary, type RecallOutput } from "../
 import { isCurrentlyValidMemory, isWithinValidityWindow } from "../../core/temporal-validity.js";
 import type { Durable } from "../../core/types.js";
 
-import { resolveKeyedDurableLifecycleStatus } from "../../core/claim-key-lifecycle.js";
+import { resolveKeyedDurableLifecycleStatus } from "../../core/keyed-durable-lifecycle.js";
 import { parseDirectiveMetadata } from "../../core/directives/model.js";
 import { applyAbstainDirectivesForInjection } from "../directives/abstain-filter.js";
 import { projectClaimCentricRecallEntry } from "../recall/claim-centric.js";
