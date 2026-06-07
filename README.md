@@ -70,7 +70,7 @@ The OpenClaw plugin id remains `agenr`, so `plugins.entries.agenr`, `plugins.slo
 After the plugin is installed, `openclaw plugins update agenr` continues to target that same plugin id.
 If `plugins.entries.agenr.config` is omitted, the plugin falls back to agenr's normal config resolution: `AGENR_CONFIG_PATH`, then `~/.agenr/config.json`, and the `dbPath` from that config or `~/.agenr/knowledge.db`.
 
-If you want to pin an exact plugin release, install a versioned package spec such as `openclaw plugins install @agenr/openclaw-plugin@3.0.0`.
+If you want to pin an exact plugin release, install a versioned package spec such as `openclaw plugins install @agenr/openclaw-plugin@2026.6.1`.
 
 For local development or a custom build path, run `pnpm build` first and point OpenClaw at the plugin package root:
 

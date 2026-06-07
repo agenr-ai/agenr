@@ -1,6 +1,6 @@
 {
   "name": "agenr",
-  "version": "4.0.0",
+  "version": "2026.6.1",
   "description": "Agent memory - local-first knowledge infrastructure for AI agents",
   "type": "module",
   "bin": {
@@ -28,6 +28,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "packages:sync": "node scripts/sync-package-versions.mjs",
+    "packages:sync:check": "node scripts/sync-package-versions.mjs --check",
     "smoke:packages": "node scripts/package-smoke.mjs",
     "test": "vitest run",
     "test:win-sim": "node scripts/test-win-sim.mjs",

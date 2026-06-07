@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { isReleaseVersion } from "../src/release-version.js";
 import { APP_VERSION } from "../src/version.js";
 
 describe("APP_VERSION", () => {
@@ -8,7 +9,7 @@ describe("APP_VERSION", () => {
     expect(APP_VERSION.trim()).not.toHaveLength(0);
   });
 
-  it("matches a semver-like version pattern", () => {
-    expect(APP_VERSION).toMatch(/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/);
+  it("matches the OpenClaw-style release version format", () => {
+    expect(isReleaseVersion(APP_VERSION)).toBe(true);
   });
 });

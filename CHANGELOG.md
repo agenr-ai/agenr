@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Release versioning** now follows OpenClaw's `YYYY.M.PATCH` calendar scheme instead of semver. The third component is a monthly patch counter, not a calendar day.
+
 ### Breaking
 
 - **Greenfield database only.** Schema versioning and in-place migrations are removed. Startup rejects legacy tables and columns such as `entries`, `retired`, `minhash_sig`, `cluster_id`, `durables_retired`, and `recall_delta`, and rejects partially initialized databases that are missing required tables. Run `agenr db reset` before upgrading.

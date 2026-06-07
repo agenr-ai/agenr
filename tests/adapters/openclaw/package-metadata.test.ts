@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { isReleaseVersion } from "../../../src/release-version.js";
+
 type PackageJson = {
   name?: string;
   version?: string;
@@ -68,6 +70,7 @@ describe("published OpenClaw plugin package metadata", () => {
     expect(pluginManifest.id).toBe("agenr");
     expect(pluginManifest.version).toBe(pluginPackageJson.version);
     expect(pluginPackageJson.version).toBe(rootPackageJson.version);
+    expect(isReleaseVersion(rootPackageJson.version ?? "")).toBe(true);
   });
 
   it("does not expose a CLI or CLI-only dependencies from the plugin package", async () => {
