@@ -1,16 +1,14 @@
 import { resolveEpisodeActivityEligibility, type EpisodeActivityThreshold } from "../../../app/episode-ingest/activity-threshold.js";
 import { countMaterialTranscriptTurns } from "../../../core/episode/transcript-render.js";
 import type { ParsedTranscript } from "../../../core/types.js";
+import { HOST_SHUTDOWN_EPISODE_ACTIVITY_THRESHOLD, resolveHostShutdownEpisodeEligibility } from "../../shared/shutdown-episode-threshold.js";
 import type { AgenrSkelnServices } from "../runtime.js";
 import { type SkelnSessionEpisodeTarget, writeSkelnBoundedSessionEpisode } from "./bounded-session-episode.js";
 
 const SKELN_EPISODE_GENERATOR_VERSION = "skeln-episodic-summary-v1";
 
 /** Skeln shutdown episode activity gate from the Phase 4 lifecycle contract. */
-const SKELN_PHASE4_SHUTDOWN_EPISODE_ACTIVITY_THRESHOLD: EpisodeActivityThreshold = {
-  minMaterialTurns: 8,
-  minDurationMs: 20 * 60 * 1000,
-};
+const SKELN_PHASE4_SHUTDOWN_EPISODE_ACTIVITY_THRESHOLD: EpisodeActivityThreshold = HOST_SHUTDOWN_EPISODE_ACTIVITY_THRESHOLD;
 
 /**
  * Best-effort bounded Skeln episode write for a completed session.
@@ -71,10 +69,5 @@ export type SkelnShutdownEpisodeEligibility = ReturnType<typeof resolveSkelnShut
  * @returns Eligibility decision and threshold facts.
  */
 export function resolveSkelnShutdownEpisodeEligibility(transcript: ParsedTranscript) {
-  return resolveEpisodeActivityEligibility(
-    countMaterialTranscriptTurns(transcript.messages),
-    transcript.metadata.startedAt,
-    transcript.metadata.endedAt,
-    SKELN_PHASE4_SHUTDOWN_EPISODE_ACTIVITY_THRESHOLD,
-  );
+  return resolveHostShutdownEpisodeEligibility(transcript);
 }

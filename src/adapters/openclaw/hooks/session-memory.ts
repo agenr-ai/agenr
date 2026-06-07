@@ -193,6 +193,17 @@ export function shouldRouteOpenClawSessionTreeTrigger(reason: AgenrOpenClawSessi
 export function shouldSkipOpenClawSessionEndMemoryTrigger(reason: AgenrOpenClawSessionEndEvent["reason"]): boolean {
   return reason === "compaction";
 }
+
+/**
+ * Returns whether session_end should skip automatic episode capture because
+ * compaction hooks already wrote a pre-compaction episode.
+ *
+ * @param reason - OpenClaw session-end reason when present.
+ * @returns True when session-end episode capture should be skipped.
+ */
+export function shouldSkipOpenClawSessionEndEpisodeWrite(reason: AgenrOpenClawSessionEndEvent["reason"]): boolean {
+  return reason === "compaction";
+}
 /** Builds one compaction checkpoint artifact from OpenClaw compaction facts. */
 function buildOpenClawCompactionCheckpointArtifact(
   sessionKey: string,

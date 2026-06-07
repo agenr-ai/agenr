@@ -53,9 +53,16 @@ Episodes are generated through three current paths.
 
 ### 1. Automatic session-end write (OpenClaw)
 
-When OpenClaw emits `session_end`, the plugin best-effort writes an episode for the just-finished session through the shared `app/episode-ingest` workflow. This is separate from session-memory lineage intake, which is routed on `session_start`, compaction, reset, and shutdown-style session-end reasons.
+When OpenClaw emits `session_end`, the plugin awaits bounded episode capture for the just-finished session through the shared `app/episode-ingest` workflow. This is separate from session-memory lineage intake, which is routed on `session_start`, compaction, reset, and shutdown-style session-end reasons.
 
 When OpenClaw emits `before_compaction`, the plugin may also write a pre-compaction episode from the full transcript snapshot before OpenClaw compacts it. This path uses source id `${sessionId}:pre-compaction:${messageCount}`, is gated by `memoryPolicy.episodes.enabled` (not `memoryPolicy.sessionStart.enabled`), and runs under the shared episode-write guard.
+
+OpenClaw session-end episode writes use the same phase 4 activity thresholds as Skeln shutdown episodes:
+
+- at least 8 material user or assistant turns, or
+- at least 20 minutes of session duration
+
+Session-end capture is skipped when `reason` is `compaction` because the pre-compaction hook already captured the full transcript snapshot.
 
 On OpenClaw `session_start`, agenr records lineage facts through `routeSessionMemoryTrigger`. When the host supplies `resumedFrom`, that value is stored as the predecessor source ref for resume lineage.
 

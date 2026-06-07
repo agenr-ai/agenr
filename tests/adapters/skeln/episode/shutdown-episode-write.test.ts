@@ -90,6 +90,26 @@ describe("scheduleSkelnSessionShutdownEpisodeWrite", () => {
     expect(close).not.toHaveBeenCalled();
   });
 
+  it("registers transition shutdown episode work through host deferWork", async () => {
+    const close = vi.fn(async () => undefined);
+    const deferred: Promise<unknown>[] = [];
+
+    await scheduleSkelnSessionShutdownEpisodeWrite({
+      event: {
+        reason: "new",
+        deferWork: (work) => {
+          deferred.push(work);
+        },
+      },
+      context: buildContext([]),
+      servicesPromise: buildServicesPromise({ episodesEnabled: false, close }),
+    });
+
+    expect(deferred).toHaveLength(1);
+    await deferred[0];
+    expect(close).not.toHaveBeenCalled();
+  });
+
   it("returns quit shutdown work for the lifecycle handler to await when deferWork is absent", async () => {
     const close = vi.fn(async () => undefined);
 

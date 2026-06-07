@@ -316,12 +316,14 @@ Current behavior:
 
 ## Session-end episode ingest
 
-`session_end` clears mid-session tracker state and kicks off a best-effort write for the just-finished session through `writeOpenClawCurrentSessionEpisode(...)`.
+`session_end` clears mid-session tracker state and awaits bounded episode capture for the just-finished session through `scheduleOpenClawSessionEndEpisodeWrite(...)`.
 
 Current behavior:
 
-- resolves the current session transcript from OpenClaw state via `resolveOpenClawCurrentSessionTarget(...)`
+- resolves the current session transcript from synchronous `sessionFile` facts when present, otherwise from OpenClaw state via `resolveOpenClawCurrentSessionTarget(...)`
 - routes through the shared `app/episode-ingest` workflow
+- applies the same phase 4 activity thresholds as Skeln shutdown episodes: at least 8 material turns or 20 minutes
+- skips automatic session-end capture when `reason` is `compaction` because pre-compaction hooks already wrote the full transcript snapshot
 - parses the transcript with the OpenClaw JSONL parser
 - uses an OpenClaw-authenticated LLM client for summary generation
 - prefers plugin `episodeModel` and otherwise falls back to the active agent model
@@ -329,7 +331,7 @@ Current behavior:
 - tries to embed the episode summary when embeddings are available and time budget remains
 - logs skipped, invalid, failed, timed-out, created, or updated outcomes
 
-This path is best-effort and never blocks host lifecycle teardown.
+OpenClaw awaits the `session_end` handler before starting the next session, matching Skeln's transition shutdown wait for episode capture.
 
 ## Tool behavior
 

@@ -2,10 +2,13 @@ import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
 import { resolveAgentEffectiveModelPrimary, resolveDefaultAgentId } from "openclaw/plugin-sdk/agent-runtime";
 import { createSingleTranscriptDiscoveryPort } from "../../../app/episode-ingest/index.js";
+import type { EpisodeActivityThreshold } from "../../../app/episode-ingest/activity-threshold.js";
+import { HOST_SHUTDOWN_EPISODE_ACTIVITY_THRESHOLD, resolveHostShutdownEpisodeEligibility } from "../../shared/shutdown-episode-threshold.js";
 import { createDeadlineAwareEpisodeSummaryLlm } from "../../shared/deadline-aware-episode-summary-llm.js";
 import { embedEpisodeSummaryWithinBudget } from "../../shared/bounded-episode-embedding.js";
 import { EPISODE_SUMMARY_TIMEOUT_MS } from "../../shared/bounded-episode-summary.js";
 import { writeBoundedSingleTranscriptEpisode } from "../../shared/bounded-episode-write.js";
+import type { ParsedTranscript } from "../../../core/types.js";
 import { createOpenClawLlmClient } from "../llm/openclaw-llm-client.js";
 import { formatSessionContext } from "../logging.js";
 import { openClawTranscriptParser } from "../transcript/parser.js";
@@ -27,14 +30,37 @@ export interface OpenClawEpisodeTarget {
 }
 
 /**
- * Best-effort background write for the current OpenClaw session at session end.
+ * Best-effort bounded write for the just-finished OpenClaw session at session end.
  *
- * Writing at session end lets the just-finished session become dreaming
- * evidence before the next session starts. The write upserts by the same
- * `(source, sourceId)` identity.
+ * @param params - Hook context, session target snapshot, shared services, and logger.
+ * @returns Promise that resolves after the episode attempt is complete or skipped.
+ */
+export async function writeOpenClawSessionEndEpisode(params: {
+  ctx: AgenrOpenClawHookContext;
+  target: OpenClawEpisodeTarget;
+  services: AgenrOpenClawServices;
+  logger: PluginLogger;
+}): Promise<void> {
+  await writeOpenClawSessionEpisode({
+    ctx: params.ctx,
+    target: params.target,
+    services: params.services,
+    logger: params.logger,
+    actionLabel: "session-end episode write",
+    sourceSessionId: params.target.sessionId,
+    fileField: "file",
+    shortCountField: "materialTurns",
+    activityThreshold: HOST_SHUTDOWN_EPISODE_ACTIVITY_THRESHOLD,
+    embeddingSkipLogContext: `[agenr] session-end episode embedding skipped for ${formatSessionContext(params.ctx.sessionId, params.ctx.sessionKey)} file=${params.target.sessionFile}`,
+  });
+}
+
+/**
+ * Best-effort background write for the current OpenClaw session at session end.
  *
  * @param params - Hook context, current-session facts, shared services, and logger.
  * @returns Promise that resolves after the background episode attempt finishes.
+ * @deprecated Prefer `writeOpenClawSessionEndEpisode` via `scheduleOpenClawSessionEndEpisodeWrite`.
  */
 export async function writeOpenClawCurrentSessionEpisode(params: {
   ctx: AgenrOpenClawHookContext;
@@ -42,16 +68,11 @@ export async function writeOpenClawCurrentSessionEpisode(params: {
   services: AgenrOpenClawServices;
   logger: PluginLogger;
 }): Promise<void> {
-  await writeOpenClawSessionEpisode({
+  await writeOpenClawSessionEndEpisode({
     ctx: params.ctx,
     target: params.current,
     services: params.services,
     logger: params.logger,
-    actionLabel: "session-end episode write",
-    sourceSessionId: params.current.sessionId,
-    fileField: "file",
-    shortCountField: "materialTurns",
-    embeddingSkipLogContext: `[agenr] session-end episode embedding skipped for ${formatSessionContext(params.ctx.sessionId, params.ctx.sessionKey)} file=${params.current.sessionFile}`,
   });
 }
 
@@ -101,6 +122,7 @@ async function writeOpenClawSessionEpisode(params: {
   fileField: "file";
   shortCountField: "materialTurns";
   embeddingSkipLogContext: string;
+  activityThreshold?: EpisodeActivityThreshold;
 }): Promise<void> {
   const sessionContext = formatSessionContext(params.ctx.sessionId, params.ctx.sessionKey);
   const writeStartedAtMs = Date.now();
@@ -166,6 +188,7 @@ async function writeOpenClawSessionEpisode(params: {
     ingestOptions: {
       genVersion: OPENCLAW_EPISODE_GENERATOR_VERSION,
       skipActiveSessionCheck: true,
+      ...(params.activityThreshold ? { activityThreshold: params.activityThreshold } : {}),
       candidateOverrides: {
         sessionId: params.sourceSessionId,
         agentId: trimOptionalString(params.ctx.agentId) ?? null,
@@ -174,6 +197,19 @@ async function writeOpenClawSessionEpisode(params: {
       },
     },
   });
+}
+
+/** Eligibility facts returned by OpenClaw session-end activity threshold evaluation. */
+export type OpenClawSessionEndEpisodeEligibility = ReturnType<typeof resolveOpenClawSessionEndEpisodeEligibility>;
+
+/**
+ * Resolves phase 4 activity thresholds for OpenClaw session-end episode writes.
+ *
+ * @param transcript - Parsed OpenClaw transcript.
+ * @returns Eligibility decision and threshold facts.
+ */
+export function resolveOpenClawSessionEndEpisodeEligibility(transcript: ParsedTranscript) {
+  return resolveHostShutdownEpisodeEligibility(transcript);
 }
 
 /**

@@ -60,21 +60,16 @@ export interface SkelnSessionTreeEvent {
   fromExtension?: boolean;
 }
 
-/** Registers deferred shutdown work with the Skeln host when reason is `quit`. */
+/** Registers deferred shutdown work with the Skeln host when provided. */
 export type SkelnSessionShutdownDeferWork = (work: Promise<unknown>) => void;
 
 /** Skeln session_shutdown payload fields consumed by session-memory intake. */
-export type SkelnSessionShutdownEvent =
-  | {
-      reason: "quit";
-      targetSessionFile?: string;
-      /** When provided, the host keeps the process alive until episode capture and DB close finish. */
-      deferWork?: SkelnSessionShutdownDeferWork;
-    }
-  | {
-      reason: "reload" | "new" | "fork" | "clone" | "resume";
-      targetSessionFile?: string;
-    };
+export type SkelnSessionShutdownEvent = {
+  reason: "quit" | "reload" | "new" | "fork" | "clone" | "resume";
+  targetSessionFile?: string;
+  /** When provided, the host waits for episode capture before replacing the active session. */
+  deferWork?: SkelnSessionShutdownDeferWork;
+};
 
 /** Skeln session_start reasons that create lineage edges. */
 type SkelnLineageSessionStartReason = Extract<SessionStartTransitionReason, "fork" | "clone" | "resume">;

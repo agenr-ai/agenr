@@ -18,7 +18,7 @@ import { createDatabase, type SqlDatabase } from "../../../../src/adapters/db/cl
 import { createDreamPort } from "../../../../src/adapters/db/dreaming-port.js";
 import { createMemoryRepository } from "../../../../src/adapters/db/memory-repository.js";
 import { createSessionStartRepository } from "../../../../src/adapters/db/session-start-repository.js";
-import { writeOpenClawCurrentSessionEpisode } from "../../../../src/adapters/openclaw/episode/episode-writer.js";
+import { writeOpenClawCurrentSessionEpisode, resolveOpenClawSessionEndEpisodeEligibility } from "../../../../src/adapters/openclaw/episode/episode-writer.js";
 import { createNoopAgenrDebugSink } from "../../../../src/adapters/openclaw/debug/index.js";
 import { createStubAgenrHostMemorySurface } from "../../../helpers/host-memory-stubs.js";
 import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../../src/adapters/openclaw/types.js";
@@ -42,7 +42,7 @@ describe("writeOpenClawCurrentSessionEpisode", () => {
     }
   });
 
-  it("writes the current session episode at session end", async () => {
+  it("writes the current session episode at session end when phase 4 thresholds pass", async () => {
     const database = await createTestDatabase(databases, tempPaths);
     const sessionFile = await writeStandardSession(tempPaths, "current-session-end");
     const logger = createLogger();
@@ -77,6 +77,51 @@ describe("writeOpenClawCurrentSessionEpisode", () => {
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([`[agenr] session-end episode write triggered for session=current-session-end key=agent:main:tui-current file=${sessionFile}`]),
     );
+  });
+
+  it("skips short sessions below the shared phase 4 thresholds", async () => {
+    const database = await createTestDatabase(databases, tempPaths);
+    const sessionFile = await writeShortSession(tempPaths, "short-session-end");
+    const logger = createLogger();
+    const episodeRunner = createRunner({
+      text: JSON.stringify({
+        summary: "Should not be written.",
+        tags: ["session-end"],
+        activityLevel: "light",
+      }),
+    });
+
+    await writeOpenClawCurrentSessionEpisode({
+      ctx: {
+        agentId: "main",
+        sessionId: "short-session-end",
+      },
+      current: {
+        sessionId: "short-session-end",
+        sessionFile,
+      },
+      services: createServices(database, episodeRunner),
+      logger,
+    });
+
+    expect(await database.getEpisodeBySourceId("openclaw", "short-session-end")).toBeNull();
+    expect(episodeRunner).not.toHaveBeenCalled();
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("[agenr] session-end episode write skipped for session=short-session-end"),
+      ]),
+    );
+  });
+});
+
+describe("resolveOpenClawSessionEndEpisodeEligibility", () => {
+  it("matches the shared phase 4 shutdown thresholds", () => {
+    expect(resolveOpenClawSessionEndEpisodeEligibility(buildTranscript({ messageCount: 4 }))).toEqual({
+      eligible: false,
+      reason: "below_activity_threshold",
+      materialTurns: 4,
+      durationMs: 3 * 60 * 1000,
+    });
   });
 });
 
@@ -250,7 +295,7 @@ async function createTestDatabase(databases: SqlDatabase[], tempPaths: string[])
   return database;
 }
 
-async function writeStandardSession(tempPaths: string[], sessionId: string): Promise<string> {
+async function writeShortSession(tempPaths: string[], sessionId: string): Promise<string> {
   return writeSessionFile(tempPaths, sessionId, [
     {
       type: "session",
@@ -261,7 +306,7 @@ async function writeStandardSession(tempPaths: string[], sessionId: string): Pro
       timestamp: "2026-03-28T10:00:00.000Z",
       message: {
         role: "human",
-        content: "We need episodic recall for prior work.",
+        content: "Short session.",
       },
     },
     {
@@ -269,26 +314,65 @@ async function writeStandardSession(tempPaths: string[], sessionId: string): Pro
       timestamp: "2026-03-28T10:01:00.000Z",
       message: {
         role: "assistant",
-        content: "A separate episodes table should handle temporal recall.",
-      },
-    },
-    {
-      type: "message",
-      timestamp: "2026-03-28T10:02:00.000Z",
-      message: {
-        role: "human",
-        content: "The OpenClaw hook should write episodes in the background.",
-      },
-    },
-    {
-      type: "message",
-      timestamp: "2026-03-28T10:03:00.000Z",
-      message: {
-        role: "assistant",
-        content: "Then prompt build can continue even when the summary call is slow.",
+        content: "Acknowledged.",
       },
     },
   ]);
+}
+
+function buildTranscript(options: { messageCount: number; startedAt?: string; endedAt?: string }) {
+  const startedAt = options.startedAt ?? "2026-05-30T10:00:00.000Z";
+  const endedAt = options.endedAt ?? "2026-05-30T10:03:00.000Z";
+  const messages = Array.from({ length: options.messageCount }, (_, index) => ({
+    index,
+    role: index % 2 === 0 ? ("user" as const) : ("assistant" as const),
+    text: `message ${index}`,
+    timestamp: index === options.messageCount - 1 ? endedAt : startedAt,
+  }));
+
+  return {
+    messages,
+    metadata: {
+      startedAt,
+      endedAt,
+      messageCount: messages.length,
+      transcriptHash: "hash",
+    },
+    warnings: [],
+  };
+}
+
+async function writeStandardSession(tempPaths: string[], sessionId: string): Promise<string> {
+  const lines: object[] = [
+    {
+      type: "session",
+      id: sessionId,
+    },
+  ];
+
+  for (let index = 0; index < 8; index += 1) {
+    const timestamp = index === 7 ? "2026-03-28T10:20:00.000Z" : "2026-03-28T10:00:00.000Z";
+    lines.push(
+      {
+        type: "message",
+        timestamp,
+        message: {
+          role: "human",
+          content: `User turn ${index + 1}`,
+        },
+      },
+      {
+        type: "message",
+        timestamp,
+        message: {
+          role: "assistant",
+          content: `Assistant turn ${index + 1}`,
+        },
+      },
+    );
+  }
+
+  return writeSessionFile(tempPaths, sessionId, lines);
 }
 
 async function writeSessionFile(tempPaths: string[], sessionId: string, lines: object[]): Promise<string> {

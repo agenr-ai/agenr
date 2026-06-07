@@ -40,9 +40,10 @@ export function buildSkelnSessionShutdownEpisodeWork(params: SkelnSessionShutdow
 /**
  * Schedules bounded shutdown episode capture for one Skeln session.
  *
- * Quit shutdown without host deferral returns work for the lifecycle handler to await.
- * Quit shutdown with `deferWork` registers work with the host and resolves immediately.
- * Non-quit shutdown reasons start best-effort background capture and resolve immediately.
+ * When Skeln supplies `deferWork`, the host waits for episode capture before
+ * invalidating the ending session's extension context. Quit shutdown without
+ * host deferral returns work for the lifecycle handler to await. Non-deferred
+ * shutdown reasons start best-effort background capture and resolve immediately.
  *
  * @param params - Shutdown event, live host context, and shared services.
  * @returns Promise the lifecycle handler should await unless work was deferred to the host.
@@ -50,7 +51,7 @@ export function buildSkelnSessionShutdownEpisodeWork(params: SkelnSessionShutdow
 export function scheduleSkelnSessionShutdownEpisodeWrite(params: SkelnSessionShutdownEpisodeWriteParams): Promise<void> {
   const work = buildSkelnSessionShutdownEpisodeWork(params);
 
-  if (params.event.reason === "quit" && params.event.deferWork) {
+  if (params.event.deferWork) {
     params.event.deferWork(work);
     return Promise.resolve();
   }

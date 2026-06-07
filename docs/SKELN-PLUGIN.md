@@ -208,8 +208,8 @@ Current lifecycle behavior:
 - `before_agent_start` runs session-start recall on the first turn for a tracked session identity, then before-turn recall on later turns; later turns can also inject the latest compaction checkpoint once per artifact
 - `tool_result` maps structured agenr failed tool details (`details.status === "failed"`) to Skeln `{ isError: true }` because Skeln's `AgentToolResult` type does not carry an inline error flag
 - `session_shutdown` routes session-memory intake, clears compaction prompt tracker state and remembered scope for the ending session (before episode scheduling), snapshots transcript target facts synchronously, then dispatches optional bounded shutdown episode capture from that snapshot
-- non-`quit` shutdown reasons start episode capture in the background without closing the shared database handle; this is best-effort and may not finish if the host exits or reloads quickly
-- `quit` shutdown without `deferWork` awaits episode capture (when enabled) and `services.close()` in the lifecycle handler; when Skeln supplies `deferWork`, the same chain runs under host deferral so stale extension context is never read after shutdown
+- when Skeln supplies `deferWork`, the host waits for episode capture before invalidating the ending session's extension context; quit shutdown also closes the shared database handle after capture
+- quit shutdown without host deferral awaits episode capture (when enabled) and `services.close()` in the lifecycle handler
 
 The default package export is a Skeln `ExtensionFactory` that calls `registerAgenrSkelnMemory(skeln)` with manifest-backed settings only.
 
