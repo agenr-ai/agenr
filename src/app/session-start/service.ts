@@ -4,19 +4,12 @@ import type { Durable } from "../../core/types.js";
 
 import { resolveKeyedDurableLifecycleStatus } from "../../core/keyed-durable-lifecycle.js";
 import { parseDirectiveMetadata } from "../../core/directives/model.js";
+import { resolvePredecessorSessionArtifacts } from "../session-memory/predecessor-artifacts.js";
 import { applyAbstainDirectivesForInjection } from "../directives/abstain-filter.js";
 import { projectClaimCentricRecallEntry } from "../recall/claim-centric.js";
-import { buildSessionStartContextSections } from "./context-sections.js";
-
+import { buildSessionStartArtifactRecallQuery } from "./artifact-recall-query.js";
 import type { SessionStartDeps } from "./ports.js";
-import type {
-  SessionStartContextSection,
-  SessionStartInput,
-  SessionStartPatch,
-  SessionStartPatchDiagnostics,
-  SessionStartPatchItem,
-  SessionStartPolicy,
-} from "./types.js";
+import type { SessionStartInput, SessionStartPatch, SessionStartPatchDiagnostics, SessionStartPatchItem, SessionStartPolicy } from "./types.js";
 
 const DEFAULT_MAX_CORE_ENTRIES = 4;
 const DEFAULT_MAX_ARTIFACT_RECALL_ENTRIES = 3;
@@ -36,7 +29,6 @@ export async function runSessionStart(input: SessionStartInput, deps: SessionSta
   const policy = normalizePolicy(input.policy);
   const now = deps.now ?? new Date();
   const nowMs = now.getTime();
-  const contextSections = buildSessionStartContextSections(input.continuitySummaryText, input.recentSessionText);
   const profileSnapshot = await deps.repository.getActiveProfileSnapshot(policy.maxProfileSnapshotAgeHours * 60 * 60 * 1000, now);
   const profileEntries = profileSnapshot ? filterCurrentEntries(await deps.repository.listEntriesByIds(profileSnapshot.durableIds), nowMs) : [];
   const profileItems = profileEntries.map((entry) => buildProfilePatchItem(entry, profileSnapshot?.id ?? "unknown", nowMs));
@@ -54,7 +46,7 @@ export async function runSessionStart(input: SessionStartInput, deps: SessionSta
     notices: [],
   };
 
-  const artifactRecallQuery = policy.enableArtifactRecall ? buildArtifactRecallQuery(contextSections, policy.maxArtifactChars) : undefined;
+  const artifactRecallQuery = await resolveSessionStartArtifactRecallQuery(input.sessionKey, policy, deps);
   if (!policy.enableArtifactRecall) {
     diagnostics.notices.push("Artifact-grounded durable recall disabled by session-start policy.");
   }
@@ -67,10 +59,35 @@ export async function runSessionStart(input: SessionStartInput, deps: SessionSta
   const durableMemory = assignRanks(visibleDurableMemory);
 
   return {
-    contextSections,
     durableMemory,
     diagnostics,
   };
+}
+
+/**
+ * Resolves the artifact-grounded recall query for one session-start pass.
+ *
+ * @param sessionKey - Optional active session key.
+ * @param policy - Effective session-start policy.
+ * @param deps - Session-start dependencies.
+ * @returns Normalized recall query, or undefined when recall should not run.
+ */
+async function resolveSessionStartArtifactRecallQuery(
+  sessionKey: string | undefined,
+  policy: Required<SessionStartPolicy>,
+  deps: SessionStartDeps,
+): Promise<string | undefined> {
+  if (!policy.enableArtifactRecall) {
+    return undefined;
+  }
+
+  const normalizedSessionKey = sessionKey?.trim();
+  if (!normalizedSessionKey || !deps.sessionMemoryRepository) {
+    return undefined;
+  }
+
+  const predecessor = await resolvePredecessorSessionArtifacts({ sessionKey: normalizedSessionKey }, deps.sessionMemoryRepository);
+  return buildSessionStartArtifactRecallQuery(predecessor.artifacts, policy.maxArtifactChars);
 }
 
 /**
@@ -113,7 +130,7 @@ function buildDirectivePatchItem(entry: Durable, nowMs: number): SessionStartPat
 }
 
 /**
- * Runs bounded artifact-grounded durable recall when predecessor artifacts exist.
+ * Runs bounded artifact-grounded durable recall when a query is available.
  *
  * @param query - Normalized artifact-derived recall seed.
  * @param sessionKey - Optional session key for recall telemetry.
@@ -214,44 +231,6 @@ function buildArtifactRecallPatchItem(recalled: RecallOutput, deps: SessionStart
 }
 
 /**
- * Builds one bounded artifact-grounded recall query from preserved context sections.
- *
- * @param sections - Ordered non-memory context sections.
- * @param maxChars - Maximum character budget for the derived query.
- * @returns Normalized recall query, or undefined when no artifact signal exists.
- */
-function buildArtifactRecallQuery(sections: SessionStartContextSection[], maxChars: number): string | undefined {
-  if (sections.length === 0 || maxChars <= 0) {
-    return undefined;
-  }
-
-  let remaining = maxChars;
-  const parts: string[] = [];
-  for (const section of sections) {
-    if (remaining <= 0) {
-      break;
-    }
-
-    const normalizedContent = normalizeWhitespace(section.content);
-    if (normalizedContent.length === 0) {
-      continue;
-    }
-
-    const labeled = `${section.title}: ${normalizedContent}`;
-    const truncated = truncate(labeled, remaining);
-    if (truncated.length === 0) {
-      continue;
-    }
-
-    parts.push(truncated);
-    remaining -= truncated.length;
-  }
-
-  const query = normalizeWhitespace(parts.join("\n"));
-  return query.length > 0 ? query : undefined;
-}
-
-/**
  * Merges profile, directive, core, and artifact-grounded recall candidates.
  *
  * Profile snapshot entries lead, proactive directives rank above generic
@@ -273,18 +252,46 @@ function mergeDurableMemory(
 ): SessionStartPatchItem[] {
   const merged: SessionStartPatchItem[] = [];
   const seenEntryIds = new Set<string>();
-  for (const item of [...profileItems, ...directiveItems, ...coreItems, ...artifactRecallItems]) {
-    if (seenEntryIds.has(item.entry.id)) {
-      continue;
+
+  const tryAdd = (item: SessionStartPatchItem): boolean => {
+    if (merged.length >= maxDurableEntries || seenEntryIds.has(item.entry.id)) {
+      return false;
     }
 
     seenEntryIds.add(item.entry.id);
     merged.push(item);
-    if (merged.length >= maxDurableEntries) {
-      break;
+    return true;
+  };
+
+  const addFrom = (items: SessionStartPatchItem[], maxAdd = Number.POSITIVE_INFINITY): void => {
+    let added = 0;
+    for (const item of items) {
+      if (merged.length >= maxDurableEntries || added >= maxAdd) {
+        return;
+      }
+
+      if (tryAdd(item)) {
+        added += 1;
+      }
     }
+  };
+
+  addFrom(profileItems);
+  addFrom(directiveItems);
+  if (merged.length >= maxDurableEntries) {
+    return merged;
   }
 
+  const uniqueArtifact = artifactRecallItems.find((item) => !seenEntryIds.has(item.entry.id));
+  const remainingSlots = maxDurableEntries - merged.length;
+  const coreLimit = uniqueArtifact ? Math.max(0, remainingSlots - 1) : remainingSlots;
+  addFrom(coreItems, coreLimit);
+  if (uniqueArtifact) {
+    tryAdd(uniqueArtifact);
+  }
+
+  addFrom(coreItems);
+  addFrom(artifactRecallItems);
   return merged;
 }
 
@@ -455,35 +462,6 @@ function formatProjectedProvenance(provenance: ReturnType<typeof projectClaimCen
 function normalizeOptionalString(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : undefined;
-}
-
-/**
- * Collapses repeated whitespace inside one text value for query use.
- *
- * @param value - Raw text.
- * @returns Query-friendly normalized text.
- */
-function normalizeWhitespace(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
-
-/**
- * Truncates one string to the requested character budget.
- *
- * @param value - Raw string.
- * @param maxChars - Maximum characters to keep.
- * @returns Truncated string.
- */
-function truncate(value: string, maxChars: number): string {
-  if (maxChars <= 0) {
-    return "";
-  }
-
-  if (value.length <= maxChars) {
-    return value;
-  }
-
-  return `${value.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
 }
 
 /**

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { logSessionMemoryTriggerResult } from "../../../../src/adapters/shared/session-memory-routing.js";
 import {
   buildSkelnSessionBeforeCompactTriggerEvent,
   buildSkelnSessionBeforeForkTriggerEvent,
@@ -7,7 +8,6 @@ import {
   buildSkelnSessionShutdownTriggerEvent,
   buildSkelnSessionStartTriggerEvent,
   buildSkelnSessionTreeTriggerEvent,
-  logSessionMemoryTriggerResult,
 } from "../../../../src/adapters/skeln/hooks/session-memory.js";
 import type { AgenrSkelnSessionScope } from "../../../../src/adapters/skeln/types.js";
 
@@ -36,7 +36,7 @@ describe("buildSkelnSessionStartTriggerEvent", () => {
       childSessionKey: scope.sessionKey,
       transitionReason: "resume",
       predecessor: {
-        sourceRef: "previous-session.jsonl",
+        sourceRef: "session_file:previous-session.jsonl",
       },
       observedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
     });
@@ -49,7 +49,7 @@ describe("buildSkelnSessionStartTriggerEvent", () => {
       childSessionKey: scope.sessionKey,
       transitionReason: "fork",
       predecessor: {
-        sourceRef: "parent.jsonl",
+        sourceRef: "session_file:parent.jsonl",
       },
       observedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
     });
@@ -74,6 +74,7 @@ describe("buildSkelnSessionCompactTriggerEvent", () => {
         kind: "compaction_checkpoint",
         source: "skeln",
         sourceId: "compact-1",
+        sourceRef: "compaction:compact-1",
         summary: "The checkpoint summary.",
         metadata: {
           firstKeptEntryId: "entry-1",
@@ -125,9 +126,10 @@ describe("checkpoint-relevant lifecycle triggers", () => {
   });
 
   it("builds session_before_compact and session_shutdown triggers", () => {
-    expect(buildSkelnSessionBeforeCompactTriggerEvent(scope)).toMatchObject({
+    expect(buildSkelnSessionBeforeCompactTriggerEvent(scope, { messageCount: 4 })).toMatchObject({
       type: "session_before_compact",
       sessionKey: scope.sessionKey,
+      payload: { messageCount: 4 },
     });
     expect(buildSkelnSessionShutdownTriggerEvent(scope, { reason: "reload" })).toMatchObject({
       type: "session_shutdown",

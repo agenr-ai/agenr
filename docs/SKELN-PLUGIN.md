@@ -26,7 +26,7 @@ The Skeln integration is deliberately scoped down from [`docs/OPENCLAW-PLUGIN.md
 
 Current Skeln omissions:
 
-- no `agenr_trace`
+- no runtime trace tool; use `agenr trace` CLI for provenance inspection
 - no predecessor continuity summaries
 - no background predecessor episode ingest
 - no OpenClaw transcript parsing or episode writer
@@ -162,6 +162,7 @@ Supported `memoryPolicy` keys match the shared plugin contract:
 - `memoryPolicy.beforeTurn.recallThreshold` - optional durable-recall score floor for before-turn recall
 - `memoryPolicy.beforeTurn.highConfidenceRecallThreshold` - optional score floor required before before-turn recall can expand beyond the normal durable-item cap
 - `memoryPolicy.beforeTurn.procedureThreshold` - optional score floor for proactive procedure suggestion
+- `memoryPolicy.episodes.enabled` - optional toggle for automatic Skeln episode writes (shutdown and pre-compaction); defaults to on
 - `memoryPolicy.workingContext.enabled` - optional toggle for automatic transient `<agenr_work_context>` injection; defaults to true when `features.workingMemory` is enabled
 - `memoryPolicy.slotPolicies.attributeHeads` - optional attribute-head overrides for read-time claim-slot policy classes
 
@@ -193,6 +194,8 @@ The plugin currently wires:
 
 - the three memory tools
 - `session_start`
+- `session_before_compact`
+- `session_compact`
 - `before_agent_start`
 - `tool_result`
 - `session_shutdown`
@@ -200,9 +203,11 @@ The plugin currently wires:
 Current lifecycle behavior:
 
 - `session_start` resolves session scope, remembers it in the scope tracker, and records first-turn facts in the shared session-start tracker
-- `before_agent_start` runs session-start recall on the first turn for a tracked session identity, then before-turn recall on later turns
+- `session_before_compact` routes session-memory intake and best-effort writes a pre-compaction episode from the live transcript snapshot when `memoryPolicy.episodes.enabled` is on
+- `session_compact` routes a compaction checkpoint artifact from Skeln host compaction facts
+- `before_agent_start` runs session-start recall on the first turn for a tracked session identity, then before-turn recall on later turns; later turns can also inject the latest compaction checkpoint once per artifact
 - `tool_result` maps structured agenr failed tool details (`details.status === "failed"`) to Skeln `{ isError: true }` because Skeln's `AgentToolResult` type does not carry an inline error flag
-- `session_shutdown` routes session-memory intake, clears remembered scope for the ending session (before episode scheduling), snapshots transcript target facts synchronously, then dispatches optional bounded shutdown episode capture from that snapshot
+- `session_shutdown` routes session-memory intake, clears compaction prompt tracker state and remembered scope for the ending session (before episode scheduling), snapshots transcript target facts synchronously, then dispatches optional bounded shutdown episode capture from that snapshot
 - non-`quit` shutdown reasons start episode capture in the background without closing the shared database handle; this is best-effort and may not finish if the host exits or reloads quickly
 - `quit` shutdown without `deferWork` awaits episode capture (when enabled) and `services.close()` in the lifecycle handler; when Skeln supplies `deferWork`, the same chain runs under host deferral so stale extension context is never read after shutdown
 
@@ -358,12 +363,14 @@ That audit pointer is not live replay text. Compaction, branch summarization, an
 
 The working-memory scope contract uses host-neutral `conversationKey` or `runtimeThreadKey` when the host has a cross-session conversation identity. Skeln is not required to supply `threadId`; `hostThreadId` is compatibility-only when a host actually names that field.
 
-Phase 0 defines four agenr config feature flags, all defaulting to false:
+Phase 0 defines four agenr config feature flags. `features.sessionTreeCompaction` defaults to on; the other three default to off:
 
 - `features.workingMemory`
 - `features.sessionTreeLineage`
 - `features.sessionTreeCompaction`
 - `features.goalContinuation`
+
+Persisted config only records overrides: most flags are written when explicitly enabled, while `sessionTreeCompaction: false` is written when compaction intake should be disabled.
 
 `features.workingMemory` enables the v11 ledger, `agenr_work`, trusted Skeln work commands, and `/goal` aliases. `features.sessionTreeLineage` enables v12 lineage intake for lifecycle events such as resume, fork, clone, and subagent spawn. `features.sessionTreeCompaction` enables v12 checkpoint artifact intake. Automatic per-turn working-context injection is controlled separately through `memoryPolicy.workingContext.enabled` and defaults to on when working memory is enabled.
 

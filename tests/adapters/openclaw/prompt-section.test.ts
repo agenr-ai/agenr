@@ -10,7 +10,7 @@ describe("buildAgenrMemoryPromptSection", () => {
 
   it("renders guidance for the agenr toolset", () => {
     const lines = buildAgenrMemoryPromptSection({
-      availableTools: new Set(["agenr_recall", "agenr_store", "agenr_update", "agenr_update", "agenr_trace"]),
+      availableTools: new Set(["agenr_recall", "agenr_store", "agenr_update", "agenr_fetch"]),
       citationsMode: "off",
     });
 
@@ -40,7 +40,6 @@ describe("buildAgenrMemoryPromptSection", () => {
     expect(lines.join("\n")).toContain(MEMORY_DOCTRINE.update.vsSupersedes);
     expect(lines.join("\n")).not.toContain("Do not store progress logs");
     expect(lines.join("\n")).toContain("contradicted by live evidence");
-    expect(lines.join("\n")).toContain("Use agenr_trace");
     expect(lines.join("\n")).not.toContain("unfinished background work");
     expect(lines.join("\n")).toContain("Citations are disabled");
   });

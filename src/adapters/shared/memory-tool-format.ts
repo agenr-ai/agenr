@@ -69,7 +69,7 @@ export function assertEntryFetchableContentLength(content: string): void {
   const contentChars = content.trim().length;
   if (contentChars > ENTRY_FETCH_MAX_CONTENT_CHARS) {
     throw new Error(
-      `Entry content is ${contentChars} characters, which exceeds the agenr_fetch limit of ${ENTRY_FETCH_MAX_CONTENT_CHARS}. Use agenr_trace or the CLI for full inspection.`,
+      `Entry content is ${contentChars} characters, which exceeds the agenr_fetch limit of ${ENTRY_FETCH_MAX_CONTENT_CHARS}. Use the CLI for full inspection.`,
     );
   }
 }

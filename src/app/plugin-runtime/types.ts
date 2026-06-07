@@ -63,6 +63,14 @@ export interface PluginWorkingContextMemoryPolicyConfig {
 }
 
 /**
+ * Episode-write overrides for automatic OpenClaw episode capture.
+ */
+export interface PluginEpisodeMemoryPolicyConfig {
+  /** Enables or disables automatic episode writes. Defaults to true. */
+  enabled?: boolean;
+}
+
+/**
  * Memory-policy settings shared by host plugin adapters, including injection knobs.
  */
 export interface PluginInjectionMemoryPolicyConfig extends PluginMemoryPolicyConfig {
@@ -72,6 +80,8 @@ export interface PluginInjectionMemoryPolicyConfig extends PluginMemoryPolicyCon
   beforeTurn?: PluginBeforeTurnMemoryPolicyConfig;
   /** Working-context overrides for transient per-turn WIP injection. */
   workingContext?: PluginWorkingContextMemoryPolicyConfig;
+  /** Episode-write overrides for automatic OpenClaw/Skeln episode capture. */
+  episodes?: PluginEpisodeMemoryPolicyConfig;
 }
 
 /**

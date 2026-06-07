@@ -1,6 +1,7 @@
 import type { ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
 import type { RecallPorts } from "../../core/ports.js";
 import type { Durable } from "../../core/types.js";
+import type { SessionMemoryRepository } from "../session-memory/repository.js";
 
 /** Active profile snapshot metadata used by session-start selection. */
 export interface SessionStartProfileSnapshot {
@@ -61,4 +62,6 @@ export interface SessionStartDeps {
   listActiveAbstainDirectives?: () => Promise<Durable[]>;
   /** Optional lookup for proactive session-start directives. */
   listActiveProactiveDirectives?: () => Promise<Durable[]>;
+  /** Optional session-memory repository used for predecessor artifact recall. */
+  sessionMemoryRepository?: SessionMemoryRepository;
 }

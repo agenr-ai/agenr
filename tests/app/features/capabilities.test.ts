@@ -4,10 +4,10 @@ import { resolveRuntimeCapabilities } from "../../../src/app/features/capabiliti
 import { DEFAULT_AGENR_FEATURE_FLAGS } from "../../../src/app/features/types.js";
 
 describe("resolveRuntimeCapabilities", () => {
-  it("derives disabled capabilities when feature flags are off", () => {
+  it("derives baseline capabilities from default feature flags", () => {
     expect(resolveRuntimeCapabilities(DEFAULT_AGENR_FEATURE_FLAGS)).toEqual({
       workingMemory: "disabled",
-      sessionMemory: "disabled",
+      sessionMemory: "misconfigured",
       shutdownEpisodes: false,
       goalContinuation: "disabled",
     });
@@ -42,7 +42,7 @@ describe("resolveRuntimeCapabilities", () => {
       ),
     ).toEqual({
       workingMemory: "disabled",
-      sessionMemory: "disabled",
+      sessionMemory: "misconfigured",
       shutdownEpisodes: false,
       goalContinuation: "misconfigured",
     });

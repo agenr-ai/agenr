@@ -47,7 +47,7 @@ describe("createSessionMemoryRepository", () => {
     const repository = createSessionMemoryRepository(database);
 
     const created = await repository.upsertSessionArtifact({
-      kind: "continuity_summary",
+      kind: "compaction_checkpoint",
       sessionKey: "skeln:parent",
       source: "skeln",
       sourceId: "summary-1",
@@ -57,7 +57,7 @@ describe("createSessionMemoryRepository", () => {
       metadata: { messageCount: 12 },
     });
     const updated = await repository.upsertSessionArtifact({
-      kind: "continuity_summary",
+      kind: "compaction_checkpoint",
       sessionKey: "skeln:parent",
       source: "skeln",
       sourceId: "summary-1",
@@ -77,7 +77,7 @@ describe("createSessionMemoryRepository", () => {
     await expect(
       repository.listSessionArtifacts({
         sessionKey: "skeln:parent",
-        kinds: ["continuity_summary"],
+        kinds: ["compaction_checkpoint"],
       }),
     ).resolves.toMatchObject([
       {
@@ -92,7 +92,7 @@ describe("createSessionMemoryRepository", () => {
     const repository = createSessionMemoryRepository(database);
 
     await repository.upsertSessionArtifact({
-      kind: "continuity_summary",
+      kind: "compaction_checkpoint",
       sessionKey: "skeln:parent",
       source: "skeln",
       sourceId: "summary-1",
@@ -104,7 +104,7 @@ describe("createSessionMemoryRepository", () => {
     await expect(
       repository.listSessionArtifactsBySourceRef({
         sourceRef: "previous-session.jsonl",
-        kinds: ["continuity_summary"],
+        kinds: ["compaction_checkpoint"],
       }),
     ).resolves.toMatchObject([
       {
@@ -126,7 +126,7 @@ describe("createSessionMemoryRepository", () => {
         observedAt: "2026-05-30T12:00:00.000Z",
       },
       artifact: {
-        kind: "continuity_summary",
+        kind: "compaction_checkpoint",
         sessionKey: "skeln:parent",
         source: "skeln",
         sourceId: "summary-1",
@@ -141,7 +141,7 @@ describe("createSessionMemoryRepository", () => {
       reason: "resume",
     });
     expect(intake.artifact).toMatchObject({
-      kind: "continuity_summary",
+      kind: "compaction_checkpoint",
       summary: "The predecessor summary.",
     });
     await expect(repository.getLatestLineageEdgeForChild("skeln:child")).resolves.toMatchObject({
@@ -150,7 +150,7 @@ describe("createSessionMemoryRepository", () => {
     await expect(
       repository.listSessionArtifacts({
         sessionKey: "skeln:parent",
-        kinds: ["continuity_summary"],
+        kinds: ["compaction_checkpoint"],
       }),
     ).resolves.toMatchObject([
       {

@@ -24,14 +24,9 @@ import { createSessionStartRepository } from "../../../src/adapters/db/session-s
 import { createOpenClawLlmClient } from "../../../src/adapters/openclaw/llm/openclaw-llm-client.js";
 import { computeProcedureRevisionHash, computeProcedureSourceHash } from "../../../src/core/procedures/hashing.js";
 import { composeProcedureRecallText } from "../../../src/core/procedures/recall-text.js";
-import {
-  createAgenrFetchTool,
-  createAgenrRecallTool,
-  createAgenrStoreTool,
-  createAgenrTraceTool,
-  createAgenrUpdateTool,
-} from "../../../src/adapters/openclaw/tools.js";
+import { createAgenrFetchTool, createAgenrRecallTool, createAgenrStoreTool, createAgenrUpdateTool } from "../../../src/adapters/openclaw/tools.js";
 import { createNoopAgenrDebugSink } from "../../../src/adapters/openclaw/debug/index.js";
+import { createStubAgenrHostMemorySurface } from "../../helpers/host-memory-stubs.js";
 import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../src/adapters/openclaw/types.js";
 import type { EmbeddingPort, RecallPorts } from "../../../src/core/ports.js";
 import type { Durable, Procedure } from "../../../src/core/types.js";
@@ -146,13 +141,12 @@ describe("agenr OpenClaw tools", () => {
     );
   });
 
-  it("stores, updates, traces, and closes validity via valid_to", async () => {
+  it("stores, updates, and closes validity via valid_to", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
     const services = createDatabaseBackedServices(database);
     const storeTool = createAgenrStoreTool(createToolContext(), Promise.resolve(services), logger);
     const updateTool = createAgenrUpdateTool(createToolContext(), Promise.resolve(services), logger);
-    const traceTool = createAgenrTraceTool(createToolContext(), Promise.resolve(services), logger);
 
     const storeResult = await storeTool.execute("tool-1", {
       type: "decision",
@@ -169,9 +163,6 @@ describe("agenr OpenClaw tools", () => {
       importance: 9,
       expiry: "core",
     });
-    const traceResult = await traceTool.execute("tool-3", {
-      id: storedEntry?.id,
-    });
     const staleResult = await updateTool.execute("tool-4", {
       subject: "feature flag policy",
       validTo: "2026-01-01T00:00:00.000Z",
@@ -186,8 +177,6 @@ describe("agenr OpenClaw tools", () => {
       importance: 9,
       expiry: "core",
     });
-    expect(traceResult.content[0]?.type).toBe("text");
-    expect(expectTextContent(traceResult.content[0])).toContain("Trace for");
     expect(staleResult.details).toMatchObject({
       status: "updated",
       validTo: "2026-01-01T00:00:00.000Z",
@@ -198,7 +187,6 @@ describe("agenr OpenClaw tools", () => {
       expect.arrayContaining([
         '[agenr] tool=agenr_store session=session-1 key=agent:main:webchat:test store 1 entry subject="feature flag policy" type=decision',
         expect.stringContaining("[agenr] tool=agenr_update session=session-1 key=agent:main:webchat:test target=id:"),
-        expect.stringContaining("[agenr] tool=agenr_trace session=session-1 key=agent:main:webchat:test target=id:"),
         expect.stringContaining('[agenr] tool=agenr_update session=session-1 key=agent:main:webchat:test target=subject:"feature flag policy"'),
       ]),
     );
@@ -758,40 +746,11 @@ describe("agenr OpenClaw tools", () => {
     );
   });
 
-  it("traces the most recent entry when last is true", async () => {
-    const database = await createTestDatabase();
-    const logger = createLogger();
-    const services = createDatabaseBackedServices(database);
-    const storeTool = createAgenrStoreTool(createToolContext(), Promise.resolve(services), logger);
-    const traceTool = createAgenrTraceTool(createToolContext(), Promise.resolve(services), logger);
-
-    await storeTool.execute("tool-6", {
-      type: "fact",
-      subject: "older memory",
-      content: "This was stored first and should not be selected by last.",
-    });
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    await storeTool.execute("tool-7", {
-      type: "decision",
-      subject: "newest memory",
-      content: "This was stored most recently and should be selected by last.",
-    });
-
-    const result = await traceTool.execute("tool-8", {
-      last: true,
-    });
-
-    expect(result.content[0]?.type).toBe("text");
-    expect(expectTextContent(result.content[0])).toContain("newest memory");
-    expect(getMessages(logger.info)).toContain("[agenr] tool=agenr_trace session=session-1 key=agent:main:webchat:test target=last");
-  });
-
   it("stores explicit supersession metadata through agenr_store", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
     const services = createDatabaseBackedServices(database);
     const storeTool = createAgenrStoreTool(createToolContext(), Promise.resolve(services), logger);
-    const traceTool = createAgenrTraceTool(createToolContext(), Promise.resolve(services), logger);
 
     await storeTool.execute("tool-13", {
       type: "fact",
@@ -808,9 +767,6 @@ describe("agenr OpenClaw tools", () => {
       supersedes: original?.id,
       claimKey: "jim/home_city",
       validFrom: "2026-03-30T00:00:00.000Z",
-    });
-    const traceResult = await traceTool.execute("tool-15", {
-      id: original?.id,
     });
     const replacementEntryId = (replacementResult.details as { entryId?: string }).entryId ?? "";
     const replacementEntry = await database.getDurable(replacementEntryId);
@@ -830,11 +786,6 @@ describe("agenr OpenClaw tools", () => {
     });
     expect(replacementEntry?.claim_support_locator).toContain("#agenr_store");
     expect(replacementEntry?.claim_support_observed_at).toMatch(/^20\d\d-/);
-    expect(expectTextContent(traceResult.content[0])).toContain("superseded_by=");
-    expect(expectTextContent(traceResult.content[0])).toContain("supersession=update");
-    expect(expectTextContent(traceResult.content[0])).toContain("claim_key=jim/home_city");
-    expect(expectTextContent(traceResult.content[0])).toContain("claim_family=jim/home_city");
-
     const storeParamsMessages = getMessages(logger.info).filter((message) => message.includes("tool=agenr_store") && message.includes("params="));
     expect(storeParamsMessages.join("\n")).toContain('"hasSupersedes":true');
     expect(storeParamsMessages.join("\n")).toContain('"hasClaimKey":true');
@@ -847,7 +798,6 @@ describe("agenr OpenClaw tools", () => {
     const services = createDatabaseBackedServices(database);
     const storeTool = createAgenrStoreTool(createToolContext(), Promise.resolve(services), logger);
     const updateTool = createAgenrUpdateTool(createToolContext(), Promise.resolve(services), logger);
-    const traceTool = createAgenrTraceTool(createToolContext(), Promise.resolve(services), logger);
 
     await storeTool.execute("tool-16", {
       type: "fact",
@@ -862,9 +812,6 @@ describe("agenr OpenClaw tools", () => {
       validFrom: "2027-03-01T00:00:00.000Z",
       validTo: "2027-03-31T00:00:00.000Z",
       project: "agenr",
-    });
-    const traceResult = await traceTool.execute("tool-18", {
-      id: storedEntry?.id,
     });
     const updatedEntry = await database.getDurable(storedEntry?.id ?? "");
 
@@ -890,10 +837,6 @@ describe("agenr OpenClaw tools", () => {
     });
     expect(updatedEntry?.claim_support_locator).toContain("#agenr_update");
     expect(updatedEntry?.claim_support_observed_at).toMatch(/^20\d\d-/);
-    expect(expectTextContent(traceResult.content[0])).toContain("claim_key=jim/timezone");
-    expect(expectTextContent(traceResult.content[0])).toContain("claim_family=jim/timezone");
-    expect(expectTextContent(traceResult.content[0])).toContain("validity=2027-03-01T00:00:00.000Z -> 2027-03-31T00:00:00.000Z");
-
     const updateParamsMessage = getMessages(logger.info).find((message) => message.includes("tool=agenr_update") && message.includes("params="));
     expect(updateParamsMessage).toContain('"hasClaimKey":true');
     expect(updateParamsMessage).toContain('"hasValidFrom":true');
@@ -1095,6 +1038,7 @@ function createServices(
       ...(options.available ? {} : { error: "Embedding API key is required." }),
     },
     debugSink: options.debugSink ?? createNoopAgenrDebugSink(),
+    ...createStubAgenrHostMemorySurface(),
     async close() {
       await database.close();
     },

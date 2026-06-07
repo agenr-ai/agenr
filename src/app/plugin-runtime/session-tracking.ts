@@ -49,21 +49,6 @@ export interface SessionStartTracker {
    * @returns Tracking facts for the attempted session-start event.
    */
   consume(sessionId?: string, sessionKey?: string): SessionStartConsumeResult;
-  /**
-   * Remembers a session-start transition emitted by the host.
-   *
-   * @param sessionId - New ephemeral host session identifier.
-   * @param sessionKey - Stable host session key for the active lane.
-   * @param resumedFrom - Previous session identifier when the host provides it.
-   */
-  rememberSessionStart(sessionId?: string, sessionKey?: string, resumedFrom?: string): void;
-  /**
-   * Returns the predecessor session identifier remembered for a new session.
-   *
-   * @param sessionId - New ephemeral host session identifier lookup.
-   * @returns Previous session identifier, or `undefined` when unavailable.
-   */
-  getResumedFrom(sessionId?: string): string | undefined;
 }
 
 /**
@@ -73,7 +58,6 @@ export interface SessionStartTracker {
  */
 export function createSessionStartTracker(): SessionStartTracker {
   const seenSessionIdentities = new Set<string>();
-  const resumedFromBySessionId = new Map<string, string>();
 
   return {
     consume(sessionId, sessionKey) {
@@ -97,19 +81,6 @@ export function createSessionStartTracker(): SessionStartTracker {
         isFirst: true,
         activeCount: seenSessionIdentities.size,
       };
-    },
-    rememberSessionStart(sessionId, _sessionKey, resumedFrom) {
-      const normalizedSessionId = sessionId?.trim();
-      const normalizedResumedFrom = resumedFrom?.trim();
-      if (!normalizedSessionId || !normalizedResumedFrom) {
-        return;
-      }
-
-      resumedFromBySessionId.set(normalizedSessionId, normalizedResumedFrom);
-    },
-    getResumedFrom(sessionId) {
-      const normalizedSessionId = sessionId?.trim();
-      return normalizedSessionId ? resumedFromBySessionId.get(normalizedSessionId) : undefined;
     },
   };
 }

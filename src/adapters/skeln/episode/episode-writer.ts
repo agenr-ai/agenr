@@ -36,6 +36,31 @@ export async function writeSkelnShutdownEpisode(params: {
   });
 }
 
+/**
+ * Best-effort bounded Skeln episode write for the full transcript snapshot before compaction.
+ *
+ * @param params - Session target snapshot, message count, shared services, and optional logger.
+ * @returns Promise that resolves after the episode attempt is complete or skipped.
+ */
+export async function writeSkelnPreCompactionEpisode(params: {
+  target: SkelnSessionEpisodeTarget;
+  messageCount: number;
+  services: AgenrSkelnServices;
+  logger?: Pick<Console, "info" | "warn">;
+}): Promise<void> {
+  await writeSkelnBoundedSessionEpisode({
+    target: params.target,
+    services: params.services,
+    logger: params.logger,
+    actionLabel: "skeln pre-compaction episode write",
+    genVersion: SKELN_EPISODE_GENERATOR_VERSION,
+    buildSourceRef: (sessionFile) => sessionFile,
+    sourceSessionId: `${params.target.sessionId}:pre-compaction:${params.messageCount}`,
+    logContext: `session=${params.target.sessionId}:pre-compaction:${params.messageCount}`,
+    skipDetails: `session=${params.target.sessionId}`,
+  });
+}
+
 /** Eligibility facts returned by Skeln shutdown activity threshold evaluation. */
 export type SkelnShutdownEpisodeEligibility = ReturnType<typeof resolveSkelnShutdownEpisodeEligibility>;
 

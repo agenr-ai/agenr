@@ -51,24 +51,6 @@ export interface AgenrDebugRecallToolResultSummary {
 }
 
 /**
- * Compact summary payload embedded in `continuity_resolution` events.
- */
-export interface AgenrDebugContinuitySummary {
-  /** Whether a predecessor session was resolved. */
-  predecessorFound: boolean;
-  /** Optional predecessor session file basename when one was resolved. */
-  predecessorFileBasename?: string;
-  /** Whether continuity summary content was loaded or generated. */
-  hasContinuitySummary: boolean;
-  /** Whether recent-session tail content was rendered. */
-  hasRecentSession: boolean;
-  /** Length of the continuity summary content in characters. */
-  continuitySummaryChars: number;
-  /** Length of the recent-session content in characters. */
-  recentSessionChars: number;
-}
-
-/**
  * Discriminated union of structured agenr debug events written to the
  * adapter-owned JSONL sink.
  */
@@ -104,12 +86,6 @@ export type AgenrDebugEvent =
       sessionId?: string;
       sessionKey?: string;
       debug: RecallDebugArtifactV1;
-    }
-  | {
-      type: "continuity_resolution";
-      sessionId?: string;
-      sessionKey?: string;
-      summary: AgenrDebugContinuitySummary;
     }
   | {
       type: "error";

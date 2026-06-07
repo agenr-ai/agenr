@@ -22,7 +22,9 @@ export interface WriteSkelnBoundedSessionEpisodeParams {
   /** Episode generator version persisted on the written episode. */
   genVersion: string;
   /** Activity gate applied before summary generation. */
-  activityThreshold: EpisodeActivityThreshold;
+  activityThreshold?: EpisodeActivityThreshold;
+  /** Optional provenance session id override for upsert identity. */
+  sourceSessionId?: string;
   /** Builds the provenance source reference from the resolved session file path. */
   buildSourceRef: (sessionFile: string) => string;
   /** Structured context string passed to bounded ingest logging. */
@@ -101,9 +103,9 @@ export async function writeSkelnBoundedSessionEpisode(params: WriteSkelnBoundedS
       source: "skeln",
       genVersion: params.genVersion,
       skipActiveSessionCheck: true,
-      activityThreshold: params.activityThreshold,
+      ...(params.activityThreshold ? { activityThreshold: params.activityThreshold } : {}),
       candidateOverrides: {
-        sessionId,
+        sessionId: params.sourceSessionId ?? sessionId,
         sourceRef: params.buildSourceRef(sessionFile),
         agentId: null,
         surface: "skeln",

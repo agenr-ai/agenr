@@ -3,6 +3,7 @@ import type { ExtensionContext } from "../skeln-types.js";
 import { maybeRunLightDream } from "../../../app/dreaming/background-triggers.js";
 import { withEpisodeWriteGuard } from "../../../app/dreaming/concurrency.js";
 import { formatErrorMessage } from "../../shared/errors.js";
+import { isPluginEpisodeWriteEnabled } from "../../shared/episode-write-policy.js";
 import type { SkelnSessionShutdownEvent } from "../hooks/session-memory.js";
 import type { createAgenrSkelnServices } from "../runtime.js";
 import { resolveSkelnSessionEpisodeTarget, type SkelnSessionEpisodeTarget } from "./bounded-session-episode.js";
@@ -85,7 +86,7 @@ async function writeScopedSkelnShutdownEpisode(
   logger?: Pick<Console, "info" | "warn">,
 ): Promise<void> {
   const services = await servicesPromise;
-  if (!services.capabilities.shutdownEpisodes) {
+  if (!isPluginEpisodeWriteEnabled(services.skelnConfig.memoryPolicy)) {
     return;
   }
 

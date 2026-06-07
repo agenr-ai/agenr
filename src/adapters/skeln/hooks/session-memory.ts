@@ -1,5 +1,5 @@
-import type { SessionMemoryTriggerResult } from "../../../app/session-memory/results.js";
 import type { SessionArtifactInput, SessionMemoryTriggerEvent, SessionStartTransitionReason } from "../../../app/session-memory/types.js";
+import { buildCompactionSourceRef, buildSessionFileSourceRef } from "../../../app/session-memory/source-ref.js";
 
 import { toWorkingScopeFromSkelnSession } from "../session/scope.js";
 import type { AgenrSkelnSessionScope } from "../types.js";
@@ -14,6 +14,11 @@ export interface SkelnSessionStartTransition {
 export interface SkelnSessionBeforeForkEvent {
   entryId?: string;
   position: "before" | "at";
+}
+
+/** Skeln session_before_compact payload fields consumed by session-memory intake. */
+export interface SkelnSessionBeforeCompactEvent {
+  messageCount?: number;
 }
 
 /** Skeln session_compact payload fields consumed by session-memory intake. */
@@ -128,12 +133,17 @@ export function buildSkelnSessionBeforeForkTriggerEvent(scope: AgenrSkelnSession
  * Builds a checkpoint-relevant session_before_compact trigger event.
  *
  * @param scope - Resolved session scope.
+ * @param event - Optional Skeln before-compaction payload.
  * @returns Canonical session-memory lifecycle event.
  */
-export function buildSkelnSessionBeforeCompactTriggerEvent(scope: AgenrSkelnSessionScope): SessionMemoryTriggerEvent {
+export function buildSkelnSessionBeforeCompactTriggerEvent(
+  scope: AgenrSkelnSessionScope,
+  event: SkelnSessionBeforeCompactEvent = {},
+): SessionMemoryTriggerEvent {
   return {
     type: "session_before_compact",
     sessionKey: scope.sessionKey,
+    ...(Object.keys(event).length > 0 ? { payload: event } : {}),
     observedAt: new Date().toISOString(),
   };
 }
@@ -225,20 +235,6 @@ export function buildSkelnSessionShutdownTriggerEvent(scope: AgenrSkelnSessionSc
     observedAt: new Date().toISOString(),
   };
 }
-
-/**
- * Logs structured session-memory trigger outcomes for Skeln lifecycle hooks.
- *
- * @param result - Router result for one lifecycle trigger.
- */
-export function logSessionMemoryTriggerResult(result: SessionMemoryTriggerResult): void {
-  if (result.accepted || result.reason === "feature_disabled") {
-    return;
-  }
-
-  console.warn(`[agenr] session-memory trigger rejected: ${result.reason} (${result.message})`);
-}
-
 /** Resolves the canonical session-start transition reason from Skeln facts. */
 function resolveSessionStartTransitionReason(
   reason: SkelnSessionStartTransition["reason"],
@@ -270,7 +266,7 @@ function buildSessionStartPredecessor(
     return undefined;
   }
 
-  return { sourceRef };
+  return { sourceRef: buildSessionFileSourceRef(sourceRef) };
 }
 
 /** Builds one compaction checkpoint artifact from Skeln compaction facts. */
@@ -284,7 +280,7 @@ function buildCompactionCheckpointArtifact(
     sessionKey,
     source: "skeln",
     sourceId: compactionEntry.id,
-    sourceRef: `compaction:${compactionEntry.id}`,
+    sourceRef: buildCompactionSourceRef(compactionEntry.id),
     summary: compactionEntry.summary,
     metadata: {
       firstKeptEntryId: compactionEntry.firstKeptEntryId,

@@ -1,10 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 
+const searchAgenrDurablesThroughMemoryHostMock = vi.hoisted(() =>
+  vi.fn(async () => [{ path: "user/preference/theme", startLine: 1, endLine: 1, score: 0.9, snippet: "prefers dark mode", source: "memory" as const }]),
+);
+
+vi.mock("../../../src/adapters/openclaw/memory/search-bridge.js", () => ({
+  searchAgenrDurablesThroughMemoryHost: searchAgenrDurablesThroughMemoryHostMock,
+}));
+
 import { createAgenrMemoryRuntime } from "../../../src/adapters/openclaw/memory/runtime.js";
 import type { AgenrOpenClawServices } from "../../../src/adapters/openclaw/types.js";
 
 describe("createAgenrMemoryRuntime", () => {
-  it("bridges status probes while leaving generic memory-host search empty", async () => {
+  it("bridges durable recall into the generic memory-host search surface", async () => {
     const services = {
       config: {
         dbPath: "/tmp/agenr/knowledge.db",
@@ -35,7 +43,21 @@ describe("createAgenrMemoryRuntime", () => {
     });
 
     expect(result.error).toBeUndefined();
-    expect(await result.manager?.search("workflow policy")).toEqual([]);
+    expect(await result.manager?.search("workflow policy", { maxResults: 3, sessionKey: "agent:main:webchat:test" })).toEqual([
+      {
+        path: "user/preference/theme",
+        startLine: 1,
+        endLine: 1,
+        score: 0.9,
+        snippet: "prefers dark mode",
+        source: "memory",
+      },
+    ]);
+    expect(searchAgenrDurablesThroughMemoryHostMock).toHaveBeenCalledWith("workflow policy", services, {
+      maxResults: 3,
+      minScore: undefined,
+      sessionKey: "agent:main:webchat:test",
+    });
     await expect(result.manager?.readFile({ relPath: "memory.md" })).rejects.toThrow('[agenr] memory file reads are not supported for "memory.md"');
     expect(result.manager?.status()).toMatchObject({
       backend: "builtin",

@@ -1,5 +1,6 @@
 import { EMBEDDING_DIMENSIONS } from "../../embeddings.js";
 import { formatErrorMessage } from "../logging.js";
+import { searchAgenrDurablesThroughMemoryHost } from "./search-bridge.js";
 import type { AgenrOpenClawMemoryPluginRuntime, AgenrOpenClawMemoryProviderStatus, AgenrOpenClawServices } from "../types.js";
 
 /**
@@ -36,10 +37,12 @@ export function createAgenrMemoryRuntime(servicesPromise: Promise<AgenrOpenClawS
 
         return {
           manager: {
-            async search() {
-              // agenr does not expose a file-backed memory corpus through the generic
-              // OpenClaw memory host yet, so status registration reports no search hits.
-              return [];
+            async search(query, opts) {
+              return searchAgenrDurablesThroughMemoryHost(query, services, {
+                maxResults: opts?.maxResults,
+                minScore: opts?.minScore,
+                sessionKey: opts?.sessionKey,
+              });
             },
             async readFile({ relPath }) {
               throw new Error(`[agenr] memory file reads are not supported for "${relPath}"`);

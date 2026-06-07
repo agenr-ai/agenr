@@ -72,8 +72,9 @@ export function mergeSkelnMemoryPolicy(
   const beforeTurn = fromSettings.beforeTurn || fromOptions.beforeTurn ? { ...fromSettings.beforeTurn, ...fromOptions.beforeTurn } : undefined;
   const workingContext =
     fromSettings.workingContext || fromOptions.workingContext ? { ...fromSettings.workingContext, ...fromOptions.workingContext } : undefined;
+  const episodes = fromSettings.episodes || fromOptions.episodes ? { ...fromSettings.episodes, ...fromOptions.episodes } : undefined;
 
-  if (!slotPolicies && !sessionStart && !beforeTurn && !workingContext) {
+  if (!slotPolicies && !sessionStart && !beforeTurn && !workingContext && !episodes) {
     return undefined;
   }
 
@@ -82,6 +83,7 @@ export function mergeSkelnMemoryPolicy(
     ...(sessionStart ? { sessionStart } : {}),
     ...(beforeTurn ? { beforeTurn } : {}),
     ...(workingContext ? { workingContext } : {}),
+    ...(episodes ? { episodes } : {}),
   };
 }
 

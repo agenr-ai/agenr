@@ -4,7 +4,7 @@ import { resolveAgenrFeatureFlags } from "../../../src/app/features/resolve.js";
 import { AGENR_FEATURE_FLAG_KEYS, DEFAULT_AGENR_FEATURE_FLAGS, createAllEnabledFeatureFlagConfig } from "../../../src/app/features/types.js";
 
 describe("resolveAgenrFeatureFlags", () => {
-  it("returns all-off defaults when features are omitted", () => {
+  it("returns default feature flags when features are omitted", () => {
     expect(resolveAgenrFeatureFlags()).toEqual(DEFAULT_AGENR_FEATURE_FLAGS);
   });
 
@@ -32,7 +32,7 @@ describe("resolveAgenrFeatureFlags", () => {
     ).toEqual({
       workingMemory: true,
       sessionTreeLineage: false,
-      sessionTreeCompaction: false,
+      sessionTreeCompaction: true,
       goalContinuation: false,
     });
   });

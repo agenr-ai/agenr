@@ -5,7 +5,10 @@ import { shouldInjectWorkingContext, toWorkingContextAuditPointer, type WorkingC
 
 import { runBeforeTurn } from "../../../app/before-turn/index.js";
 import { runSessionStart } from "../../../app/session-start/index.js";
+import type { SessionLifecycleIntakeTracker } from "../../../app/plugin-runtime/session-lifecycle-intake.js";
 import type { SessionStartTracker } from "../../../app/plugin-runtime/session-tracking.js";
+import type { CompactionPromptTracker } from "../../shared/compaction-prompt-tracker.js";
+import { mergeInjectionContent } from "../../shared/injection/merge-injection-content.js";
 import { formatAgenrBeforeTurnRecall } from "../../shared/injection/before-turn-format.js";
 import { formatAgenrSessionStartRecall } from "../../shared/injection/session-start-format.js";
 import type { AgenrSkelnServices } from "../runtime.js";
@@ -22,6 +25,7 @@ import {
 } from "../memory-trace.js";
 import { resolveBeforeTurnPolicy, resolveSessionStartPolicy, resolveWorkingContextGate } from "../../shared/injection/policy.js";
 import { extractRecentTurnsFromMessages, normalizePromptText } from "../../shared/injection/message-text.js";
+import { resolveSkelnCompactionPromptContext } from "./compaction-handlers.js";
 
 /** Skeln before_agent_start event payload used by the agenr adapter. */
 export interface AgenrSkelnBeforeAgentStartEvent {
@@ -62,6 +66,8 @@ interface SkelnBeforeAgentStartComposeInput {
 export interface AgenrSkelnBeforeAgentStartDeps {
   servicesPromise: Promise<AgenrSkelnServices>;
   sessionStartTracker: SessionStartTracker;
+  compactionPromptTracker: CompactionPromptTracker;
+  lifecycleIntakeTracker: SessionLifecycleIntakeTracker;
   resolveScope: (context: ExtensionContext) => Promise<AgenrSkelnSessionScope>;
 }
 
@@ -79,6 +85,7 @@ export async function handleAgenrSkelnBeforeAgentStart(
   deps: AgenrSkelnBeforeAgentStartDeps,
 ): Promise<AgenrSkelnBeforeAgentStartResult> {
   const scope = await deps.resolveScope(context);
+  await deps.lifecycleIntakeTracker.wait(scope.sessionId, scope.sessionKey);
   const doctrine = buildAgenrSkelnMemoryPromptSection().join("\n");
   const systemPromptWithDoctrine = appendPromptSection(event.systemPrompt, doctrine);
   const trackerState = deps.sessionStartTracker.consume(scope.sessionId, scope.sessionKey);
@@ -87,7 +94,7 @@ export async function handleAgenrSkelnBeforeAgentStart(
     return resolveSessionStartInjection(scope, event.systemPrompt, systemPromptWithDoctrine, deps.servicesPromise);
   }
 
-  return resolveBeforeTurnInjection(event, scope, event.systemPrompt, systemPromptWithDoctrine, context, deps.servicesPromise);
+  return resolveBeforeTurnInjection(event, scope, event.systemPrompt, systemPromptWithDoctrine, context, deps);
 }
 
 /** Builds one hidden user message carrying injected memory context. */
@@ -133,8 +140,6 @@ async function resolveSessionStartInjection(
       });
     }
 
-    // Predecessor continuity injection is deferred until Skeln adopts the OpenClaw-style
-    // read-time continuity path (filesystem sidecar + transcript tail), not DB artifacts.
     const sessionStartPatch = await runSessionStart(
       {
         sessionKey: scope.sessionKey,
@@ -170,9 +175,10 @@ async function resolveBeforeTurnInjection(
   baseSystemPrompt: string,
   systemPrompt: string,
   context: ExtensionContext,
-  servicesPromise: Promise<AgenrSkelnServices>,
+  deps: AgenrSkelnBeforeAgentStartDeps,
 ): Promise<AgenrSkelnBeforeAgentStartResult> {
-  const services = await servicesPromise;
+  const services = await deps.servicesPromise;
+  const compactionContext = await resolveSkelnCompactionPromptContext(scope, services, deps.compactionPromptTracker);
   const workingInjection = await resolveWorkingContextInjection(services, scope, `skeln:before-turn:${scope.sessionKey}`);
   if (services.skelnConfig.memoryPolicy?.beforeTurn?.enabled === false) {
     return composeSkelnBeforeAgentStartResult({
@@ -180,6 +186,7 @@ async function resolveBeforeTurnInjection(
       systemPrompt,
       recallKind: "before_turn_recall",
       recallSkippedReason: "memoryPolicy.beforeTurn.enabled=false",
+      recallText: compactionContext,
       workingInjection,
     });
   }
@@ -191,6 +198,7 @@ async function resolveBeforeTurnInjection(
       systemPrompt,
       recallKind: "before_turn_recall",
       recallSkippedReason: "empty turn prompt",
+      recallText: compactionContext,
       workingInjection,
     });
   }
@@ -210,7 +218,7 @@ async function resolveBeforeTurnInjection(
       baseSystemPrompt,
       systemPrompt,
       recallKind: "before_turn_recall",
-      recallText: formatAgenrBeforeTurnRecall(beforeTurnPatch),
+      recallText: mergeInjectionContent(compactionContext, formatAgenrBeforeTurnRecall(beforeTurnPatch)),
       workingInjection,
     });
   } catch (error) {
@@ -220,6 +228,7 @@ async function resolveBeforeTurnInjection(
       systemPrompt,
       recallKind: "before_turn_recall",
       recallFailureReason: error instanceof Error ? error.message : String(error),
+      recallText: compactionContext,
       workingInjection,
     });
   }

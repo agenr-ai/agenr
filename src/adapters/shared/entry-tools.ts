@@ -1,7 +1,6 @@
 import { DURABLE_KINDS, EXPIRY_LEVELS, type DurableKind, type Expiry } from "../../core/types.js";
 import { formatErrorMessage } from "./errors.js";
 import { truncate } from "./memory-tool-format.js";
-import { readBooleanParam } from "./resolve-target.js";
 
 export { CLAIM_KEY_DESCRIPTION } from "./memory-prompt-doctrine.js";
 
@@ -124,14 +123,9 @@ export function normalizeStringArray(values: string[] | undefined): string[] {
  *
  * @param id - Optional entry id.
  * @param subject - Optional entry subject.
- * @param last - Optional "last entry" selector.
  * @returns Log-friendly selector description.
  */
-export function formatTargetSelector(id?: string, subject?: string, last?: boolean): string {
-  if (last === true) {
-    return "last";
-  }
-
+export function formatTargetSelector(id?: string, subject?: string): string {
   if (id) {
     return `id:${JSON.stringify(id)}`;
   }
@@ -144,28 +138,25 @@ export function formatTargetSelector(id?: string, subject?: string, last?: boole
 }
 
 /**
- * Formats an id, subject, or last selector read from raw tool arguments.
+ * Formats an id or subject selector read from raw tool arguments.
  *
  * @param params - Raw tool parameter object.
- * @param options - Optional truncation and last-selector support.
+ * @param options - Optional truncation support.
  * @returns Log- and transcript-friendly selector description.
  */
 export function formatTargetSelectorFromParams(
   params: Record<string, unknown>,
   options: {
     maxValueChars?: number;
-    allowLast?: boolean;
   } = {},
 ): string {
   const id = readTrimmedOptionalStringParam(params, "id");
   const subject = readTrimmedOptionalStringParam(params, "subject");
-  const last = options.allowLast ? readBooleanParam(params, "last") : undefined;
   const maxValueChars = options.maxValueChars;
 
   return formatTargetSelector(
     id && maxValueChars !== undefined ? truncate(id, maxValueChars) : id,
     subject && maxValueChars !== undefined ? truncate(subject, maxValueChars) : subject,
-    last,
   );
 }
 

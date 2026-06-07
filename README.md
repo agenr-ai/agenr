@@ -27,7 +27,7 @@ What makes agenr different is the combination of local-first storage, semantic e
 - Procedural memory: repo-authored YAML procedures synced into durable structured runbooks for repeatable how-to workflows.
 - LLM-powered knowledge extraction from conversation transcripts.
 - Semantic deduplication using exact hashes, normalized hashes, embeddings, and within-run clustering.
-- Session continuity with predecessor resolution, recent transcript tails, and LLM-generated continuity summaries.
+- Session-end episode ingest for the just-finished OpenClaw session.
 - Dreaming maintenance pipeline for corpus health: tiered scan, deterministic reconcile, and apply with audit history.
 - Agent tools for durable memory through the OpenClaw plugin (`store`, `recall`, `fetch`, `update`, and `trace`) and the Skeln plugin (`store`, `recall`, `update`, `work`, and goal aliases).
 - Native OpenClaw memory plugin that replaces OpenClaw's built-in memory slot.
@@ -169,9 +169,9 @@ The CLI surface is still intentionally compact, but it now covers setup, recall,
 | `agenr scenarios run`            | Run one or more claim-key sandbox scenarios.                                                                                           |
 | `agenr db reset`                 | Delete and recreate the knowledge database.                                                                                            |
 
-The OpenClaw plugin gives the agent five tools directly inside the runtime: `agenr_store`, `agenr_recall`, `agenr_fetch`, `agenr_update`, and `agenr_trace`.
+The OpenClaw plugin gives the agent four tools directly inside the runtime: `agenr_store`, `agenr_recall`, `agenr_fetch`, and `agenr_update`.
 
-The Skeln plugin exposes eight tools: `agenr_store`, `agenr_recall`, `agenr_fetch`, `agenr_update`, `agenr_work`, `get_goal`, `create_goal`, and `update_goal`. It does not expose `agenr_trace`.
+The Skeln plugin exposes eight tools: `agenr_store`, `agenr_recall`, `agenr_fetch`, `agenr_update`, `agenr_work`, `get_goal`, `create_goal`, and `update_goal`. Neither host exposes a runtime trace tool; use `agenr trace` for provenance inspection.
 
 Examples:
 

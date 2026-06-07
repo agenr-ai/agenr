@@ -10,9 +10,7 @@ export interface TuiLaneIdentity {
    * Owning OpenClaw agent identifier.
    */
   agentId: string;
-  /**
-   * Stable TUI continuity lane used for fallback predecessor matching.
-   */
+  /** Stable TUI lane used when comparing session keys. */
   stableLane: string;
   /**
    * Full runtime lane segment from the session key.

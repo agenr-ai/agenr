@@ -29,24 +29,8 @@ export interface SessionStartPolicy {
 export interface SessionStartInput {
   /** Optional session key used for recall telemetry attribution. */
   sessionKey?: string;
-  /** Optional predecessor continuity summary supplied by the host adapter. */
-  continuitySummaryText?: string;
-  /** Optional recent-session tail text supplied by the host adapter. */
-  recentSessionText?: string;
   /** Optional policy hints that bound the returned patch. */
   policy?: SessionStartPolicy;
-}
-
-/**
- * One non-memory context section preserved separately from durable memory.
- */
-export interface SessionStartContextSection {
-  /** Stable section identity. */
-  kind: "continuity_summary" | "recent_session";
-  /** Human-readable section title for adapter rendering. */
-  title: string;
-  /** Normalized section body text. */
-  content: string;
 }
 
 /**
@@ -108,8 +92,6 @@ export interface SessionStartPatchDiagnostics {
  * Structured session-start output returned by the app-layer service.
  */
 export interface SessionStartPatch {
-  /** Context sections that should stay visibly separate from durable memory. */
-  contextSections: SessionStartContextSection[];
   /** Ranked bounded durable-memory selection for the host adapter to render. */
   durableMemory: SessionStartPatchItem[];
   /** Compact diagnostics describing how the patch was built. */

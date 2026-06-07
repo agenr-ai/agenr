@@ -7,7 +7,7 @@ import type { WorkingScope } from "../working-memory/scope.js";
 /**
  * Artifact kinds accepted by schema v12.
  */
-const SESSION_ARTIFACT_KINDS = ["continuity_summary", "recent_session", "compaction_checkpoint", "branch_abandonment", "session_episode"] as const;
+const SESSION_ARTIFACT_KINDS = ["compaction_checkpoint", "branch_abandonment", "session_episode"] as const;
 
 /**
  * Host transition reasons that create session-lineage edges.

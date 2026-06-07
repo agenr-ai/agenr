@@ -3,8 +3,16 @@ import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 import { maybeRunLightDream } from "../../../app/dreaming/background-triggers.js";
 import { withEpisodeWriteGuard } from "../../../app/dreaming/concurrency.js";
 import { writeOpenClawCurrentSessionEpisode } from "../episode/episode-writer.js";
+import {
+  buildOpenClawSessionShutdownTriggerEvent,
+  buildOpenClawSessionTreeTriggerEvent,
+  shouldRouteOpenClawSessionTreeTrigger,
+  shouldSkipOpenClawSessionEndMemoryTrigger,
+} from "./session-memory.js";
+import { routeOpenClawSessionMemoryTrigger } from "./session-memory-routing.js";
+import { isPluginEpisodeWriteEnabled } from "../../shared/episode-write-policy.js";
 import { formatErrorMessage, formatSessionContext } from "../logging.js";
-import { resolveOpenClawCurrentSessionTarget } from "../session/continuity/current-session-resolver.js";
+import { resolveOpenClawCurrentSessionTarget } from "../session/current-session-resolver.js";
 import type { MidSessionTracker } from "../session/state.js";
 import type { AgenrOpenClawHookContext, AgenrOpenClawServices, AgenrOpenClawSessionEndEvent } from "../types.js";
 
@@ -12,8 +20,8 @@ import type { AgenrOpenClawHookContext, AgenrOpenClawServices, AgenrOpenClawSess
  * Handles OpenClaw session end: clears mid-session state and writes the
  * just-finished session's episode in the background.
  *
- * Writing at session end removes the predecessor-only consolidation lag so a
- * session becomes dreaming evidence before the next session starts. The write
+ * Writing at session end lets the just-finished session become dreaming
+ * evidence before the next session starts. The write
  * is best-effort and never throws into the host lifecycle.
  *
  * @param event - Session-end payload from OpenClaw.
@@ -31,9 +39,22 @@ export async function handleAgenrSessionEnd(
   params.midSessionTracker.clear(event.sessionId, event.sessionKey);
 
   const sessionContext = formatSessionContext(event.sessionId, event.sessionKey);
+  const scopeContext = {
+    sessionId: event.sessionId,
+    ...(event.sessionKey ? { sessionKey: event.sessionKey } : {}),
+  };
+
+  if (!shouldSkipOpenClawSessionEndMemoryTrigger(event.reason)) {
+    if (shouldRouteOpenClawSessionTreeTrigger(event.reason)) {
+      await routeOpenClawSessionMemoryTrigger(params.servicesPromise, scopeContext, (scope) => buildOpenClawSessionTreeTriggerEvent(scope, event));
+    } else {
+      await routeOpenClawSessionMemoryTrigger(params.servicesPromise, scopeContext, (scope) => buildOpenClawSessionShutdownTriggerEvent(scope, event));
+    }
+  }
+
   try {
     const services = await params.servicesPromise;
-    if (services.pluginConfig.memoryPolicy?.sessionStart?.enabled === false) {
+    if (!isPluginEpisodeWriteEnabled(services.pluginConfig.memoryPolicy)) {
       params.logger.debug?.(`[agenr] session-end episode write skipped for ${sessionContext} reason=memory_policy_disabled`);
       return;
     }

@@ -5,6 +5,8 @@ import { createAgenrDebugSink, createNoopAgenrDebugSink } from "../../adapters/o
 import type { OpenClawPluginDebugSink } from "./debug-sink.js";
 import path from "node:path";
 import { buildClaimExtractionRuntime, composeHostPluginServices, EMBEDDING_MODEL } from "../../adapters/plugin-runtime/index.js";
+import { resolveAgenrFeatureFlags } from "../features/resolve.js";
+import { createHostMemoryServices } from "../host-memory/create-host-memory-services.js";
 import type { AgenrOpenClawServices } from "./types.js";
 
 export type { AgenrOpenClawServices } from "./types.js";
@@ -35,14 +37,24 @@ export async function createAgenrOpenClawServices(
         createOpenClawLlmClient(options.openClaw, hostConfig.claimExtractionModel, "claim extraction model override"),
       ),
     onBeforeClose: () => debugSink.close(),
-    extend: ({ resolvedConfig, agenrConfig, runtimeServices }) => ({
-      ...runtimeServices,
-      openClaw: options.openClaw,
-      config: resolvedConfig,
-      pluginConfig: config,
-      agenrConfig,
-      debugSink,
-    }),
+    extend: ({ resolvedConfig, agenrConfig, runtimeServices }) => {
+      const featureFlags = resolveAgenrFeatureFlags(agenrConfig.features);
+      const hostMemory = createHostMemoryServices(featureFlags, {
+        workingMemoryRepository: runtimeServices.workingMemoryRepository,
+        sessionMemoryRepository: runtimeServices.sessionMemoryRepository,
+        workingMemorySourceLabel: "openclaw",
+      });
+
+      return {
+        ...runtimeServices,
+        ...hostMemory,
+        openClaw: options.openClaw,
+        config: resolvedConfig,
+        pluginConfig: config,
+        agenrConfig,
+        debugSink,
+      };
+    },
   });
 }
 

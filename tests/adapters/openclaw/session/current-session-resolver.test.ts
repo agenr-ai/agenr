@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { resolveOpenClawCurrentSessionTarget } from "../../../../src/adapters/openclaw/session/continuity/current-session-resolver.js";
+import { resolveOpenClawCurrentSessionTarget } from "../../../../src/adapters/openclaw/session/current-session-resolver.js";
 
 describe("resolveOpenClawCurrentSessionTarget", () => {
   const tempRoots: string[] = [];

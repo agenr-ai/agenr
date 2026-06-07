@@ -30,15 +30,6 @@ export interface AgenrOpenClawBeforePromptBuildEvent {
 }
 
 /**
- * Minimal session-start payload used to track predecessor continuity.
- */
-export interface AgenrOpenClawSessionStartEvent {
-  sessionId: string;
-  sessionKey?: string;
-  resumedFrom?: string;
-}
-
-/**
  * Minimal session-end payload used for lifecycle cleanup.
  */
 export interface AgenrOpenClawSessionEndEvent {
@@ -46,6 +37,10 @@ export interface AgenrOpenClawSessionEndEvent {
   sessionKey?: string;
   messageCount: number;
   durationMs?: number;
+  reason?: "new" | "reset" | "idle" | "daily" | "compaction" | "deleted" | "unknown";
+  sessionFile?: string;
+  nextSessionId?: string;
+  nextSessionKey?: string;
 }
 
 /**

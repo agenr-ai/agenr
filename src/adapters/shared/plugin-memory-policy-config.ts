@@ -39,7 +39,12 @@ export function normalizePluginInjectionMemoryPolicyConfig(
     errors.push(...workingContextResult.errors);
   }
 
-  const allowedKeys = new Set(["slotPolicies", "sessionStart", "beforeTurn", "workingContext"]);
+  const episodesResult = normalizeEpisodeMemoryPolicyConfig(value.episodes);
+  if (!episodesResult.ok) {
+    errors.push(...episodesResult.errors);
+  }
+
+  const allowedKeys = new Set(["slotPolicies", "sessionStart", "beforeTurn", "workingContext", "episodes"]);
   for (const key of Object.keys(value)) {
     if (!allowedKeys.has(key)) {
       errors.push(`unknown config field: memoryPolicy.${key}`);
@@ -56,12 +61,14 @@ export function normalizePluginInjectionMemoryPolicyConfig(
       (slotPoliciesResult.ok && slotPoliciesResult.value) ||
       (sessionStartResult.ok && sessionStartResult.value) ||
       (beforeTurnResult.ok && beforeTurnResult.value) ||
-      (workingContextResult.ok && workingContextResult.value)
+      (workingContextResult.ok && workingContextResult.value) ||
+      (episodesResult.ok && episodesResult.value)
         ? {
             ...(slotPoliciesResult.ok && slotPoliciesResult.value ? { slotPolicies: slotPoliciesResult.value } : {}),
             ...(sessionStartResult.ok && sessionStartResult.value ? { sessionStart: sessionStartResult.value } : {}),
             ...(beforeTurnResult.ok && beforeTurnResult.value ? { beforeTurn: beforeTurnResult.value } : {}),
             ...(workingContextResult.ok && workingContextResult.value ? { workingContext: workingContextResult.value } : {}),
+            ...(episodesResult.ok && episodesResult.value ? { episodes: episodesResult.value } : {}),
           }
         : undefined,
   };
@@ -91,6 +98,43 @@ function normalizeWorkingContextMemoryPolicyConfig(
   for (const key of Object.keys(value)) {
     if (!allowedKeys.has(key)) {
       errors.push(`unknown config field: memoryPolicy.workingContext.${key}`);
+    }
+  }
+
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+
+  return {
+    ok: true,
+    value: enabled !== undefined ? { enabled } : undefined,
+  };
+}
+
+/**
+ * Validates and normalizes episode-write overrides nested under `memoryPolicy`.
+ *
+ * @param value - Raw nested config value.
+ * @returns Normalized episode overrides or stable validation errors.
+ */
+function normalizeEpisodeMemoryPolicyConfig(
+  value: unknown,
+): { ok: true; value: PluginInjectionMemoryPolicyConfig["episodes"] | undefined } | { ok: false; errors: string[] } {
+  if (value === undefined) {
+    return { ok: true, value: undefined };
+  }
+
+  if (!isRecord(value)) {
+    return { ok: false, errors: ["memoryPolicy.episodes must be an object when provided"] };
+  }
+
+  const errors: string[] = [];
+  const enabled = normalizeOptionalBoolean(value.enabled, "memoryPolicy.episodes.enabled", errors);
+
+  const allowedKeys = new Set(["enabled"]);
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.has(key)) {
+      errors.push(`unknown config field: memoryPolicy.episodes.${key}`);
     }
   }
 

@@ -1,9 +1,6 @@
 import { failedTextResult, readNumberParam, readStringArrayParam, readStringParam, textResult } from "openclaw/plugin-sdk/agent-runtime";
 import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sdk/core";
 
-import { renderEntryTraceText } from "../../../app/memory/render-trace.js";
-import type { EntryTrace } from "../../../app/memory/ports.js";
-import type { Durable } from "../../../core/types.js";
 import { formatErrorMessage } from "../../shared/errors.js";
 import type { MemoryToolOutcome, MemoryToolParamReader } from "../../shared/memory-tools.js";
 import {
@@ -20,8 +17,6 @@ import {
   parseRecallMode,
   sanitizeUpdateToolParams,
 } from "../../shared/entry-tools.js";
-import { buildEntryMemoryResolverPorts, readBooleanParam, resolveTargetDurable as resolveSharedTargetDurable } from "../../shared/resolve-target.js";
-import type { AgenrOpenClawServices } from "../types.js";
 
 /** Shared OpenClaw param reader wired into host-neutral memory tool parsers. */
 const OPENCLAW_PARAM_READER: MemoryToolParamReader = {
@@ -44,7 +39,6 @@ export {
   parseDurableKinds,
   parseExpiry,
   parseRecallMode,
-  readBooleanParam,
   sanitizeUpdateToolParams,
 };
 
@@ -63,24 +57,6 @@ export function toOpenClawToolResult(outcome: MemoryToolOutcome) {
   }
 
   return textResult(outcome.text, outcome.details);
-}
-
-/**
- * Resolves exactly one tool target selector into a concrete agenr entry.
- *
- * @param services - OpenClaw service bundle used for entry lookups.
- * @param params - Raw tool parameters.
- * @param options - Optional selector controls.
- * @returns Matching agenr entry.
- */
-export async function resolveTargetDurable(
-  services: AgenrOpenClawServices,
-  params: Record<string, unknown>,
-  options: {
-    allowLast?: boolean;
-  } = {},
-): Promise<Durable> {
-  return resolveSharedTargetDurable(buildEntryMemoryResolverPorts(services), params, options);
 }
 
 /**
@@ -115,30 +91,6 @@ export function logToolCall(
  */
 export function logToolFailure(logger: PluginLogger, toolName: string, ctx: OpenClawPluginToolContext, error: unknown): void {
   logger.warn(`[agenr] tool=${toolName} ${formatToolSessionContext(ctx)} failed: ${formatErrorMessage(error)}`);
-}
-
-/**
- * Sanitizes trace parameters before debug logging.
- *
- * @param params - Parsed trace-tool parameters.
- * @returns Redacted log payload.
- */
-export function sanitizeTraceToolParams(params: { id: string | undefined; subject: string | undefined; last: boolean | undefined }): Record<string, unknown> {
-  return {
-    ...(params.id ? { id: params.id } : {}),
-    ...(params.subject ? { subject: params.subject } : {}),
-    ...(params.last !== undefined ? { last: params.last } : {}),
-  };
-}
-
-/**
- * Formats the provenance and audit view returned by `agenr_trace`.
- *
- * @param trace - Loaded trace payload.
- * @returns Human-readable trace output.
- */
-export function formatTrace(trace: EntryTrace): string {
-  return renderEntryTraceText(trace);
 }
 
 /**

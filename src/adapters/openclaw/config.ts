@@ -49,14 +49,6 @@ export function normalizeAgenrOpenClawPluginConfig(value: unknown): { ok: true; 
     errors.push("configPath must be a non-empty string when provided");
   }
 
-  const rawContinuityModel = value.continuityModel;
-  const continuityModel = typeof rawContinuityModel === "string" ? rawContinuityModel.trim() : undefined;
-  if (rawContinuityModel !== undefined && !continuityModel) {
-    errors.push("continuityModel must be a non-empty string when provided");
-  } else if (continuityModel && !continuityModel.includes("/")) {
-    errors.push("continuityModel must use provider/model format when provided");
-  }
-
   const rawEpisodeModel = value.episodeModel;
   const episodeModel = typeof rawEpisodeModel === "string" ? rawEpisodeModel.trim() : undefined;
   if (rawEpisodeModel !== undefined && !episodeModel) {
@@ -88,7 +80,7 @@ export function normalizeAgenrOpenClawPluginConfig(value: unknown): { ok: true; 
     errors.push(...debugResult.errors);
   }
 
-  const allowedKeys = new Set(["dbPath", "configPath", "continuityModel", "episodeModel", "claimExtractionModel", "storeNudge", "memoryPolicy", "debug"]);
+  const allowedKeys = new Set(["dbPath", "configPath", "episodeModel", "claimExtractionModel", "storeNudge", "memoryPolicy", "debug"]);
   for (const key of Object.keys(value)) {
     if (!allowedKeys.has(key)) {
       errors.push(`unknown config field: ${key}`);
@@ -104,7 +96,6 @@ export function normalizeAgenrOpenClawPluginConfig(value: unknown): { ok: true; 
     value: {
       ...(dbPath ? { dbPath } : {}),
       ...(configPath ? { configPath } : {}),
-      ...(continuityModel ? { continuityModel } : {}),
       ...(episodeModel ? { episodeModel } : {}),
       ...(claimExtractionModel ? { claimExtractionModel } : {}),
       ...(storeNudgeResult.ok && storeNudgeResult.value ? { storeNudge: storeNudgeResult.value } : {}),

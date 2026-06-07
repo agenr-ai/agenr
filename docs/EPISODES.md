@@ -6,7 +6,7 @@ That split lets the system answer questions like "what happened yesterday?", "wh
 
 Current production behavior covers OpenClaw and Skeln sessions:
 
-- the OpenClaw plugin writes predecessor-session episodes in the background at session start
+- the OpenClaw plugin writes just-finished session episodes on `session_end`
 - the Skeln plugin can write bounded shutdown episodes when `sessionTreeLineage` is enabled and activity thresholds pass
 - the `agenr ingest episodes` CLI backfills or regenerates episodes from OpenClaw transcript files
 - unified recall can query episodes directly or alongside durable entries
@@ -51,26 +51,26 @@ Episode recall and embedding backfill operate on active episodes only, meaning r
 
 Episodes are generated through three current paths.
 
-### 1. Automatic predecessor write at session start
+### 1. Automatic session-end write (OpenClaw)
 
-On OpenClaw `session_start`, agenr records lineage facts. On the first `before_prompt_build` for the new session, the plugin resolves the predecessor session and triggers a best-effort background episode write for that predecessor.
+When OpenClaw emits `session_end`, the plugin best-effort writes an episode for the just-finished session through the shared `app/episode-ingest` workflow. This is separate from session-memory lineage intake, which is routed on `session_start`, compaction, reset, and shutdown-style session-end reasons.
+
+When OpenClaw emits `before_compaction`, the plugin may also write a pre-compaction episode from the full transcript snapshot before OpenClaw compacts it. This path uses source id `${sessionId}:pre-compaction:${messageCount}`, is gated by `memoryPolicy.episodes.enabled` (not `memoryPolicy.sessionStart.enabled`), and runs under the shared episode-write guard.
+
+On OpenClaw `session_start`, agenr records lineage facts through `routeSessionMemoryTrigger`. When the host supplies `resumedFrom`, that value is stored as the predecessor source ref for resume lineage.
 
 Important current behavior:
 
-- it runs through the shared `app/episode-ingest` workflow, not a separate plugin-only pipeline
-- it uses the active agent model by default, or the plugin `episodeModel` override when configured
-- it skips the active-session check because the host already knows it is writing a predecessor session
-- it times out after 45 seconds
-- it may embed the summary if embeddings are available and there is enough time budget left
-- it never blocks prompt construction or session startup
-
-If the predecessor already has an episode, the write is skipped. If parsing fails, the summary call fails, or the timeout is hit, the session still continues normally.
+- predecessor continuity lookup and predecessor episode writes at first `before_prompt_build` are not wired in the current OpenClaw adapter
+- session-end episode writes run after session-memory shutdown/tree triggers are routed
 
 ### 2. Skeln shutdown write
 
 When the Skeln adapter receives `session_shutdown`, it first routes the lifecycle event through session-memory intake. If an active working set exists, agenr records a `merge_checkpoint` update and leaves the set open. Shutdown never closes a working set implicitly.
 
-After the checkpoint attempt, the adapter may write a Skeln episode through the same shared `app/episode-ingest` workflow used by OpenClaw and CLI ingest. This path is gated by `sessionTreeLineage`, uses Skeln JSONL parsing, and writes `source: "skeln"`.
+After the checkpoint attempt, the adapter may write a Skeln episode through the same shared `app/episode-ingest` workflow used by OpenClaw and CLI ingest. Automatic Skeln episode writes (shutdown and pre-compaction) are gated by `memoryPolicy.episodes.enabled` (default on), use Skeln JSONL parsing, and write `source: "skeln"`.
+
+When Skeln emits `session_before_compact`, the adapter may also write a pre-compaction episode from the live transcript snapshot before compaction runs. This path uses source id `${sessionId}:pre-compaction:${messageCount}` and does not apply the shutdown activity thresholds.
 
 The shutdown writer is bounded and conservative:
 

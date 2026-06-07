@@ -78,7 +78,7 @@ export interface OpenClawSessionsStoreReadResult {
  * Reads and normalizes OpenClaw `sessions.json` entries from a sessions directory.
  *
  * Missing files, malformed JSON, and malformed entries are treated as empty
- * results so TUI predecessor fallback remains best-effort.
+ * results for registry lookups and episode ingest preflight.
  *
  * @param sessionsDir - Absolute or relative OpenClaw sessions directory.
  * @param logger - Optional plugin logger used for debug diagnostics.

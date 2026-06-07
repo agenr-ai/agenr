@@ -52,6 +52,7 @@ export async function createPluginMemoryRuntime(input: CreatePluginMemoryRuntime
     listActiveSessionStartProactiveDirectives(database);
   const fetchTopicProactiveDirectives = (): Promise<Awaited<ReturnType<typeof listActiveTopicProactiveDirectives>>> =>
     listActiveTopicProactiveDirectives(database);
+  const sessionMemoryRepository = createSessionMemoryRepository(database);
   let closed = false;
 
   return {
@@ -63,13 +64,14 @@ export async function createPluginMemoryRuntime(input: CreatePluginMemoryRuntime
     }),
     dreaming: createDreamPort(database),
     workingMemoryRepository: createWorkingMemoryRepository(database),
-    sessionMemoryRepository: createSessionMemoryRepository(database),
+    sessionMemoryRepository,
     sessionStart: {
       repository: createSessionStartRepository(database),
       recall,
       slotPolicyConfig: slotPolicies,
       listActiveAbstainDirectives: fetchActiveAbstainDirectives,
       listActiveProactiveDirectives: fetchSessionStartProactiveDirectives,
+      sessionMemoryRepository,
     },
     beforeTurn: {
       recall,

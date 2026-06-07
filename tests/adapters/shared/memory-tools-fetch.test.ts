@@ -58,7 +58,6 @@ describe("agenr_fetch shared tool flow", () => {
         embedding: {} as never,
         memory: {
           findEntryBySubject: async () => entry,
-          findMostRecentEntry: async () => entry,
           getEntryTrace: async () => null,
         },
       },
@@ -89,7 +88,6 @@ describe("agenr_fetch shared tool flow", () => {
           embedding: {} as never,
           memory: {
             findEntryBySubject: async () => oversizedEntry,
-            findMostRecentEntry: async () => oversizedEntry,
             getEntryTrace: async () => null,
           },
         },

@@ -1,19 +1,22 @@
 import type { ExtensionAPI, ExtensionContext } from "./skeln-types.js";
 
-import type { SessionMemoryTriggerEvent } from "../../app/session-memory/types.js";
 import { formatErrorMessage } from "../shared/errors.js";
+import { logSessionMemoryTriggerResult } from "../shared/session-memory-routing.js";
+import { createSessionLifecycleIntakeTracker } from "../../app/plugin-runtime/session-lifecycle-intake.js";
 import { createSessionStartTracker } from "../../app/plugin-runtime/session-tracking.js";
+import { createCompactionPromptTracker } from "../shared/compaction-prompt-tracker.js";
 import { mergeSkelnMemoryPolicy, readSkelnMemoryPolicySetting } from "./config.js";
 import { handleAgenrSkelnBeforeAgentStart } from "./hooks/before-agent-start.js";
+import { handleSkelnSessionBeforeCompact } from "./hooks/compaction-handlers.js";
+import { routeSkelnSessionMemoryTrigger } from "./hooks/session-memory-routing.js";
 import {
-  buildSkelnSessionBeforeCompactTriggerEvent,
   buildSkelnSessionBeforeForkTriggerEvent,
   buildSkelnSessionBeforeTreeTriggerEvent,
   buildSkelnSessionCompactTriggerEvent,
   buildSkelnSessionShutdownTriggerEvent,
   buildSkelnSessionStartTriggerEvent,
   buildSkelnSessionTreeTriggerEvent,
-  logSessionMemoryTriggerResult,
+  type SkelnSessionBeforeCompactEvent,
   type SkelnSessionBeforeForkEvent,
   type SkelnSessionBeforeTreeEvent,
   type SkelnSessionCompactEvent,
@@ -55,7 +58,7 @@ export { handleAgenrSkelnBeforeAgentStart } from "./hooks/before-agent-start.js"
 type SkelnLifecycleHookRegistrar = {
   on(event: "session_start", handler: (event: SkelnSessionStartTransition, context: ExtensionContext) => Promise<void> | void): void;
   on(event: "session_before_fork", handler: (event: SkelnSessionBeforeForkEvent, context: ExtensionContext) => Promise<void> | void): void;
-  on(event: "session_before_compact", handler: (event: unknown, context: ExtensionContext) => Promise<void> | void): void;
+  on(event: "session_before_compact", handler: (event: SkelnSessionBeforeCompactEvent, context: ExtensionContext) => Promise<void> | void): void;
   on(event: "session_compact", handler: (event: SkelnSessionCompactEvent, context: ExtensionContext) => Promise<void> | void): void;
   on(event: "session_before_tree", handler: (event: SkelnSessionBeforeTreeEvent, context: ExtensionContext) => Promise<void> | void): void;
   on(event: "session_tree", handler: (event: SkelnSessionTreeEvent, context: ExtensionContext) => Promise<void> | void): void;
@@ -97,6 +100,8 @@ export function registerAgenrSkelnMemory(skeln: ExtensionAPI, options: RegisterA
   const servicesPromise = createAgenrSkelnServices(config);
   const scopeTracker = createSkelnSessionScopeTracker();
   const sessionStartTracker = createSessionStartTracker();
+  const compactionPromptTracker = createCompactionPromptTracker();
+  const lifecycleIntakeTracker = createSessionLifecycleIntakeTracker();
   const lifecycle = skeln as ExtensionAPI & SkelnLifecycleHookRegistrar;
 
   const resolveScope = async (context: ExtensionContext) => resolveCurrentSkelnSessionScope(context, scopeTracker, options);
@@ -107,8 +112,16 @@ export function registerAgenrSkelnMemory(skeln: ExtensionAPI, options: RegisterA
 
   registerAgenrSkelnTools(skeln, servicesPromise, resolveScope);
   registerAgenrSkelnFailureBoundary(lifecycle);
-  registerAgenrSkelnInjectionHooks(lifecycle, scopeTracker, servicesPromise, sessionStartTracker, resolveScope);
-  registerAgenrSkelnSessionMemoryHooks(lifecycle, scopeTracker, servicesPromise, resolveScope);
+  registerAgenrSkelnInjectionHooks(
+    lifecycle,
+    scopeTracker,
+    servicesPromise,
+    sessionStartTracker,
+    compactionPromptTracker,
+    lifecycleIntakeTracker,
+    resolveScope,
+  );
+  registerAgenrSkelnSessionMemoryHooks(lifecycle, scopeTracker, servicesPromise, resolveScope, compactionPromptTracker, lifecycleIntakeTracker);
   registerAgenrSkelnSubagentFindingHooks(lifecycle, servicesPromise, resolveScope);
 
   return {
@@ -127,15 +140,23 @@ function registerAgenrSkelnInjectionHooks(
   scopeTracker: SkelnSessionScopeTracker,
   servicesPromise: ReturnType<typeof createAgenrSkelnServices>,
   sessionStartTracker: ReturnType<typeof createSessionStartTracker>,
+  compactionPromptTracker: ReturnType<typeof createCompactionPromptTracker>,
+  lifecycleIntakeTracker: ReturnType<typeof createSessionLifecycleIntakeTracker>,
   resolveScope: (context: ExtensionContext) => Promise<AgenrSkelnSessionScope>,
 ): void {
   skeln.on("session_start", async (event, context) => {
     try {
       const scope = await resolveScope(context);
-      rememberSkelnSessionStart(scopeTracker, sessionStartTracker, scope, event.previousSessionFile);
+      rememberSkelnSessionStart(scopeTracker, scope);
 
-      const services = await servicesPromise;
-      logSessionMemoryTriggerResult(await services.routeSessionMemoryTrigger(buildSkelnSessionStartTriggerEvent(scope, event)));
+      await lifecycleIntakeTracker.track(
+        scope.sessionId,
+        scope.sessionKey,
+        (async () => {
+          const services = await servicesPromise;
+          logSessionMemoryTriggerResult(await services.routeSessionMemoryTrigger(buildSkelnSessionStartTriggerEvent(scope, event)));
+        })(),
+      );
     } catch (error) {
       console.warn(`[agenr] session_start scope failed: ${formatErrorMessage(error)}`);
     }
@@ -145,6 +166,8 @@ function registerAgenrSkelnInjectionHooks(
     handleAgenrSkelnBeforeAgentStart(event, context, {
       servicesPromise,
       sessionStartTracker,
+      compactionPromptTracker,
+      lifecycleIntakeTracker,
       resolveScope,
     }),
   );
@@ -156,29 +179,52 @@ function registerAgenrSkelnSessionMemoryHooks(
   scopeTracker: SkelnSessionScopeTracker,
   servicesPromise: ReturnType<typeof createAgenrSkelnServices>,
   resolveScope: (context: ExtensionContext) => Promise<AgenrSkelnSessionScope>,
+  compactionPromptTracker: ReturnType<typeof createCompactionPromptTracker>,
+  lifecycleIntakeTracker: ReturnType<typeof createSessionLifecycleIntakeTracker>,
 ): void {
   skeln.on("session_before_fork", async (event, context) => {
-    await routeScopedSessionMemoryTrigger(servicesPromise, resolveScope, context, (scope) => buildSkelnSessionBeforeForkTriggerEvent(scope, event));
+    const scope = await resolveScope(context);
+    await lifecycleIntakeTracker.track(
+      scope.sessionId,
+      scope.sessionKey,
+      routeSkelnSessionMemoryTrigger(servicesPromise, resolveScope, context, (scope) => buildSkelnSessionBeforeForkTriggerEvent(scope, event)),
+    );
   });
 
-  skeln.on("session_before_compact", async (_event, context) => {
-    await routeScopedSessionMemoryTrigger(servicesPromise, resolveScope, context, (scope) => buildSkelnSessionBeforeCompactTriggerEvent(scope));
+  skeln.on("session_before_compact", async (event, context) => {
+    const scope = await resolveScope(context);
+    await lifecycleIntakeTracker.track(scope.sessionId, scope.sessionKey, handleSkelnSessionBeforeCompact(event, context, servicesPromise, resolveScope));
   });
 
   skeln.on("session_compact", async (event, context) => {
-    await routeScopedSessionMemoryTrigger(servicesPromise, resolveScope, context, (scope) => buildSkelnSessionCompactTriggerEvent(scope, event));
+    const scope = await resolveScope(context);
+    await lifecycleIntakeTracker.track(
+      scope.sessionId,
+      scope.sessionKey,
+      routeSkelnSessionMemoryTrigger(servicesPromise, resolveScope, context, (scope) => buildSkelnSessionCompactTriggerEvent(scope, event)),
+    );
   });
 
   skeln.on("session_before_tree", async (event, context) => {
-    await routeScopedSessionMemoryTrigger(servicesPromise, resolveScope, context, (scope) => buildSkelnSessionBeforeTreeTriggerEvent(scope, event));
+    const scope = await resolveScope(context);
+    await lifecycleIntakeTracker.track(
+      scope.sessionId,
+      scope.sessionKey,
+      routeSkelnSessionMemoryTrigger(servicesPromise, resolveScope, context, (scope) => buildSkelnSessionBeforeTreeTriggerEvent(scope, event)),
+    );
   });
 
   skeln.on("session_tree", async (event, context) => {
-    await routeScopedSessionMemoryTrigger(servicesPromise, resolveScope, context, (scope) => buildSkelnSessionTreeTriggerEvent(scope, event));
+    const scope = await resolveScope(context);
+    await lifecycleIntakeTracker.track(
+      scope.sessionId,
+      scope.sessionKey,
+      routeSkelnSessionMemoryTrigger(servicesPromise, resolveScope, context, (scope) => buildSkelnSessionTreeTriggerEvent(scope, event)),
+    );
   });
 
   skeln.on("session_shutdown", async (event, context) => {
-    await handleSkelnSessionShutdown(servicesPromise, scopeTracker, resolveScope, event, context);
+    await handleSkelnSessionShutdown(servicesPromise, scopeTracker, resolveScope, event, context, compactionPromptTracker, lifecycleIntakeTracker);
   });
 }
 
@@ -189,8 +235,21 @@ async function handleSkelnSessionShutdown(
   resolveScope: (context: ExtensionContext) => Promise<AgenrSkelnSessionScope>,
   event: SkelnSessionShutdownEvent,
   context: ExtensionContext,
+  compactionPromptTracker: ReturnType<typeof createCompactionPromptTracker>,
+  lifecycleIntakeTracker: ReturnType<typeof createSessionLifecycleIntakeTracker>,
 ): Promise<void> {
-  await routeScopedSessionMemoryTrigger(servicesPromise, resolveScope, context, (scope) => buildSkelnSessionShutdownTriggerEvent(scope, event));
+  try {
+    const scope = await resolveScope(context);
+    await lifecycleIntakeTracker.track(
+      scope.sessionId,
+      scope.sessionKey,
+      routeSkelnSessionMemoryTrigger(servicesPromise, resolveScope, context, (scope) => buildSkelnSessionShutdownTriggerEvent(scope, event)),
+    );
+    compactionPromptTracker.clear(scope.sessionId, scope.sessionKey);
+    await lifecycleIntakeTracker.clear(scope.sessionId, scope.sessionKey);
+  } catch {
+    // Ignore scope resolution failures during shutdown cleanup.
+  }
   // Shutdown episode work uses a synchronous transcript snapshot, not the scope tracker.
   clearTrackedSkelnScope(scopeTracker, context);
   await scheduleSkelnSessionShutdownEpisodeWrite({ event, context, servicesPromise });
@@ -206,22 +265,6 @@ function registerAgenrSkelnSubagentFindingHooks(
     await recordSkelnSubagentFindings(servicesPromise, resolveScope, context, event);
     return undefined;
   });
-}
-
-/** Routes one scoped session-memory trigger and logs non-fatal failures. */
-async function routeScopedSessionMemoryTrigger(
-  servicesPromise: ReturnType<typeof createAgenrSkelnServices>,
-  resolveScope: (context: ExtensionContext) => Promise<AgenrSkelnSessionScope>,
-  context: ExtensionContext,
-  buildEvent: (scope: AgenrSkelnSessionScope) => SessionMemoryTriggerEvent,
-): Promise<void> {
-  try {
-    const scope = await resolveScope(context);
-    const services = await servicesPromise;
-    logSessionMemoryTriggerResult(await services.routeSessionMemoryTrigger(buildEvent(scope)));
-  } catch (error) {
-    console.warn(`[agenr] session-memory trigger failed: ${formatErrorMessage(error)}`);
-  }
 }
 
 /** Resolves one active Skeln session scope from host context and optional overrides. */
@@ -249,15 +292,9 @@ async function resolveCurrentSkelnSessionScope(
   return toSkelnSessionScope(mergeSkelnHostContext(defaults, override), sessionId);
 }
 
-/** Records session scope and predecessor facts for later injection hooks. */
-function rememberSkelnSessionStart(
-  scopeTracker: SkelnSessionScopeTracker,
-  sessionStartTracker: ReturnType<typeof createSessionStartTracker>,
-  scope: AgenrSkelnSessionScope,
-  previousSessionFile: string | undefined,
-): void {
+/** Records session scope facts for later injection hooks. */
+function rememberSkelnSessionStart(scopeTracker: SkelnSessionScopeTracker, scope: AgenrSkelnSessionScope): void {
   scopeTracker.rememberSessionStart(scope);
-  sessionStartTracker.rememberSessionStart(scope.sessionId, scope.sessionKey, previousSessionFile);
 }
 
 /** Returns the active CWD from the Skeln context while tolerating older host shapes. */

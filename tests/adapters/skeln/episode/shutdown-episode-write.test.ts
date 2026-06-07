@@ -16,7 +16,7 @@ describe("scheduleSkelnSessionShutdownEpisodeWrite", () => {
         },
       },
       context: buildContext(calls),
-      servicesPromise: buildServicesPromise({ shutdownEpisodes: false }),
+      servicesPromise: buildServicesPromise({ episodesEnabled: false }),
     });
 
     expect(calls).toEqual(["sessionId", "sessionFile", "defer"]);
@@ -40,7 +40,7 @@ describe("scheduleSkelnSessionShutdownEpisodeWrite", () => {
         }
         return "/tmp/session.jsonl";
       }),
-      servicesPromise: buildServicesPromise({ shutdownEpisodes: false }),
+      servicesPromise: buildServicesPromise({ episodesEnabled: false }),
     });
 
     expect(sessionFileReads).toBe(1);
@@ -66,7 +66,7 @@ describe("scheduleSkelnSessionShutdownEpisodeWrite", () => {
         },
       },
       context: buildContext([]),
-      servicesPromise: buildServicesPromise({ shutdownEpisodes: false, close }),
+      servicesPromise: buildServicesPromise({ episodesEnabled: false, close }),
     });
 
     expect(closeFinished).toBe(false);
@@ -81,7 +81,7 @@ describe("scheduleSkelnSessionShutdownEpisodeWrite", () => {
     await scheduleSkelnSessionShutdownEpisodeWrite({
       event: { reason: "reload" },
       context: buildContext([]),
-      servicesPromise: buildServicesPromise({ shutdownEpisodes: false, close }),
+      servicesPromise: buildServicesPromise({ episodesEnabled: false, close }),
     });
 
     await new Promise<void>((resolve) => {
@@ -96,7 +96,7 @@ describe("scheduleSkelnSessionShutdownEpisodeWrite", () => {
     await scheduleSkelnSessionShutdownEpisodeWrite({
       event: { reason: "quit" },
       context: buildContext([]),
-      servicesPromise: buildServicesPromise({ shutdownEpisodes: false, close }),
+      servicesPromise: buildServicesPromise({ episodesEnabled: false, close }),
     });
 
     expect(close).toHaveBeenCalledOnce();
@@ -143,9 +143,11 @@ function buildContext(
 }
 
 /** Builds one resolved services promise for shutdown scheduling tests. */
-function buildServicesPromise(options: { shutdownEpisodes: boolean; close?: () => Promise<void> }): Promise<AgenrSkelnServices> {
+function buildServicesPromise(options: { episodesEnabled?: boolean; close?: () => Promise<void> }): Promise<AgenrSkelnServices> {
   return Promise.resolve({
-    capabilities: { shutdownEpisodes: options.shutdownEpisodes },
+    skelnConfig: {
+      memoryPolicy: options.episodesEnabled === false ? { episodes: { enabled: false } } : undefined,
+    },
     close: options.close ?? (async () => undefined),
   } as AgenrSkelnServices);
 }

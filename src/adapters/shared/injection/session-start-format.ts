@@ -10,17 +10,11 @@ import { wrapAgenrMemoryContext } from "./memory-context.js";
  * @returns Prompt-ready text, or an empty string when nothing should be injected.
  */
 export function formatAgenrSessionStartRecall(patch: SessionStartPatch): string {
-  if (patch.contextSections.length === 0 && patch.durableMemory.length === 0) {
+  if (patch.durableMemory.length === 0) {
     return "";
   }
 
   const lines: string[] = [];
-
-  for (const section of patch.contextSections) {
-    lines.push(`## ${section.title}`);
-    lines.push(section.content);
-    lines.push("");
-  }
 
   const durableSections = buildSections(patch);
   if (durableSections.length > 0) {

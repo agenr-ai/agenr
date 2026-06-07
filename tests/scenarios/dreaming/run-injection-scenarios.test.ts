@@ -61,7 +61,7 @@ interface DreamingScenario {
   durables: ScenarioDurable[];
   directives?: ScenarioDurable[];
   beforeTurn?: { currentTurnText: string; recentTurns?: Array<{ role: "user" | "assistant"; text: string }> };
-  sessionStart?: { continuitySummaryText?: string; recentSessionText?: string; policy?: SessionStartPolicy };
+  sessionStart?: { policy?: SessionStartPolicy };
   policy?: BeforeTurnPolicy;
   expect: ScenarioExpectation;
 }
@@ -136,8 +136,6 @@ async function runScenario(scenario: DreamingScenario, database: SqlDatabase, re
 
   const result = await runSessionStart(
     {
-      ...(scenario.sessionStart?.continuitySummaryText ? { continuitySummaryText: scenario.sessionStart.continuitySummaryText } : {}),
-      ...(scenario.sessionStart?.recentSessionText ? { recentSessionText: scenario.sessionStart.recentSessionText } : {}),
       ...(scenario.sessionStart?.policy ? { policy: scenario.sessionStart.policy } : {}),
     },
     {

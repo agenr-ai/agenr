@@ -3,9 +3,11 @@ import path from "node:path";
 
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
-import type { OpenClawEpisodeTarget } from "../../episode/episode-writer.js";
-import type { AgenrOpenClawHookContext, AgenrOpenClawRuntime } from "../../types.js";
-import { parseOpenClawSessionContinuityKey } from "../session-key-parser.js";
+import type { OpenClawEpisodeTarget } from "../episode/episode-writer.js";
+import type { AgenrOpenClawHookContext, AgenrOpenClawRuntime } from "../types.js";
+import { parseTuiSessionKey } from "./tui-lane.js";
+
+const GENERIC_AGENT_SESSION_KEY_PATTERN = /^agent:([^:]+):/i;
 
 /**
  * Resolves the transcript file for the active OpenClaw session.
@@ -24,7 +26,6 @@ export async function resolveOpenClawCurrentSessionTarget(
   ctx: AgenrOpenClawHookContext,
   params: {
     resolveStateDir: AgenrOpenClawRuntime["state"]["resolveStateDir"];
-    mainKey?: string;
     logger?: PluginLogger;
   },
 ): Promise<OpenClawEpisodeTarget | undefined> {
@@ -34,10 +35,7 @@ export async function resolveOpenClawCurrentSessionTarget(
     return undefined;
   }
 
-  const identity = parseOpenClawSessionContinuityKey(ctx.sessionKey ?? "", {
-    ...(params.mainKey ? { mainKey: params.mainKey } : {}),
-  });
-  const agentId = ctx.agentId?.trim() || identity.agentId?.trim();
+  const agentId = ctx.agentId?.trim() || resolveAgentIdFromSessionKey(ctx.sessionKey);
   if (!agentId) {
     params.logger?.debug?.(`[agenr] session-end: current-session resolution skipped for session=${sessionId} reason=no_agent_id`);
     return undefined;
@@ -57,4 +55,25 @@ export async function resolveOpenClawCurrentSessionTarget(
   }
 
   return { sessionId, sessionFile };
+}
+
+/**
+ * Derives the owning OpenClaw agent identifier from a session key.
+ *
+ * @param sessionKey - Stable OpenClaw session key.
+ * @returns Agent identifier, or `undefined` when unavailable.
+ */
+function resolveAgentIdFromSessionKey(sessionKey: string | undefined): string | undefined {
+  const trimmedSessionKey = sessionKey?.trim();
+  if (!trimmedSessionKey) {
+    return undefined;
+  }
+
+  const tuiIdentity = parseTuiSessionKey(trimmedSessionKey);
+  if (tuiIdentity) {
+    return tuiIdentity.agentId;
+  }
+
+  const match = GENERIC_AGENT_SESSION_KEY_PATTERN.exec(trimmedSessionKey);
+  return match?.[1]?.trim() || undefined;
 }

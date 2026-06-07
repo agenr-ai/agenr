@@ -85,8 +85,8 @@ describe("createAgenrSkelnServices", () => {
     expect(services.goalContinuation).toBeDefined();
     expect(services.capabilities).toEqual({
       workingMemory: "disabled",
-      sessionMemory: "disabled",
-      shutdownEpisodes: false,
+      sessionMemory: "enabled",
+      shutdownEpisodes: true,
       goalContinuation: "disabled",
     });
 
@@ -111,7 +111,7 @@ describe("createAgenrSkelnServices", () => {
     expect(services.runtimePolicy.featureFlags).toEqual({
       workingMemory: true,
       sessionTreeLineage: false,
-      sessionTreeCompaction: false,
+      sessionTreeCompaction: true,
       goalContinuation: false,
     });
 

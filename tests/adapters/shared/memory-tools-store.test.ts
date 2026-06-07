@@ -71,8 +71,6 @@ describe("agenr_store shared tool flow", () => {
         session: {
           sessionId: "session-1",
           agentId: "main",
-          channel: "webchat",
-          chatType: "direct",
         },
         sourcePrefix: "skeln-session",
         defaultSourceContext: "Stored via agenr_store from Skeln.",
@@ -117,8 +115,6 @@ describe("agenr_store shared tool flow", () => {
         session: {
           sessionId: "session-2",
           agentId: "main",
-          channel: "webchat",
-          chatType: "direct",
         },
         sourcePrefix: "skeln-session",
         defaultSourceContext: "Stored via agenr_store from Skeln.",

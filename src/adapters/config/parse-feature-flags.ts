@@ -41,7 +41,7 @@ export function parseFeatureFlags(value: unknown, path: string, issues: Validati
   const input: AgenrFeatureFlagConfig = {
     ...(workingMemory === true ? { workingMemory } : {}),
     ...(sessionTreeLineage === true ? { sessionTreeLineage } : {}),
-    ...(sessionTreeCompaction === true ? { sessionTreeCompaction } : {}),
+    ...(sessionTreeCompaction === false ? { sessionTreeCompaction: false } : {}),
     ...(goalContinuation === true ? { goalContinuation } : {}),
   };
 
@@ -60,18 +60,19 @@ export function parseFeatureFlags(value: unknown, path: string, issues: Validati
  * Converts resolved feature flags back into the sparse persisted shape.
  *
  * @param value - Resolved feature flags.
- * @returns Sparse persisted shape, or undefined when all flags are false.
+ * @returns Sparse persisted shape, or undefined when all flags match defaults.
  */
 export function toFeatureFlagInput(value: AgenrFeatureFlags | undefined): AgenrFeatureFlagConfig | undefined {
   if (!value) {
     return undefined;
   }
 
+  const defaults = DEFAULT_AGENR_FEATURE_FLAGS;
   const input: AgenrFeatureFlagConfig = {
-    ...(value.workingMemory ? { workingMemory: true } : {}),
-    ...(value.sessionTreeLineage ? { sessionTreeLineage: true } : {}),
-    ...(value.sessionTreeCompaction ? { sessionTreeCompaction: true } : {}),
-    ...(value.goalContinuation ? { goalContinuation: true } : {}),
+    ...(value.workingMemory !== defaults.workingMemory ? { workingMemory: value.workingMemory } : {}),
+    ...(value.sessionTreeLineage !== defaults.sessionTreeLineage ? { sessionTreeLineage: value.sessionTreeLineage } : {}),
+    ...(value.sessionTreeCompaction !== defaults.sessionTreeCompaction ? { sessionTreeCompaction: value.sessionTreeCompaction } : {}),
+    ...(value.goalContinuation !== defaults.goalContinuation ? { goalContinuation: value.goalContinuation } : {}),
   };
 
   return Object.keys(input).length > 0 ? input : undefined;

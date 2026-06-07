@@ -107,7 +107,7 @@ export interface MemoryToolOutcome {
 export interface EntryMemoryToolServices {
   entries: DatabasePort;
   embedding: EmbeddingPort;
-  memory: Pick<MemoryRepository, "findEntryBySubject" | "findMostRecentEntry" | "getEntryTrace">;
+  memory: Pick<MemoryRepository, "findEntryBySubject" | "getEntryTrace">;
   claimExtraction?: PluginClaimExtractionRuntime;
 }
 

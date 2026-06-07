@@ -2,13 +2,15 @@ import { describe, expect, it, vi } from "vitest";
 
 import { runSessionStart } from "../../../src/app/session-start/index.js";
 import type { SessionStartDeps } from "../../../src/app/session-start/index.js";
+import type { SessionMemoryRepository } from "../../../src/app/session-memory/repository.js";
+import { createStubSessionMemoryRepository } from "../../helpers/host-memory-stubs.js";
 import type { RecallCandidateDurable } from "../../../src/core/recall/types.js";
 import type { RecallPorts } from "../../../src/core/ports.js";
 import type { Durable } from "../../../src/core/types.js";
 import { finalizeTestDurable } from "../../helpers/durable-fixtures.js";
 
 describe("runSessionStart", () => {
-  it("returns only always-on core memory when no predecessor artifacts exist", async () => {
+  it("returns only always-on core memory at session start", async () => {
     const coreEntry = createEntry({
       id: "core-branching",
       subject: "branching workflow",
@@ -27,7 +29,6 @@ describe("runSessionStart", () => {
       deps,
     );
 
-    expect(result.contextSections).toEqual([]);
     expect(result.durableMemory).toMatchObject([
       {
         rank: 1,
@@ -51,68 +52,7 @@ describe("runSessionStart", () => {
     expect(deps.recall.recordRecallEvents).not.toHaveBeenCalled();
   });
 
-  it("merges artifact-grounded durable recall with core memory, dedupes overlaps, and preserves rank order", async () => {
-    const coreEntry = createEntry({
-      id: "core-policy",
-      subject: "workflow policy",
-      content: "Always branch from local master before editing shared runtime code.",
-      expiry: "core",
-      importance: 10,
-    });
-    const recalledEntry = createEntry({
-      id: "permanent-runtime",
-      type: "lesson",
-      subject: "runtime wiring lesson",
-      content: "Keep the app-layer contract host-neutral and let the adapter own prompt rendering.",
-      expiry: "permanent",
-      importance: 8,
-    });
-    const deps = createDeps({
-      coreEntries: [coreEntry],
-      ftsCandidates: [toRecallCandidateDurable(coreEntry), toRecallCandidateDurable(recalledEntry)],
-      hydratedEntries: [coreEntry, recalledEntry],
-    });
-
-    const result = await runSessionStart(
-      {
-        sessionKey: "agent:main:webchat:test",
-        continuitySummaryText: "The workflow policy still matters when wiring session-start runtime behavior.",
-        recentSessionText: "U: Keep the runtime contract host-neutral.\nA: Let the adapter own prompt rendering.",
-        policy: {
-          maxCoreEntries: 1,
-          maxArtifactRecallEntries: 3,
-          maxDurableEntries: 2,
-        },
-      },
-      deps,
-    );
-
-    expect(result.contextSections.map((section) => section.title)).toEqual(["Previous session summary", "Recent session"]);
-    expect(result.diagnostics).toMatchObject({
-      coreCandidateCount: 1,
-      artifactRecallCandidateCount: 2,
-      artifactRecallUsed: true,
-    });
-    expect(result.durableMemory).toMatchObject([
-      {
-        rank: 1,
-        entry: { id: "core-policy" },
-        sourceKind: "core",
-      },
-      {
-        rank: 2,
-        entry: { id: "permanent-runtime" },
-        sourceKind: "artifact_recall",
-      },
-    ]);
-    expect(result.durableMemory).toHaveLength(2);
-    expect(result.durableMemory[1]?.whySurfaced.reasons).toEqual(expect.arrayContaining([expect.stringContaining("lexical overlap")]));
-    expect(deps.recall.embed).toHaveBeenCalledOnce();
-    expect(deps.recall.ftsSearch).toHaveBeenCalledOnce();
-    expect(deps.recall.recordRecallEvents).toHaveBeenCalledOnce();
-  });
-
-  it("uses active profile snapshot entries before core memory and artifact recall", async () => {
+  it("uses active profile snapshot entries before core memory", async () => {
     const profileEntry = createEntry({
       id: "profile-runtime",
       subject: "runtime boundary",
@@ -127,13 +67,6 @@ describe("runSessionStart", () => {
       expiry: "core",
       importance: 10,
     });
-    const recalledEntry = createEntry({
-      id: "artifact-memory",
-      subject: "adapter boundary",
-      content: "Adapters translate host details into app calls.",
-      expiry: "permanent",
-      importance: 8,
-    });
     const deps = createDeps({
       profileSnapshot: {
         id: "profile-1",
@@ -145,13 +78,10 @@ describe("runSessionStart", () => {
       },
       entriesById: [profileEntry],
       coreEntries: [coreEntry],
-      ftsCandidates: [toRecallCandidateDurable(recalledEntry)],
-      hydratedEntries: [recalledEntry],
     });
 
     const result = await runSessionStart(
       {
-        continuitySummaryText: "Continue the adapter boundary work.",
         policy: {
           maxDurableEntries: 3,
         },
@@ -163,75 +93,144 @@ describe("runSessionStart", () => {
     expect(result.durableMemory.map((item) => [item.sourceKind, item.entry.id])).toEqual([
       ["profile", "profile-runtime"],
       ["core", "core-policy"],
-      ["artifact_recall", "artifact-memory"],
     ]);
   });
 
-  it("captures degraded recall diagnostics when semantic search is unavailable", async () => {
+  it("runs artifact-grounded recall from predecessor session-memory artifacts", async () => {
     const recalledEntry = createEntry({
-      id: "permanent-slice",
-      subject: "hybrid session-start slice",
-      content: "Use artifact-grounded durable recall when predecessor continuity is available.",
+      id: "artifact-memory",
+      subject: "adapter boundary",
+      content: "Adapters translate host details into app calls.",
       expiry: "permanent",
-      importance: 9,
+      importance: 8,
     });
     const deps = createDeps({
       ftsCandidates: [toRecallCandidateDurable(recalledEntry)],
       hydratedEntries: [recalledEntry],
+      sessionMemoryRepository: createStubSessionMemoryRepository({
+        getLatestLineageEdgeForChild: vi.fn(async () => ({
+          id: "edge-1",
+          childSessionKey: "child-session",
+          parentSessionKey: "parent-session",
+          reason: "resume" as const,
+          observedAt: "2026-05-30T00:00:00.000Z",
+        })),
+        listSessionArtifacts: vi.fn(async () => [
+          {
+            id: "summary-1",
+            kind: "compaction_checkpoint" as const,
+            sessionKey: "parent-session",
+            source: "openclaw",
+            sourceId: "compact-1",
+            contentHash: "hash-1",
+            summary: "Previous work focused on adapter boundaries.",
+            createdAt: "2026-05-30T00:00:00.000Z",
+          },
+        ]),
+      }),
     });
 
     const result = await runSessionStart(
       {
-        continuitySummaryText: "Use artifact-grounded durable recall when predecessor continuity is available.",
+        sessionKey: "child-session",
+        policy: {
+          enableArtifactRecall: true,
+          maxDurableEntries: 2,
+        },
       },
       deps,
     );
 
-    expect(result.diagnostics.artifactRecallUsed).toBe(true);
-    expect(result.diagnostics.artifactRecallTrace?.degraded.active).toBe(true);
-    expect(result.diagnostics.notices).toEqual(expect.arrayContaining(["Embeddings failed during recall, so Agenr fell back to lexical-only entry ranking."]));
+    expect(result.diagnostics).toMatchObject({
+      artifactRecallUsed: true,
+      artifactRecallCandidateCount: 1,
+      artifactRecallQuery: "Compaction checkpoint: Previous work focused on adapter boundaries.",
+    });
     expect(result.durableMemory).toMatchObject([
       {
         sourceKind: "artifact_recall",
-        entry: {
-          id: "permanent-slice",
-        },
+        entry: { id: "artifact-memory" },
       },
     ]);
+    expect(deps.recall.ftsSearch).toHaveBeenCalledOnce();
   });
 
-  it("swallows artifact recall failures and still returns core memory", async () => {
-    const coreEntry = createEntry({
-      id: "core-continuity",
-      subject: "continuity fallback",
-      content: "Session start should still inject bounded durable memory even if recall fails.",
-      expiry: "core",
-      importance: 10,
+  it("reserves a session-start slot for unique artifact-grounded recall", async () => {
+    const profileEntry = createEntry({
+      id: "profile-current",
+      subject: "profile current work",
+      content: "Current work is focused on host lifecycle memory.",
+      importance: 9,
+    });
+    const coreEntries = Array.from({ length: 4 }, (_, index) =>
+      createEntry({
+        id: `core-${index + 1}`,
+        subject: `core workflow ${index + 1}`,
+        content: `Core memory ${index + 1}.`,
+        expiry: "core",
+        importance: 8 - index,
+      }),
+    );
+    const recalledEntry = createEntry({
+      id: "artifact-memory",
+      subject: "previous compaction lesson",
+      content: "The previous session compacted the lifecycle contract discussion.",
+      importance: 8,
     });
     const deps = createDeps({
-      coreEntries: [coreEntry],
-      ftsSearchImplementation: async () => {
-        throw new Error("fts is unavailable");
+      profileSnapshot: {
+        id: "profile-1",
+        durableIds: ["profile-current"],
+        directiveIds: [],
+        asOf: "2026-04-14T10:00:00.000Z",
+        runId: "run-1",
+        createdAt: "2026-04-14T10:00:00.000Z",
       },
+      entriesById: [profileEntry],
+      coreEntries,
+      ftsCandidates: [toRecallCandidateDurable(recalledEntry)],
+      hydratedEntries: [recalledEntry],
+      sessionMemoryRepository: createStubSessionMemoryRepository({
+        getLatestLineageEdgeForChild: vi.fn(async () => ({
+          id: "edge-1",
+          childSessionKey: "child-session",
+          parentSessionKey: "parent-session",
+          reason: "resume" as const,
+          observedAt: "2026-05-30T00:00:00.000Z",
+        })),
+        listSessionArtifacts: vi.fn(async () => [
+          {
+            id: "compact-1",
+            kind: "compaction_checkpoint" as const,
+            sessionKey: "parent-session",
+            source: "openclaw",
+            sourceId: "compact-1",
+            contentHash: "hash-1",
+            summary: "Previous work focused on lifecycle ordering.",
+            createdAt: "2026-05-30T00:00:00.000Z",
+          },
+        ]),
+      }),
     });
 
     const result = await runSessionStart(
       {
-        continuitySummaryText: "Continuity still matters even if recall is down.",
+        sessionKey: "child-session",
+        policy: {
+          maxCoreEntries: 4,
+          maxDurableEntries: 5,
+        },
       },
       deps,
     );
 
-    expect(result.durableMemory).toMatchObject([
-      {
-        rank: 1,
-        entry: {
-          id: "core-continuity",
-        },
-        sourceKind: "core",
-      },
+    expect(result.durableMemory.map((item) => [item.sourceKind, item.entry.id])).toEqual([
+      ["profile", "profile-current"],
+      ["core", "core-1"],
+      ["core", "core-2"],
+      ["core", "core-3"],
+      ["artifact_recall", "artifact-memory"],
     ]);
-    expect(result.diagnostics.notices).toEqual(expect.arrayContaining(["Artifact-grounded durable recall failed: fts is unavailable"]));
   });
 
   it("skips artifact-grounded recall when the session-start policy disables it", async () => {
@@ -257,8 +256,6 @@ describe("runSessionStart", () => {
 
     const result = await runSessionStart(
       {
-        continuitySummaryText: "Continue the previous runtime work.",
-        recentSessionText: "U: hello\nA: hi",
         policy: {
           enableArtifactRecall: false,
         },
@@ -449,6 +446,7 @@ function createDeps(
     listActiveProactiveDirectives?: SessionStartDeps["listActiveProactiveDirectives"];
     profileSnapshot?: Awaited<ReturnType<SessionStartDeps["repository"]["getActiveProfileSnapshot"]>>;
     entriesById?: Durable[];
+    sessionMemoryRepository?: SessionMemoryRepository;
   } = {},
 ): SessionStartDeps {
   const recallEntries = new Map((options.hydratedEntries ?? []).map((entry) => [entry.id, entry]));
@@ -480,6 +478,7 @@ function createDeps(
     recall,
     ...(options.listActiveAbstainDirectives ? { listActiveAbstainDirectives: options.listActiveAbstainDirectives } : {}),
     ...(options.listActiveProactiveDirectives ? { listActiveProactiveDirectives: options.listActiveProactiveDirectives } : {}),
+    ...(options.sessionMemoryRepository ? { sessionMemoryRepository: options.sessionMemoryRepository } : {}),
   };
 }
 

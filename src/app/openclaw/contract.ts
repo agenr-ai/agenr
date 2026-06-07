@@ -81,8 +81,6 @@ export interface AgenrOpenClawPluginConfig {
   dbPath?: string;
   /** Path to the agenr config.json file. */
   configPath?: string;
-  /** Model override for continuity summary generation (OpenClaw auth). */
-  continuityModel?: string;
   /** Model override for episode summary generation at session-start (OpenClaw auth). */
   episodeModel?: string;
   /** Model override for claim-key extraction at store time (OpenClaw auth). Format: "provider/model". */

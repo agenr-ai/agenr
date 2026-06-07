@@ -15,9 +15,9 @@ export type AgenrFeatureFlagKey = (typeof AGENR_FEATURE_FLAG_KEYS)[number];
 /**
  * Sparse persisted feature-flag overrides.
  *
- * Only `true` values are written to disk. Explicit `false` is accepted during
- * parse and reflected in resolved runtime flags, but canonicalization strips
- * false entries because every flag defaults to off.
+ * Most flags default to off and are persisted only when explicitly enabled.
+ * `sessionTreeCompaction` defaults to on and is persisted only when explicitly
+ * disabled.
  */
 export type AgenrFeatureFlagConfig = Partial<Record<AgenrFeatureFlagKey, boolean>>;
 
@@ -27,12 +27,13 @@ export type AgenrFeatureFlagConfig = Partial<Record<AgenrFeatureFlagKey, boolean
 export type AgenrFeatureFlags = Record<AgenrFeatureFlagKey, boolean>;
 
 /**
- * Default feature flags. Every staged feature is off in Phase 0.
+ * Default feature flags. Session-tree compaction is on by default; other staged
+ * features remain off until explicitly enabled.
  */
 const DEFAULT_AGENR_FEATURE_FLAGS: AgenrFeatureFlags = {
   workingMemory: false,
   sessionTreeLineage: false,
-  sessionTreeCompaction: false,
+  sessionTreeCompaction: true,
   goalContinuation: false,
 };
 

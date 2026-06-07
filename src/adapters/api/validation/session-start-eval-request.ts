@@ -22,7 +22,7 @@ import {
 } from "../../shared/validation.js";
 
 const ROOT_REQUEST_KEYS = new Set<string>(["caseId", "description", "sandbox", "memoryPool", "sessionStartInput", "options"]);
-const SESSION_START_INPUT_KEYS = new Set<string>(["sessionKey", "continuitySummaryText", "recentSessionText", "policy"]);
+const SESSION_START_INPUT_KEYS = new Set<string>(["sessionKey", "policy"]);
 const SESSION_START_POLICY_KEYS = new Set<string>([
   "maxCoreEntries",
   "enableArtifactRecall",
@@ -64,8 +64,6 @@ export interface SessionStartEvalCaseRequestDto {
 /** Adapter-owned normalized DTO for session-start input. */
 interface SessionStartInputDto {
   sessionKey?: string;
-  continuitySummaryText?: string;
-  recentSessionText?: string;
   policy?: SessionStartPolicyDto;
 }
 
@@ -143,8 +141,6 @@ function parseSessionStartInput(value: unknown, issues: ValidationIssue[]): Sess
 
   return {
     sessionKey: parseOptionalTrimmedString(sessionStartInput.sessionKey, "sessionStartInput.sessionKey", issues),
-    continuitySummaryText: parseOptionalTrimmedString(sessionStartInput.continuitySummaryText, "sessionStartInput.continuitySummaryText", issues),
-    recentSessionText: parseOptionalTrimmedString(sessionStartInput.recentSessionText, "sessionStartInput.recentSessionText", issues),
     policy: parseSessionStartPolicy(sessionStartInput.policy, issues),
   };
 }
@@ -200,8 +196,6 @@ function parseOptions(value: unknown, issues: ValidationIssue[]): SessionStartEv
 function mapSessionStartInputDto(dto: SessionStartInputDto): SessionStartInput {
   return {
     ...(dto.sessionKey ? { sessionKey: dto.sessionKey } : {}),
-    ...(dto.continuitySummaryText ? { continuitySummaryText: dto.continuitySummaryText } : {}),
-    ...(dto.recentSessionText ? { recentSessionText: dto.recentSessionText } : {}),
     ...(dto.policy ? { policy: mapSessionStartPolicyDto(dto.policy) } : {}),
   };
 }

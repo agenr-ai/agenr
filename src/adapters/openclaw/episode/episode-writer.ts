@@ -27,51 +27,11 @@ export interface OpenClawEpisodeTarget {
 }
 
 /**
- * Predecessor episode facts passed from the continuity resolver into the
- * background episode writer.
- */
-export type OpenClawPredecessorEpisodeTarget = OpenClawEpisodeTarget;
-
-/**
- * Best-effort background write for one predecessor OpenClaw session.
- *
- * The function never throws. It logs all outcomes and returns once the
- * episodic-memory attempt is fully handled.
- *
- * @param params - Hook context, predecessor facts, shared services, and logger.
- * @returns Promise that resolves after the background episode attempt finishes.
- */
-export async function writeOpenClawPredecessorEpisode(params: {
-  ctx: AgenrOpenClawHookContext;
-  predecessor?: OpenClawPredecessorEpisodeTarget;
-  services: AgenrOpenClawServices;
-  logger: PluginLogger;
-}): Promise<void> {
-  const sessionContext = formatSessionContext(params.ctx.sessionId, params.ctx.sessionKey);
-  if (!params.predecessor) {
-    params.logger.info(`[agenr] session-start predecessor episode write skipped for ${sessionContext} reason=no_predecessor`);
-    return;
-  }
-
-  await writeOpenClawSessionEpisode({
-    ctx: params.ctx,
-    target: params.predecessor,
-    services: params.services,
-    logger: params.logger,
-    actionLabel: "session-start predecessor episode write",
-    fileField: "predecessor",
-    shortCountField: "cleanedMessages",
-    embeddingSkipLogContext: `[agenr] session-start predecessor episode embedding skipped for ${sessionContext} predecessor=${params.predecessor.sessionFile}`,
-  });
-}
-
-/**
  * Best-effort background write for the current OpenClaw session at session end.
  *
- * Writing at session end removes the predecessor-only consolidation lag so the
- * just-finished session becomes dreaming evidence before the next session
- * starts. The write is idempotent with the predecessor backstop because both
- * paths upsert by the same `(source, sourceId)` identity.
+ * Writing at session end lets the just-finished session become dreaming
+ * evidence before the next session starts. The write upserts by the same
+ * `(source, sourceId)` identity.
  *
  * @param params - Hook context, current-session facts, shared services, and logger.
  * @returns Promise that resolves after the background episode attempt finishes.
@@ -82,16 +42,46 @@ export async function writeOpenClawCurrentSessionEpisode(params: {
   services: AgenrOpenClawServices;
   logger: PluginLogger;
 }): Promise<void> {
-  const sessionContext = formatSessionContext(params.ctx.sessionId, params.ctx.sessionKey);
   await writeOpenClawSessionEpisode({
     ctx: params.ctx,
     target: params.current,
     services: params.services,
     logger: params.logger,
     actionLabel: "session-end episode write",
+    sourceSessionId: params.current.sessionId,
     fileField: "file",
     shortCountField: "materialTurns",
-    embeddingSkipLogContext: `[agenr] session-end episode embedding skipped for ${sessionContext} file=${params.current.sessionFile}`,
+    embeddingSkipLogContext: `[agenr] session-end episode embedding skipped for ${formatSessionContext(params.ctx.sessionId, params.ctx.sessionKey)} file=${params.current.sessionFile}`,
+  });
+}
+
+/**
+ * Best-effort episode write for the full transcript snapshot captured before compaction.
+ *
+ * @param params - Hook context, transcript path, shared services, and logger.
+ * @returns Promise that resolves after the background episode attempt finishes.
+ */
+export async function writeOpenClawPreCompactionEpisode(params: {
+  ctx: AgenrOpenClawHookContext;
+  sessionId: string;
+  sessionFile: string;
+  messageCount: number;
+  services: AgenrOpenClawServices;
+  logger: PluginLogger;
+}): Promise<void> {
+  await writeOpenClawSessionEpisode({
+    ctx: params.ctx,
+    target: {
+      sessionId: params.sessionId,
+      sessionFile: params.sessionFile,
+    },
+    services: params.services,
+    logger: params.logger,
+    actionLabel: "pre-compaction episode write",
+    sourceSessionId: `${params.sessionId}:pre-compaction:${params.messageCount}`,
+    fileField: "file",
+    shortCountField: "materialTurns",
+    embeddingSkipLogContext: `[agenr] pre-compaction episode embedding skipped for ${formatSessionContext(params.ctx.sessionId, params.ctx.sessionKey)} file=${params.sessionFile}`,
   });
 }
 
@@ -107,8 +97,9 @@ async function writeOpenClawSessionEpisode(params: {
   services: AgenrOpenClawServices;
   logger: PluginLogger;
   actionLabel: string;
-  fileField: "file" | "predecessor";
-  shortCountField: "materialTurns" | "cleanedMessages";
+  sourceSessionId: string;
+  fileField: "file";
+  shortCountField: "materialTurns";
   embeddingSkipLogContext: string;
 }): Promise<void> {
   const sessionContext = formatSessionContext(params.ctx.sessionId, params.ctx.sessionKey);
@@ -176,7 +167,7 @@ async function writeOpenClawSessionEpisode(params: {
       genVersion: OPENCLAW_EPISODE_GENERATOR_VERSION,
       skipActiveSessionCheck: true,
       candidateOverrides: {
-        sessionId: target.sessionId,
+        sessionId: params.sourceSessionId,
         agentId: trimOptionalString(params.ctx.agentId) ?? null,
         surface: resolveSessionSurface(params.ctx) ?? null,
         metadataSource: "registry",
@@ -212,7 +203,7 @@ function trimOptionalString(value: string | undefined): string | undefined {
 }
 
 /**
- * Resolves the effective model ref for one predecessor episode summary request.
+ * Resolves the effective model ref for one episode summary request.
  *
  * @param openClaw - OpenClaw host config and runtime helpers.
  * @param agentId - Optional active agent id from the current hook context.

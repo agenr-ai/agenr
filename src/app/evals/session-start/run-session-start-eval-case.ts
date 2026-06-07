@@ -73,7 +73,6 @@ export async function runSessionStartEvalCase(request: SessionStartEvalCaseReque
         return buildSessionStartEvalSuccessResponse({
           request,
           patch: {
-            contextSections: [],
             durableMemory: [],
             diagnostics: {
               coreCandidateCount: 0,

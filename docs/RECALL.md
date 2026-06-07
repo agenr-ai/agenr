@@ -487,7 +487,7 @@ The contract:
   known-at column is not required for the current contract.
 - **History is preserved; current state is a view over it.** Supersession is the
   bridge between axes: a successor row opens a new valid window while the
-  predecessor keeps its old window and stays queryable through `agenr_trace`,
+  predecessor keeps its old window and stays queryable through `agenr trace`,
   the `historical_state` profile, and explicit `asOf` recall.
 
 Only the `historical_state` ranking profile bypasses valid-time filtering, by
@@ -675,12 +675,11 @@ OpenClaw and Skeln use the same bounded automatic recall app services through di
 Session-start recall:
 
 - runs once per session
-- merges continuity context with durable memory
-- keeps continuity and durable memory visibly separate
+- uses predecessor session-memory artifacts to seed artifact-grounded durable recall
 - caps the durable-memory patch to a small bounded set
 - prefers fresh profile snapshot ids before generic core or artifact-grounded durable memory
 - surfaces active proactive directives with `session_start` or `always` triggers
-- prefers artifact-grounded durable memory for non-core context after profile and core selections
+- reserves room for unique artifact-grounded durable memory after profile and directive selections instead of letting core entries starve predecessor context
 - filters expired and not-yet-valid core durables in SQL (`valid_to < now`, `valid_from > now`) so stale rows never auto-inject
 - labels a surviving entry `historical` only when `valid_to` has actually passed, not merely because a `valid_to` is set
 - applies [memory-directive abstention](#memory-directive-abstention) over the assembled durable set

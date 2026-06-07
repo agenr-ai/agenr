@@ -9,6 +9,7 @@
 - **Keyed durables require lifecycle status.** Rows with a `claim_key` must also store a valid `claim_key_status`; NULL lifecycle status is no longer treated as legacy at read time.
 - **Retirement flags removed; staleness uses `valid_to`.** `durables`, `episodes`, and `procedures` no longer store `retired`, `retired_at`, or `retired_reason`. Close validity with `valid_to` plus optional `supersession_kind: "stale"` and `supersession_reason` instead.
 - **`agenr_retire` removed.** Use `agenr_update` with `validTo` to close durable validity from OpenClaw hosts.
+- **`agenr_trace` removed from OpenClaw.** Use `agenr trace` for provenance, lineage, and recall-history inspection.
 - **Dreaming prune actions renamed.** Run summaries and `dream_runs.durables_staled` replace `durables_retired`; audit actions use `stale` instead of `retire`.
 - **Neighborhood expansion flag renamed.** Recall adapters accept `includeHistorical` instead of `includeRetired`.
 

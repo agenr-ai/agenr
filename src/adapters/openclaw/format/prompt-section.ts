@@ -6,7 +6,6 @@ const MEMORY_TOOL_NAMES = {
   fetch: "agenr_fetch",
   store: "agenr_store",
   update: "agenr_update",
-  trace: "agenr_trace",
 } as const;
 
 const MEMORY_TOOL_NAME_SET = new Set<string>(Object.values(MEMORY_TOOL_NAMES));
@@ -41,7 +40,6 @@ export function buildAgenrMemoryPromptSection({
     "Memory authority, strongest to weakest:",
     "- Durable memory is the canonical record for verified facts, decisions, preferences, and lessons unless live evidence contradicts them.",
     "- Episode recall explains what happened in completed sessions, but it is a narrative summary, not an exact log.",
-    "- Session handoffs and continuity summaries are approximate restart context and may be incomplete or stale.",
     "- Live verification beats stored memory whenever you can check quickly.",
     "The newest completed session may not be consolidated into episodes yet, so very recent work can be missing from episode recall.",
   ];
@@ -57,10 +55,6 @@ export function buildAgenrMemoryPromptSection({
 
   if (availableTools.has(MEMORY_TOOL_NAMES.fetch)) {
     lines.push(MEMORY_DOCTRINE.recall.fetchWhenTruncated);
-  }
-
-  if (availableTools.has(MEMORY_TOOL_NAMES.trace)) {
-    lines.push("Use agenr_trace when provenance, recall history, or supersession matters.");
   }
 
   if (hasOrchestrationTool) {

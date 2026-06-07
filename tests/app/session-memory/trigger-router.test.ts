@@ -268,7 +268,7 @@ describe("routeSessionMemoryTrigger", () => {
             sessionKey: "parent-session",
           },
           artifact: {
-            kind: "continuity_summary",
+            kind: "session_episode",
             source: "skeln",
             sourceId: "summary-1",
             summary: "The predecessor summary.",
@@ -288,7 +288,7 @@ describe("routeSessionMemoryTrigger", () => {
         parentSessionKey: "parent-session",
       },
       artifact: {
-        kind: "continuity_summary",
+        kind: "session_episode",
       },
     });
     expect(repository.recordTriggerIntake).toHaveBeenCalledTimes(1);
@@ -300,7 +300,7 @@ describe("routeSessionMemoryTrigger", () => {
         observedAt: "2026-05-30T00:00:00.000Z",
       },
       artifact: expect.objectContaining({
-        kind: "continuity_summary",
+        kind: "session_episode",
         sessionKey: "child-session",
         source: "skeln",
         sourceId: "summary-1",

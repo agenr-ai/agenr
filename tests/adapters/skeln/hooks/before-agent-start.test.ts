@@ -5,7 +5,11 @@ import type { SessionStartDeps } from "../../../../src/app/session-start/index.j
 import { resolveRuntimeCapabilities } from "../../../../src/app/features/capabilities.js";
 import type { Durable } from "../../../../src/core/types.js";
 import { buildAgenrSkelnInjectionMessage, handleAgenrSkelnBeforeAgentStart } from "../../../../src/adapters/skeln/hooks/before-agent-start.js";
+import { createStubSessionMemoryRepository } from "../../../helpers/host-memory-stubs.js";
+import { createSessionLifecycleIntakeTracker } from "../../../../src/app/plugin-runtime/session-lifecycle-intake.js";
 import { createSessionStartTracker } from "../../../../src/app/plugin-runtime/session-tracking.js";
+import { createCompactionPromptTracker } from "../../../../src/adapters/shared/compaction-prompt-tracker.js";
+import type { SessionMemoryRepository } from "../../../../src/app/session-memory/repository.js";
 import type { AgenrSkelnServices } from "../../../../src/app/skeln/runtime.js";
 import type { AgenrSkelnSessionScope } from "../../../../src/adapters/skeln/types.js";
 
@@ -39,6 +43,8 @@ describe("handleAgenrSkelnBeforeAgentStart", () => {
       {
         servicesPromise: Promise.resolve(services),
         sessionStartTracker,
+        compactionPromptTracker: createCompactionPromptTracker(),
+        lifecycleIntakeTracker: createSessionLifecycleIntakeTracker(),
         resolveScope: async () => scope,
       },
     );
@@ -72,7 +78,7 @@ describe("handleAgenrSkelnBeforeAgentStart", () => {
         listSessionArtifacts: vi.fn(async () => [
           {
             id: "summary-1",
-            kind: "continuity_summary" as const,
+            kind: "compaction_checkpoint" as const,
             sessionKey: "parent-session",
             source: "skeln",
             sourceId: "summary-1",
@@ -99,6 +105,8 @@ describe("handleAgenrSkelnBeforeAgentStart", () => {
       {
         servicesPromise: Promise.resolve(services),
         sessionStartTracker,
+        compactionPromptTracker: createCompactionPromptTracker(),
+        lifecycleIntakeTracker: createSessionLifecycleIntakeTracker(),
         resolveScope: async () => scope,
       },
     );
@@ -123,6 +131,8 @@ describe("handleAgenrSkelnBeforeAgentStart", () => {
       {
         servicesPromise: Promise.resolve(services),
         sessionStartTracker,
+        compactionPromptTracker: createCompactionPromptTracker(),
+        lifecycleIntakeTracker: createSessionLifecycleIntakeTracker(),
         resolveScope: async () => scope,
       },
     );
@@ -168,6 +178,8 @@ describe("handleAgenrSkelnBeforeAgentStart", () => {
       {
         servicesPromise: Promise.resolve(services),
         sessionStartTracker,
+        compactionPromptTracker: createCompactionPromptTracker(),
+        lifecycleIntakeTracker: createSessionLifecycleIntakeTracker(),
         resolveScope: async () => scope,
       },
     );
@@ -206,6 +218,8 @@ describe("handleAgenrSkelnBeforeAgentStart", () => {
       {
         servicesPromise: Promise.resolve(services),
         sessionStartTracker,
+        compactionPromptTracker: createCompactionPromptTracker(),
+        lifecycleIntakeTracker: createSessionLifecycleIntakeTracker(),
         resolveScope: async () => scope,
       },
     );
@@ -214,6 +228,54 @@ describe("handleAgenrSkelnBeforeAgentStart", () => {
     expect(result?.memoryTrace).toEqual(
       expect.arrayContaining([expect.objectContaining({ kind: "before_turn_recall", action: "skipped", reason: "memoryPolicy.beforeTurn.enabled=false" })]),
     );
+  });
+
+  it("injects compaction checkpoint context on later turns", async () => {
+    const services = createServices({
+      sessionStart: createSessionStartDeps([]),
+      sessionTreeCompaction: true,
+      sessionMemoryRepository: {
+        listSessionArtifacts: vi.fn(async () => [
+          {
+            id: "artifact-1",
+            kind: "compaction_checkpoint" as const,
+            sessionKey: scope.sessionKey,
+            source: "skeln",
+            sourceId: "compact-1",
+            contentHash: "hash-1",
+            summary: "Earlier debugging context was compacted.",
+            createdAt: "2026-05-30T00:00:00.000Z",
+          },
+        ]),
+      },
+      skelnConfig: {
+        memoryPolicy: {
+          beforeTurn: {
+            enabled: false,
+          },
+        },
+      },
+    });
+    const sessionStartTracker = createSessionStartTracker();
+    sessionStartTracker.consume(scope.sessionId, scope.sessionKey);
+
+    const result = await handleAgenrSkelnBeforeAgentStart(
+      {
+        type: "before_agent_start",
+        prompt: "What changed?",
+        systemPrompt: "Base prompt.",
+      },
+      createContext([{ role: "user", content: "earlier question" }]),
+      {
+        servicesPromise: Promise.resolve(services),
+        sessionStartTracker,
+        compactionPromptTracker: createCompactionPromptTracker(),
+        lifecycleIntakeTracker: createSessionLifecycleIntakeTracker(),
+        resolveScope: async () => scope,
+      },
+    );
+
+    expect(extractText(result?.message)).toContain("Earlier debugging context was compacted.");
   });
 
   it("returns transient working context without a persisted recall message", async () => {
@@ -241,6 +303,8 @@ describe("handleAgenrSkelnBeforeAgentStart", () => {
       {
         servicesPromise: Promise.resolve(services),
         sessionStartTracker,
+        compactionPromptTracker: createCompactionPromptTracker(),
+        lifecycleIntakeTracker: createSessionLifecycleIntakeTracker(),
         resolveScope: async () => scope,
       },
     );
@@ -286,6 +350,8 @@ describe("handleAgenrSkelnBeforeAgentStart", () => {
       {
         servicesPromise: Promise.resolve(services),
         sessionStartTracker,
+        compactionPromptTracker: createCompactionPromptTracker(),
+        lifecycleIntakeTracker: createSessionLifecycleIntakeTracker(),
         resolveScope: async () => scope,
       },
     );
@@ -299,6 +365,8 @@ describe("handleAgenrSkelnBeforeAgentStart", () => {
       {
         servicesPromise: Promise.resolve(services),
         sessionStartTracker,
+        compactionPromptTracker: createCompactionPromptTracker(),
+        lifecycleIntakeTracker: createSessionLifecycleIntakeTracker(),
         resolveScope: async () => scope,
       },
     );
@@ -344,6 +412,8 @@ describe("handleAgenrSkelnBeforeAgentStart", () => {
       {
         servicesPromise: Promise.resolve(services),
         sessionStartTracker,
+        compactionPromptTracker: createCompactionPromptTracker(),
+        lifecycleIntakeTracker: createSessionLifecycleIntakeTracker(),
         resolveScope: async () => scope,
       },
     );
@@ -387,6 +457,8 @@ describe("handleAgenrSkelnBeforeAgentStart", () => {
       {
         servicesPromise: Promise.resolve(services),
         sessionStartTracker,
+        compactionPromptTracker: createCompactionPromptTracker(),
+        lifecycleIntakeTracker: createSessionLifecycleIntakeTracker(),
         resolveScope: async () => scope,
       },
     );
@@ -424,6 +496,8 @@ describe("handleAgenrSkelnBeforeAgentStart", () => {
       {
         servicesPromise: Promise.resolve(services),
         sessionStartTracker,
+        compactionPromptTracker: createCompactionPromptTracker(),
+        lifecycleIntakeTracker: createSessionLifecycleIntakeTracker(),
         resolveScope: async () => scope,
       },
     );
@@ -467,19 +541,22 @@ function createServices(input: {
   workingStubProjection?: string;
   workingMemoryEnabled?: boolean;
   sessionTreeLineage?: boolean;
-  sessionMemoryRepository?: AgenrSkelnServices["sessionMemoryRepository"];
+  sessionTreeCompaction?: boolean;
+  sessionMemoryRepository?: Partial<SessionMemoryRepository>;
 }): AgenrSkelnServices {
   const featureFlags = {
     workingMemory: (input.workingMemoryEnabled ?? input.workingProjection !== undefined) || input.workingStubProjection !== undefined,
     sessionTreeLineage: input.sessionTreeLineage ?? false,
-    sessionTreeCompaction: false,
+    sessionTreeCompaction: input.sessionTreeCompaction ?? false,
     goalContinuation: false,
   };
   const workingMemoryRepository = featureFlags.workingMemory ? ({} as AgenrSkelnServices["workingMemoryRepository"]) : undefined;
 
+  const sessionMemoryRepository = input.sessionMemoryRepository ? createStubSessionMemoryRepository(input.sessionMemoryRepository) : undefined;
+
   return {
     sessionStart: input.sessionStart,
-    sessionMemoryRepository: input.sessionMemoryRepository,
+    sessionMemoryRepository,
     beforeTurn: {
       recall: {
         embed: vi.fn(),
@@ -495,7 +572,7 @@ function createServices(input: {
     featureFlags,
     capabilities: resolveRuntimeCapabilities(featureFlags, {
       workingMemoryRepository,
-      sessionMemoryRepository: input.sessionMemoryRepository,
+      sessionMemoryRepository,
     }),
     workingMemory: {
       run: vi.fn(),
@@ -528,6 +605,9 @@ function createServices(input: {
       }),
     },
     skelnConfig: input.skelnConfig ?? {},
+    agenrConfig: {
+      features: featureFlags,
+    },
   } as unknown as AgenrSkelnServices;
 }
 

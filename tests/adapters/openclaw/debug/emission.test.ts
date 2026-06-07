@@ -15,6 +15,7 @@ import { createAgenrRecallTool } from "../../../../src/adapters/openclaw/tools.j
 import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../../src/adapters/openclaw/types.js";
 import type { EmbeddingPort, RecallPorts } from "../../../../src/core/ports.js";
 import { closeTestDatabases, removeTestPath } from "../../../helpers/temp-paths.js";
+import { createStubAgenrHostMemorySurface } from "../../../helpers/host-memory-stubs.js";
 
 const openClawSessionId = "emission-session-1";
 const openClawSessionKey = "agent:main:tui:debug-sink";
@@ -82,7 +83,7 @@ describe("agenr debug sink event emission", () => {
     });
   });
 
-  it("emits continuity_resolution and session_start_recall events from session-start", async () => {
+  it("emits session_start_recall events from session-start", async () => {
     const database = await createDatabase(":memory:");
     databases.push(database);
     const logPath = path.join(tempRoot, "session-start-emit.jsonl");
@@ -115,14 +116,7 @@ describe("agenr debug sink event emission", () => {
     const lines = (await readFile(logPath, "utf8")).trim().split("\n");
     const events = lines.map((line) => JSON.parse(line));
     const emittedTypes = events.map((event) => event.type);
-    expect(emittedTypes).toContain("continuity_resolution");
     expect(emittedTypes).toContain("session_start_recall");
-    const continuity = events.find((event) => event.type === "continuity_resolution");
-    expect(continuity.summary).toMatchObject({
-      predecessorFound: false,
-      hasContinuitySummary: false,
-      hasRecentSession: false,
-    });
     const recall = events.find((event) => event.type === "session_start_recall");
     expect(recall.debug).toMatchObject({
       durableMemoryCount: expect.any(Number),
@@ -250,6 +244,7 @@ function createTestServices(
       error: "Embedding API key is required.",
     },
     debugSink: options.debugSink,
+    ...createStubAgenrHostMemorySurface(),
     async close() {
       await database.close();
     },

@@ -42,7 +42,6 @@ describe("agenr OpenClaw plugin config", () => {
       coerceAgenrOpenClawPluginConfig({
         dbPath: "/tmp/knowledge.db",
         configPath: "/tmp/config.json",
-        continuityModel: "openai/gpt-5.4-mini",
         episodeModel: "openai/gpt-5.4-mini",
         claimExtractionModel: "openai/gpt-5.4-nano",
         storeNudge: {
@@ -71,7 +70,6 @@ describe("agenr OpenClaw plugin config", () => {
     ).toEqual({
       dbPath: "/tmp/knowledge.db",
       configPath: "/tmp/config.json",
-      continuityModel: "openai/gpt-5.4-mini",
       episodeModel: "openai/gpt-5.4-mini",
       claimExtractionModel: "openai/gpt-5.4-nano",
       storeNudge: {
@@ -103,7 +101,6 @@ describe("agenr OpenClaw plugin config", () => {
 
   it("rejects model overrides that do not use provider/model format", () => {
     const parsed = normalizeAgenrOpenClawPluginConfig({
-      continuityModel: "gpt-5.4-mini",
       episodeModel: "gpt-5.4-mini",
       claimExtractionModel: "gpt-5.4-nano",
     });
@@ -111,7 +108,6 @@ describe("agenr OpenClaw plugin config", () => {
     expect(parsed.ok).toBe(false);
     expect(parsed.ok ? [] : parsed.errors).toEqual(
       expect.arrayContaining([
-        "continuityModel must use provider/model format when provided",
         "episodeModel must use provider/model format when provided",
         "claimExtractionModel must use provider/model format when provided",
       ]),

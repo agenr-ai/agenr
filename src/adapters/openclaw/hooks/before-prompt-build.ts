@@ -3,19 +3,18 @@ import { randomUUID } from "node:crypto";
 import { runBeforeTurn } from "../../../app/before-turn/index.js";
 import { runSessionStart } from "../../../app/session-start/index.js";
 import type { BeforeTurnPatch } from "../../../app/before-turn/index.js";
-import path from "node:path";
 import { resolveStoreNudgeConfig } from "../config.js";
 import { buildLiveBeforeTurnDebugArtifact } from "../debug/index.js";
-import type { AgenrDebugSink } from "../debug/index.js";
-import type { PredecessorContinuityResult } from "../session/continuity/index.js";
-import { writeOpenClawPredecessorEpisode } from "../episode/episode-writer.js";
 import { formatAgenrBeforeTurnRecall } from "../format/before-turn-format.js";
 import { extractRecentTurnsFromMessages, normalizePromptText } from "../../shared/injection/message-text.js";
 import { resolveBeforeTurnPolicy, resolveSessionStartPolicy } from "../../shared/injection/policy.js";
 import { buildStoreNudgeMessage } from "../format/nudge-format.js";
 import { formatAgenrSessionStartRecall } from "../format/recall-format.js";
+import { resolveOpenClawCompactionPromptContext } from "./compaction-handlers.js";
 import { formatErrorMessage, formatSessionContext } from "../logging.js";
-import { resolvePredecessorContinuity as resolveContinuity } from "../session/continuity/index.js";
+import type { CompactionPromptTracker } from "../../shared/compaction-prompt-tracker.js";
+import { mergeInjectionContent } from "../../shared/injection/merge-injection-content.js";
+import type { SessionLifecycleIntakeTracker } from "../../../app/plugin-runtime/session-lifecycle-intake.js";
 import type { SessionStartTracker } from "../../../app/plugin-runtime/session-tracking.js";
 import { createMidSessionTracker, type MidSessionTracker } from "../session/state.js";
 import type {
@@ -52,9 +51,12 @@ export async function handleAgenrBeforePromptBuild(
     tracker: SessionStartTracker;
     midSessionTracker?: MidSessionTracker;
     storeNudgeConfig?: StoreNudgeConfig;
+    compactionPromptTracker?: CompactionPromptTracker;
+    lifecycleIntakeTracker?: SessionLifecycleIntakeTracker;
   },
 ): Promise<AgenrOpenClawBeforePromptBuildResult | undefined> {
   const sessionContext = formatSessionContext(ctx.sessionId, ctx.sessionKey);
+  await params.lifecycleIntakeTracker?.wait(ctx.sessionId, ctx.sessionKey);
   const trackerState = params.tracker.consume(ctx.sessionId, ctx.sessionKey);
   if (!trackerState.isFirst) {
     params.logger.debug?.(`[agenr] before_prompt_build: session tracker duplicate blocked for ${sessionContext}`);
@@ -74,19 +76,9 @@ export async function handleAgenrBeforePromptBuild(
       return await resolveNonFirstTurnResult(event, ctx, sessionContext, params);
     }
 
-    const continuity = await resolveContinuity(ctx, params.tracker, services, params.logger);
-    emitContinuityEvent(services.debugSink, ctx, continuity);
-    void writeOpenClawPredecessorEpisode({
-      ctx,
-      predecessor: continuity.predecessor,
-      services,
-      logger: params.logger,
-    });
     const sessionStartPatch = await runSessionStart(
       {
         sessionKey: ctx.sessionKey,
-        continuitySummaryText: continuity.continuitySummaryContent,
-        recentSessionText: continuity.recentSessionContent,
         policy: resolveSessionStartPolicy(services.pluginConfig.memoryPolicy),
       },
       services.sessionStart,
@@ -153,33 +145,6 @@ export async function handleAgenrBeforePromptBuild(
 }
 
 /**
- * Emits one continuity-resolution summary event through the debug sink.
- *
- * @param sink - Adapter-owned debug sink.
- * @param ctx - Active OpenClaw hook context.
- * @param continuity - Resolved predecessor continuity payload.
- */
-function emitContinuityEvent(sink: AgenrDebugSink, ctx: AgenrOpenClawHookContext, continuity: PredecessorContinuityResult): void {
-  if (!sink.enabled) {
-    return;
-  }
-
-  void sink.emit({
-    type: "continuity_resolution",
-    ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
-    ...(ctx.sessionKey ? { sessionKey: ctx.sessionKey } : {}),
-    summary: {
-      predecessorFound: Boolean(continuity.predecessor),
-      ...(continuity.predecessor ? { predecessorFileBasename: path.basename(continuity.predecessor.sessionFile) } : {}),
-      hasContinuitySummary: continuity.continuitySummaryContent.length > 0,
-      hasRecentSession: continuity.recentSessionContent.length > 0,
-      continuitySummaryChars: continuity.continuitySummaryContent.length,
-      recentSessionChars: continuity.recentSessionContent.length,
-    },
-  });
-}
-
-/**
  * Resolves one non-first prompt-build turn by trying before-turn recall first,
  * then falling back to the mid-session store nudge path when appropriate.
  *
@@ -196,14 +161,32 @@ async function resolveNonFirstTurnResult(
   params: AgenrOpenClawBeforePromptBuildDeps & {
     midSessionTracker?: MidSessionTracker;
     storeNudgeConfig?: StoreNudgeConfig;
+    compactionPromptTracker?: CompactionPromptTracker;
   },
 ): Promise<AgenrOpenClawBeforePromptBuildResult | undefined> {
-  const beforeTurnResult = await resolveBeforeTurnResult(event, ctx, sessionContext, params);
-  if (beforeTurnResult) {
-    return beforeTurnResult;
+  const services = await params.servicesPromise;
+  const compactionContext = params.compactionPromptTracker
+    ? await resolveOpenClawCompactionPromptContext(ctx, services, params.compactionPromptTracker)
+    : undefined;
+  if (compactionContext) {
+    params.logger.info(`[agenr] compaction recall injected for ${sessionContext}`);
   }
 
-  return resolveStoreNudgeResult(event, ctx, sessionContext, params);
+  const beforeTurnResult = await resolveBeforeTurnResult(event, ctx, sessionContext, params);
+  if (beforeTurnResult?.prependContext || compactionContext) {
+    return {
+      prependContext: mergeInjectionContent(compactionContext, beforeTurnResult?.prependContext),
+    };
+  }
+
+  const storeNudgeResult = await resolveStoreNudgeResult(event, ctx, sessionContext, params);
+  if (storeNudgeResult?.prependContext || compactionContext) {
+    return {
+      prependContext: mergeInjectionContent(compactionContext, storeNudgeResult?.prependContext),
+    };
+  }
+
+  return compactionContext ? { prependContext: compactionContext } : undefined;
 }
 
 /**

@@ -35,7 +35,7 @@ steps:
     kind: inspect_state
     instruction: Confirm the running gateway exposes the expected agenr memory tools and runtime identity.
     target: running OpenClaw gateway
-    query: Confirm the plugin id is agenr and the agenr_store, agenr_recall, agenr_update, agenr_retire, and agenr_trace tools are available.
+    query: Confirm the plugin id is agenr and the agenr_store, agenr_recall, agenr_fetch, and agenr_update tools are available.
   - id: ask-for-runtime-smoke-test
     kind: ask_user
     instruction: Choose one lightweight runtime check to prove the local plugin build is the one that loaded.

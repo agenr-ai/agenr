@@ -467,7 +467,7 @@ Current plugin registration includes:
 - memory flush-plan registration
 - memory runtime registration
 - hooks for `before_prompt_build`, `session_start`, `after_tool_call`, `session_end`, and `gateway_stop`
-- tools `agenr_store`, `agenr_recall`, `agenr_fetch`, `agenr_update`, and `agenr_trace`
+- tools `agenr_store`, `agenr_recall`, `agenr_fetch`, and `agenr_update`
 
 Implemented behaviors include:
 
@@ -508,7 +508,7 @@ Implemented behaviors include:
 - transient working-context injection when `features.workingMemory` is enabled
 - trusted Skeln work commands and goal aliases for working-memory lifecycle control
 
-Skeln deliberately omits OpenClaw-only surfaces such as `agenr_trace`, predecessor continuity summaries, background predecessor episode ingest, and mid-session store nudges. See [`docs/SKELN-PLUGIN.md`](./SKELN-PLUGIN.md) for the full adapter map.
+Skeln deliberately omits OpenClaw-only surfaces such as predecessor continuity summaries, background predecessor episode ingest, and mid-session store nudges. See [`docs/SKELN-PLUGIN.md`](./SKELN-PLUGIN.md) for the full adapter map.
 
 ### 7.8 Dreaming
 
