@@ -18,13 +18,13 @@ Most runtimes forget what mattered yesterday. agenr keeps memory structured, sea
 
 agenr splits agent memory into layers. Each answers a different question.
 
-| Layer | Question | In short |
-| --- | --- | --- |
-| **Durable** | What is true? | Facts, decisions, preferences, lessons - distilled knowledge with claim-key lifecycle and hybrid recall. |
-| **Episodic** | What happened? | Session-level narrative summaries for time-bounded questions like "what did we do last week?" |
-| **Working** | What are we doing right now? | Transient task state - scratchpad, checkpoints, next actions - injected per turn, not durable truth. |
-| **Procedural** | How do I do this? | Repo-authored YAML runbooks synced into the store for repeatable workflows. |
-| **Dreaming** | Is the corpus healthy? | Background maintenance: scan, reconcile, and repair durable memory behind an explicit apply gate. |
+| Layer          | Question                     | In short                                                                                                 |
+| -------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------- |
+| **Durable**    | What is true?                | Facts, decisions, preferences, lessons - distilled knowledge with claim-key lifecycle and hybrid recall. |
+| **Episodic**   | What happened?               | Session-level narrative summaries for time-bounded questions like "what did we do last week?"            |
+| **Working**    | What are we doing right now? | Transient task state - scratchpad, checkpoints, next actions - injected per turn, not durable truth.     |
+| **Procedural** | How do I do this?            | Repo-authored YAML runbooks synced into the store for repeatable workflows.                              |
+| **Dreaming**   | Is the corpus healthy?       | Background maintenance: scan, reconcile, and repair durable memory behind an explicit apply gate.        |
 
 **Durable** and **episodic** live in the database. **Working** is session-scoped and fades when the task moves on. **Procedural** is authored in git and synced in. **Dreaming** keeps the long-term store coherent over time.
 
@@ -70,22 +70,22 @@ Full CLI reference: [AGENTS.md](./AGENTS.md#cli-surface).
 
 ## Host integrations
 
-| Host | Package | Agent tools |
-| --- | --- | --- |
+| Host     | Package                  | Agent tools                                                                |
+| -------- | ------------------------ | -------------------------------------------------------------------------- |
 | OpenClaw | `@agenr/openclaw-plugin` | `agenr_store`, `agenr_recall`, `agenr_fetch`, `agenr_update`, `agenr_work` |
-| Skeln | `@agenr/skeln-plugin` | above + `get_goal`, `create_goal`, `update_goal` |
+| Skeln    | `@agenr/skeln-plugin`    | above + `get_goal`, `create_goal`, `update_goal`                           |
 
 Both plugins share the same database and recall brain. Details: [OpenClaw plugin](./docs/OPENCLAW-PLUGIN.md), [Skeln plugin](./docs/SKELN-PLUGIN.md).
 
 ## Documentation
 
-| Topic | Doc |
-| --- | --- |
-| Architecture and repo shape | [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) |
-| Ingest pipelines | [docs/INGEST.md](./docs/INGEST.md) |
-| Configuration and env overrides | `agenr setup` or `agenr init` |
-| Contributing / development | [AGENTS.md](./AGENTS.md) |
-| Debugging | [docs/DEBUGGING.md](./docs/DEBUGGING.md) |
+| Topic                           | Doc                                            |
+| ------------------------------- | ---------------------------------------------- |
+| Architecture and repo shape     | [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) |
+| Ingest pipelines                | [docs/INGEST.md](./docs/INGEST.md)             |
+| Configuration and env overrides | `agenr setup` or `agenr init`                  |
+| Contributing / development      | [AGENTS.md](./AGENTS.md)                       |
+| Debugging                       | [docs/DEBUGGING.md](./docs/DEBUGGING.md)       |
 
 Config lives at `~/.agenr/config.json` by default. Override with `AGENR_CONFIG_PATH`, `AGENR_CONFIG_DIR`, or `AGENR_DB_PATH`.
 

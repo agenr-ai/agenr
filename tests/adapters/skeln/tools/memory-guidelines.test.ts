@@ -15,8 +15,8 @@ describe("Skeln memory tool guidelines", () => {
       expect.arrayContaining([
         expect.stringContaining("Do not store progress logs"),
         expect.stringContaining("Store the durable takeaway"),
-        expect.stringContaining("Use claimKey for slot-like facts"),
-        expect.stringContaining("Format claimKey for slot-like durables"),
+        expect.stringContaining("Use claimKey only for slot-like facts"),
+        expect.stringContaining("Format claimKey (only for slot-like durables)"),
       ]),
     );
   });

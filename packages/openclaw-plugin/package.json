@@ -1,6 +1,6 @@
 {
   "name": "@agenr/openclaw-plugin",
-  "version": "2026.6.3",
+  "version": "2026.6.4",
   "description": "agenr memory plugin for OpenClaw",
   "type": "module",
   "exports": {

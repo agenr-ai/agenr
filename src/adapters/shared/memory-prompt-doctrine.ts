@@ -45,7 +45,8 @@ const STORE_DO_NOT_PROGRESS_OR_CANONICAL =
 
 const STORE_TAKEAWAY_NOT_ACTIVITY = "Store the durable takeaway, standing rule, preference, risk, lesson, or relationship instead of raw activity.";
 
-const STORE_CLAIM_KEY_SLOT_USAGE = "Use claimKey only for slot-like facts that may later be superseded (versions, strategies, owners, limits, etc.). Skip claimKey for ordinary facts, decisions, preferences, and lessons.";
+const STORE_CLAIM_KEY_SLOT_USAGE =
+  "Use claimKey only for slot-like facts that may later be superseded (versions, strategies, owners, limits, etc.). Skip claimKey for ordinary facts, decisions, preferences, and lessons.";
 
 const CLAIM_KEY_PROMPT_LINE = `Only use claimKey for slot-like facts. When you do, pass it as ${CLAIM_KEY_SLOT_GUIDANCE}`;
 

@@ -103,8 +103,8 @@ describe("agenr OpenClaw tools", () => {
     expect(String(storeTool.description)).toContain("Do not use decision as a catch-all");
     expect(String(storeTool.description)).toContain("I filed a support ticket.");
     expect(String(storeTool.description)).toContain("Jim prefers text-first updates");
-    expect(String(storeTool.description)).toContain("Use claimKey for slot-like facts");
-    expect(String(storeTool.description)).toContain("Format claimKey for slot-like durables");
+    expect(String(storeTool.description)).toContain("Use claimKey only for slot-like facts");
+    expect(String(storeTool.description)).toContain("Format claimKey (only for slot-like durables)");
     expect(schema.properties?.type?.description).toContain("not a progress update or completed action");
     expect(schema.properties?.type?.description).toContain("not ordinary execution progress");
     expect(schema.properties?.content?.description).toContain("not the activity log, canonical record, or transient progress snapshot");

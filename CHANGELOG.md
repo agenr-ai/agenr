@@ -2,13 +2,42 @@
 
 ## [Unreleased]
 
+## [2026.6.4] - 2026-06-07
+
+OpenClaw working-memory parity, durable terminology cleanup, and claim-key guidance release.
+
+### Added
+
+- **OpenClaw working memory.** OpenClaw now exposes the shared working-memory tool surface with Skeln-parity session lifecycle handling and before-prompt working-context injection.
+
+### Changed
+
+- **Skeln session working memory** is now decoupled from goals, with session-layer scope resolution, projection readiness, and fork snapshot handling split into focused helpers and tests.
+- **Durable terminology cleanup.** Finished the entry-to-durable rename across store, ingest progress events, eval normalization, adapter helpers, and related types (`StoreDurableDetail`, `TaggedDurable`, `DurableProjectScopeFields`). Removed the before-turn eval `entry` alias on patch items.
+- **Working-memory labels and snapshots** now use exported constants for section labels and snapshot field keys.
+- **README** now presents agenr as local-first memory infrastructure with a simpler quick start, memory-layer map, and host integration table.
+- **Claim-key guidance** now tells agents to use `claimKey` only for slot-like facts that may later be superseded, and to skip it for ordinary facts, decisions, preferences, and lessons.
+
 ### Removed
 
 - **OpenClaw store nudge system.** Removed mid-session `[MEMORY CHECK]` injection, `storeNudge` plugin config, `MidSessionTracker`, and the `after_tool_call` hook that only existed to feed nudge timing.
 
-### Changed
+### Fixed
 
-- **Durable terminology cleanup.** Finished the entry-to-durable rename across store, ingest progress events, eval normalization, adapter helpers, and related types (`StoreDurableDetail`, `TaggedDurable`, `DurableProjectScopeFields`). Removed the before-turn eval `entry` alias on patch items.
+- **Release validation drift.** Formatted the README and claim-key doctrine updates, then aligned OpenClaw and Skeln tool-guideline regression tests with the stricter claim-key wording.
+
+### Validation
+
+Changes since last push to `origin/master`:
+
+- Decouple Skeln session working memory from goals
+- Rename durable-memory terminology from entries to durables
+- Remove the OpenClaw store nudge system
+- Add working memory to the OpenClaw plugin with Skeln-parity session lifecycle
+- Export working-memory section label and snapshot field-key constants
+- Rewrite README quick-start and memory-layer documentation
+- Tighten claim-key guidance to slot-like facts only and update regression expectations
+- Keep `pnpm check` green before release
 
 ## [2026.6.3] - 2026-06-06
 
