@@ -14,11 +14,9 @@ const CLAIM_KEY_SLOT_GUIDANCE =
 const CLAIM_KEY_DIRECTIVE_GUIDANCE =
   'For directive entries only (type=directive), use the three-segment family user/memory_directive/<name>, for example "user/memory_directive/weekly_goals".';
 
-/** Human-readable guidance shown in claimKey-related tool schemas. */
-export const CLAIM_KEY_DESCRIPTION = `Slot-like durables use ${CLAIM_KEY_SLOT_GUIDANCE} ${CLAIM_KEY_DIRECTIVE_GUIDANCE} Entries with the same claim key are candidates for supersession. Invalid claim keys on agenr_store are dropped with a warning; on agenr_update they reject the call.`;
+export /** Human-readable guidance shown in claimKey-related tool schemas. */ const CLAIM_KEY_DESCRIPTION = `Slot-like durables use ${CLAIM_KEY_SLOT_GUIDANCE} ${CLAIM_KEY_DIRECTIVE_GUIDANCE} Entries with the same claim key are candidates for supersession. Invalid claim keys on agenr_store are dropped with a warning; on agenr_update they reject the call.`;
 
-/** Section header for host memory prompt injection. */
-export const MEMORY_RECALL_SECTION_HEADER = "## Memory Recall";
+export /** Section header for host memory prompt injection. */ const MEMORY_RECALL_SECTION_HEADER = "## Memory Recall";
 
 const RECALL_FIRST =
   "Before answering anything about prior work, decisions, preferences, people, dates, unfinished work, or past sessions, call agenr_recall first. Session-start recall is automatic, and conservative before-turn recall may also appear as injected background context; use agenr_recall mid-session when you need context you do not already have.";
@@ -33,8 +31,7 @@ const FETCH_WHEN_TRUNCATED = "Call agenr_fetch with id when preview_truncated=tr
 const RECALL_INJECTED_CONTEXT =
   "When Agenr injects memory automatically, treat it as non-user background context and use it silently when relevant rather than forcing it into the reply.";
 
-/** Recall-mode description used by shared agenr_recall tool schemas. */
-export const RECALL_MODE_SCHEMA_DESCRIPTION =
+export /** Recall-mode description used by shared agenr_recall tool schemas. */ const RECALL_MODE_SCHEMA_DESCRIPTION =
   "Recall mode: auto routes between exact durable recall, historical-state recall, procedural recall, and episodes; durables forces exact durable recall; episodes forces temporal or semantic session recall; procedures forces procedural recall.";
 
 const STORE_FUTURE_SESSION_QUESTION =
@@ -132,10 +129,7 @@ const SKELN_RECALL_TOOL_GUIDELINES = [
   "Use asOf when the user asks what was true at an earlier point in time.",
 ] as const;
 
-/**
- * Canonical shared memory doctrine atoms referenced across host surfaces.
- */
-export const MEMORY_DOCTRINE = {
+export /** Canonical shared memory doctrine atoms referenced across host surfaces. */ const MEMORY_DOCTRINE = {
   recall: {
     first: RECALL_FIRST,
     modes: RECALL_MODES,

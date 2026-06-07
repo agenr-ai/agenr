@@ -18,7 +18,6 @@ import {
   readOptionalNullableString,
   readOptionalString,
   readOptionalStringArray,
-  readRequiredBoolean,
   readRequiredEnum,
   readRequiredNumber,
   readRequiredString,

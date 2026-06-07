@@ -3,14 +3,11 @@ import { mapActionRow } from "./dreaming-run-shared.js";
 import { readNumber, readOptionalString, readRequiredString } from "./row-mapping.js";
 import type { SqlExecutor } from "./queries.js";
 
-/** Maximum recall events returned by the trace read model. */
-export const TRACE_RECALL_EVENT_LIMIT = 25;
+export /** Maximum recall events returned by the trace read model. */ const TRACE_RECALL_EVENT_LIMIT = 25;
 
-/** Maximum dreaming actions returned by the trace read model. */
-export const TRACE_DREAM_ACTION_LIMIT = 50;
+export /** Maximum dreaming actions returned by the trace read model. */ const TRACE_DREAM_ACTION_LIMIT = 50;
 
-/** Maximum profile snapshots returned by the trace read model. */
-export const TRACE_PROFILE_SNAPSHOT_LIMIT = 10;
+export /** Maximum profile snapshots returned by the trace read model. */ const TRACE_PROFILE_SNAPSHOT_LIMIT = 10;
 
 /**
  * Counts recall telemetry rows linked to one durable.

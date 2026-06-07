@@ -1,5 +1,10 @@
-/** Canonical dreaming tables created during database initialization. */
-export const DREAMING_TABLE_NAMES = ["dream_runs", "dream_run_actions", "dream_proposals", "dream_state", "profile_snapshots"] as const;
+export /** Canonical dreaming tables created during database initialization. */ const DREAMING_TABLE_NAMES = [
+  "dream_runs",
+  "dream_run_actions",
+  "dream_proposals",
+  "dream_state",
+  "profile_snapshots",
+] as const;
 
 /** Creates the core dreaming run, action, proposal, and progress tables. */
 const CREATE_DREAM_RUNS_TABLE_SQL = `

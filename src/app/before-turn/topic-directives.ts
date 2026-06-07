@@ -66,6 +66,7 @@ export function filterCurrentEntries(entries: Durable[], nowMs: number): Durable
   return entries.filter((entry) => isWithinValidityWindow(entry.valid_from, entry.valid_to, nowMs));
 }
 
+/** Builds one before-turn patch item from a proactive topic directive durable. */
 function buildTopicDirectivePatchItem(entry: Durable, deps: BeforeTurnDeps, score: number): BeforeTurnPatchItem {
   const metadata = parseDirectiveMetadata(entry);
   const projected = projectClaimCentricRecallEntry(buildSyntheticRecallOutput(entry, score), {
@@ -89,6 +90,7 @@ function buildTopicDirectivePatchItem(entry: Durable, deps: BeforeTurnDeps, scor
   };
 }
 
+/** Builds a synthetic recall output used to render directive provenance in before-turn patches. */
 function buildSyntheticRecallOutput(entry: Durable, score: number): RecallOutput {
   return {
     entry,
@@ -108,6 +110,7 @@ function buildSyntheticRecallOutput(entry: Durable, score: number): RecallOutput
   };
 }
 
+/** Merges proactive directive items with recalled durable items under before-turn policy caps. */
 function mergeTopicDirectivePatchItems(
   directiveItems: BeforeTurnPatchItem[],
   recalledItems: BeforeTurnPatchItem[],

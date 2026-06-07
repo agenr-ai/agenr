@@ -1,8 +1,11 @@
 import type { SessionMemoryRepository } from "./repository.js";
 import type { SessionArtifact, SessionLineageEdge } from "./types.js";
 
-/** Artifact kinds that can seed session-start durable recall from predecessor context. */
-export const SESSION_START_ARTIFACT_KINDS = ["compaction_checkpoint", "branch_abandonment", "session_episode"] as const;
+export /** Artifact kinds that can seed session-start durable recall from predecessor context. */ const SESSION_START_ARTIFACT_KINDS = [
+  "compaction_checkpoint",
+  "branch_abandonment",
+  "session_episode",
+] as const;
 
 /** Request accepted by host-neutral predecessor artifact lookup. */
 export interface ResolvePredecessorSessionArtifactsInput {

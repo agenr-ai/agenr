@@ -1,5 +1,7 @@
-/** Canonical session-memory tables created during database initialization. */
-export const SESSION_MEMORY_TABLE_NAMES = ["session_lineage_edges", "session_artifacts"] as const;
+export /** Canonical session-memory tables created during database initialization. */ const SESSION_MEMORY_TABLE_NAMES = [
+  "session_lineage_edges",
+  "session_artifacts",
+] as const;
 
 export /** SQL statement that creates session lineage edges. */
 const CREATE_SESSION_LINEAGE_EDGES_TABLE_SQL = `

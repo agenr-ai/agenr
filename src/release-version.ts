@@ -18,6 +18,7 @@ export type ParsedReleaseVersion = {
   correctionNumber?: number;
 };
 
+/** Parses one release-version regex match into normalized release metadata. */
 function parseVersionParts(version: string, groups: Record<string, string | undefined>, channel: ParsedReleaseVersion["channel"]): ParsedReleaseVersion | null {
   const year = Number.parseInt(groups.year ?? "", 10);
   const month = Number.parseInt(groups.month ?? "", 10);

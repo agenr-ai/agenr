@@ -1,5 +1,13 @@
-/** Canonical core-memory tables created during database initialization. */
-export const CORE_TABLE_NAMES = ["durables", "durables_fts", "ingest_log", "episodes", "procedures", "procedures_fts", "recall_events", "_meta"] as const;
+export /** Canonical core-memory tables created during database initialization. */ const CORE_TABLE_NAMES = [
+  "durables",
+  "durables_fts",
+  "ingest_log",
+  "episodes",
+  "procedures",
+  "procedures_fts",
+  "recall_events",
+  "_meta",
+] as const;
 
 /** FTS indexes non-superseded rows; query-time filters exclude stale rows from live recall. */
 const FTS_DURABLE_INSERT_WHEN = "new.superseded_by IS NULL";

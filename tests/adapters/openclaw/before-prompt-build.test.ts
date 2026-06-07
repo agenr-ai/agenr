@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -1278,37 +1277,6 @@ type TestOpenClawHost = AgenrOpenClawHost & {
   };
 };
 
-function createEpisodeSummaryRunner(
-  options: {
-    implementation?: LlmPort["complete"];
-    response?: string;
-  } = {},
-): {
-  runEmbeddedPiAgent: LlmPort["complete"];
-  runEmbeddedPiAgentSpy: ReturnType<typeof vi.fn>;
-} {
-  const runEmbeddedPiAgentSpy = vi.fn(
-    options.implementation ??
-      (async () => {
-        return (
-          options.response ??
-          JSON.stringify({
-            summary:
-              "The session focused on agenr episodic-memory work and agreed to write predecessor episodes in the background so prompt build stays fast. The discussion stayed grounded in OpenClaw integration details for temporal recall. The work was substantive and project-scoped.",
-            tags: ["agenr", "openclaw", "episodic-memory"],
-            activityLevel: "substantial",
-            project: "agenr",
-          })
-        );
-      }),
-  );
-
-  return {
-    runEmbeddedPiAgent: runEmbeddedPiAgentSpy as LlmPort["complete"],
-    runEmbeddedPiAgentSpy,
-  };
-}
-
 function createOpenClawHost(options: { episodeSummaryRunImplementation: LlmPort["complete"] }): TestOpenClawHost {
   const workspaceDir = path.join(os.tmpdir(), "agenr-openclaw-test-workspace");
   const agentDir = path.join(os.tmpdir(), "agenr-openclaw-test-agent");
@@ -1422,36 +1390,6 @@ async function createTestDatabase(): Promise<SqlDatabase> {
   const database = await createDatabase(databasePath);
   openDatabases.push(database);
   return database;
-}
-
-async function createWorkspaceWithSessions(): Promise<{ workspaceDir: string; sessionsDir: string }> {
-  const sandboxRoot = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-sandbox-"));
-  tempPaths.push(sandboxRoot);
-  const workspaceDir = path.join(sandboxRoot, "workspace");
-  const stateDir = path.join(sandboxRoot, ".openclaw");
-  const sessionsDir = path.join(stateDir, "agents", "main", "sessions");
-  delete process.env.OPENCLAW_STATE_DIR;
-  process.env.OPENCLAW_HOME = sandboxRoot;
-  await mkdir(workspaceDir, { recursive: true });
-  await mkdir(sessionsDir, { recursive: true });
-  return { workspaceDir, sessionsDir };
-}
-
-async function writeSessionsJson(sessionsDir: string, entries: Record<string, Record<string, unknown>>): Promise<void> {
-  await writeFile(path.join(sessionsDir, "sessions.json"), `${JSON.stringify(entries, null, 2)}\n`, "utf8");
-}
-
-async function writeSessionFileToDirectory(directory: string, sessionId: string, lines: object[]): Promise<string> {
-  const filePath = path.join(directory, `${sessionId}.jsonl`);
-  await writeFile(filePath, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`, "utf8");
-  return filePath;
-}
-
-async function writeArchivedSessionFileToDirectory(directory: string, sessionId: string, suffix: string, lines: object[]): Promise<string> {
-  const safeSuffix = process.platform === "win32" ? suffix.replace(/:/g, "-") : suffix;
-  const filePath = path.join(directory, `${sessionId}.jsonl.${safeSuffix}`);
-  await writeFile(filePath, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`, "utf8");
-  return filePath;
 }
 
 function createMetadataBlock(sentinel: string, payload: object): string {

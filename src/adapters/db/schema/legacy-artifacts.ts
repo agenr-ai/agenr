@@ -1,11 +1,8 @@
-/** Legacy tables that require database rejection when present. */
-export const LEGACY_DB_TABLES = ["entries"] as const;
+export /** Legacy tables that require database rejection when present. */ const LEGACY_DB_TABLES = ["entries"] as const;
 
-/** Legacy table-name prefixes that require database rejection when present. */
-export const LEGACY_DB_TABLE_PREFIXES = ["surgeon_"] as const;
+export /** Legacy table-name prefixes that require database rejection when present. */ const LEGACY_DB_TABLE_PREFIXES = ["surgeon_"] as const;
 
-/** Legacy columns that require database rejection when present on an existing table. */
-export const LEGACY_DB_COLUMNS = [
+export /** Legacy columns that require database rejection when present on an existing table. */ const LEGACY_DB_COLUMNS = [
   { table: "durables", column: "retired" },
   { table: "durables", column: "retired_at" },
   { table: "durables", column: "retired_reason" },

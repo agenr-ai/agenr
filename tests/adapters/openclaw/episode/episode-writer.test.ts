@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -228,10 +228,6 @@ function createLlmPort(complete: LlmPort["complete"]): LlmPort {
   };
 }
 
-async function listTempDirEntries(prefix: string): Promise<string[]> {
-  return (await readdir(os.tmpdir())).filter((entry) => entry.startsWith(prefix)).sort();
-}
-
 function createLogger() {
   return {
     debug: vi.fn(),
@@ -303,10 +299,4 @@ async function writeSessionFile(tempPaths: string[], sessionId: string, lines: o
   const sessionFile = path.join(sessionsDir, `${sessionId}.jsonl`);
   await writeFile(sessionFile, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`, "utf8");
   return sessionFile;
-}
-
-function createEmbedding(index: number, value: number): number[] {
-  const vector = Array.from({ length: 1024 }, () => 0);
-  vector[index] = value;
-  return vector;
 }

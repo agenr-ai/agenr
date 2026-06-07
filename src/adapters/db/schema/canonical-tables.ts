@@ -5,8 +5,7 @@ import { WORKING_MEMORY_TABLE_NAMES } from "./working-memory.js";
 
 export { CORE_TABLE_NAMES };
 
-/** Canonical tables that must all exist before initSchema may run against a persisted database. */
-export const REQUIRED_INITIALIZED_TABLES = [
+export /** Canonical tables that must all exist before initSchema may run against a persisted database. */ const REQUIRED_INITIALIZED_TABLES = [
   ...CORE_TABLE_NAMES,
   ...DREAMING_TABLE_NAMES,
   ...WORKING_MEMORY_TABLE_NAMES,
