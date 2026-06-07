@@ -1,7 +1,7 @@
 export { applyCrossEncoderRerank, DEFAULT_CROSS_ENCODER_ALPHA, DEFAULT_CROSS_ENCODER_TOP_K } from "./cross-encoder.js";
 export type { CrossEncoderRerankCandidate, CrossEncoderRerankOptions, CrossEncoderRerankResult } from "./cross-encoder.js";
-export { describeDurableLineageState, formatDurableClaimLifecycle, summarizeClaimFamilyTransition } from "./entry-lineage.js";
-export type { DurableLineageState } from "./entry-lineage.js";
+export { describeDurableLineageState, formatDurableClaimLifecycle, summarizeClaimFamilyTransition } from "./durable-lineage.js";
+export type { DurableLineageState } from "./durable-lineage.js";
 export { DEFAULT_RRF_RANK_CONSTANT, rrfFuse, rrfFuseVectorLexical } from "./fusion.js";
 export type { RrfChannel } from "./fusion.js";
 export { buildLexicalPlan, computeLexicalScore, tokenize } from "./lexical.js";
@@ -14,7 +14,7 @@ export {
   DEFAULT_STRONG_SEED_TOP_N,
   seededRerank,
   selectStrongSeeds,
-  sharesEntryLineage,
+  sharesDurableLineage,
   sharesEpisodeLineage,
   sharesProcedureLineage,
 } from "./neighborhood.js";

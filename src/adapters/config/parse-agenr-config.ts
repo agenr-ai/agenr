@@ -442,7 +442,7 @@ function parseOptionalUnitInterval(value: unknown, path: string, issues: Validat
 }
 
 /**
- * Parses one optional list of eligible entry types.
+ * Parses one optional list of eligible durable types.
  *
  * @param value - Raw field value.
  * @param path - Stable issue path.
@@ -455,7 +455,7 @@ function parseEligibleTypes(value: unknown, path: string, issues: ValidationIssu
   }
 
   if (!Array.isArray(value)) {
-    pushIssue(issues, path, "Expected an array of entry types.");
+    pushIssue(issues, path, "Expected an array of durable types.");
     return undefined;
   }
 

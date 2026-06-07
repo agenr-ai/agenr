@@ -45,7 +45,7 @@ export interface PluginBeforeTurnMemoryPolicyConfig {
   /** Enables or disables proactive procedure suggestion inside the patch. */
   procedureSuggestion?: boolean;
   /** Normal durable-item cap before very-high-confidence expansion applies. */
-  maxDurableEntries?: number;
+  maxDurables?: number;
   /** Durable-recall score threshold required before an entry can surface. */
   recallThreshold?: number;
   /** Durable-recall score threshold required before surfacing more than the normal cap. */
@@ -115,7 +115,7 @@ export interface PluginClaimExtractionRuntime {
  * Process-lifetime memory services shared by host plugin runtimes.
  */
 export interface PluginMemoryRuntimeServices {
-  entries: DatabasePort;
+  durables: DatabasePort;
   episodes: EpisodeDatabasePort;
   procedures: ProcedureDatabasePort;
   memory: MemoryRepository;

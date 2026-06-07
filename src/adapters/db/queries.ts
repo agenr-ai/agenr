@@ -34,19 +34,19 @@ export interface SqlExecutor {
 }
 
 /**
- * Inserts an entry row and returns the persisted entry ID.
+ * Inserts a durable row and returns the persisted durable ID.
  *
  * @param executor - SQL executor used for the insert.
- * @param entry - Canonical entry payload to persist.
- * @param embedding - Embedding vector to store with the entry.
+ * @param durable - Canonical durable payload to persist.
+ * @param embedding - Embedding vector to store with the durable.
  * @param contentHash - Stable content hash for dedup checks.
- * @returns Persisted entry ID.
+ * @returns Persisted durable ID.
  */
-export async function insertDurable(executor: SqlExecutor, entry: Durable, embedding: number[], contentHash: string): Promise<string> {
+export async function insertDurable(executor: SqlExecutor, durable: Durable, embedding: number[], contentHash: string): Promise<string> {
   const now = new Date().toISOString();
-  const id = entry.id.trim().length > 0 ? entry.id.trim() : randomUUID();
-  const createdAt = normalizeTimestamp(entry.created_at) ?? now;
-  const updatedAt = normalizeTimestamp(entry.updated_at) ?? now;
+  const id = durable.id.trim().length > 0 ? durable.id.trim() : randomUUID();
+  const createdAt = normalizeTimestamp(durable.created_at) ?? now;
+  const updatedAt = normalizeTimestamp(durable.updated_at) ?? now;
   const vectorJson = serializeEmbeddingForVector(embedding);
   await executor.execute({
     sql: `
@@ -96,40 +96,40 @@ export async function insertDurable(executor: SqlExecutor, entry: Durable, embed
     `,
     args: [
       id,
-      entry.type,
-      entry.subject,
-      entry.content,
-      normalizeInteger(entry.importance, 0),
-      entry.expiry,
-      serializeTags(entry.tags),
-      normalizeOptionalString(entry.source_file),
-      normalizeOptionalString(entry.source_context),
+      durable.type,
+      durable.subject,
+      durable.content,
+      normalizeInteger(durable.importance, 0),
+      durable.expiry,
+      serializeTags(durable.tags),
+      normalizeOptionalString(durable.source_file),
+      normalizeOptionalString(durable.source_context),
       vectorJson,
       vectorJson,
       contentHash.trim(),
-      normalizeOptionalString(entry.norm_content_hash),
-      normalizeNumber(entry.quality_score, DEFAULT_QUALITY_SCORE),
-      normalizeInteger(entry.recall_count, 0),
-      normalizeOptionalString(entry.last_recalled_at),
-      normalizeOptionalString(entry.superseded_by),
-      normalizeOptionalString(entry.valid_from),
-      normalizeOptionalString(entry.valid_to),
-      normalizeOptionalString(entry.directive_polarity),
-      normalizeOptionalString(entry.directive_trigger),
-      normalizeOptionalString(entry.claim_key),
-      normalizeOptionalString(entry.claim_key_raw),
-      normalizeOptionalString(entry.claim_key_status),
-      normalizeOptionalString(entry.claim_key_source),
-      normalizeOptionalNumber(entry.claim_key_confidence),
-      normalizeOptionalString(entry.claim_key_rationale),
-      normalizeOptionalString(entry.claim_support_source_kind),
-      normalizeOptionalString(entry.claim_support_locator),
-      normalizeOptionalString(entry.claim_support_observed_at),
-      normalizeOptionalString(entry.claim_support_mode),
-      normalizeOptionalString(entry.supersession_kind),
-      normalizeOptionalString(entry.supersession_reason),
-      normalizeOptionalString(entry.user_id),
-      normalizeOptionalString(entry.project),
+      normalizeOptionalString(durable.norm_content_hash),
+      normalizeNumber(durable.quality_score, DEFAULT_QUALITY_SCORE),
+      normalizeInteger(durable.recall_count, 0),
+      normalizeOptionalString(durable.last_recalled_at),
+      normalizeOptionalString(durable.superseded_by),
+      normalizeOptionalString(durable.valid_from),
+      normalizeOptionalString(durable.valid_to),
+      normalizeOptionalString(durable.directive_polarity),
+      normalizeOptionalString(durable.directive_trigger),
+      normalizeOptionalString(durable.claim_key),
+      normalizeOptionalString(durable.claim_key_raw),
+      normalizeOptionalString(durable.claim_key_status),
+      normalizeOptionalString(durable.claim_key_source),
+      normalizeOptionalNumber(durable.claim_key_confidence),
+      normalizeOptionalString(durable.claim_key_rationale),
+      normalizeOptionalString(durable.claim_support_source_kind),
+      normalizeOptionalString(durable.claim_support_locator),
+      normalizeOptionalString(durable.claim_support_observed_at),
+      normalizeOptionalString(durable.claim_support_mode),
+      normalizeOptionalString(durable.supersession_kind),
+      normalizeOptionalString(durable.supersession_reason),
+      normalizeOptionalString(durable.user_id),
+      normalizeOptionalString(durable.project),
       createdAt,
       updatedAt,
     ],
@@ -139,11 +139,11 @@ export async function insertDurable(executor: SqlExecutor, entry: Durable, embed
 }
 
 /**
- * Fetches active entries by ID, preserving the input order.
+ * Fetches active durables by ID, preserving the input order.
  *
  * @param executor - SQL executor used for the lookup.
- * @param ids - Entry IDs to resolve.
- * @returns Active entries for the requested IDs.
+ * @param ids - Durable IDs to resolve.
+ * @returns Active durables for the requested IDs.
  */
 export async function getDurables(executor: SqlExecutor, ids: string[]): Promise<Durable[]> {
   const normalizedIds = dedupeStrings(ids);
@@ -166,28 +166,28 @@ export async function getDurables(executor: SqlExecutor, ids: string[]): Promise
     });
 
     for (const row of result.rows) {
-      const entry = mapDurableRow(row);
-      byId.set(entry.id, entry);
+      const durable = mapDurableRow(row);
+      byId.set(durable.id, durable);
     }
   }
 
-  return ids.map((id) => byId.get(id.trim())).filter((entry): entry is Durable => entry !== undefined);
+  return ids.map((id) => byId.get(id.trim())).filter((durable): durable is Durable => durable !== undefined);
 }
 
 /**
- * Fetches a single active entry by ID.
+ * Fetches a single active durable by ID.
  *
  * @param executor - SQL executor used for the lookup.
- * @param id - Entry ID to resolve.
- * @returns Active entry, or null when missing.
+ * @param id - Durable ID to resolve.
+ * @returns Active durable, or null when missing.
  */
 export async function getDurable(executor: SqlExecutor, id: string): Promise<Durable | null> {
-  const [entry] = await getDurables(executor, [id]);
-  return entry ?? null;
+  const [durable] = await getDurables(executor, [id]);
+  return durable ?? null;
 }
 
 /**
- * Finds which content hashes already exist among active entries.
+ * Finds which content hashes already exist among active durables.
  *
  * @param executor - SQL executor used for the lookup.
  * @param hashes - Candidate hashes to check.
@@ -221,7 +221,7 @@ export async function findExistingHashes(executor: SqlExecutor, hashes: string[]
 }
 
 /**
- * Finds which normalized content hashes already exist among active entries.
+ * Finds which normalized content hashes already exist among active durables.
  *
  * @param executor - SQL executor used for the lookup.
  * @param hashes - Candidate normalized hashes to check.
@@ -255,11 +255,11 @@ export async function findExistingNormHashes(executor: SqlExecutor, hashes: stri
 }
 
 /**
- * Closes the valid-time window for one active entry, making it stale for current recall.
+ * Closes the valid-time window for one active durable, making it stale for current recall.
  *
  * @param executor - SQL executor used for the update.
- * @param id - Entry ID to stale.
- * @param reason - Optional explanation recorded on the entry.
+ * @param id - Durable ID to stale.
+ * @param reason - Optional explanation recorded on the durable.
  * @returns True when an active row was updated.
  */
 export async function closeDurableValidity(executor: SqlExecutor, id: string, reason?: string): Promise<boolean> {
@@ -281,14 +281,14 @@ export async function closeDurableValidity(executor: SqlExecutor, id: string, re
 }
 
 /**
- * Marks one active entry as superseded by a newer replacement entry.
+ * Marks one active durable as superseded by a newer replacement durable.
  *
  * @param executor - SQL executor used for the update.
- * @param oldId - Active entry that should become historical.
- * @param newId - Replacement entry identifier.
+ * @param oldId - Active durable that should become historical.
+ * @param newId - Replacement durable identifier.
  * @param kind - Optional explicit supersession relationship.
- * @param reason - Optional explanation recorded on the superseded entry.
- * @returns True when the target entry was active and updated.
+ * @param reason - Optional explanation recorded on the superseded durable.
+ * @returns True when the target durable was active and updated.
  */
 export async function supersedeDurable(executor: SqlExecutor, oldId: string, newId: string, kind?: string, reason?: string): Promise<boolean> {
   const normalizedOldId = oldId.trim();
@@ -330,11 +330,11 @@ export async function supersedeDurable(executor: SqlExecutor, oldId: string, new
 }
 
 /**
- * Loads active entries that share one claim key.
+ * Loads active durables that share one claim key.
  *
  * @param executor - SQL executor used for the lookup.
  * @param claimKey - Canonical claim key to match.
- * @returns Active entries with the requested claim key.
+ * @returns Active durables with the requested claim key.
  */
 export async function findActiveDurablesByClaimKey(executor: SqlExecutor, claimKey: string): Promise<Durable[]> {
   const normalizedClaimKey = claimKey.trim();
@@ -411,7 +411,7 @@ export async function getClaimKeyExamples(executor: SqlExecutor, limit = 8): Pro
  * Lists active per-prefix claim-key counts used by conservative alias-family handling.
  *
  * @param executor - SQL executor used for the lookup.
- * @returns Ordered per-prefix counts across active keyed entries.
+ * @returns Ordered per-prefix counts across active keyed durables.
  */
 export async function getClaimKeyEntityPrefixStats(executor: SqlExecutor): Promise<ClaimKeyEntityPrefixStats[]> {
   const result = await executor.execute({
@@ -445,14 +445,14 @@ export async function getClaimKeyEntityPrefixStats(executor: SqlExecutor): Promi
     return [
       {
         entityPrefix,
-        activeEntryCount: coerceRowInteger(row.active_durable_count),
-        trustedEntryCount: coerceRowInteger(row.trusted_durable_count),
-        tentativeEntryCount: coerceRowInteger(row.tentative_durable_count),
-        unresolvedEntryCount: coerceRowInteger(row.unresolved_durable_count),
-        deterministicRepairEntryCount: coerceRowInteger(row.deterministic_repair_durable_count),
-        manualEntryCount: coerceRowInteger(row.manual_durable_count),
-        modelEntryCount: coerceRowInteger(row.model_durable_count),
-        jsonRetryEntryCount: coerceRowInteger(row.json_retry_durable_count),
+        activeDurableCount: coerceRowInteger(row.active_durable_count),
+        trustedDurableCount: coerceRowInteger(row.trusted_durable_count),
+        tentativeDurableCount: coerceRowInteger(row.tentative_durable_count),
+        unresolvedDurableCount: coerceRowInteger(row.unresolved_durable_count),
+        deterministicRepairDurableCount: coerceRowInteger(row.deterministic_repair_durable_count),
+        manualDurableCount: coerceRowInteger(row.manual_durable_count),
+        modelDurableCount: coerceRowInteger(row.model_durable_count),
+        jsonRetryDurableCount: coerceRowInteger(row.json_retry_durable_count),
         dreamingFamilyReuseDurableCount: coerceRowInteger(row.dreaming_reconcile_durable_count),
       } satisfies ClaimKeyEntityPrefixStats,
     ];
@@ -460,10 +460,10 @@ export async function getClaimKeyEntityPrefixStats(executor: SqlExecutor): Promi
 }
 
 /**
- * Updates mutable fields on an active entry.
+ * Updates mutable fields on an active durable.
  *
  * @param executor - SQL executor used for the update.
- * @param id - Entry ID to update.
+ * @param id - Durable ID to update.
  * @param fields - Mutable fields supported by the port contract.
  * @returns True when an active row was updated.
  */
@@ -571,12 +571,12 @@ export async function updateDurable(
 }
 
 /**
- * Loads the currently persisted validity bounds for one mutable entry.
+ * Loads the currently persisted validity bounds for one mutable durable.
  *
  * @param executor - SQL executor used for the lookup.
- * @param id - Target entry id.
+ * @param id - Target durable id.
  * @param options - Whether inactive rows are addressable for this mutation.
- * @returns Current bounds, or null when the entry is missing/inactive.
+ * @returns Current bounds, or null when the durable is missing/inactive.
  */
 async function loadCurrentValidityBounds(
   executor: SqlExecutor,
@@ -611,12 +611,12 @@ async function loadCurrentValidityBounds(
  * Records a recall event and updates the durable recall counters.
  *
  * @param executor - SQL executor used for the write.
- * @param entryId - Entry that was recalled.
+ * @param durableId - Durable that was recalled.
  * @param query - Query text that caused the recall.
  * @param sessionKey - Optional session key for attribution.
  * @returns Promise that resolves after the write completes.
  */
-export async function recordRecallEvent(executor: SqlExecutor, entryId: string, query: string, sessionKey?: string): Promise<void> {
+export async function recordRecallEvent(executor: SqlExecutor, durableId: string, query: string, sessionKey?: string): Promise<void> {
   const now = new Date().toISOString();
   const updateResult = await executor.execute({
     sql: `
@@ -627,7 +627,7 @@ export async function recordRecallEvent(executor: SqlExecutor, entryId: string, 
       WHERE id = ?
         AND ${ACTIVE_DURABLE_CLAUSE}
     `,
-    args: [now, now, entryId],
+    args: [now, now, durableId],
   });
 
   if (updateResult.rowsAffected === 0) {
@@ -645,7 +645,7 @@ export async function recordRecallEvent(executor: SqlExecutor, entryId: string, 
       )
       VALUES (?, ?, ?, ?, ?)
     `,
-    args: [randomUUID(), entryId, query, normalizeOptionalString(sessionKey), now],
+    args: [randomUUID(), durableId, query, normalizeOptionalString(sessionKey), now],
   });
 }
 
@@ -684,7 +684,7 @@ export async function getIngestLogEntry(executor: SqlExecutor, filePath: string)
  * @param executor - SQL executor used for the write.
  * @param filePath - Source file path that was ingested.
  * @param fileHash - Hash of the ingested file contents.
- * @param durableCount - Number of entries produced from the file.
+ * @param durableCount - Number of durables produced from the file.
  * @returns Promise that resolves after the write completes.
  */
 export async function insertIngestLogEntry(executor: SqlExecutor, filePath: string, fileHash: string, durableCount: number): Promise<void> {

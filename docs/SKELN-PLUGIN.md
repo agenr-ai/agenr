@@ -158,7 +158,7 @@ Supported `memoryPolicy` keys match the shared plugin contract:
 - `memoryPolicy.sessionStart.relevantDurableMemory` - optional toggle for artifact-grounded relevant durable memory during session-start injection
 - `memoryPolicy.beforeTurn.enabled` - optional toggle for the proactive before-turn patch path
 - `memoryPolicy.beforeTurn.procedureSuggestion` - optional toggle for the before-turn procedure section
-- `memoryPolicy.beforeTurn.maxDurableEntries` - optional normal durable-item cap for before-turn recall
+- `memoryPolicy.beforeTurn.maxDurables` - optional normal durable-item cap for before-turn recall
 - `memoryPolicy.beforeTurn.recallThreshold` - optional durable-recall score floor for before-turn recall
 - `memoryPolicy.beforeTurn.highConfidenceRecallThreshold` - optional score floor required before before-turn recall can expand beyond the normal durable-item cap
 - `memoryPolicy.beforeTurn.procedureThreshold` - optional score floor for proactive procedure suggestion
@@ -288,9 +288,9 @@ On the first tracked turn for a session identity, the handler:
 
 Current session-start policy defaults:
 
-- `maxCoreEntries = 4`
-- `maxArtifactRecallEntries = 3`
-- `maxDurableEntries = 5`
+- `maxCoreDurables = 4`
+- `maxArtifactRecallDurables = 3`
+- `maxDurables = 5`
 - `maxArtifactChars = 1200`
 - session-start memory injection enabled unless `memoryPolicy.sessionStart.enabled === false`
 - always-on core memory enabled unless `memoryPolicy.sessionStart.coreMemory === false`
@@ -311,8 +311,8 @@ On later turns, the handler:
 
 Current before-turn policy defaults:
 
-- `maxDurableEntries = 1`
-- `maxHighConfidenceDurableEntries = 2`
+- `maxDurables = 1`
+- `maxHighConfidenceDurables = 2`
 - `maxRecentTurns = 2`
 - `maxQueryChars = 450`
 - `maxProcedureCandidates = 3`

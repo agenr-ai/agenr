@@ -1,5 +1,5 @@
 import type { DatabasePort, EmbeddingPort, LlmPort, TranscriptPort } from "../ports.js";
-import { applyClaimExtractionResultToEntry, runBatchClaimExtraction, type ClaimExtractionConfig } from "../store/claim-extraction.js";
+import { applyClaimExtractionResultToDurable, runBatchClaimExtraction, type ClaimExtractionConfig } from "../store/claim-extraction.js";
 import { type StoreDurablesDetailedResult, type StoreDurablesOptions, type StorePipelineOptions, storeDurablesDetailed } from "../store/pipeline.js";
 import type { StoreDurableInput, StoreResult } from "../types.js";
 import { annotateExplicitClaimKeyEntry, restoreExplicitClaimKeysAfterDedup } from "./claim-key-preservation.js";
@@ -67,7 +67,7 @@ export interface ExtractedFileResult {
   file: string;
   skipped: boolean;
   messageCount: number;
-  entries: StoreDurableInput[];
+  durables: StoreDurableInput[];
   chunkCount: number;
   successfulChunks: number;
   failedChunks: number;
@@ -146,15 +146,15 @@ export async function ingestFile(
     return toIngestFileResult(extracted, null);
   }
 
-  const dedupResult = await dedupBatch(extracted.entries, ports.dedupLlm ?? ports.llm, ports.embedding, {
+  const dedupResult = await dedupBatch(extracted.durables, ports.dedupLlm ?? ports.llm, ports.embedding, {
     concurrency: options.concurrency ?? getDefaultDedupConcurrency(),
     skip: options.skipDedup,
     verbose: options.verbose,
   });
-  const dedupedEntries = restoreExplicitClaimKeysAfterDedup(extracted.entries, dedupResult);
+  const dedupedEntries = restoreExplicitClaimKeysAfterDedup(extracted.durables, dedupResult);
   const dedupedExtracted: ExtractedFileResult = {
     ...extracted,
-    entries: dedupedEntries,
+    durables: dedupedEntries,
   };
 
   if (ports.claimExtractionLlm) {
@@ -173,7 +173,7 @@ export async function ingestFile(
     );
 
     for (const [entry, extractedClaimKey] of extractedClaimKeys) {
-      applyClaimExtractionResultToEntry(entry, extractedClaimKey);
+      applyClaimExtractionResultToDurable(entry, extractedClaimKey);
     }
   }
 
@@ -227,7 +227,7 @@ export async function extractFile(
         file: filePath,
         skipped: true,
         messageCount: 0,
-        entries: [],
+        durables: [],
         chunkCount: 0,
         successfulChunks: 0,
         failedChunks: 0,
@@ -254,7 +254,7 @@ export async function extractFile(
     failedChunks = extraction.failedChunks;
     chunkDetails = extraction.chunkDetails;
     warnings.push(...extraction.warnings);
-    const extractedEntries = extraction.entries.map((entry, entryIndex) => {
+    const extractedEntries = extraction.durables.map((entry, entryIndex) => {
       const sourceFile = resolveStableTranscriptSourceFile(filePath, transcript, entry.source_file);
       return annotateExplicitClaimKeyEntry(
         {
@@ -276,7 +276,7 @@ export async function extractFile(
       file: filePath,
       skipped: false,
       messageCount,
-      entries: extractedEntries,
+      durables: extractedEntries,
       chunkCount,
       successfulChunks,
       failedChunks,
@@ -293,7 +293,7 @@ export async function extractFile(
       file: filePath,
       skipped: false,
       messageCount,
-      entries: [],
+      durables: [],
       chunkCount,
       successfulChunks,
       failedChunks,
@@ -331,7 +331,7 @@ export async function storeExtractedResults(
 
   for (const result of successfulResults) {
     perFileStoreResults.set(result.file, emptyStoreResult());
-    for (const entry of result.entries) {
+    for (const entry of result.durables) {
       allEntries.push(entry);
       entryOwners.push(result.file);
     }
@@ -421,7 +421,7 @@ function toIngestFileResult(result: ExtractedFileResult, storeResult: StoreResul
     file: result.file,
     skipped: result.skipped,
     messageCount: result.messageCount,
-    entriesExtracted: result.entries.length,
+    entriesExtracted: result.durables.length,
     chunkCount: result.chunkCount,
     successfulChunks: result.successfulChunks,
     failedChunks: result.failedChunks,

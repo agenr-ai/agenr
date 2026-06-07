@@ -98,15 +98,15 @@ describe("runRecallEvalCase", () => {
       status: "ok",
       caseId: "case-app-success",
       result: {
-        entryIds: ["policy-new"],
+        durableIds: ["policy-new"],
       },
       metadata: {
         path: "core",
         claim: {
-          projectedEntries: [
+          projectedDurables: [
             expect.objectContaining({
-              entryId: "policy-new",
-              familyKey: "entry:policy-new",
+              durableId: "policy-new",
+              familyKey: "durable:policy-new",
               memoryState: "current",
               claimStatus: "no_key",
             }),
@@ -132,7 +132,7 @@ describe("runRecallEvalCase", () => {
           supersededCount: 1,
           createdAtDefaultedCount: 0,
           updatedAtDefaultedCount: 2,
-          seededEntries: [
+          seededDurables: [
             {
               id: "policy-old",
               created_at: "2026-03-10T00:00:00.000Z",
@@ -184,7 +184,7 @@ describe("runRecallEvalCase", () => {
         preserved: true,
       },
     });
-    expect(response.result?.entries[0]).toMatchObject({
+    expect(response.result?.durables[0]).toMatchObject({
       id: "policy-new",
       content: "Taylor is on call this week.",
       created_at: "2026-03-11T00:00:00.000Z",
@@ -203,7 +203,7 @@ describe("runRecallEvalCase", () => {
         scoreCandidatesMs: expect.any(Number),
         thresholdMs: expect.any(Number),
         budgetMs: expect.any(Number),
-        hydrateEntriesMs: expect.any(Number),
+        hydrateDurablesMs: expect.any(Number),
         shapeResultsMs: expect.any(Number),
         recordRecallEventsMs: expect.any(Number),
       }),
@@ -261,7 +261,7 @@ describe("runRecallEvalCase", () => {
         },
       ]);
 
-      const seededPolicyNew = response.diagnostics?.provision?.seededEntries.find((entry) => entry.id === "policy-new");
+      const seededPolicyNew = response.diagnostics?.provision?.seededDurables.find((entry) => entry.id === "policy-new");
       const storedPolicyNew = rows.rows.find((row) => String(row.id) === "policy-new");
 
       expect(seededPolicyNew).toEqual({
@@ -413,14 +413,14 @@ describe("runRecallEvalCase", () => {
       status: "ok",
       caseId: "case-recall-fail",
       result: {
-        entryIds: ["fixture-id"],
+        durableIds: ["fixture-id"],
       },
       metadata: {
         path: "core",
         claim: {
-          projectedEntries: [
+          projectedDurables: [
             expect.objectContaining({
-              entryId: "fixture-id",
+              durableId: "fixture-id",
               memoryState: "current",
             }),
           ],
@@ -439,7 +439,7 @@ describe("runRecallEvalCase", () => {
         provision: {
           requestedCount: 1,
           provisionedCount: 1,
-          seededEntries: [
+          seededDurables: [
             {
               id: "fixture-id",
             },
@@ -454,7 +454,7 @@ describe("runRecallEvalCase", () => {
           active: true,
           reasons: ["query_embedding_failed"],
           lexicalOnly: true,
-          notices: [expect.stringContaining("fell back to lexical-only entry ranking")],
+          notices: [expect.stringContaining("fell back to lexical-only durable ranking")],
         },
         candidateCounts: {
           vectorRetrieved: 0,
@@ -472,7 +472,7 @@ describe("runRecallEvalCase", () => {
         preserved: true,
       },
     });
-    expect(response.result?.entries[0]).toMatchObject({
+    expect(response.result?.durables[0]).toMatchObject({
       id: "fixture-id",
       claim: {
         memoryState: "current",
@@ -511,7 +511,7 @@ describe("runRecallEvalCase", () => {
       status: "ok",
       caseId: "case-fault-query-embedding",
       result: {
-        entryIds: ["fallback-entry"],
+        durableIds: ["fallback-entry"],
       },
       diagnostics: {
         retrieval: {
@@ -523,7 +523,7 @@ describe("runRecallEvalCase", () => {
           active: true,
           reasons: ["query_embedding_failed"],
           lexicalOnly: true,
-          notices: [expect.stringContaining("fell back to lexical-only entry ranking")],
+          notices: [expect.stringContaining("fell back to lexical-only durable ranking")],
         },
         candidateCounts: {
           vectorRetrieved: 0,
@@ -570,7 +570,7 @@ describe("runRecallEvalCase", () => {
       status: "ok",
       caseId: "case-fault-vector-search",
       result: {
-        entryIds: ["vector-fallback-entry"],
+        durableIds: ["vector-fallback-entry"],
       },
       diagnostics: {
         retrieval: {
@@ -582,7 +582,7 @@ describe("runRecallEvalCase", () => {
           active: true,
           reasons: ["vector_search_failed"],
           lexicalOnly: false,
-          notices: [expect.stringContaining("continued with lexical entry candidates only")],
+          notices: [expect.stringContaining("continued with lexical durable candidates only")],
         },
         candidateCounts: {
           vectorRetrieved: 0,
@@ -667,14 +667,14 @@ describe("runRecallEvalCase", () => {
           episodeCount: 0,
         },
         claim: {
-          projectedEntries: expect.arrayContaining([
+          projectedDurables: expect.arrayContaining([
             expect.objectContaining({
-              entryId: "owner-old",
+              durableId: "owner-old",
               familyKey: "repo/owner_primary",
               slotPolicy: "multivalued",
             }),
           ]),
-          entryFamilies: expect.arrayContaining([
+          durableFamilies: expect.arrayContaining([
             expect.objectContaining({
               familyKey: "repo/owner_primary",
               slotPolicy: "multivalued",
@@ -688,7 +688,7 @@ describe("runRecallEvalCase", () => {
         },
       },
     });
-    expect(response.result?.entryIds).toContain("owner-old");
+    expect(response.result?.durableIds).toContain("owner-old");
 
     const sandboxDatabase = await createDatabase(response.sandbox?.dbPath ?? "");
     try {
@@ -752,7 +752,7 @@ describe("runRecallEvalCase", () => {
       status: "ok",
       caseId: "case-unified-procedure-path",
       result: {
-        entryIds: [],
+        durableIds: [],
       },
       metadata: {
         path: "unified",
@@ -785,7 +785,7 @@ describe("runRecallEvalCase", () => {
         },
       },
     });
-    expect(response.result?.entries).toEqual([]);
+    expect(response.result?.durables).toEqual([]);
   });
 
   it("forwards the full core recall request shape through the core path", async () => {
@@ -850,8 +850,8 @@ describe("runRecallEvalCase", () => {
         },
       },
     });
-    expect(response.result?.entryIds).toEqual(expect.arrayContaining([expect.any(String)]));
-    expect(response.result?.entries.length).toBeGreaterThan(0);
+    expect(response.result?.durableIds).toEqual(expect.arrayContaining([expect.any(String)]));
+    expect(response.result?.durables.length).toBeGreaterThan(0);
   });
 
   it("returns claim-centric result annotations and claim-key diagnostics for historical-state evals", async () => {
@@ -907,9 +907,9 @@ describe("runRecallEvalCase", () => {
       metadata: {
         path: "core",
         claim: {
-          projectedEntries: expect.arrayContaining([
+          projectedDurables: expect.arrayContaining([
             expect.objectContaining({
-              entryId: "approach-old",
+              durableId: "approach-old",
               familyKey: "deployment/approach",
               claimKey: "deployment/approach",
               slotPolicy: "exclusive",
@@ -920,7 +920,7 @@ describe("runRecallEvalCase", () => {
         },
       },
     });
-    expect(response.result?.entries[0]).toMatchObject({
+    expect(response.result?.durables[0]).toMatchObject({
       id: "approach-old",
       claim: {
         familyKey: "deployment/approach",
@@ -936,7 +936,7 @@ describe("runRecallEvalCase", () => {
     });
     expect(response.diagnostics?.claimKey?.historicalBoosted ?? 0).toBeGreaterThanOrEqual(1);
     expect(response.diagnostics?.claimKey?.trustPenalized ?? 0).toBeGreaterThanOrEqual(0);
-    expect(response.diagnostics?.provision?.seededEntries).toContainEqual(
+    expect(response.diagnostics?.provision?.seededDurables).toContainEqual(
       expect.objectContaining({
         id: "approach-old",
         claim_key: "deployment/approach",
@@ -1413,8 +1413,8 @@ describe("runRecallEvalCase", () => {
     expect(artifact.schemaVersion).toBe("recall-debug-artifact.v1");
     expect(artifact.caseId).toBe("case-debug-artifact-included");
     expect(artifact.request).toEqual({ recallPath: "core", query: "who is on call" });
-    expect(Array.isArray(artifact.selectedEntryIds)).toBe(true);
-    expect(artifact.selectedEntryIds.length).toBeGreaterThan(0);
+    expect(Array.isArray(artifact.selectedDurableIds)).toBe(true);
+    expect(artifact.selectedDurableIds.length).toBeGreaterThan(0);
     expect(artifact.topCandidates).toBeDefined();
     expect(artifact.topCandidates!.length).toBeLessThanOrEqual(2);
     for (const candidate of artifact.topCandidates ?? []) {
@@ -1470,7 +1470,7 @@ describe("runRecallEvalCase", () => {
         path: "core",
       },
     });
-    expect(response.result?.entries[0]).toMatchObject({
+    expect(response.result?.durables[0]).toMatchObject({
       id: "approach-old",
       claim: {
         freshness: {

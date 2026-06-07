@@ -17,16 +17,16 @@ const MAX_SUBJECT_LENGTH = 48;
 export function buildStoreNudgeMessage(state: MidSessionState, maxPerSession: number): string {
   const isFirstNudge = state.nudgeCount === 1;
   const isFinalNudge = state.nudgeCount >= maxPerSession;
-  const hasStoredEntries = state.entriesStored > 0;
+  const hasStoredDurables = state.durablesStored > 0;
   const subjectsLabel = formatStoredSubjects(state.storedSubjects) ?? "recent durable session memory";
 
-  if (hasStoredEntries) {
+  if (hasStoredDurables) {
     if (isFinalNudge) {
       return "[MEMORY CHECK] Session may end soon. Capture final durable takeaways: validated preferences, confirmed lessons, important decisions, open risks. Skip transient progress and derivable project state.";
     }
 
     if (isFirstNudge) {
-      return `[MEMORY CHECK] You've stored ${state.entriesStored} ${state.entriesStored === 1 ? "entry" : "durables"} this session covering ${subjectsLabel}. Review recent conversation for anything else worth keeping - decisions, confirmed approaches, preferences, lessons, or open risks. Store both corrections and validated wins. Skip transient progress and derivable repo facts.`;
+      return `[MEMORY CHECK] You've stored ${state.durablesStored} ${state.durablesStored === 1 ? "durable" : "durables"} this session covering ${subjectsLabel}. Review recent conversation for anything else worth keeping - decisions, confirmed approaches, preferences, lessons, or open risks. Store both corrections and validated wins. Skip transient progress and derivable repo facts.`;
     }
 
     return `[MEMORY CHECK] Session memory covers ${subjectsLabel}. Check for newer durable knowledge - especially non-obvious approaches the user confirmed worked well. Use memory for future-session knowledge, not current task state.`;

@@ -1,5 +1,5 @@
 import type { SessionStartInput, SessionStartPatchDiagnostics } from "../../session-start/types.js";
-import type { RecallEvalFixtureEntry, RecallEvalSandboxRequest, RecallEvalSandboxResult } from "../recall/contracts.js";
+import type { RecallEvalFixtureDurable, RecallEvalSandboxRequest, RecallEvalSandboxResult } from "../recall/contracts.js";
 
 /**
  * Optional response-shaping flags for session-start eval cases.
@@ -22,7 +22,7 @@ export interface SessionStartEvalCaseRequest {
   /** Optional sandbox configuration for the case execution. */
   sandbox?: RecallEvalSandboxRequest;
   /** Explicit memory fixtures to provision for the isolated case. */
-  memoryPool: RecallEvalFixtureEntry[];
+  memoryPool: RecallEvalFixtureDurable[];
   /** Session-start input facts forwarded to the real app-layer service. */
   sessionStartInput: SessionStartInput;
   /** Optional response-shaping flags for diagnostics and timings. */
@@ -33,10 +33,10 @@ export interface SessionStartEvalCaseRequest {
  * Final shaped output returned from one session-start eval case run.
  */
 export interface SessionStartEvalCaseOutput {
-  /** Convenience list of ranked durable entry IDs in output order. */
-  selectedEntryIds: string[];
-  /** Source kind for each selected durable entry id. */
-  sourceKindsByEntryId: Record<string, "profile" | "directive" | "core" | "artifact_recall">;
+  /** Convenience list of ranked durable durable IDs in output order. */
+  selectedDurableIds: string[];
+  /** Source kind for each selected durable durable id. */
+  sourceKindsByDurableId: Record<string, "profile" | "directive" | "core" | "artifact_recall">;
 }
 
 /**

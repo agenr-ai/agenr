@@ -47,7 +47,7 @@ export interface BeforeTurnDebugArtifactInputSummary {
  * Bounded durable-recall candidate breakdown for the before-turn debug artifact.
  */
 export interface BeforeTurnDebugArtifactDurableCandidate {
-  /** Stable durable entry identifier. */
+  /** Stable durable durable identifier. */
   id: string;
   /** Final durable-memory score for the candidate. */
   score: number;
@@ -87,8 +87,8 @@ export interface BeforeTurnDebugArtifactV1 {
   queryVariants?: BeforeTurnPatchDiagnostics["queryVariants"];
   /** Stable abstention reasons mirrored from diagnostics. */
   abstentionReasons?: string[];
-  /** Ranked durable entry IDs returned by the selector. */
-  selectedEntryIds: string[];
+  /** Ranked durable durable IDs returned by the selector. */
+  selectedDurableIds: string[];
   /** Selected canonical procedure key when one surfaced, otherwise null. */
   selectedProcedureKey: string | null;
   /** Optional bounded durable-recall top-K candidate breakdown. */

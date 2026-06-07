@@ -90,7 +90,7 @@ export async function handleAgenrBeforePromptBuild(
         ...(ctx.sessionKey ? { sessionKey: ctx.sessionKey } : {}),
         debug: {
           durableMemoryCount: sessionStartPatch.durableMemory.length,
-          selectedEntryIds: sessionStartPatch.durableMemory.map((item) => item.entry.id),
+          selectedDurableIds: sessionStartPatch.durableMemory.map((item) => item.durable.id),
           coreCandidateCount: sessionStartPatch.diagnostics.coreCandidateCount,
           artifactRecallCandidateCount: sessionStartPatch.diagnostics.artifactRecallCandidateCount,
           artifactRecallUsed: sessionStartPatch.diagnostics.artifactRecallUsed,
@@ -114,7 +114,7 @@ export async function handleAgenrBeforePromptBuild(
       params.logger.info(`[agenr] session-start recall notices for ${sessionContext}: ${sessionStartPatch.diagnostics.notices.join(" | ")}`);
     }
     params.logger.debug?.(
-      `[agenr] before_prompt_build: session-start durables for ${sessionContext}: ${formatEntryRefs(sessionStartPatch.durableMemory.map((item) => item.entry))}`,
+      `[agenr] before_prompt_build: session-start durables for ${sessionContext}: ${formatDurableRefs(sessionStartPatch.durableMemory.map((item) => item.durable))}`,
     );
     params.logger.debug?.(`[agenr] before_prompt_build: session-start prependContext length for ${sessionContext}: ${prependContext.length} chars`);
     if (prependContext.length === 0) {
@@ -281,8 +281,8 @@ async function resolveBeforeTurnResult(
     }
     params.logger.debug?.(`[agenr] before_prompt_build: before-turn diagnostics for ${sessionContext}: ${formatBeforeTurnDiagnosticsForLog(beforeTurnPatch)}`);
     params.logger.debug?.(
-      `[agenr] before_prompt_build: before-turn durables for ${sessionContext}: ${formatEntryRefs(
-        beforeTurnPatch.durableMemory.map((item: (typeof beforeTurnPatch.durableMemory)[number]) => item.entry),
+      `[agenr] before_prompt_build: before-turn durables for ${sessionContext}: ${formatDurableRefs(
+        beforeTurnPatch.durableMemory.map((item: (typeof beforeTurnPatch.durableMemory)[number]) => item.durable),
       )}`,
     );
     params.logger.debug?.(`[agenr] before_prompt_build: before-turn prependContext length for ${sessionContext}: ${prependContext.length} chars`);
@@ -373,13 +373,13 @@ function resolveStoreNudgeResult(
 }
 
 /**
- * Formats a concise entry reference list for debug logging.
+ * Formats a concise durable reference list for debug logging.
  *
- * @param entries - Session-start durable entries.
+ * @param durables - Session-start or before-turn durables.
  * @returns Stable debug text listing subjects and ids.
  */
-function formatEntryRefs(entries: Array<{ id: string; subject: string }>): string {
-  return entries.length === 0 ? "none" : entries.map((entry) => `${entry.subject} [${entry.id}]`).join(", ");
+function formatDurableRefs(durables: Array<{ id: string; subject: string }>): string {
+  return durables.length === 0 ? "none" : durables.map((durable) => `${durable.subject} [${durable.id}]`).join(", ");
 }
 
 /**
@@ -407,12 +407,12 @@ function formatBeforeTurnDiagnosticsForLog(patch: BeforeTurnPatch): string {
           queryKind: patch.diagnostics.directness.queryKind,
           entity: patch.diagnostics.directness.entity,
           decision: patch.diagnostics.directness.decision,
-          winnerEntryId: patch.diagnostics.directness.winnerEntryId,
-          runnerUpEntryId: patch.diagnostics.directness.runnerUpEntryId,
+          winnerDurableId: patch.diagnostics.directness.winnerDurableId,
+          runnerUpDurableId: patch.diagnostics.directness.runnerUpDurableId,
           winnerGap: patch.diagnostics.directness.winnerGap,
           reason: truncateForLog(patch.diagnostics.directness.reason, 180),
           candidates: patch.diagnostics.directness.candidates.map((candidate) => ({
-            entryId: candidate.entryId,
+            durableId: candidate.durableId,
             baseRank: candidate.baseRank,
             baseScore: candidate.baseScore,
             directnessDelta: candidate.directnessDelta,
@@ -425,8 +425,8 @@ function formatBeforeTurnDiagnosticsForLog(patch: BeforeTurnPatch): string {
     abstentionReasons: patch.diagnostics.abstentionReasons.map((reason) => truncateForLog(reason, 180)),
     notices: patch.diagnostics.notices.map((notice) => truncateForLog(notice, 180)),
     selectedEntries: patch.durableMemory.map((item) => ({
-      id: item.entry.id,
-      subject: truncateForLog(item.entry.subject, 80),
+      id: item.durable.id,
+      subject: truncateForLog(item.durable.subject, 80),
       score: Number(item.score.toFixed(3)),
     })),
     procedure: patch.procedure

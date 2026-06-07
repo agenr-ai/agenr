@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "../skeln-types.js";
 
 import { UPDATE_TOOL_PARAMETERS, parseUpdateToolParams, runUpdateMemoryTool } from "../../shared/memory-tools.js";
-import { formatTargetSelector, sanitizeUpdateToolParams } from "../../shared/entry-tools.js";
+import { formatTargetSelector, sanitizeUpdateToolParams } from "../../shared/durable-tools.js";
 import { buildUpdateToolDescription, buildUpdateToolGuidelines } from "../../shared/memory-prompt-doctrine.js";
 import type { AgenrSkelnServices } from "../runtime.js";
 import type { AgenrSkelnSessionScope } from "../types.js";
@@ -17,7 +17,7 @@ export function registerAgenrSkelnUpdateTool(
     name: "agenr_update",
     label: "Agenr Update",
     description: buildUpdateToolDescription(),
-    promptSnippet: "Use agenr_update to correct metadata on an existing durable memory entry.",
+    promptSnippet: "Use agenr_update to correct metadata on an existing durable memory.",
     promptGuidelines: buildUpdateToolGuidelines(),
     parameters: toolSchema(UPDATE_TOOL_PARAMETERS),
     execute: async (_toolCallId, rawParams, _signal, _onUpdate, context) => {

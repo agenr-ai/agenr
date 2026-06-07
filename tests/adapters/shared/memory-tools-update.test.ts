@@ -4,7 +4,7 @@ import { runUpdateMemoryTool } from "../../../src/adapters/shared/memory-tools.j
 import type { DatabasePort } from "../../../src/core/ports.js";
 import type { Durable } from "../../../src/core/types.js";
 
-const entry: Durable = {
+const durable: Durable = {
   id: "entry-1",
   type: "fact",
   subject: "Workspace scope",
@@ -60,7 +60,7 @@ describe("agenr_update shared tool flow", () => {
     expect(updateDurable).toHaveBeenCalledWith("entry-1", { project: "agenr" });
     expect(outcome.details).toMatchObject({
       status: "updated",
-      entryId: entry.id,
+      durableId: durable.id,
       project: "agenr",
     });
   });
@@ -93,15 +93,15 @@ describe("agenr_update shared tool flow", () => {
 
 function buildServices(updateDurable: DatabasePort["updateDurable"] = async () => true) {
   return {
-    entries: {
-      getDurable: async (entryId: string) => (entryId === entry.id ? entry : null),
+    durables: {
+      getDurable: async (durableId: string) => (durableId === durable.id ? durable : null),
       updateDurable,
     } as DatabasePort,
     embedding: {} as never,
     memory: {
-      findEntryBySubject: async () => entry,
-      findMostRecentEntry: async () => entry,
-      getEntryTrace: async () => null,
+      findDurableBySubject: async () => durable,
+      findMostRecentDurable: async () => durable,
+      getDurableTrace: async () => null,
     },
   };
 }

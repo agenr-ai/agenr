@@ -14,11 +14,11 @@ import type { DurableFilters, FtsCandidate, RecallCandidateDurable, VectorCandid
 // ── Database ─────────────────────────────────────────────────────────
 
 /**
- * Storage contract for persisting, updating, and querying knowledge entries.
+ * Storage contract for persisting, updating, and querying durables.
  */
 export interface DatabasePort {
-  /** Insert a new entry with its embedding. */
-  insertDurable(entry: Durable, embedding: number[], contentHash: string): Promise<string>;
+  /** Insert a new durable with its embedding. */
+  insertDurable(durable: Durable, embedding: number[], contentHash: string): Promise<string>;
 
   /** Drop expensive indexes and triggers before a bulk write phase begins. */
   prepareForBulkWrites(): Promise<void>;
@@ -26,10 +26,10 @@ export interface DatabasePort {
   /** Rebuild expensive indexes and triggers after a bulk write phase ends. */
   finalizeBulkWrites(): Promise<void>;
 
-  /** Get entries by IDs. */
+  /** Get durables by IDs. */
   getDurables(ids: string[]): Promise<Durable[]>;
 
-  /** Get a single entry by ID. */
+  /** Get a single durable by ID. */
   getDurable(id: string): Promise<Durable | null>;
 
   /** Check if content hashes already exist. Returns the set of existing hashes. */
@@ -38,13 +38,13 @@ export interface DatabasePort {
   /** Check if normalized content hashes already exist. Returns the set of existing hashes. */
   findExistingNormHashes(hashes: string[]): Promise<Set<string>>;
 
-  /** Close one entry's valid-time window so it becomes stale for current recall. */
+  /** Close one durable's valid-time window so it becomes stale for current recall. */
   closeDurableValidity(id: string, reason?: string): Promise<boolean>;
 
-  /** Supersede an active entry, linking it to the new entry that replaces it. */
+  /** Supersede an active durable, linking it to the replacement durable. */
   supersedeDurable(oldId: string, newId: string, kind?: string, reason?: string): Promise<boolean>;
 
-  /** Find active entries with the given claim key. */
+  /** Find active durables with the given claim key. */
   findActiveDurablesByClaimKey(claimKey: string): Promise<Durable[]>;
 
   /** Get distinct entity prefixes from existing claim keys. */
@@ -56,14 +56,14 @@ export interface DatabasePort {
   /** Get active per-prefix claim-key counts for conservative alias-family handling. */
   getClaimKeyEntityPrefixStats?(): Promise<ClaimKeyEntityPrefixStats[]>;
 
-  /** Update entry fields (importance, expiry, and temporal metadata). */
+  /** Update durable fields (importance, expiry, and temporal metadata). */
   updateDurable(id: string, fields: DurableUpdateInput): Promise<boolean>;
 
   /** Check if a file has been ingested (by path + hash). */
   getIngestLogEntry(filePath: string): Promise<{ fileHash: string; ingestedAt: string } | null>;
 
   /** Record that a file was ingested. */
-  insertIngestLogEntry(filePath: string, fileHash: string, entryCount: number): Promise<void>;
+  insertIngestLogEntry(filePath: string, fileHash: string, durableCount: number): Promise<void>;
 
   /** Initialize the database schema. */
   init(): Promise<void>;
@@ -166,21 +166,21 @@ export interface RecallPorts {
   ftsSearch(params: { text: string; limit: number; filters?: DurableFilters }): Promise<FtsCandidate[]>;
 
   /**
-   * Expand a typed neighborhood of entries around the provided seed IDs.
+   * Expand a typed neighborhood of durables around the provided seed IDs.
    *
    * The adapter honors `families` exactly and treats `includeHistorical` as a
    * hard gate. This is the generalized successor of the phase 1
-   * `fetchPredecessors` lookup and is used by every entry ranking profile.
+   * `fetchPredecessors` lookup and is used by every durable ranking profile.
    * The default profile passes `includeHistorical: false`; historical-state
    * passes `includeHistorical: true` with a wider family set.
    */
   expandNeighborhood?(request: DurableNeighborhoodRequest): Promise<RecallCandidateDurable[]>;
 
-  /** Hydrate fully populated entries for the final ranked result set. */
-  hydrateEntries(ids: string[]): Promise<Durable[]>;
+  /** Hydrate fully populated durables for the final ranked result set. */
+  hydrateDurables(ids: string[]): Promise<Durable[]>;
 
-  /** Persist recall events for the returned entry set. */
-  recordRecallEvents(params: { entryIds: string[]; query: string; sessionKey?: string }): Promise<void>;
+  /** Persist recall events for the returned durable set. */
+  recordRecallEvents(params: { durableIds: string[]; query: string; sessionKey?: string }): Promise<void>;
 
   /**
    * Optional cross-encoder rerank port. When present, recall calls the

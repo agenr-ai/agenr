@@ -3,7 +3,7 @@ import type { ResolvedTemporalWindow } from "../../core/episode/types.js";
 import type { RecallOutput } from "../../core/recall/types.js";
 import type { DurableKind, Procedure } from "../../core/types.js";
 import type { ProcedureRecallCandidate } from "../procedures/recall/types.js";
-import type { ClaimCentricRecallEntry, ClaimCentricRecallFamily } from "./claim-centric.js";
+import type { ClaimCentricRecallDurable, ClaimCentricRecallFamily } from "./claim-centric.js";
 
 /**
  * Agent-facing recall mode.
@@ -63,9 +63,9 @@ export interface ClaimTransitionExplanation {
   /** Family subject shown to the caller. */
   subject: string;
   /** Current entry when one is visible in the recall result. */
-  currentEntryId?: string;
+  currentDurableId?: string;
   /** Prior entry when one is visible in the recall result. */
-  priorEntryId?: string;
+  priorDurableId?: string;
   /** Human-readable transition summary. */
   summary: string;
   /** Nearby episode context when one appears relevant. */
@@ -89,9 +89,9 @@ export interface UnifiedRecallResult {
   procedureCandidates: ProcedureRecallCandidate[];
   procedureNotices: string[];
   episodes: import("../../core/episode/types.js").EpisodeResult[];
-  entries: RecallOutput[];
-  projectedEntries: ClaimCentricRecallEntry[];
-  entryFamilies: ClaimCentricRecallFamily[];
+  durables: RecallOutput[];
+  projectedDurables: ClaimCentricRecallDurable[];
+  durableFamilies: ClaimCentricRecallFamily[];
   claimTransitions: ClaimTransitionExplanation[];
   notices: string[];
   count: number;

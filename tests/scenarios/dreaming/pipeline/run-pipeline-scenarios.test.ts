@@ -261,7 +261,7 @@ async function assertRecall(client: Client, checks: PipelineScenarioRecallCheck[
       },
       adapter,
     );
-    const contents = results.map((result) => result.entry.content);
+    const contents = results.map((result) => result.durable.content);
 
     if (check.expectTopContentIncludes) {
       expect(contents[0], `top result for "${check.query}" should include "${check.expectTopContentIncludes}"`).toContain(check.expectTopContentIncludes);

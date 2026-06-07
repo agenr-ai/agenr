@@ -1,5 +1,5 @@
-import type { ClaimCentricRecallEntry, UnifiedRecallResult } from "../../app/recall/index.js";
-import { buildEntryRecallPreview, ENTRY_PREVIEW_MAX_CHARS, recallResultHasTruncatedEntryPreviews, truncate } from "./memory-tool-format.js";
+import type { ClaimCentricRecallDurable, UnifiedRecallResult } from "../../app/recall/index.js";
+import { buildDurableRecallPreview, DURABLE_PREVIEW_MAX_CHARS, recallResultHasTruncatedDurablePreviews, truncate } from "./memory-tool-format.js";
 
 /**
  * Formats unified recall results into sectioned tool-readable text.
@@ -32,9 +32,9 @@ export function formatUnifiedRecallResults(result: UnifiedRecallResult): string 
     lines.push("");
   }
 
-  const renderEntriesFirst = result.routing.detectedIntent === "historical_state";
-  if (renderEntriesFirst) {
-    appendEntryMatches(lines, result);
+  const renderDurablesFirst = result.routing.detectedIntent === "historical_state";
+  if (renderDurablesFirst) {
+    appendDurableMatches(lines, result);
     lines.push("");
     appendClaimTransitions(lines, result);
     lines.push("");
@@ -42,12 +42,12 @@ export function formatUnifiedRecallResults(result: UnifiedRecallResult): string 
   } else {
     appendEpisodeMatches(lines, result);
     lines.push("");
-    appendEntryMatches(lines, result);
+    appendDurableMatches(lines, result);
     lines.push("");
     appendClaimTransitions(lines, result);
   }
 
-  if (recallResultHasTruncatedEntryPreviews(result)) {
+  if (recallResultHasTruncatedDurablePreviews(result)) {
     lines.push("");
     lines.push("Fetch Guidance");
     lines.push("One or more durable previews were truncated. Call agenr_fetch with id when exact stored wording is required.");
@@ -95,33 +95,33 @@ function appendProcedureMatches(lines: string[], result: UnifiedRecallResult): v
   }
 }
 
-/** Append the entry result section in tool-readable text format. */
-function appendEntryMatches(lines: string[], result: UnifiedRecallResult): void {
+/** Append the durable result section in tool-readable text format. */
+function appendDurableMatches(lines: string[], result: UnifiedRecallResult): void {
   lines.push("Durable Matches");
-  if (result.projectedEntries.length === 0) {
+  if (result.projectedDurables.length === 0) {
     lines.push("None.");
     return;
   }
 
-  for (const [familyIndex, family] of result.entryFamilies.entries()) {
+  for (const [familyIndex, family] of result.durableFamilies.entries()) {
     lines.push(
       family.claimKey
-        ? `Family ${familyIndex + 1}. claim_key=${family.claimKey} | slot_policy=${family.slotPolicy} | primary=${family.primary.entryId} | subject=${family.subject}`
-        : `Standalone ${familyIndex + 1}. ${family.primary.entryId} | subject=${family.subject}`,
+        ? `Family ${familyIndex + 1}. claim_key=${family.claimKey} | slot_policy=${family.slotPolicy} | primary=${family.primary.durableId} | subject=${family.subject}`
+        : `Standalone ${familyIndex + 1}. ${family.primary.durableId} | subject=${family.subject}`,
     );
-    for (const [entryIndex, entry] of family.entries.entries()) {
-      const preview = buildEntryRecallPreview(entry.recall.entry.content);
+    for (const [rowIndex, projected] of family.durables.entries()) {
+      const preview = buildDurableRecallPreview(projected.recall.durable.content);
       lines.push(
-        `   ${entryIndex + 1}. ${entry.entryId} | ${entry.recall.entry.type} | ${entry.recall.entry.subject} | score ${entry.recall.score.toFixed(2)} | state=${entry.memoryState} | claim_status=${formatClaimStatus(entry.claimStatus)}`,
+        `   ${rowIndex + 1}. ${projected.durableId} | ${projected.recall.durable.type} | ${projected.recall.durable.subject} | score ${projected.recall.score.toFixed(2)} | state=${projected.memoryState} | claim_status=${formatClaimStatus(projected.claimStatus)}`,
       );
       lines.push(`      ${preview.contentPreview}`);
       lines.push(`      content_chars=${preview.contentChars} preview_truncated=${preview.previewTruncated ? "true" : "false"}`);
-      lines.push(`      freshness=${entry.freshness.label}`);
-      const provenance = formatProjectedEntryProvenance(entry);
+      lines.push(`      freshness=${projected.freshness.label}`);
+      const provenance = formatProjectedDurableProvenance(projected);
       if (provenance) {
         lines.push(`      provenance=${provenance}`);
       }
-      lines.push(`      why_surfaced=${entry.whySurfaced.summary}`);
+      lines.push(`      why_surfaced=${projected.whySurfaced.summary}`);
     }
   }
 }
@@ -138,7 +138,7 @@ function appendEpisodeMatches(lines: string[], result: UnifiedRecallResult): voi
     lines.push(
       `${index + 1}. ${episode.episode.id} | ${episode.episode.source} | ${episode.episode.startedAt} -> ${episode.episode.endedAt ?? episode.episode.startedAt} | score ${episode.score.toFixed(2)}`,
     );
-    lines.push(`   ${index < 3 ? episode.episode.summary.trim() : truncate(episode.episode.summary.trim(), ENTRY_PREVIEW_MAX_CHARS)}`);
+    lines.push(`   ${index < 3 ? episode.episode.summary.trim() : truncate(episode.episode.summary.trim(), DURABLE_PREVIEW_MAX_CHARS)}`);
     lines.push(`   why_matched=${describeEpisodeMatch(episode)}`);
   }
 }
@@ -189,8 +189,8 @@ function appendClaimTransitions(lines: string[], result: UnifiedRecallResult): v
 
   for (const [index, transition] of result.claimTransitions.entries()) {
     lines.push(
-      `${index + 1}. family=${transition.claimKey ?? transition.familyKey} | slot_policy=${transition.slotPolicy}${transition.currentEntryId ? ` | current=${transition.currentEntryId}` : ""}${
-        transition.priorEntryId ? ` | prior=${transition.priorEntryId}` : ""
+      `${index + 1}. family=${transition.claimKey ?? transition.familyKey} | slot_policy=${transition.slotPolicy}${transition.currentDurableId ? ` | current=${transition.currentDurableId}` : ""}${
+        transition.priorDurableId ? ` | prior=${transition.priorDurableId}` : ""
       }`,
     );
     lines.push(`   ${transition.summary}`);
@@ -198,7 +198,7 @@ function appendClaimTransitions(lines: string[], result: UnifiedRecallResult): v
       lines.push(
         `   episode=${transition.episodeContext.episodeId} | ${transition.episodeContext.startedAt} -> ${transition.episodeContext.endedAt ?? transition.episodeContext.startedAt}`,
       );
-      lines.push(`   ${truncate(transition.episodeContext.summary.trim(), ENTRY_PREVIEW_MAX_CHARS)}`);
+      lines.push(`   ${truncate(transition.episodeContext.summary.trim(), DURABLE_PREVIEW_MAX_CHARS)}`);
     }
   }
 }
@@ -266,20 +266,20 @@ function describeEpisodeMatch(result: UnifiedRecallResult["episodes"][number]): 
 }
 
 /** Formats the normalized claim-status label for user-facing text output. */
-function formatClaimStatus(status: ClaimCentricRecallEntry["claimStatus"]): string {
+function formatClaimStatus(status: ClaimCentricRecallDurable["claimStatus"]): string {
   return status === "no_key" ? "no-key" : status;
 }
 
 /** Formats provenance cues for one projected recall row. */
-function formatProjectedEntryProvenance(entry: ClaimCentricRecallEntry): string {
+function formatProjectedDurableProvenance(projected: ClaimCentricRecallDurable): string {
   const parts = [
-    entry.provenance.supersededById ? `superseded_by=${entry.provenance.supersededById}` : undefined,
-    entry.provenance.supersessionKind ? `kind=${entry.provenance.supersessionKind}` : undefined,
-    entry.provenance.supersessionReason ? `reason=${truncate(entry.provenance.supersessionReason, 120)}` : undefined,
-    entry.provenance.supportSourceKind ? `support=${entry.provenance.supportSourceKind}` : undefined,
-    entry.provenance.supportMode ? `support_mode=${entry.provenance.supportMode}` : undefined,
-    entry.provenance.supportObservedAt ? `observed=${entry.provenance.supportObservedAt}` : undefined,
-    entry.provenance.supportLocator ? `locator=${truncate(entry.provenance.supportLocator, 120)}` : undefined,
+    projected.provenance.supersededById ? `superseded_by=${projected.provenance.supersededById}` : undefined,
+    projected.provenance.supersessionKind ? `kind=${projected.provenance.supersessionKind}` : undefined,
+    projected.provenance.supersessionReason ? `reason=${truncate(projected.provenance.supersessionReason, 120)}` : undefined,
+    projected.provenance.supportSourceKind ? `support=${projected.provenance.supportSourceKind}` : undefined,
+    projected.provenance.supportMode ? `support_mode=${projected.provenance.supportMode}` : undefined,
+    projected.provenance.supportObservedAt ? `observed=${projected.provenance.supportObservedAt}` : undefined,
+    projected.provenance.supportLocator ? `locator=${truncate(projected.provenance.supportLocator, 120)}` : undefined,
   ].filter((value): value is string => value !== undefined);
 
   return parts.join(" | ");

@@ -19,7 +19,7 @@ describe("runSessionStart", () => {
       importance: 10,
     });
     const deps = createDeps({
-      coreEntries: [coreEntry],
+      coreDurables: [coreEntry],
     });
 
     const result = await runSessionStart(
@@ -32,7 +32,7 @@ describe("runSessionStart", () => {
     expect(result.durableMemory).toMatchObject([
       {
         rank: 1,
-        entry: {
+        durable: {
           id: "core-branching",
         },
         sourceKind: "core",
@@ -77,20 +77,20 @@ describe("runSessionStart", () => {
         createdAt: "2026-04-14T10:00:00.000Z",
       },
       entriesById: [profileEntry],
-      coreEntries: [coreEntry],
+      coreDurables: [coreEntry],
     });
 
     const result = await runSessionStart(
       {
         policy: {
-          maxDurableEntries: 3,
+          maxDurables: 3,
         },
       },
       deps,
     );
 
     expect(result.diagnostics.activeProfileSnapshotId).toBe("profile-1");
-    expect(result.durableMemory.map((item) => [item.sourceKind, item.entry.id])).toEqual([
+    expect(result.durableMemory.map((item) => [item.sourceKind, item.durable.id])).toEqual([
       ["profile", "profile-runtime"],
       ["core", "core-policy"],
     ]);
@@ -106,7 +106,7 @@ describe("runSessionStart", () => {
     });
     const deps = createDeps({
       ftsCandidates: [toRecallCandidateDurable(recalledEntry)],
-      hydratedEntries: [recalledEntry],
+      hydratedDurables: [recalledEntry],
       sessionMemoryRepository: createStubSessionMemoryRepository({
         getLatestLineageEdgeForChild: vi.fn(async () => ({
           id: "edge-1",
@@ -135,7 +135,7 @@ describe("runSessionStart", () => {
         sessionKey: "child-session",
         policy: {
           enableArtifactRecall: true,
-          maxDurableEntries: 2,
+          maxDurables: 2,
         },
       },
       deps,
@@ -149,7 +149,7 @@ describe("runSessionStart", () => {
     expect(result.durableMemory).toMatchObject([
       {
         sourceKind: "artifact_recall",
-        entry: { id: "artifact-memory" },
+        durable: { id: "artifact-memory" },
       },
     ]);
     expect(deps.recall.ftsSearch).toHaveBeenCalledOnce();
@@ -162,7 +162,7 @@ describe("runSessionStart", () => {
       content: "Current work is focused on host lifecycle memory.",
       importance: 9,
     });
-    const coreEntries = Array.from({ length: 4 }, (_, index) =>
+    const coreDurables = Array.from({ length: 4 }, (_, index) =>
       createEntry({
         id: `core-${index + 1}`,
         subject: `core workflow ${index + 1}`,
@@ -187,9 +187,9 @@ describe("runSessionStart", () => {
         createdAt: "2026-04-14T10:00:00.000Z",
       },
       entriesById: [profileEntry],
-      coreEntries,
+      coreDurables,
       ftsCandidates: [toRecallCandidateDurable(recalledEntry)],
-      hydratedEntries: [recalledEntry],
+      hydratedDurables: [recalledEntry],
       sessionMemoryRepository: createStubSessionMemoryRepository({
         getLatestLineageEdgeForChild: vi.fn(async () => ({
           id: "edge-1",
@@ -217,14 +217,14 @@ describe("runSessionStart", () => {
       {
         sessionKey: "child-session",
         policy: {
-          maxCoreEntries: 4,
-          maxDurableEntries: 5,
+          maxCoreDurables: 4,
+          maxDurables: 5,
         },
       },
       deps,
     );
 
-    expect(result.durableMemory.map((item) => [item.sourceKind, item.entry.id])).toEqual([
+    expect(result.durableMemory.map((item) => [item.sourceKind, item.durable.id])).toEqual([
       ["profile", "profile-current"],
       ["core", "core-1"],
       ["core", "core-2"],
@@ -249,9 +249,9 @@ describe("runSessionStart", () => {
       importance: 8,
     });
     const deps = createDeps({
-      coreEntries: [coreEntry],
+      coreDurables: [coreEntry],
       ftsCandidates: [toRecallCandidateDurable(recalledEntry)],
-      hydratedEntries: [recalledEntry],
+      hydratedDurables: [recalledEntry],
     });
 
     const result = await runSessionStart(
@@ -266,7 +266,7 @@ describe("runSessionStart", () => {
     expect(result.durableMemory).toMatchObject([
       {
         rank: 1,
-        entry: {
+        durable: {
           id: "core-only",
         },
         sourceKind: "core",
@@ -304,15 +304,15 @@ describe("runSessionStart", () => {
       claim_key: "user/memory_directive/do_not_mention_stan",
     });
     const deps = createDeps({
-      coreEntries: [stanEntry, allowedEntry],
+      coreDurables: [stanEntry, allowedEntry],
       listActiveAbstainDirectives: vi.fn(async () => [directiveRow]),
     });
 
     const result = await runSessionStart({ policy: { enableArtifactRecall: false } }, deps);
 
-    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["core-workflow"]);
+    expect(result.durableMemory.map((item) => item.durable.id)).toEqual(["core-workflow"]);
     expect(result.diagnostics.directiveAbstentions).toEqual([
-      { entryId: "core-stan", reason: "directive_topic", directiveId: "dir-stan", blockedTerm: "stan" },
+      { durableId: "core-stan", reason: "directive_topic", directiveId: "dir-stan", blockedTerm: "stan" },
     ]);
   });
 
@@ -333,13 +333,13 @@ describe("runSessionStart", () => {
       importance: 8,
     });
     const deps = createDeps({
-      coreEntries: [directiveCore, allowedEntry],
+      coreDurables: [directiveCore, allowedEntry],
     });
 
     const result = await runSessionStart({ policy: { enableArtifactRecall: false } }, deps);
 
-    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["core-workflow"]);
-    expect(result.diagnostics.directiveAbstentions).toEqual([{ entryId: "dir-core", reason: "directive_self" }]);
+    expect(result.durableMemory.map((item) => item.durable.id)).toEqual(["core-workflow"]);
+    expect(result.diagnostics.directiveAbstentions).toEqual([{ durableId: "dir-core", reason: "directive_self" }]);
   });
 
   it("surfaces proactive directives at session start", async () => {
@@ -363,7 +363,7 @@ describe("runSessionStart", () => {
     expect(result.durableMemory).toMatchObject([
       {
         sourceKind: "directive",
-        entry: { id: "dir-weekly-goals" },
+        durable: { id: "dir-weekly-goals" },
       },
     ]);
     expect(result.diagnostics.proactiveDirectiveCandidateCount).toBe(1);
@@ -401,7 +401,7 @@ describe("runSessionStart", () => {
 
     expect(result.durableMemory).toEqual([]);
     expect(result.diagnostics.directiveAbstentions).toEqual([
-      { entryId: "dir-ask-stan", reason: "directive_topic", directiveId: "dir-no-stan", blockedTerm: "stan" },
+      { durableId: "dir-ask-stan", reason: "directive_topic", directiveId: "dir-no-stan", blockedTerm: "stan" },
     ]);
   });
 
@@ -423,11 +423,11 @@ describe("runSessionStart", () => {
         expiry: "core",
         valid_to: "2026-02-01T00:00:00.000Z",
       });
-      const deps = createDeps({ coreEntries: [stillValid, alreadyExpired] });
+      const deps = createDeps({ coreDurables: [stillValid, alreadyExpired] });
 
       const result = await runSessionStart({ policy: { enableArtifactRecall: false } }, deps);
 
-      const states = new Map(result.durableMemory.map((item) => [item.entry.id, item.memoryState]));
+      const states = new Map(result.durableMemory.map((item) => [item.durable.id, item.memoryState]));
       expect(states.get("core-lease")).toBe("current");
       expect(states.get("core-stale")).toBe("historical");
     } finally {
@@ -438,9 +438,9 @@ describe("runSessionStart", () => {
 
 function createDeps(
   options: {
-    coreEntries?: Durable[];
+    coreDurables?: Durable[];
     ftsCandidates?: RecallCandidateDurable[];
-    hydratedEntries?: Durable[];
+    hydratedDurables?: Durable[];
     ftsSearchImplementation?: RecallPorts["ftsSearch"];
     listActiveAbstainDirectives?: SessionStartDeps["listActiveAbstainDirectives"];
     listActiveProactiveDirectives?: SessionStartDeps["listActiveProactiveDirectives"];
@@ -449,7 +449,7 @@ function createDeps(
     sessionMemoryRepository?: SessionMemoryRepository;
   } = {},
 ): SessionStartDeps {
-  const recallEntries = new Map((options.hydratedEntries ?? []).map((entry) => [entry.id, entry]));
+  const recallEntries = new Map((options.hydratedDurables ?? []).map((entry) => [entry.id, entry]));
   const entriesById = new Map((options.entriesById ?? []).map((entry) => [entry.id, entry]));
   const recall: RecallPorts = {
     embed: vi.fn(async () => {
@@ -459,21 +459,21 @@ function createDeps(
     ftsSearch:
       options.ftsSearchImplementation ??
       vi.fn(async () =>
-        (options.ftsCandidates ?? []).map((entry) => ({
-          entry,
+        (options.ftsCandidates ?? []).map((durable) => ({
+          durable,
           rank: -1,
           tier: "all_tokens" as const,
         })),
       ),
-    hydrateEntries: vi.fn(async (ids: string[]) => ids.flatMap((id) => recallEntries.get(id) ?? [])),
+    hydrateDurables: vi.fn(async (ids: string[]) => ids.flatMap((id) => recallEntries.get(id) ?? [])),
     recordRecallEvents: vi.fn(async () => undefined),
   };
 
   return {
     repository: {
-      listCoreEntries: vi.fn(async (limit) => (options.coreEntries ?? []).slice(0, limit)),
+      listCoreDurables: vi.fn(async (limit) => (options.coreDurables ?? []).slice(0, limit)),
       getActiveProfileSnapshot: vi.fn(async () => options.profileSnapshot ?? null),
-      listEntriesByIds: vi.fn(async (ids: string[]) => ids.flatMap((id) => entriesById.get(id) ?? [])),
+      listDurablesByIds: vi.fn(async (ids: string[]) => ids.flatMap((id) => entriesById.get(id) ?? [])),
     },
     recall,
     ...(options.listActiveAbstainDirectives ? { listActiveAbstainDirectives: options.listActiveAbstainDirectives } : {}),

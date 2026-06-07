@@ -26,8 +26,8 @@ describe("startInternalRecallEvalServer", () => {
               status: "ok",
               caseId: ((await request.json()) as { caseId: string }).caseId,
               result: {
-                entries: [],
-                entryIds: [],
+                durables: [],
+                durableIds: [],
               },
             }),
             {
@@ -49,7 +49,7 @@ describe("startInternalRecallEvalServer", () => {
             caseId: "before-turn",
             output: {
               abstained: true,
-              selectedEntryIds: [],
+              selectedDurableIds: [],
               selectedProcedureKey: null,
               patch: {
                 durableMemory: [],
@@ -100,8 +100,8 @@ describe("startInternalRecallEvalServer", () => {
       status: "ok",
       caseId: "server-case",
       result: {
-        entries: [],
-        entryIds: [],
+        durables: [],
+        durableIds: [],
       },
     });
     expect(server.baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/u);

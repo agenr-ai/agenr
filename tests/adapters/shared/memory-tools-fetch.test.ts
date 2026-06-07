@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ENTRY_FETCH_MAX_CONTENT_CHARS } from "../../../src/adapters/shared/memory-tool-format.js";
+import { DURABLE_FETCH_MAX_CONTENT_CHARS } from "../../../src/adapters/shared/memory-tool-format.js";
 import { parseFetchToolParams, runFetchMemoryTool } from "../../../src/adapters/shared/memory-tools.js";
 import type { MemoryToolParamReader } from "../../../src/adapters/shared/memory-tools.js";
 import type { DatabasePort } from "../../../src/core/ports.js";
@@ -28,7 +28,7 @@ const READER: MemoryToolParamReader = {
   },
 };
 
-const entry: Durable = {
+const durable: Durable = {
   id: "entry-1",
   type: "fact",
   subject: "Skeln architecture",
@@ -48,50 +48,50 @@ describe("agenr_fetch shared tool flow", () => {
     expect(parseFetchToolParams({ subject: "Skeln architecture" }, READER)).toEqual({ id: undefined, subject: "Skeln architecture" });
   });
 
-  it("returns the full entry body", async () => {
+  it("returns the full durable body", async () => {
     const outcome = await runFetchMemoryTool(
       { id: "entry-1", subject: undefined },
       {
-        entries: {
-          getDurable: async (entryId: string) => (entryId === entry.id ? entry : null),
+        durables: {
+          getDurable: async (durableId: string) => (durableId === durable.id ? durable : null),
         } as DatabasePort,
         embedding: {} as never,
         memory: {
-          findEntryBySubject: async () => entry,
-          getEntryTrace: async () => null,
+          findDurableBySubject: async () => durable,
+          getDurableTrace: async () => null,
         },
       },
     );
 
     expect(outcome.failed).toBe(false);
-    expect(outcome.text).toContain(entry.content);
+    expect(outcome.text).toContain(durable.content);
     expect(outcome.details).toMatchObject({
       status: "ok",
-      entryId: entry.id,
-      content: entry.content,
+      durableId: durable.id,
+      content: durable.content,
     });
   });
 
-  it("rejects entry bodies above the fetch size limit", async () => {
+  it("rejects durable bodies above the fetch size limit", async () => {
     const oversizedEntry: Durable = {
-      ...entry,
-      content: "x".repeat(ENTRY_FETCH_MAX_CONTENT_CHARS + 1),
+      ...durable,
+      content: "x".repeat(DURABLE_FETCH_MAX_CONTENT_CHARS + 1),
     };
 
     await expect(
       runFetchMemoryTool(
         { id: "entry-1", subject: undefined },
         {
-          entries: {
+          durables: {
             getDurable: async (_id: string): Promise<Durable | null> => oversizedEntry,
           } as DatabasePort,
           embedding: {} as never,
           memory: {
-            findEntryBySubject: async () => oversizedEntry,
-            getEntryTrace: async () => null,
+            findDurableBySubject: async () => oversizedEntry,
+            getDurableTrace: async () => null,
           },
         },
       ),
-    ).rejects.toThrow(`exceeds the agenr_fetch limit of ${ENTRY_FETCH_MAX_CONTENT_CHARS}`);
+    ).rejects.toThrow(`exceeds the agenr_fetch limit of ${DURABLE_FETCH_MAX_CONTENT_CHARS}`);
   });
 });

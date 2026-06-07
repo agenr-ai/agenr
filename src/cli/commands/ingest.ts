@@ -62,9 +62,9 @@ interface FileUsageSummary {
   runningCost: number;
 }
 
-/** Extracted entry annotated with its source file and original flattened index. */
-interface TaggedEntry {
-  entry: StoreDurableInput;
+/** Extracted durable annotated with its source file and original flattened index. */
+interface TaggedDurable {
+  durable: StoreDurableInput;
   fileIndex: number;
   originalIndex: number;
 }
@@ -200,14 +200,14 @@ function registerIngestEntriesCommand(parent: Command): void {
       const extractionRuns = ingestResult.extractionRuns;
       const extractedResults = extractionRuns.map(({ result }) => result);
       const extractedSuccesses = extractedResults.filter((result) => result.skipped !== true && result.error === undefined);
-      const taggedEntries = collectTaggedEntries(extractedSuccesses);
+      const taggedDurables = collectTaggedDurables(extractedSuccesses);
       const dedupResult = ingestResult.dedupResult;
       const dedupUsage = ingestResult.dedupUsage;
       const storeResults = ingestResult.storeResults;
       const claimKeyHealth = ingestResult.claimKeyHealth;
 
       if (extractedSuccesses.length > 0) {
-        printDedupSummary(dedupResult, taggedEntries, commandInput, dedupUsage.totalCost);
+        printDedupSummary(dedupResult, taggedDurables, commandInput, dedupUsage.totalCost);
       }
 
       if (claimKeyHealth) {
@@ -580,14 +580,14 @@ function getDisplayResult(result: ExtractedFileResult, storeResults: Map<string,
 }
 
 /** Flattens extracted entries while tracking their source file and order. */
-function collectTaggedEntries(results: ExtractedFileResult[]): TaggedEntry[] {
-  const taggedEntries: TaggedEntry[] = [];
+function collectTaggedDurables(results: ExtractedFileResult[]): TaggedDurable[] {
+  const taggedDurables: TaggedDurable[] = [];
   let originalIndex = 0;
 
   for (const [fileIndex, result] of results.entries()) {
-    for (const entry of result.entries) {
-      taggedEntries.push({
-        entry,
+    for (const entry of result.durables) {
+      taggedDurables.push({
+        durable: entry,
         fileIndex,
         originalIndex,
       });
@@ -595,18 +595,18 @@ function collectTaggedEntries(results: ExtractedFileResult[]): TaggedEntry[] {
     }
   }
 
-  return taggedEntries;
+  return taggedDurables;
 }
 
 /** Prints the aggregate and optional verbose within-batch dedup summary. */
-function printDedupSummary(dedupResult: DedupResult, taggedEntries: TaggedEntry[], options: IngestCommandOptions, dedupCost: number): void {
-  if (taggedEntries.length === 0) {
+function printDedupSummary(dedupResult: DedupResult, taggedDurables: TaggedDurable[], options: IngestCommandOptions, dedupCost: number): void {
+  if (taggedDurables.length === 0) {
     clack.log.step("Dedup: 0 durables extracted, nothing to arbitrate.");
     return;
   }
 
   if (options.skipDedup === true) {
-    clack.log.step(`Dedup: skipped (--skip-dedup), ${taggedEntries.length} ${pluralize(taggedEntries.length, "entry", "durables")} passed through.`);
+    clack.log.step(`Dedup: skipped (--skip-dedup), ${taggedDurables.length} ${pluralize(taggedDurables.length, "entry", "durables")} passed through.`);
     return;
   }
 
@@ -629,7 +629,7 @@ function printDedupSummary(dedupResult: DedupResult, taggedEntries: TaggedEntry[
   }
 
   for (const [clusterIndex, detail] of dedupResult.clusterDetails.entries()) {
-    clack.log.step(formatDedupClusterDetail(clusterIndex, detail, taggedEntries));
+    clack.log.step(formatDedupClusterDetail(clusterIndex, detail, taggedDurables));
   }
 
   clack.log.step(
@@ -638,7 +638,7 @@ function printDedupSummary(dedupResult: DedupResult, taggedEntries: TaggedEntry[
 }
 
 /** Formats one verbose dedup cluster arbitration detail block. */
-function formatDedupClusterDetail(clusterIndex: number, detail: DedupResult["clusterDetails"][number], taggedEntries: TaggedEntry[]): string {
+function formatDedupClusterDetail(clusterIndex: number, detail: DedupResult["clusterDetails"][number], taggedDurables: TaggedDurable[]): string {
   const localIndexByOriginal = new Map<number, number>();
   detail.entryIndices.forEach((entryIndex, localIndex) => {
     localIndexByOriginal.set(entryIndex, localIndex);
@@ -649,8 +649,8 @@ function formatDedupClusterDetail(clusterIndex: number, detail: DedupResult["clu
   ];
 
   for (const [localIndex, originalIndex] of detail.entryIndices.entries()) {
-    const taggedEntry = taggedEntries.find((entry) => entry.originalIndex === originalIndex);
-    const entry = taggedEntry?.entry;
+    const taggedDurable = taggedDurables.find((entry) => entry.originalIndex === originalIndex);
+    const entry = taggedDurable?.durable;
     if (!entry) {
       continue;
     }
@@ -692,7 +692,7 @@ function toIngestFileResult(result: ExtractedFileResult, storeResult: StoreResul
     file: result.file,
     skipped: result.skipped,
     messageCount: result.messageCount,
-    entriesExtracted: result.entries.length,
+    entriesExtracted: result.durables.length,
     chunkCount: result.chunkCount,
     successfulChunks: result.successfulChunks,
     failedChunks: result.failedChunks,
@@ -721,22 +721,22 @@ function progressMessageForIngestStage(event: IngestStageProgressEvent): string 
     case "claim_extraction_start":
       return "Extracting claim keys...";
     case "store_start":
-      return `Running store pipeline for ${event.totalEntries} ${pluralize(event.totalEntries, "entry", "durables")}...`;
+      return `Running store pipeline for ${event.totalDurables} ${pluralize(event.totalDurables, "durable", "durables")}...`;
   }
 }
 
 /** Formats live spinner text for in-phase dedup arbitration progress. */
 function progressMessageForDedup(event: DedupProgressEvent): string {
-  return `Deduplicating durables... ${event.completedClusters}/${event.totalClusters} ${pluralize(event.totalClusters, "cluster")} arbitrated (${event.completedEntries}/${event.totalEntries} durables covered)`;
+  return `Deduplicating durables... ${event.completedClusters}/${event.totalClusters} ${pluralize(event.totalClusters, "cluster")} arbitrated (${event.completedDurables}/${event.totalDurables} durables covered)`;
 }
 
 /** Formats live spinner text for primary and retry claim-extraction progress. */
 function progressMessageForClaimExtraction(event: ClaimExtractionProgressEvent): string {
   switch (event.phase) {
     case "primary":
-      return `Extracting claim keys... ${event.completedEntries}/${event.totalEntries} durables`;
+      return `Extracting claim keys... ${event.completedDurables}/${event.totalDurables} durables`;
     case "retry":
-      return `Retrying unresolved claim keys... ${event.completedEntries}/${event.totalEntries} durables`;
+      return `Retrying unresolved claim keys... ${event.completedDurables}/${event.totalDurables} durables`;
   }
 }
 

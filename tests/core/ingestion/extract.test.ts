@@ -57,7 +57,7 @@ describe("extractFromTranscript", () => {
     });
 
     expect(result).toEqual({
-      entries: [
+      durables: [
         {
           type: "decision",
           subject: "agenr package manager",
@@ -103,7 +103,7 @@ describe("extractFromTranscript", () => {
       interChunkDelayMs: 0,
     });
 
-    expect(result.entries[0]?.created_at).toBe("2026-03-01T10:05:00.000Z");
+    expect(result.durables[0]?.created_at).toBe("2026-03-01T10:05:00.000Z");
   });
 
   it("falls back to transcript startedAt when chunk messages lack timestamps", async () => {
@@ -131,7 +131,7 @@ describe("extractFromTranscript", () => {
       interChunkDelayMs: 0,
     });
 
-    expect(result.entries[0]?.created_at).toBe("2026-03-02T09:00:00.000Z");
+    expect(result.durables[0]?.created_at).toBe("2026-03-02T09:00:00.000Z");
   });
 
   it("uses whole-file mode when the transcript fits in context", async () => {
@@ -247,7 +247,7 @@ describe("extractFromTranscript", () => {
     await vi.runAllTimersAsync();
     const result = await promise;
 
-    expect(result.entries).toEqual([]);
+    expect(result.durables).toEqual([]);
     expect(result.failedChunks).toBe(1);
     expect(result.warnings[0]).toMatch(/failed after 3 attempts/i);
     vi.useRealTimers();

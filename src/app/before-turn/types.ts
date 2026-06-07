@@ -48,8 +48,8 @@ export type BeforeTurnDirectnessSignal =
  * Inspectable directness features for one top candidate.
  */
 export interface BeforeTurnDirectnessCandidateDiagnostic {
-  /** Durable entry identifier for the inspected candidate. */
-  entryId: string;
+  /** Durable identifier for the inspected candidate. */
+  durableId: string;
   /** Original recall rank before local directness reranking. */
   baseRank: number;
   /** Base durable recall score before local adjustments. */
@@ -72,10 +72,10 @@ export interface BeforeTurnDirectnessDiagnostics {
   entity: string;
   /** Final local decision after reranking or abstention. */
   decision: BeforeTurnDirectnessDecision;
-  /** Winning durable entry id after reranking when one remained stable enough. */
-  winnerEntryId?: string;
-  /** Runner-up durable entry id used for stability comparison when available. */
-  runnerUpEntryId?: string;
+  /** Winning durable id after reranking when one remained stable enough. */
+  winnerDurableId?: string;
+  /** Runner-up durable id used for stability comparison when available. */
+  runnerUpDurableId?: string;
   /** Adjusted winner gap against the runner-up when available. */
   winnerGap?: number;
   /** Short explanation describing why the pass kept, reranked, or abstained. */
@@ -121,9 +121,9 @@ export interface BeforeTurnPolicy {
   /** Maximum total characters preserved in the derived turn query. */
   maxQueryChars?: number;
   /** Maximum durable-memory rows to return. */
-  maxDurableEntries?: number;
+  maxDurables?: number;
   /** Maximum durable-memory rows allowed when all surfaced items are very high confidence. */
-  maxHighConfidenceDurableEntries?: number;
+  maxHighConfidenceDurables?: number;
   /** Maximum procedure candidates to consider before canonical selection. */
   maxProcedureCandidates?: number;
   /** Optional score threshold used for durable-memory recall. */
@@ -170,8 +170,8 @@ export interface BeforeTurnSurfacingExplanation {
 export interface BeforeTurnPatchItem {
   /** Stable final rank in the bounded durable-memory set. */
   rank: number;
-  /** Hydrated durable entry selected for the active turn. */
-  entry: Durable;
+  /** Hydrated durable selected for the active turn. */
+  durable: Durable;
   /** Source channel for this surfaced item. */
   sourceKind: "turn_recall" | "directive";
   /** Final ranking score from durable-memory recall. */

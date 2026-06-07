@@ -11,7 +11,7 @@ export interface EpisodeIngestSupportPort {
    *
    * @returns Total row count from `entries`.
    */
-  countEntries(): Promise<number>;
+  countDurables(): Promise<number>;
 
   /**
    * Returns whether sampled transcript paths overlap existing ingest provenance.
@@ -30,7 +30,7 @@ export interface EpisodeIngestSupportPort {
  */
 export function createEpisodeIngestSupportPort(executor: SqlExecutor): EpisodeIngestSupportPort {
   return {
-    countEntries: async () => countRows(executor, "SELECT COUNT(*) AS count FROM durables"),
+    countDurables: async () => countRows(executor, "SELECT COUNT(*) AS count FROM durables"),
     hasRelevantProvenanceMatch: async (sampleFiles) => hasRelevantProvenanceMatch(executor, sampleFiles),
   };
 }

@@ -38,7 +38,7 @@ describe("handleAgenrAfterToolCall", () => {
       lastSuccessfulStoreTurn: 3,
       lastMemoryActionTurn: 3,
       lastExplicitMemoryActionTurn: 3,
-      entriesStored: 1,
+      durablesStored: 1,
       storedSubjects: ["workflow rule"],
     });
   });
@@ -75,7 +75,7 @@ describe("handleAgenrAfterToolCall", () => {
       lastSuccessfulStoreTurn: 0,
       lastMemoryActionTurn: 2,
       lastExplicitMemoryActionTurn: 0,
-      entriesStored: 0,
+      durablesStored: 0,
       storedSubjects: [],
     });
   });
@@ -114,7 +114,7 @@ describe("handleAgenrAfterToolCall", () => {
       lastSuccessfulStoreTurn: 0,
       lastMemoryActionTurn: 0,
       lastExplicitMemoryActionTurn: 2,
-      entriesStored: 0,
+      durablesStored: 0,
     });
   });
 

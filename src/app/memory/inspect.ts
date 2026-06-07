@@ -1,17 +1,17 @@
 import { createDatabase } from "../../adapters/db/client.js";
 import { createMemoryRepository } from "../../adapters/db/memory-repository.js";
-import type { EntryTrace } from "./ports.js";
+import type { DurableTrace } from "./ports.js";
 import { readConfig, resolveDbPath } from "../../config.js";
 
 /**
  * Selector accepted by the CLI trace runtime helper.
  */
-export interface EntryTraceSelector {
-  /** Trace one specific entry by canonical ID. */
+export interface DurableTraceSelector {
+  /** Trace one specific durable by canonical ID. */
   id?: string;
   /** Trace the most recent exact or substring subject match. */
   subject?: string;
-  /** Trace the newest entry from any state. */
+  /** Trace the newest durable from any state. */
   last?: boolean;
 }
 
@@ -19,9 +19,9 @@ export interface EntryTraceSelector {
  * Loads one trace payload from the shared agenr database for CLI inspection.
  *
  * @param input - Selector plus optional config and db-path overrides.
- * @returns Trace payload for the selected entry.
+ * @returns Trace payload for the selected durable.
  */
-export async function loadEntryTraceRuntime(input: EntryTraceSelector & { dbPath?: string; env?: NodeJS.ProcessEnv }): Promise<EntryTrace> {
+export async function loadDurableTraceRuntime(input: DurableTraceSelector & { dbPath?: string; env?: NodeJS.ProcessEnv }): Promise<DurableTrace> {
   const selector = normalizeTraceSelector(input);
   const configPathOverride = normalizeOptionalString(input.env?.AGENR_CONFIG_PATH);
   const config = readConfig({
@@ -33,10 +33,10 @@ export async function loadEntryTraceRuntime(input: EntryTraceSelector & { dbPath
   const repository = createMemoryRepository(database);
 
   try {
-    const entryId = await resolveTraceEntryId(repository, selector);
-    const trace = await repository.getEntryTrace(entryId);
+    const durableId = await resolveTraceDurableId(repository, selector);
+    const trace = await repository.getDurableTrace(durableId);
     if (!trace) {
-      throw new Error(`No agenr entry found for id ${entryId}.`);
+      throw new Error(`No agenr durable found for id ${durableId}.`);
     }
 
     return trace;
@@ -46,35 +46,35 @@ export async function loadEntryTraceRuntime(input: EntryTraceSelector & { dbPath
 }
 
 /**
- * Resolves one validated selector into the corresponding trace entry ID.
+ * Resolves one validated selector into the corresponding trace durable ID.
  *
  * @param repository - Memory read model used for lookups.
  * @param selector - Validated selector payload.
- * @returns Canonical entry ID for the selected entry.
+ * @returns Canonical durable ID for the selected durable.
  */
-async function resolveTraceEntryId(
+async function resolveTraceDurableId(
   repository: ReturnType<typeof createMemoryRepository>,
-  selector: Required<Pick<EntryTraceSelector, "last">> & Pick<EntryTraceSelector, "id" | "subject">,
+  selector: Required<Pick<DurableTraceSelector, "last">> & Pick<DurableTraceSelector, "id" | "subject">,
 ): Promise<string> {
   if (selector.last) {
-    const entry = await repository.findMostRecentEntry();
-    if (!entry) {
+    const durable = await repository.findMostRecentDurable();
+    if (!durable) {
       throw new Error("No agenr durables exist yet.");
     }
 
-    return entry.id;
+    return durable.id;
   }
 
   if (selector.id) {
     return selector.id;
   }
 
-  const entry = await repository.findEntryBySubject(selector.subject ?? "");
-  if (!entry) {
+  const durable = await repository.findDurableBySubject(selector.subject ?? "");
+  if (!durable) {
     throw new Error(`No agenr durable found for subject "${selector.subject}".`);
   }
 
-  return entry.id;
+  return durable.id;
 }
 
 /**
@@ -83,7 +83,7 @@ async function resolveTraceEntryId(
  * @param selector - Raw selector payload.
  * @returns Normalized selector payload.
  */
-function normalizeTraceSelector(selector: EntryTraceSelector): Required<Pick<EntryTraceSelector, "last">> & Pick<EntryTraceSelector, "id" | "subject"> {
+function normalizeTraceSelector(selector: DurableTraceSelector): Required<Pick<DurableTraceSelector, "last">> & Pick<DurableTraceSelector, "id" | "subject"> {
   const id = normalizeOptionalString(selector.id);
   const subject = normalizeOptionalString(selector.subject);
   const last = selector.last === true;

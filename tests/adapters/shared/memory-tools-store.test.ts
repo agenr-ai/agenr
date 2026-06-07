@@ -143,7 +143,7 @@ function buildServices(database: SqlDatabase) {
   };
 
   return {
-    entries: database,
+    durables: database,
     embedding,
     memory: createMemoryRepository(database),
   };

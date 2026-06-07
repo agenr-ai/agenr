@@ -170,7 +170,7 @@ function normalizeBeforeTurnMemoryPolicyConfig(
   const errors: string[] = [];
   const enabled = normalizeOptionalBoolean(value.enabled, "memoryPolicy.beforeTurn.enabled", errors);
   const procedureSuggestion = normalizeOptionalBoolean(value.procedureSuggestion, "memoryPolicy.beforeTurn.procedureSuggestion", errors);
-  const maxDurableEntries = normalizeOptionalPositiveInteger(value.maxDurableEntries, "memoryPolicy.beforeTurn.maxDurableEntries", errors);
+  const maxDurables = normalizeOptionalPositiveInteger(value.maxDurables, "memoryPolicy.beforeTurn.maxDurables", errors);
   const recallThreshold = normalizeOptionalUnitInterval(value.recallThreshold, "memoryPolicy.beforeTurn.recallThreshold", errors);
   const highConfidenceRecallThreshold = normalizeOptionalUnitInterval(
     value.highConfidenceRecallThreshold,
@@ -179,14 +179,7 @@ function normalizeBeforeTurnMemoryPolicyConfig(
   );
   const procedureThreshold = normalizeOptionalUnitInterval(value.procedureThreshold, "memoryPolicy.beforeTurn.procedureThreshold", errors);
 
-  const allowedKeys = new Set([
-    "enabled",
-    "procedureSuggestion",
-    "maxDurableEntries",
-    "recallThreshold",
-    "highConfidenceRecallThreshold",
-    "procedureThreshold",
-  ]);
+  const allowedKeys = new Set(["enabled", "procedureSuggestion", "maxDurables", "recallThreshold", "highConfidenceRecallThreshold", "procedureThreshold"]);
   for (const key of Object.keys(value)) {
     if (!allowedKeys.has(key)) {
       errors.push(`unknown config field: memoryPolicy.beforeTurn.${key}`);
@@ -202,14 +195,14 @@ function normalizeBeforeTurnMemoryPolicyConfig(
     value:
       enabled !== undefined ||
       procedureSuggestion !== undefined ||
-      maxDurableEntries !== undefined ||
+      maxDurables !== undefined ||
       recallThreshold !== undefined ||
       highConfidenceRecallThreshold !== undefined ||
       procedureThreshold !== undefined
         ? {
             ...(enabled !== undefined ? { enabled } : {}),
             ...(procedureSuggestion !== undefined ? { procedureSuggestion } : {}),
-            ...(maxDurableEntries !== undefined ? { maxDurableEntries } : {}),
+            ...(maxDurables !== undefined ? { maxDurables } : {}),
             ...(recallThreshold !== undefined ? { recallThreshold } : {}),
             ...(highConfidenceRecallThreshold !== undefined ? { highConfidenceRecallThreshold } : {}),
             ...(procedureThreshold !== undefined ? { procedureThreshold } : {}),

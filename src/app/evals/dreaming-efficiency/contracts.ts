@@ -1,6 +1,6 @@
 import type { DreamEfficiencySummary } from "../../../core/dreaming/types.js";
 import type { EvalDreamRunFixture } from "../dream-run-fixture.js";
-import type { RecallEvalFixtureEntry, RecallEvalSandboxRequest, RecallEvalSandboxResult } from "../recall/contracts.js";
+import type { RecallEvalFixtureDurable, RecallEvalSandboxRequest, RecallEvalSandboxResult } from "../recall/contracts.js";
 
 /** Pre-baked dreaming run completion summary fixture for Option A evals. */
 export type DreamingEfficiencyDreamRunFixture = EvalDreamRunFixture;
@@ -16,7 +16,7 @@ export interface DreamingEfficiencyEvalCaseRequest {
   caseId: string;
   description?: string;
   sandbox?: RecallEvalSandboxRequest;
-  memoryPool: RecallEvalFixtureEntry[];
+  memoryPool: RecallEvalFixtureDurable[];
   dreamRunFixture: DreamingEfficiencyDreamRunFixture;
   options?: DreamingEfficiencyEvalCaseOptions;
 }

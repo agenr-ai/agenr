@@ -96,7 +96,7 @@ function buildSandboxResult(sandbox: RecallEvalSandboxContext): BeforeTurnEvalCa
 function buildOutput(patch: BeforeTurnPatch, renderedPatchText: string | undefined): BeforeTurnEvalCaseOutput {
   return {
     abstained: patch.diagnostics.abstained,
-    selectedEntryIds: patch.durableMemory.map((item) => item.entry.id),
+    selectedDurableIds: patch.durableMemory.map((item) => item.durable.id),
     selectedProcedureKey: patch.procedure?.procedure.procedure_key ?? null,
     patch: normalizePatchForEvalOutput(patch),
     ...(renderedPatchText !== undefined ? { renderedPatchText } : {}),
@@ -115,9 +115,9 @@ function normalizePatchForEvalOutput(patch: BeforeTurnPatch): BeforeTurnPatch {
     ...patch,
     durableMemory: patch.durableMemory.map((item) => ({
       ...item,
-      entry: {
-        ...item.entry,
-        ...(typeof item.entry.claim_key === "string" ? { claimKey: item.entry.claim_key } : {}),
+      durable: {
+        ...item.durable,
+        ...(typeof item.durable.claim_key === "string" ? { claimKey: item.durable.claim_key } : {}),
       },
     })),
   } as BeforeTurnPatch;

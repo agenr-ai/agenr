@@ -116,7 +116,7 @@ describe("buildSkelnSessionTreeTriggerEvent", () => {
 
 describe("checkpoint-relevant lifecycle triggers", () => {
   it("builds session_before_fork triggers with fork position metadata", () => {
-    expect(buildSkelnSessionBeforeForkTriggerEvent(scope, { entryId: "entry-1", position: "before" })).toMatchObject({
+    expect(buildSkelnSessionBeforeForkTriggerEvent(scope, { durableId: "entry-1", position: "before" })).toMatchObject({
       type: "session_before_fork",
       predecessor: {
         forkEntryId: "entry-1",

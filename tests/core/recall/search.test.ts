@@ -21,8 +21,8 @@ describe("recall raw evidence gating", () => {
   it("falls back to lexical-only ranking when query embeddings fail", async () => {
     const traceSummaries: RecallExecutionTraceSummary[] = [];
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "policy-new",
           type: "decision",
           subject: "pager policy",
@@ -49,7 +49,7 @@ describe("recall raw evidence gating", () => {
       },
     );
 
-    expect(results.map((result) => result.entry.id)).toEqual(["policy-new"]);
+    expect(results.map((result) => result.durable.id)).toEqual(["policy-new"]);
     expect(results[0]?.scores.vector).toBe(0);
     expect(results[0]?.scores.lexical).toBeGreaterThan(0);
     expect(traceSummaries).toEqual([
@@ -58,7 +58,7 @@ describe("recall raw evidence gating", () => {
           active: true,
           reasons: ["query_embedding_failed"],
           lexicalOnly: true,
-          notices: [expect.stringContaining("fell back to lexical-only entry ranking")],
+          notices: [expect.stringContaining("fell back to lexical-only durable ranking")],
         },
       }),
     ]);
@@ -67,8 +67,8 @@ describe("recall raw evidence gating", () => {
   it("keeps lexical recall working when vector search fails", async () => {
     const traceSummaries: RecallExecutionTraceSummary[] = [];
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "policy-new",
           type: "decision",
           subject: "pager policy",
@@ -96,7 +96,7 @@ describe("recall raw evidence gating", () => {
       },
     );
 
-    expect(results.map((result) => result.entry.id)).toEqual(["policy-new"]);
+    expect(results.map((result) => result.durable.id)).toEqual(["policy-new"]);
     expect(results[0]?.scores.vector).toBeGreaterThan(0);
     expect(results[0]?.scores.lexical).toBeGreaterThan(0);
     expect(traceSummaries).toEqual([
@@ -105,7 +105,7 @@ describe("recall raw evidence gating", () => {
           active: true,
           reasons: ["vector_search_failed"],
           lexicalOnly: false,
-          notices: [expect.stringContaining("continued with lexical entry candidates only")],
+          notices: [expect.stringContaining("continued with lexical durable candidates only")],
         },
       }),
     ]);
@@ -113,8 +113,8 @@ describe("recall raw evidence gating", () => {
 
   it("keeps degraded lexical ranking useful for non-ASCII queries", async () => {
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "cafe-policy",
           type: "decision",
           subject: "café policy",
@@ -135,28 +135,28 @@ describe("recall raw evidence gating", () => {
     );
 
     expect(results).toHaveLength(1);
-    expect(results[0]?.entry.id).toBe("cafe-policy");
+    expect(results[0]?.durable.id).toBe("cafe-policy");
     expect(results[0]?.scores.lexical).toBeGreaterThan(0.9);
   });
 
   it("abstains when every candidate is a weak vector-only match", async () => {
     const traceSummaries: RecallExecutionTraceSummary[] = [];
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "branch-prefixes",
           subject: "branch naming convention",
           content: "Use standard Git branch prefixes like feat/, fix/, chore/, and hotfix/ instead of custom names.",
           created_at: "2026-03-06T00:00:00.000Z",
         }),
-        buildEntry({
+        buildDurable({
           id: "prompt-drafting-style",
           type: "preference",
           subject: "prompt drafting style",
           content: "Implementation prompts should be numbered and linked back to the plan.",
           created_at: "2026-03-05T00:00:00.000Z",
         }),
-        buildEntry({
+        buildDurable({
           id: "db-path-resolution",
           subject: "db path resolution",
           content: "Resolve the database path from AGENR_DB_PATH before config defaults.",
@@ -203,8 +203,8 @@ describe("recall raw evidence gating", () => {
 
   it("keeps a strong vector-only match for a non-reminder query when the raw similarity is meaningful", async () => {
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "sandbox-bootstrap",
           subject: "sandbox bootstrap",
           content: "Provision isolated environments for repeatable test runs.",
@@ -222,11 +222,11 @@ describe("recall raw evidence gating", () => {
     );
 
     expect(results).toHaveLength(1);
-    expect(results[0]?.entry.id).toBe("sandbox-bootstrap");
+    expect(results[0]?.durable.id).toBe("sandbox-bootstrap");
     expect(results[0]?.scores.lexical).toBe(0);
     expect(results[0]?.scores.vector).toBeCloseTo(0.34, 6);
     expect(fixture.recordRecallEvents).toHaveBeenCalledWith({
-      entryIds: ["sandbox-bootstrap"],
+      durableIds: ["sandbox-bootstrap"],
       query: "artifact preservation",
       sessionKey: undefined,
     });
@@ -234,14 +234,14 @@ describe("recall raw evidence gating", () => {
 
   it("rejects lexical overlap that comes only from weak conversational grounding tokens", async () => {
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "memory-trigger",
           subject: "memory trigger phrase",
           content: "Saying remember this saves the current context.",
           embedding: createCosineEmbedding(0.36),
         }),
-        buildEntry({
+        buildDurable({
           id: "workflow-order",
           subject: "workflow cleanup order",
           content: "Cleanup order matters when shared handles stay open.",
@@ -271,14 +271,14 @@ describe("recall raw evidence gating", () => {
 
   it("abstains on reminder-style queries that have no grounded lexical anchor", async () => {
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "path-precedence",
           subject: "global binary path precedence",
           content: "The earlier CLI on PATH wins.",
           embedding: createCosineEmbedding(0.22),
         }),
-        buildEntry({
+        buildDurable({
           id: "branch-testing",
           subject: "guard branch testing",
           content: "Earlier guards can mask later test branches.",
@@ -308,14 +308,14 @@ describe("recall raw evidence gating", () => {
 
   it("does not treat generic numbering terms as grounding for reminder-style no-result queries", async () => {
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "prompt-style",
           subject: "codex prompt style",
           content: "Number the prompts and point them back to the plan doc.",
           embedding: createCosineEmbedding(0.22),
         }),
-        buildEntry({
+        buildDurable({
           id: "numbered-lists",
           subject: "numbered list usage",
           content: "Use numbered lists when the user needs to refer back by number.",
@@ -345,14 +345,14 @@ describe("recall raw evidence gating", () => {
 
   it("filters weak vector-only distractors while keeping a lexical match", async () => {
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "policy-new",
           type: "decision",
           subject: "pager policy",
           content: "Taylor is on call this week.",
         }),
-        buildEntry({
+        buildDurable({
           id: "branch-cleanup",
           type: "decision",
           subject: "branch cleanup workflow",
@@ -374,10 +374,10 @@ describe("recall raw evidence gating", () => {
       fixture.ports,
     );
 
-    expect(results.map((result) => result.entry.id)).toEqual(["policy-new"]);
+    expect(results.map((result) => result.durable.id)).toEqual(["policy-new"]);
     expect(results[0]?.scores.lexical).toBeGreaterThan(0);
     expect(fixture.recordRecallEvents).toHaveBeenCalledWith({
-      entryIds: ["policy-new"],
+      durableIds: ["policy-new"],
       query: "who is on call this week",
       sessionKey: undefined,
     });
@@ -385,13 +385,13 @@ describe("recall raw evidence gating", () => {
 
   it("rejects weak entity-attribute distractors that only match identity or the base entity name", async () => {
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "git-identity",
           subject: "agenr git identity",
           content: "Use the repo git identity for signed commits.",
         }),
-        buildEntry({
+        buildDurable({
           id: "jim-email",
           subject: "jim martin work email",
           content: "Jim Martin uses jim@example.com for work mail.",
@@ -423,13 +423,13 @@ describe("recall raw evidence gating", () => {
 
   it("keeps the location-bearing family entry for a narrow entity-attribute query", async () => {
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "jim-dad-location",
           subject: "Jim Martin dad location",
           content: "Jim Martin's dad lives in Austin, Texas.",
         }),
-        buildEntry({
+        buildDurable({
           id: "jim-identity",
           subject: "Jim Martin skunk identity",
           content: "Jim Martin's skunk is named Pepper.",
@@ -456,18 +456,18 @@ describe("recall raw evidence gating", () => {
       fixture.ports,
     );
 
-    expect(results.map((result) => result.entry.id)).toEqual(["jim-dad-location"]);
+    expect(results.map((result) => result.durable.id)).toEqual(["jim-dad-location"]);
   });
 
   it("keeps identity wrapper subjects working for entity-definition queries", async () => {
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "duke-identity",
           subject: "Duke identity",
           content: "Duke is Jim Martin's dog.",
         }),
-        buildEntry({
+        buildDurable({
           id: "duke-family",
           subject: "Duke family notes",
           content: "Duke likes visiting Jim Martin's parents.",
@@ -494,19 +494,19 @@ describe("recall raw evidence gating", () => {
       fixture.ports,
     );
 
-    expect(results.map((result) => result.entry.id)).toEqual(["duke-identity"]);
+    expect(results.map((result) => result.durable.id)).toEqual(["duke-identity"]);
   });
 
   it("neutralizes default age bias for historical-state ranking", async () => {
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "approach-old",
           subject: "deployment approach",
           content: "Deployment approach used the same bundler.",
           created_at: "2026-01-01T00:00:00.000Z",
         }),
-        buildEntry({
+        buildDurable({
           id: "approach-new",
           subject: "deployment approach",
           content: "Deployment approach used the same bundler.",
@@ -535,22 +535,22 @@ describe("recall raw evidence gating", () => {
       fixture.ports,
     );
 
-    expect(defaultResults.map((result) => result.entry.id)).toEqual(["approach-new", "approach-old"]);
-    expect(historicalResults.map((result) => result.entry.id)).toEqual(["approach-old", "approach-new"]);
+    expect(defaultResults.map((result) => result.durable.id)).toEqual(["approach-new", "approach-old"]);
+    expect(historicalResults.map((result) => result.durable.id)).toEqual(["approach-old", "approach-new"]);
     expect(historicalResults.map((result) => result.scores.recency)).toEqual([0.5, 0.5]);
   });
 
   it("expands historical queries with explicit inactive predecessors only for the historical profile", async () => {
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "manual-http-shim",
           subject: "local recall eval workflow",
           content: "Run local recall evals with an ad hoc HTTP shim before each debugging session.",
           created_at: "2026-01-12T00:00:00.000Z",
           superseded_by: "dev-recall-command",
         }),
-        buildEntry({
+        buildDurable({
           id: "dev-recall-command",
           subject: "local recall eval workflow",
           content: "Use the repo-owned dev recall command for local recall evals.",
@@ -577,8 +577,8 @@ describe("recall raw evidence gating", () => {
       fixture.ports,
     );
 
-    expect(currentResults.map((result) => result.entry.id)).toEqual(["dev-recall-command"]);
-    expect(historicalResults.map((result) => result.entry.id)).toEqual(["manual-http-shim", "dev-recall-command"]);
+    expect(currentResults.map((result) => result.durable.id)).toEqual(["dev-recall-command"]);
+    expect(historicalResults.map((result) => result.durable.id)).toEqual(["manual-http-shim", "dev-recall-command"]);
     // Only the historical profile requests neighborhood expansion. The default
     // profile already filters superseded rows out during retrieval, so there
     // is nothing useful to expand toward.
@@ -593,8 +593,8 @@ describe("recall raw evidence gating", () => {
 
   it("boosts retired same-topic predecessors for historical queries", async () => {
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "kanban-tracking",
           subject: "memory freshness work tracking",
           content: "Track memory freshness eval work on the kanban board.",
@@ -603,7 +603,7 @@ describe("recall raw evidence gating", () => {
           supersession_kind: "stale",
           supersession_reason: "superseded by GitHub issues",
         }),
-        buildEntry({
+        buildDurable({
           id: "github-issues-tracking",
           subject: "memory freshness work tracking",
           content: "Track memory freshness eval work in GitHub issues.",
@@ -623,19 +623,19 @@ describe("recall raw evidence gating", () => {
       fixture.ports,
     );
 
-    expect(results.map((result) => result.entry.id)).toEqual(["kanban-tracking", "github-issues-tracking"]);
+    expect(results.map((result) => result.durable.id)).toEqual(["kanban-tracking", "github-issues-tracking"]);
   });
 
   it("adds a same-topic prior-state boost for active historical peers", async () => {
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "recency-plan",
           subject: "ranking debug plan",
           content: "Plan for today: switch recall ranking to pure recency while debugging freshness problems.",
           created_at: "2026-03-18T09:00:00.000Z",
         }),
-        buildEntry({
+        buildDurable({
           id: "freshness-fix",
           type: "milestone",
           subject: "ranking debug outcome",
@@ -665,14 +665,14 @@ describe("recall raw evidence gating", () => {
       fixture.ports,
     );
 
-    expect(currentResults.map((result) => result.entry.id)).toEqual(["freshness-fix", "recency-plan"]);
-    expect(historicalResults.map((result) => result.entry.id)).toEqual(["recency-plan", "freshness-fix"]);
+    expect(currentResults.map((result) => result.durable.id)).toEqual(["freshness-fix", "recency-plan"]);
+    expect(historicalResults.map((result) => result.durable.id)).toEqual(["recency-plan", "freshness-fix"]);
   });
 
   it("prefers older same-claim-key siblings for historical queries even when subjects drift", async () => {
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "webpack-pipeline",
           subject: "webpack migration note",
           content: "Webpack handled the build setup before the current bundler.",
@@ -680,7 +680,7 @@ describe("recall raw evidence gating", () => {
           embedding: createCosineEmbedding(0.68),
           created_at: "2026-03-12T09:00:00.000Z",
         }),
-        buildEntry({
+        buildDurable({
           id: "vite-pipeline",
           subject: "vite packaging decision",
           content: "Vite handles the build setup for the current bundler.",
@@ -709,15 +709,15 @@ describe("recall raw evidence gating", () => {
       fixture.ports,
     );
 
-    expect(currentResults.map((result) => result.entry.id)).toEqual(["vite-pipeline"]);
-    expect(historicalResults.map((result) => result.entry.id)).toEqual(["webpack-pipeline", "vite-pipeline"]);
+    expect(currentResults.map((result) => result.durable.id)).toEqual(["vite-pipeline"]);
+    expect(historicalResults.map((result) => result.durable.id)).toEqual(["webpack-pipeline", "vite-pipeline"]);
   });
 
   it("prefers trusted same-claim-key predecessors over tentative siblings for historical queries", async () => {
     const traceSummaries: RecallExecutionTraceSummary[] = [];
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "current-toolchain",
           subject: "current build toolchain",
           content: "Vite is the current build toolchain.",
@@ -726,7 +726,7 @@ describe("recall raw evidence gating", () => {
           embedding: createCosineEmbedding(0.72),
           created_at: "2026-03-14T09:00:00.000Z",
         }),
-        buildEntry({
+        buildDurable({
           id: "older-toolchain-tentative",
           subject: "build setup fallback note",
           content: "Maybe esbuild handled packaging before the current toolchain settled.",
@@ -735,7 +735,7 @@ describe("recall raw evidence gating", () => {
           embedding: createCosineEmbedding(0.72),
           created_at: "2026-03-10T09:00:00.000Z",
         }),
-        buildEntry({
+        buildDurable({
           id: "older-toolchain-trusted",
           subject: "legacy bundler decision",
           content: "Webpack handled packaging before Vite.",
@@ -765,7 +765,7 @@ describe("recall raw evidence gating", () => {
       },
     );
 
-    expect(results.map((result) => result.entry.id)).toEqual(["older-toolchain-trusted", "current-toolchain", "older-toolchain-tentative"]);
+    expect(results.map((result) => result.durable.id)).toEqual(["older-toolchain-trusted", "current-toolchain", "older-toolchain-tentative"]);
     expect(results[0]?.scores.historicalLineage).toBeGreaterThan(results[2]?.scores.historicalLineage ?? 0);
     expect(traceSummaries).toEqual([
       expect.objectContaining({
@@ -779,8 +779,8 @@ describe("recall raw evidence gating", () => {
 
   it("down-ranks redundant active trusted siblings from the same current slot", async () => {
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "vite-primary",
           subject: "current build toolchain",
           content: "Use Vite for the current build toolchain.",
@@ -788,7 +788,7 @@ describe("recall raw evidence gating", () => {
           claim_key_status: "trusted",
           created_at: "2026-03-20T09:00:00.000Z",
         }),
-        buildEntry({
+        buildDurable({
           id: "vite-shadow",
           subject: "packaging toolchain note",
           content: "Vite also appears in a second active build toolchain note.",
@@ -796,7 +796,7 @@ describe("recall raw evidence gating", () => {
           claim_key_status: "trusted",
           created_at: "2026-03-19T09:00:00.000Z",
         }),
-        buildEntry({
+        buildDurable({
           id: "release-rollout",
           subject: "release rollout checklist",
           content: "Run the release rollout checklist before packaging.",
@@ -827,14 +827,14 @@ describe("recall raw evidence gating", () => {
       },
     );
 
-    expect(results.map((result) => result.entry.id)).toEqual(["vite-primary", "release-rollout", "vite-shadow"]);
+    expect(results.map((result) => result.durable.id)).toEqual(["vite-primary", "release-rollout", "vite-shadow"]);
     expect(results[2]?.scores.claimKeyRedundancyPenalty).toBeGreaterThan(0);
   });
 
   it("keeps tentative same-slot siblings from outranking a trusted current answer", async () => {
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "vite-trusted",
           subject: "current build toolchain",
           content: "Vite is the approved current build toolchain.",
@@ -842,7 +842,7 @@ describe("recall raw evidence gating", () => {
           claim_key_status: "trusted",
           created_at: "2026-03-18T09:00:00.000Z",
         }),
-        buildEntry({
+        buildDurable({
           id: "vite-tentative",
           subject: "current build toolchain experiment",
           content: "Maybe esbuild or Vite is the current build toolchain.",
@@ -865,20 +865,20 @@ describe("recall raw evidence gating", () => {
       fixture.ports,
     );
 
-    expect(results.map((result) => result.entry.id)).toEqual(["vite-trusted", "vite-tentative"]);
+    expect(results.map((result) => result.durable.id)).toEqual(["vite-trusted", "vite-tentative"]);
     expect(results[1]?.scores.claimKeyTrustPenalty).toBeGreaterThan(0);
   });
 
   it("limits historical peer boosts to shared subject prefixes", async () => {
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "phase1-plan",
           subject: "memory freshness eval rollout",
           content: "Plan: build the first memory freshness eval corpus in agenr-evals next week, then add explicit ranking assertions later.",
           created_at: "2026-03-10T00:00:00.000Z",
         }),
-        buildEntry({
+        buildDurable({
           id: "phase1-shipped",
           type: "milestone",
           subject: "memory freshness eval rollout status",
@@ -886,7 +886,7 @@ describe("recall raw evidence gating", () => {
             "Phase 1 is complete: the first memory freshness eval corpus now exists in agenr-evals, and ranking-aware assertions are queued as follow-up work.",
           created_at: "2026-03-14T00:00:00.000Z",
         }),
-        buildEntry({
+        buildDurable({
           id: "phase2-ranking-assertions",
           subject: "memory freshness phase 2",
           content: "Phase 2 will add explicit top-result, ordered-prefix, and pairwise-order assertions after the phase 1 corpus lands.",
@@ -914,19 +914,19 @@ describe("recall raw evidence gating", () => {
       fixture.ports,
     );
 
-    expect(historicalResults.map((result) => result.entry.id)).toEqual(["phase1-plan", "phase1-shipped", "phase2-ranking-assertions"]);
+    expect(historicalResults.map((result) => result.durable.id)).toEqual(["phase1-plan", "phase1-shipped", "phase2-ranking-assertions"]);
   });
 
   it("keeps around-date recency active for historical-state queries with a temporal anchor", async () => {
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "approach-feb",
           subject: "deployment approach",
           content: "We used webpack for deployments.",
           created_at: "2026-02-01T00:00:00.000Z",
         }),
-        buildEntry({
+        buildDurable({
           id: "approach-mar",
           subject: "deployment approach",
           content: "We used vite for deployments.",
@@ -950,14 +950,14 @@ describe("recall raw evidence gating", () => {
       fixture.ports,
     );
 
-    expect(results.map((result) => result.entry.id)).toEqual(["approach-feb", "approach-mar"]);
+    expect(results.map((result) => result.durable.id)).toEqual(["approach-feb", "approach-mar"]);
     expect(results[0]?.scores.recency).toBeGreaterThan(results[1]?.scores.recency ?? 0);
   });
 
   it("flips the superseded trusted predecessor above an RRF-dominant successor in historical_state", async () => {
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "approach-old",
           type: "decision",
           subject: "deployment approach",
@@ -967,7 +967,7 @@ describe("recall raw evidence gating", () => {
           created_at: "2026-02-01T00:00:00.000Z",
           superseded_by: "approach-new",
         }),
-        buildEntry({
+        buildDurable({
           id: "approach-new",
           type: "decision",
           subject: "deployment approach",
@@ -991,7 +991,7 @@ describe("recall raw evidence gating", () => {
       fixture.ports,
     );
 
-    expect(historicalResults.map((result) => result.entry.id)).toEqual(["approach-old", "approach-new"]);
+    expect(historicalResults.map((result) => result.durable.id)).toEqual(["approach-old", "approach-new"]);
     const predecessor = historicalResults[0];
     const successor = historicalResults[1];
     expect(predecessor?.scores.rrf).toBeLessThan(successor?.scores.rrf ?? Infinity);
@@ -1001,8 +1001,8 @@ describe("recall raw evidence gating", () => {
 
   it("uses the injected recall clock for historical lineage current-state checks", async () => {
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "approach-old",
           type: "decision",
           subject: "deployment approach",
@@ -1013,7 +1013,7 @@ describe("recall raw evidence gating", () => {
           valid_to: "2026-04-01T00:00:00.000Z",
           created_at: "2026-02-01T00:00:00.000Z",
         }),
-        buildEntry({
+        buildDurable({
           id: "approach-new",
           type: "decision",
           subject: "deployment approach",
@@ -1042,14 +1042,14 @@ describe("recall raw evidence gating", () => {
       },
     );
 
-    const predecessor = results.find((result) => result.entry.id === "approach-old");
+    const predecessor = results.find((result) => result.durable.id === "approach-old");
     expect(predecessor?.scores.historicalLineage).toBeGreaterThan(0);
   });
 
   it("keeps the current entry first under the default profile even when the pool has a direct predecessor", async () => {
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "approach-old",
           type: "decision",
           subject: "deployment approach",
@@ -1059,7 +1059,7 @@ describe("recall raw evidence gating", () => {
           created_at: "2026-02-01T00:00:00.000Z",
           superseded_by: "approach-new",
         }),
-        buildEntry({
+        buildDurable({
           id: "approach-new",
           type: "decision",
           subject: "deployment approach",
@@ -1084,14 +1084,14 @@ describe("recall raw evidence gating", () => {
       fixture.ports,
     );
 
-    expect(defaultResults.map((result) => result.entry.id)).toEqual(["approach-new", "approach-old"]);
+    expect(defaultResults.map((result) => result.durable.id)).toEqual(["approach-new", "approach-old"]);
     expect(defaultResults.map((result) => result.scores.historicalLineage)).toEqual([0, 0]);
   });
 
   it("does not apply same-slot redundancy shaping to multivalued claim families", async () => {
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "dependency-sqlite",
           subject: "runtime dependency",
           content: "SQLite is a supported runtime dependency for local development.",
@@ -1099,7 +1099,7 @@ describe("recall raw evidence gating", () => {
           claim_key_status: "trusted",
           created_at: "2026-03-20T09:00:00.000Z",
         }),
-        buildEntry({
+        buildDurable({
           id: "dependency-libsql",
           subject: "runtime dependency",
           content: "libSQL is also a supported runtime dependency for local development.",
@@ -1107,7 +1107,7 @@ describe("recall raw evidence gating", () => {
           claim_key_status: "trusted",
           created_at: "2026-03-19T09:00:00.000Z",
         }),
-        buildEntry({
+        buildDurable({
           id: "dependency-docs",
           subject: "dependency docs",
           content: "Document runtime dependencies in the setup guide.",
@@ -1129,7 +1129,7 @@ describe("recall raw evidence gating", () => {
       fixture.ports,
     );
 
-    expect(results.map((result) => result.entry.id)).toEqual(["dependency-sqlite", "dependency-libsql", "dependency-docs"]);
+    expect(results.map((result) => result.durable.id)).toEqual(["dependency-sqlite", "dependency-libsql", "dependency-docs"]);
     expect(results[0]?.scores.claimKeyRedundancyPenalty).toBe(0);
     expect(results[1]?.scores.claimKeyRedundancyPenalty).toBe(0);
   });
@@ -1137,8 +1137,8 @@ describe("recall raw evidence gating", () => {
   it("excludes a not-yet-valid successor when resolving an explicit as-of reference", async () => {
     const traceSummaries: RecallExecutionTraceSummary[] = [];
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "approach-old",
           subject: "deployment approach",
           content: "Webpack was the deployment approach before the migration.",
@@ -1149,7 +1149,7 @@ describe("recall raw evidence gating", () => {
           superseded_by: "approach-new",
           created_at: "2026-02-01T00:00:00.000Z",
         }),
-        buildEntry({
+        buildDurable({
           id: "approach-new",
           subject: "deployment approach",
           content: "Vite is the deployment approach after the migration.",
@@ -1183,7 +1183,7 @@ describe("recall raw evidence gating", () => {
       },
     );
 
-    expect(results.map((result) => result.entry.id)).toEqual(["approach-old"]);
+    expect(results.map((result) => result.durable.id)).toEqual(["approach-old"]);
     expect(traceSummaries[0]?.filtering.asOfValidity).toEqual({
       applied: true,
       anchor: "2026-03-01T00:00:00.000Z",
@@ -1195,8 +1195,8 @@ describe("recall raw evidence gating", () => {
   it("excludes expired rows from default recall at the current clock", async () => {
     const traceSummaries: RecallExecutionTraceSummary[] = [];
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "location-current",
           subject: "home base",
           content: "Currently living in Lisbon.",
@@ -1205,7 +1205,7 @@ describe("recall raw evidence gating", () => {
           valid_from: "2026-03-21T00:00:00.000Z",
           created_at: "2026-03-21T00:00:00.000Z",
         }),
-        buildEntry({
+        buildDurable({
           id: "location-expired",
           subject: "home base",
           content: "Living in Singapore for the contract.",
@@ -1239,7 +1239,7 @@ describe("recall raw evidence gating", () => {
       },
     );
 
-    expect(results.map((result) => result.entry.id)).toEqual(["location-current"]);
+    expect(results.map((result) => result.durable.id)).toEqual(["location-current"]);
     expect(traceSummaries[0]?.filtering.asOfValidity).toEqual({
       applied: true,
       anchor: NOW.toISOString(),
@@ -1251,8 +1251,8 @@ describe("recall raw evidence gating", () => {
   it("keeps expired lineage for the historical-state profile", async () => {
     const traceSummaries: RecallExecutionTraceSummary[] = [];
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "approach-old",
           subject: "deployment approach",
           content: "Webpack was the deployment approach before the migration.",
@@ -1263,7 +1263,7 @@ describe("recall raw evidence gating", () => {
           superseded_by: "approach-new",
           created_at: "2026-02-01T00:00:00.000Z",
         }),
-        buildEntry({
+        buildDurable({
           id: "approach-new",
           subject: "deployment approach",
           content: "Vite is the deployment approach after the migration.",
@@ -1297,15 +1297,15 @@ describe("recall raw evidence gating", () => {
 
     // The historical-state profile intentionally bypasses the valid-time filter
     // so superseded and expired lineage stays answerable.
-    expect(results.map((result) => result.entry.id).sort()).toEqual(["approach-new", "approach-old"]);
+    expect(results.map((result) => result.durable.id).sort()).toEqual(["approach-new", "approach-old"]);
     expect(traceSummaries[0]?.filtering.asOfValidity).toBeUndefined();
   });
 
   it("records a default mmr trace branch when no embeddings are available on candidates", async () => {
     const traceSummaries: RecallExecutionTraceSummary[] = [];
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "plain-entry",
           subject: "team rotation",
           content: "Taylor is on call this week.",
@@ -1342,20 +1342,20 @@ describe("recall raw evidence gating", () => {
   it("diversifies near-duplicate embeddings with MMR when lambda is low", async () => {
     const traceSummaries: RecallExecutionTraceSummary[] = [];
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "primary",
           subject: "repeat finding",
           content: "First write-up of the finding.",
           embedding: createCosineEmbedding(0.9),
         }),
-        buildEntry({
+        buildDurable({
           id: "duplicate",
           subject: "repeat finding",
           content: "Slightly reworded write-up of the same finding.",
           embedding: createCosineEmbedding(0.9),
         }),
-        buildEntry({
+        buildDurable({
           id: "diverse",
           subject: "diverse finding",
           content: "A note on a different but related topic.",
@@ -1402,14 +1402,14 @@ describe("recall raw evidence gating", () => {
   it("treats rankingPolicy.mmr = disabled as a kill switch", async () => {
     const traceSummaries: RecallExecutionTraceSummary[] = [];
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "primary",
           subject: "repeat finding",
           content: "First write-up of the finding.",
           embedding: createCosineEmbedding(0.9),
         }),
-        buildEntry({
+        buildDurable({
           id: "duplicate",
           subject: "repeat finding",
           content: "Slightly reworded write-up of the same finding.",
@@ -1457,13 +1457,13 @@ describe("recall raw evidence gating", () => {
       })),
     );
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "leader",
           subject: "on call rotation",
           content: "Taylor is on call this week.",
         }),
-        buildEntry({
+        buildDurable({
           id: "runner-up",
           subject: "on call rotation swap",
           content: "The on call rotation swapped to Taylor last Monday.",
@@ -1496,7 +1496,7 @@ describe("recall raw evidence gating", () => {
       },
     );
 
-    expect(results.map((result) => result.entry.id)).toEqual(["runner-up", "leader"]);
+    expect(results.map((result) => result.durable.id)).toEqual(["runner-up", "leader"]);
     expect(results[0]?.scores.crossEncoder).toBeCloseTo(0.95, 6);
     expect(results[1]?.scores.crossEncoder).toBeCloseTo(0.1, 6);
     expect(rank).toHaveBeenCalledTimes(1);
@@ -1520,13 +1520,13 @@ describe("recall raw evidence gating", () => {
       })),
     );
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "codex-prefix",
           subject: "codex branch naming",
           content: "Use the `codex/` prefix for Codex iteration branches in this repo.",
         }),
-        buildEntry({
+        buildDurable({
           id: "standard-prefixes",
           subject: "branch prefixes guide",
           content: "The branch prefixes to use are `feat/`, `fix/`, `chore/`, and `hotfix/`.",
@@ -1555,7 +1555,7 @@ describe("recall raw evidence gating", () => {
     );
 
     expect(rank).toHaveBeenCalledTimes(1);
-    expect(results.map((result) => result.entry.id)).toEqual(["standard-prefixes", "codex-prefix"]);
+    expect(results.map((result) => result.durable.id)).toEqual(["standard-prefixes", "codex-prefix"]);
     expect(results[0]?.scores.crossEncoder).toBeCloseTo(0.9, 6);
     expect(results[1]?.scores.crossEncoder).toBeCloseTo(0.90001, 6);
   });
@@ -1568,13 +1568,13 @@ describe("recall raw evidence gating", () => {
       })),
     );
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "singular-prefix",
           subject: "codex branch naming",
           content: "Use the `codex/` branch prefix for Codex iteration work.",
         }),
-        buildEntry({
+        buildDurable({
           id: "plural-prefixes",
           subject: "branch naming convention",
           content: "Use `feat/`, `fix/`, `chore/`, and `hotfix/` as the standard branch prefixes going forward.",
@@ -1603,15 +1603,15 @@ describe("recall raw evidence gating", () => {
     );
 
     expect(rank).toHaveBeenCalledTimes(1);
-    expect(results.map((result) => result.entry.id)).toEqual(["plural-prefixes", "singular-prefix"]);
+    expect(results.map((result) => result.durable.id)).toEqual(["plural-prefixes", "singular-prefix"]);
     expect(results[0]?.scores.lexical).toBeGreaterThan(results[1]?.scores.lexical ?? 0);
   });
 
   it("records `not_configured` in the cross-encoder trace when no port is wired", async () => {
     const traceSummaries: RecallExecutionTraceSummary[] = [];
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "lone-entry",
           subject: "on call rotation",
           content: "Taylor is on call this week.",
@@ -1650,13 +1650,13 @@ describe("recall raw evidence gating", () => {
     const traceSummaries: RecallExecutionTraceSummary[] = [];
     const rank = vi.fn<CrossEncoderPort["rank"]>(async () => []);
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "leader",
           subject: "on call rotation",
           content: "Taylor is on call this week.",
         }),
-        buildEntry({
+        buildDurable({
           id: "runner-up",
           subject: "on call rotation swap",
           content: "The on call rotation swapped to Taylor last Monday.",
@@ -1686,7 +1686,7 @@ describe("recall raw evidence gating", () => {
     );
 
     expect(rank).not.toHaveBeenCalled();
-    expect(results.map((result) => result.entry.id)).toEqual(["leader", "runner-up"]);
+    expect(results.map((result) => result.durable.id)).toEqual(["leader", "runner-up"]);
     expect(traceSummaries[0]?.crossEncoder).toEqual(
       expect.objectContaining({
         applied: false,
@@ -1702,13 +1702,13 @@ describe("recall raw evidence gating", () => {
       throw new Error("rate limit");
     });
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "leader",
           subject: "on call rotation",
           content: "Taylor is on call this week.",
         }),
-        buildEntry({
+        buildDurable({
           id: "runner-up",
           subject: "on call rotation swap",
           content: "The on call rotation swapped to Taylor last Monday.",
@@ -1741,7 +1741,7 @@ describe("recall raw evidence gating", () => {
     );
 
     expect(rank).toHaveBeenCalledTimes(1);
-    expect(results.map((result) => result.entry.id)).toEqual(["leader", "runner-up"]);
+    expect(results.map((result) => result.durable.id)).toEqual(["leader", "runner-up"]);
     expect(results.every((result) => result.scores.crossEncoder === undefined)).toBe(true);
     expect(traceSummaries[0]?.crossEncoder).toEqual(
       expect.objectContaining({
@@ -1759,10 +1759,10 @@ describe("recall raw evidence gating", () => {
       return passages.map((passage) => ({ id: passage.id, score: 0.5 }));
     });
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({ id: "a", subject: "topic a", content: "Taylor is on call this week a." }),
-        buildEntry({ id: "b", subject: "topic b", content: "Taylor is on call this week b." }),
-        buildEntry({ id: "c", subject: "topic c", content: "Taylor is on call this week c." }),
+      durables: [
+        buildDurable({ id: "a", subject: "topic a", content: "Taylor is on call this week a." }),
+        buildDurable({ id: "b", subject: "topic b", content: "Taylor is on call this week b." }),
+        buildDurable({ id: "c", subject: "topic c", content: "Taylor is on call this week c." }),
       ],
       vectorCandidates: [
         { id: "a", vectorSim: 0.72 },
@@ -1795,14 +1795,14 @@ describe("recall raw evidence gating", () => {
   it("sharpens the RRF rank constant on small fused pools by default", async () => {
     const traceSummaries: RecallExecutionTraceSummary[] = [];
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "alpha",
           subject: "alpha note",
           content: "Alpha content.",
           embedding: createCosineEmbedding(0.9),
         }),
-        buildEntry({
+        buildDurable({
           id: "beta",
           subject: "beta note",
           content: "Beta content.",
@@ -1841,14 +1841,14 @@ describe("recall raw evidence gating", () => {
   it("honors rrfSmallPoolRankConstant override on small pools", async () => {
     const traceSummaries: RecallExecutionTraceSummary[] = [];
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "alpha",
           subject: "alpha note",
           content: "Alpha content.",
           embedding: createCosineEmbedding(0.9),
         }),
-        buildEntry({
+        buildDurable({
           id: "beta",
           subject: "beta note",
           content: "Beta content.",
@@ -1885,8 +1885,8 @@ describe("recall raw evidence gating", () => {
   it("keeps k=60 on small pools when the caller sets rrfRankConstant without a small-pool override", async () => {
     const traceSummaries: RecallExecutionTraceSummary[] = [];
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "alpha",
           subject: "alpha note",
           content: "Alpha content.",
@@ -1925,15 +1925,15 @@ describe("recall raw evidence gating", () => {
     // leader. Sharpening the RRF rank constant on small pools keeps the
     // leader on top.
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "leader",
           subject: "deployment owner",
           content: "Taylor owns the deployment handoff.",
           embedding: createCosineEmbedding(0.95),
           created_at: "2026-02-15T00:00:00.000Z",
         }),
-        buildEntry({
+        buildDurable({
           id: "recent-neighbor",
           subject: "deployment note",
           content: "Jamie sent a short note about deployment logistics.",
@@ -1955,7 +1955,7 @@ describe("recall raw evidence gating", () => {
       fixture.ports,
     );
 
-    expect(results[0]?.entry.id).toBe("leader");
+    expect(results[0]?.durable.id).toBe("leader");
   });
 
   it("keeps the ranked leader intact on a three-candidate pool with a semantically distant but embeddings-diverse peer (phase-4 MMR regression)", async () => {
@@ -1966,20 +1966,20 @@ describe("recall raw evidence gating", () => {
     // The phase-4 small-pool gate skips MMR on pools of this size.
     const traceSummaries: RecallExecutionTraceSummary[] = [];
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "leader",
           subject: "pager policy",
           content: "Jordan is on call this week.",
           embedding: createCosineEmbedding(0.95),
         }),
-        buildEntry({
+        buildDurable({
           id: "near-neighbor",
           subject: "pager policy note",
           content: "Jordan holds the pager through Friday.",
           embedding: createCosineEmbedding(0.9),
         }),
-        buildEntry({
+        buildDurable({
           id: "diverse-distractor",
           subject: "office snacks",
           content: "The office is out of almonds.",
@@ -2014,39 +2014,39 @@ describe("recall raw evidence gating", () => {
       },
     );
 
-    expect(results[0]?.entry.id).toBe("leader");
+    expect(results[0]?.durable.id).toBe("leader");
     expect(traceSummaries[0]?.mmr.applied).toBe(false);
   });
 
   it("sorts the accepted MMR shortlist back into descending score order", async () => {
     const traceSummaries: RecallExecutionTraceSummary[] = [];
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "leader",
           subject: "branch naming convention",
           content: "Use feat/, fix/, chore/, and hotfix/ branch prefixes.",
           embedding: createCosineEmbedding(0.95),
         }),
-        buildEntry({
+        buildDurable({
           id: "near-1",
           subject: "branch workflow note",
           content: "Branch workflow note for nearby Git tasks.",
           embedding: createCosineEmbedding(0.94),
         }),
-        buildEntry({
+        buildDurable({
           id: "near-2",
           subject: "branch cleanup workflow",
           content: "Delete merged branches after review.",
           embedding: createCosineEmbedding(0.93),
         }),
-        buildEntry({
+        buildDurable({
           id: "diverse-mid",
           subject: "branch strategy discussion",
           content: "Branch strategy remains reviewable with standard prefixes.",
           embedding: [0, 1, 0],
         }),
-        buildEntry({
+        buildDurable({
           id: "tail",
           subject: "branch history note",
           content: "Historical note about earlier branch names.",
@@ -2085,13 +2085,13 @@ describe("recall raw evidence gating", () => {
     expect(traceSummaries[0]?.mmr.applied).toBe(true);
     expect(traceSummaries[0]?.mmr.reorderedIds.length ?? 0).toBeGreaterThan(0);
     expect(results.map((result) => result.score)).toEqual([...results.map((result) => result.score)].sort((left, right) => right - left));
-    expect(results[0]?.entry.id).toBe("leader");
+    expect(results[0]?.durable.id).toBe("leader");
   });
 
   it("falls back to support observation time before created-at for explicit as-of ranking", async () => {
     const fixture = createRecallPortsFixture({
-      entries: [
-        buildEntry({
+      durables: [
+        buildDurable({
           id: "timezone-observed",
           subject: "Jim timezone",
           content: "Jim's timezone is America/Denver.",
@@ -2100,7 +2100,7 @@ describe("recall raw evidence gating", () => {
           claim_support_observed_at: "2026-03-01T00:00:00.000Z",
           created_at: "2026-03-20T00:00:00.000Z",
         }),
-        buildEntry({
+        buildDurable({
           id: "timezone-created",
           subject: "Jim timezone",
           content: "Jim's timezone is America/Chicago.",
@@ -2124,7 +2124,7 @@ describe("recall raw evidence gating", () => {
       fixture.ports,
     );
 
-    expect(results.map((result) => result.entry.id)).toEqual(["timezone-observed", "timezone-created"]);
+    expect(results.map((result) => result.durable.id)).toEqual(["timezone-observed", "timezone-created"]);
   });
 });
 
@@ -2135,7 +2135,7 @@ describe("recall raw evidence gating", () => {
  * @returns Recall ports and the telemetry spy used by assertions.
  */
 function createRecallPortsFixture(params: {
-  entries: Durable[];
+  durables: Durable[];
   vectorCandidates: Array<{ id: string; vectorSim: number }>;
   ftsCandidates?: Array<{ id: string; rank: number; tier: FtsCandidate["tier"] }>;
   predecessorCandidateIds?: string[];
@@ -2147,7 +2147,7 @@ function createRecallPortsFixture(params: {
   recordRecallEvents: ReturnType<typeof vi.fn>;
   expandNeighborhood: ReturnType<typeof vi.fn>;
 } {
-  const entriesById = new Map(params.entries.map((entry) => [entry.id, entry]));
+  const entriesById = new Map(params.durables.map((entry) => [entry.id, entry]));
   const recordRecallEvents = vi.fn(async () => undefined);
   const expandNeighborhood = vi.fn(async () => (params.predecessorCandidateIds ?? []).map((id) => toRecallCandidateDurable(requireEntry(entriesById, id))));
   // Mirror the production adapter's ordering contract so RRF fusion sees the
@@ -2165,18 +2165,18 @@ function createRecallPortsFixture(params: {
         throw params.vectorSearchError;
       }
       return sortedVectorCandidates.map((candidate) => ({
-        entry: toRecallCandidateDurable(requireEntry(entriesById, candidate.id)),
+        durable: toRecallCandidateDurable(requireEntry(entriesById, candidate.id)),
         vectorSim: candidate.vectorSim,
       }));
     },
     ftsSearch: async (): Promise<FtsCandidate[]> =>
       (params.ftsCandidates ?? []).map((candidate) => ({
-        entry: toRecallCandidateDurable(requireEntry(entriesById, candidate.id)),
+        durable: toRecallCandidateDurable(requireEntry(entriesById, candidate.id)),
         rank: candidate.rank,
         tier: candidate.tier,
       })),
     expandNeighborhood,
-    hydrateEntries: async (ids: string[]): Promise<Durable[]> => ids.map((id) => requireEntry(entriesById, id)),
+    hydrateDurables: async (ids: string[]): Promise<Durable[]> => ids.map((id) => requireEntry(entriesById, id)),
     recordRecallEvents,
     ...(params.crossEncoder ? { crossEncoder: params.crossEncoder } : {}),
   };
@@ -2213,11 +2213,11 @@ function toRecallCandidateDurable(entry: Durable): RecallCandidateDurable {
 }
 
 /**
- * Returns a fixture entry and throws if the requested ID is missing.
+ * Returns a fixture durable and throws if the requested ID is missing.
  *
  * @param entriesById - Fixture entries keyed by ID.
  * @param id - Entry identifier.
- * @returns Matching fixture entry.
+ * @returns Matching fixture durable.
  */
 function requireEntry(entriesById: Map<string, Durable>, id: string): Durable {
   const entry = entriesById.get(id);
@@ -2234,7 +2234,7 @@ function requireEntry(entriesById: Map<string, Durable>, id: string): Durable {
  * @param overrides - Entry field overrides.
  * @returns Fully populated entry.
  */
-function buildEntry(overrides: Partial<Durable> & Pick<Durable, "id" | "subject" | "content">): Durable {
+function buildDurable(overrides: Partial<Durable> & Pick<Durable, "id" | "subject" | "content">): Durable {
   const createdAt = overrides.created_at ?? NOW.toISOString();
   const updatedAt = overrides.updated_at ?? createdAt;
 

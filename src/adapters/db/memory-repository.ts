@@ -1,7 +1,7 @@
-import { buildEntryTraceProvenance, buildEntryTraceTimeline } from "../../app/memory/trace-timeline.js";
+import { buildDurableTraceProvenance, buildDurableTraceTimeline } from "../../app/memory/trace-timeline.js";
 import { DURABLE_VECTOR_INDEX_NAME } from "./schema.js";
 import { EMBEDDING_DIMENSIONS } from "../embeddings.js";
-import type { ClaimFamily, EntryTrace, MemoryStatusSnapshot, MemoryRepository } from "../../app/memory/ports.js";
+import type { ClaimFamily, DurableTrace, MemoryStatusSnapshot, MemoryRepository } from "../../app/memory/ports.js";
 import { resolveClaimSlotPolicy, type ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
 import type { Durable } from "../../core/types.js";
 import { countRecallEventsForDurable, listDreamActionsForDurable, listProfileSnapshotsForDurable, listRecallEventsForDurable } from "./trace-queries.js";
@@ -24,24 +24,24 @@ export function createMemoryRepository(
   } = {},
 ): MemoryRepository {
   return {
-    findEntryBySubject: async (subject) => findEntryBySubject(executor, subject),
-    findMostRecentEntry: async () => findMostRecentEntry(executor),
-    getEntryTrace: async (entryId) => getEntryTrace(executor, entryId, options.claimSlotPolicyConfig),
+    findDurableBySubject: async (subject) => findDurableBySubject(executor, subject),
+    findMostRecentDurable: async () => findMostRecentDurable(executor),
+    getDurableTrace: async (durableId) => getDurableTrace(executor, durableId, options.claimSlotPolicyConfig),
     getMemoryStatusSnapshot: async () => getMemoryStatusSnapshot(executor),
     probeVectorAvailability: async () => probeVectorAvailability(executor),
   };
 }
 
 /**
- * Finds the most recent entry that matches a subject string.
+ * Finds the most recent durable that matches a subject string.
  *
  * Exact case-insensitive matches rank above substring matches.
  *
  * @param executor - SQL executor used for the lookup.
  * @param subject - Free-form subject text supplied by the caller.
- * @returns Matching entry from any state, or `null` when none match.
+ * @returns Matching durable from any state, or `null` when none match.
  */
-async function findEntryBySubject(executor: SqlExecutor, subject: string): Promise<Durable | null> {
+async function findDurableBySubject(executor: SqlExecutor, subject: string): Promise<Durable | null> {
   const normalizedSubject = subject.trim();
   if (normalizedSubject.length === 0) {
     return null;
@@ -70,12 +70,12 @@ async function findEntryBySubject(executor: SqlExecutor, subject: string): Promi
 }
 
 /**
- * Finds the most recently created entry from any state.
+ * Finds the most recently created durable from any state.
  *
  * @param executor - SQL executor used for the lookup.
- * @returns Newest entry, or `null` when the database is empty.
+ * @returns Newest durable, or `null` when the database is empty.
  */
-async function findMostRecentEntry(executor: SqlExecutor): Promise<Durable | null> {
+async function findMostRecentDurable(executor: SqlExecutor): Promise<Durable | null> {
   const result = await executor.execute({
     sql: `
       SELECT
@@ -91,26 +91,26 @@ async function findMostRecentEntry(executor: SqlExecutor): Promise<Durable | nul
 }
 
 /**
- * Loads the currently available trace view for one entry.
+ * Loads the currently available trace view for one durable.
  *
  * @param executor - SQL executor used for the lookup.
- * @param entryId - Entry identifier to trace.
- * @returns Minimal provenance facts for the requested entry, or `null` when missing.
+ * @param durableId - Durable identifier to trace.
+ * @returns Minimal provenance facts for the requested durable, or `null` when missing.
  */
-async function getEntryTrace(executor: SqlExecutor, entryId: string, claimSlotPolicyConfig?: ClaimSlotPolicyConfig): Promise<EntryTrace | null> {
-  const entry = await getDurableByIdIncludingInactive(executor, entryId);
-  if (!entry) {
+async function getDurableTrace(executor: SqlExecutor, durableId: string, claimSlotPolicyConfig?: ClaimSlotPolicyConfig): Promise<DurableTrace | null> {
+  const durable = await getDurableByIdIncludingInactive(executor, durableId);
+  if (!durable) {
     return null;
   }
 
   const [supersededBy, supersedes, claimFamily, recallTotalCount, recallEvents, dreamActions, profileSnapshots] = await Promise.all([
-    entry.superseded_by ? getDurableByIdIncludingInactive(executor, entry.superseded_by) : Promise.resolve(null),
-    listSupersededEntries(executor, entry.id),
-    entry.claim_key ? getClaimFamily(executor, entry.claim_key, claimSlotPolicyConfig) : Promise.resolve(undefined),
-    countRecallEventsForDurable(executor, entry.id),
-    listRecallEventsForDurable(executor, entry.id),
-    listDreamActionsForDurable(executor, entry.id),
-    listProfileSnapshotsForDurable(executor, entry.id),
+    durable.superseded_by ? getDurableByIdIncludingInactive(executor, durable.superseded_by) : Promise.resolve(null),
+    listSupersededDurables(executor, durable.id),
+    durable.claim_key ? getClaimFamily(executor, durable.claim_key, claimSlotPolicyConfig) : Promise.resolve(undefined),
+    countRecallEventsForDurable(executor, durable.id),
+    listRecallEventsForDurable(executor, durable.id),
+    listDreamActionsForDurable(executor, durable.id),
+    listProfileSnapshotsForDurable(executor, durable.id),
   ]);
 
   const recall = {
@@ -119,16 +119,16 @@ async function getEntryTrace(executor: SqlExecutor, entryId: string, claimSlotPo
   };
 
   return {
-    entry,
+    durable,
     ...(supersededBy ? { supersededBy } : {}),
     supersedes,
     ...(claimFamily ? { claimFamily } : {}),
     recall,
-    provenance: buildEntryTraceProvenance(entry),
+    provenance: buildDurableTraceProvenance(durable),
     dreamActions,
     profileSnapshots,
-    timeline: buildEntryTraceTimeline({
-      entry,
+    timeline: buildDurableTraceTimeline({
+      durable,
       dreamActions,
       recallEvents,
       profileSnapshots,
@@ -137,10 +137,10 @@ async function getEntryTrace(executor: SqlExecutor, entryId: string, claimSlotPo
 }
 
 /**
- * Reads aggregate entry counts for host memory runtime status surfaces.
+ * Reads aggregate durable counts for host memory runtime status surfaces.
  *
  * @param executor - SQL executor used for the lookup.
- * @returns Count snapshot for active entries, active core entries, and distinct source files.
+ * @returns Count snapshot for active durables, active core durables, and distinct source files.
  */
 async function getMemoryStatusSnapshot(executor: SqlExecutor): Promise<MemoryStatusSnapshot> {
   const result = await executor.execute({
@@ -157,15 +157,16 @@ async function getMemoryStatusSnapshot(executor: SqlExecutor): Promise<MemorySta
   const row = result.rows[0];
   if (!row) {
     return {
-      activeEntries: 0,
-      coreEntries: 0,
+      activeDurables: 0,
+      coreDurables: 0,
       sourceFiles: 0,
     };
   }
 
   return {
-    activeEntries: readNumber(row, "active_entries", 0),
-    coreEntries: readNumber(row, "core_entries", 0),
+    // SQL aliases retain legacy column labels; the mapped fields use durable terminology.
+    activeDurables: readNumber(row, "active_entries", 0),
+    coreDurables: readNumber(row, "core_entries", 0),
     sourceFiles: readNumber(row, "source_files", 0),
   };
 }
@@ -192,14 +193,14 @@ async function probeVectorAvailability(executor: SqlExecutor): Promise<boolean> 
 }
 
 /**
- * Looks up an entry by ID without filtering out stale or superseded rows.
+ * Looks up a durable by ID without filtering out stale or superseded rows.
  *
  * @param executor - SQL executor used for the lookup.
- * @param entryId - Entry identifier to resolve.
- * @returns Entry from any state, or `null` when absent.
+ * @param durableId - Durable identifier to resolve.
+ * @returns Durable from any state, or `null` when absent.
  */
-async function getDurableByIdIncludingInactive(executor: SqlExecutor, entryId: string): Promise<Durable | null> {
-  const normalizedId = entryId.trim();
+async function getDurableByIdIncludingInactive(executor: SqlExecutor, durableId: string): Promise<Durable | null> {
+  const normalizedId = durableId.trim();
   if (normalizedId.length === 0) {
     return null;
   }
@@ -220,13 +221,13 @@ async function getDurableByIdIncludingInactive(executor: SqlExecutor, entryId: s
 }
 
 /**
- * Lists entries that the target entry superseded.
+ * Lists durables that the target durable superseded.
  *
  * @param executor - SQL executor used for the lookup.
- * @param entryId - Canonical entry identifier.
- * @returns Older entries that now point at the target via `superseded_by`.
+ * @param durableId - Canonical durable identifier.
+ * @returns Older durables that now point at the target via `superseded_by`.
  */
-async function listSupersededEntries(executor: SqlExecutor, entryId: string): Promise<Durable[]> {
+async function listSupersededDurables(executor: SqlExecutor, durableId: string): Promise<Durable[]> {
   const result = await executor.execute({
     sql: `
       SELECT
@@ -235,7 +236,7 @@ async function listSupersededEntries(executor: SqlExecutor, entryId: string): Pr
       WHERE superseded_by = ?
       ORDER BY created_at DESC
     `,
-    args: [entryId],
+    args: [durableId],
   });
 
   return result.rows.map((row) => mapDurableRow(row));
@@ -264,7 +265,7 @@ async function getClaimFamily(executor: SqlExecutor, claimKey: string, claimSlot
     `,
     args: [normalizedClaimKey],
   });
-  const entries = result.rows.map((row) => mapDurableRow(row));
+  const durables = result.rows.map((row) => mapDurableRow(row));
 
   const slotPolicy = resolveClaimSlotPolicy(normalizedClaimKey, claimSlotPolicyConfig);
 
@@ -272,6 +273,6 @@ async function getClaimFamily(executor: SqlExecutor, claimKey: string, claimSlot
     claimKey: normalizedClaimKey,
     slotPolicy: slotPolicy.policy,
     slotPolicyReason: slotPolicy.reason,
-    entries,
+    durables,
   };
 }

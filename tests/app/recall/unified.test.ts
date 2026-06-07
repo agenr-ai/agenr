@@ -234,7 +234,7 @@ describe("runUnifiedRecall", () => {
     const database = createEpisodeDatabase({
       episodeVectorSearch,
     });
-    const priorEntry = createEntry({
+    const priorDurable = createEntry({
       id: "old-approach",
       subject: "deployment approach",
       content: "Before the migration we used the legacy deploy path.",
@@ -255,11 +255,11 @@ describe("runUnifiedRecall", () => {
         recall: createRecallPorts({
           vectorSearch: async () => [
             {
-              entry: toRecallCandidateDurable(priorEntry),
+              durable: toRecallCandidateDurable(priorDurable),
               vectorSim: 0.82,
             },
           ],
-          hydrateEntries: async (ids) => (ids.includes(priorEntry.id) ? [priorEntry] : []),
+          hydrateDurables: async (ids) => (ids.includes(priorDurable.id) ? [priorDurable] : []),
         }),
         embeddingAvailable: true,
         embedQuery: async () => [1, 0],
@@ -275,20 +275,20 @@ describe("runUnifiedRecall", () => {
       embedding: [1, 0],
       limit: 2,
     });
-    expect(result.entries.map((entry) => entry.entry.id)).toEqual(["old-approach"]);
-    expect(result.projectedEntries).toMatchObject([
+    expect(result.durables.map((entry) => entry.durable.id)).toEqual(["old-approach"]);
+    expect(result.projectedDurables).toMatchObject([
       {
-        entryId: "old-approach",
+        durableId: "old-approach",
         claimKey: "deployment/approach",
         memoryState: "superseded",
         claimStatus: "trusted",
       },
     ]);
-    expect(result.entryFamilies).toMatchObject([
+    expect(result.durableFamilies).toMatchObject([
       {
         claimKey: "deployment/approach",
         primary: {
-          entryId: "old-approach",
+          durableId: "old-approach",
         },
       },
     ]);
@@ -347,20 +347,20 @@ describe("runUnifiedRecall", () => {
           },
           ftsSearch: async () => [
             {
-              entry: toRecallCandidateDurable(entry),
+              durable: toRecallCandidateDurable(entry),
               rank: 1,
               tier: "all_tokens",
             },
           ],
-          hydrateEntries: async () => [entry],
+          hydrateDurables: async () => [entry],
         }),
         embeddingAvailable: false,
         embeddingError: "Embeddings are unavailable.",
       },
     );
 
-    expect(result.entries.map((item) => item.entry.id)).toEqual(["policy-new"]);
-    expect(result.notices).toContain("Embeddings failed during recall, so Agenr fell back to lexical-only entry ranking.");
+    expect(result.durables.map((item) => item.durable.id)).toEqual(["policy-new"]);
+    expect(result.notices).toContain("Embeddings failed during recall, so Agenr fell back to lexical-only durable ranking.");
   });
 
   it("logs entity-attribute detection and keeps the query on durable recall only", async () => {
@@ -382,12 +382,12 @@ describe("runUnifiedRecall", () => {
         recall: createRecallPorts({
           ftsSearch: async () => [
             {
-              entry: toRecallCandidateDurable(entry),
+              durable: toRecallCandidateDurable(entry),
               rank: 1,
               tier: "all_tokens",
             },
           ],
-          hydrateEntries: async () => [entry],
+          hydrateDurables: async () => [entry],
         }),
         embeddingAvailable: true,
         debugLog,
@@ -398,7 +398,7 @@ describe("runUnifiedRecall", () => {
       detectedIntent: "entity_attribute",
       queried: ["durables"],
     });
-    expect(result.entries.map((item) => item.entry.id)).toEqual(["jim-dad-location"]);
+    expect(result.durables.map((item) => item.durable.id)).toEqual(["jim-dad-location"]);
     expect(debugLog).toHaveBeenCalledWith(expect.stringContaining('unified recall matched entity-attribute kind="location" entity="Jim Martin\'s dad"'));
   });
 
@@ -418,7 +418,7 @@ describe("runUnifiedRecall", () => {
     const database = createEpisodeDatabase({
       episodeVectorSearch,
     });
-    const priorEntry = createEntry({
+    const priorDurable = createEntry({
       id: "approach-old",
       subject: "deployment approach",
       content: "Webpack was the deployment approach before the migration.",
@@ -428,7 +428,7 @@ describe("runUnifiedRecall", () => {
       valid_to: "2026-03-20T00:00:00.000Z",
       superseded_by: "approach-new",
     });
-    const currentEntry = createEntry({
+    const currentDurable = createEntry({
       id: "approach-new",
       subject: "deployment approach",
       content: "Vite is the deployment approach after the migration.",
@@ -449,15 +449,15 @@ describe("runUnifiedRecall", () => {
         recall: createRecallPorts({
           vectorSearch: async () => [
             {
-              entry: toRecallCandidateDurable(priorEntry),
+              durable: toRecallCandidateDurable(priorDurable),
               vectorSim: 0.82,
             },
             {
-              entry: toRecallCandidateDurable(currentEntry),
+              durable: toRecallCandidateDurable(currentDurable),
               vectorSim: 0.82,
             },
           ],
-          hydrateEntries: async (ids) => [priorEntry, currentEntry].filter((entry) => ids.includes(entry.id)),
+          hydrateDurables: async (ids) => [priorDurable, currentDurable].filter((entry) => ids.includes(entry.id)),
         }),
         embeddingAvailable: true,
         embedQuery: async () => [1, 0],
@@ -465,8 +465,8 @@ describe("runUnifiedRecall", () => {
     );
 
     expect(result.asOf).toBe("2026-03-01T00:00:00.000Z");
-    expect(result.projectedEntries[0]).toMatchObject({
-      entryId: "approach-old",
+    expect(result.projectedDurables[0]).toMatchObject({
+      durableId: "approach-old",
       slotPolicy: "exclusive",
       freshness: {
         asOf: {
@@ -478,8 +478,8 @@ describe("runUnifiedRecall", () => {
     expect(result.claimTransitions).toMatchObject([
       {
         claimKey: "deployment/approach",
-        currentEntryId: "approach-old",
-        priorEntryId: "approach-new",
+        currentDurableId: "approach-old",
+        priorDurableId: "approach-new",
         episodeContext: {
           episodeId: "history-episode",
         },
@@ -671,7 +671,7 @@ function createRecallPorts(overrides: Partial<RecallPorts> = {}): RecallPorts {
     async ftsSearch() {
       return [];
     },
-    async hydrateEntries() {
+    async hydrateDurables() {
       return [];
     },
     async recordRecallEvents() {

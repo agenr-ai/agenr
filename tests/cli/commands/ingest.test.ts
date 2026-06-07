@@ -247,27 +247,27 @@ describe("registerIngestCommand", () => {
     const clackMock = createClackMock();
     const ingestDiscoveredFilesMock = vi.fn(async (_files: string[], _ports: unknown, options: IngestPathOptions) => {
       options.onExtractionProgress?.(2, 2);
-      options.onStageProgress?.({ phase: "dedup_start", totalEntries: 4 });
+      options.onStageProgress?.({ phase: "dedup_start", totalDurables: 4 });
       options.onDedupProgress?.({
         completedClusters: 12,
         totalClusters: 47,
-        completedEntries: 388,
-        totalEntries: 1098,
+        completedDurables: 388,
+        totalDurables: 1098,
       });
-      options.onStageProgress?.({ phase: "claim_extraction_start", totalEntries: 4 });
+      options.onStageProgress?.({ phase: "claim_extraction_start", totalDurables: 4 });
       options.onClaimExtractionProgress?.({
         phase: "primary",
-        completedEntries: 437,
-        totalEntries: 1098,
-        totalEligibleEntries: 1098,
+        completedDurables: 437,
+        totalDurables: 1098,
+        totalEligibleDurables: 1098,
       });
       options.onClaimExtractionProgress?.({
         phase: "retry",
-        completedEntries: 21,
-        totalEntries: 94,
-        totalEligibleEntries: 1098,
+        completedDurables: 21,
+        totalDurables: 94,
+        totalEligibleDurables: 1098,
       });
-      options.onStageProgress?.({ phase: "store_start", totalEntries: 4 });
+      options.onStageProgress?.({ phase: "store_start", totalDurables: 4 });
       options.onBulkWriteProgress?.({ phase: "prepare_start" });
       options.onBulkWriteProgress?.({ phase: "finalize_start" });
       return {

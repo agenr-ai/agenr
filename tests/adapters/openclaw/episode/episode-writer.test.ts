@@ -149,7 +149,7 @@ function createServices(
     async ftsSearch() {
       return [];
     },
-    async hydrateEntries() {
+    async hydrateDurables() {
       return [];
     },
     async recordRecallEvents() {
@@ -165,7 +165,7 @@ function createServices(
     },
     pluginConfig: options.pluginConfig ?? {},
     agenrConfig: {},
-    entries: database,
+    durables: database,
     episodes: database,
     procedures: database,
     memory: createMemoryRepository(database),

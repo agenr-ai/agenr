@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { projectClaimCentricRecallEntries } from "../../../src/app/recall/claim-centric.js";
+import { projectClaimCentricRecallDurables } from "../../../src/app/recall/claim-centric.js";
 import { buildClaimTransitionExplanations } from "../../../src/app/recall/transitions.js";
 import type { EpisodeResult } from "../../../src/core/episode/types.js";
 import type { RecallOutput } from "../../../src/core/recall/types.js";
@@ -8,7 +8,7 @@ import type { Durable, Episode } from "../../../src/core/types.js";
 
 describe("buildClaimTransitionExplanations", () => {
   it("keeps episode context when a matching episode only wins because of token overlap", () => {
-    const priorEntry = createEntry({
+    const priorDurable = createEntry({
       id: "approach-old",
       subject: "deployment approach",
       content: "Webpack was the deployment approach before the migration.",
@@ -16,14 +16,14 @@ describe("buildClaimTransitionExplanations", () => {
       claim_key_status: "trusted",
       superseded_by: "approach-new",
     });
-    const currentEntry = createEntry({
+    const currentDurable = createEntry({
       id: "approach-new",
       subject: "deployment approach",
       content: "Vite is the deployment approach after the migration.",
       claim_key: "deployment/approach",
       claim_key_status: "trusted",
     });
-    const families = projectClaimCentricRecallEntries([createRecallOutput(priorEntry, 0.8), createRecallOutput(currentEntry, 0.7)]);
+    const families = projectClaimCentricRecallDurables([createRecallOutput(priorDurable, 0.8), createRecallOutput(currentDurable, 0.7)]);
 
     const transitions = buildClaimTransitionExplanations({
       families,
@@ -47,7 +47,7 @@ describe("buildClaimTransitionExplanations", () => {
   });
 
   it("omits episode context when no episode has positive token overlap", () => {
-    const priorEntry = createEntry({
+    const priorDurable = createEntry({
       id: "approach-old",
       subject: "deployment approach",
       content: "Webpack was the deployment approach before the migration.",
@@ -55,14 +55,14 @@ describe("buildClaimTransitionExplanations", () => {
       claim_key_status: "trusted",
       superseded_by: "approach-new",
     });
-    const currentEntry = createEntry({
+    const currentDurable = createEntry({
       id: "approach-new",
       subject: "deployment approach",
       content: "Vite is the deployment approach after the migration.",
       claim_key: "deployment/approach",
       claim_key_status: "trusted",
     });
-    const families = projectClaimCentricRecallEntries([createRecallOutput(priorEntry, 0.8), createRecallOutput(currentEntry, 0.7)]);
+    const families = projectClaimCentricRecallDurables([createRecallOutput(priorDurable, 0.8), createRecallOutput(currentDurable, 0.7)]);
 
     const transitions = buildClaimTransitionExplanations({
       families,
@@ -84,7 +84,7 @@ describe("buildClaimTransitionExplanations", () => {
   });
 
   it("emits transitions for factual recall when both prior and current rows are visible", () => {
-    const priorEntry = createEntry({
+    const priorDurable = createEntry({
       id: "runtime-old",
       subject: "deployment runtime",
       content: "Deployment runtime used Node 22.",
@@ -92,7 +92,7 @@ describe("buildClaimTransitionExplanations", () => {
       claim_key_status: "trusted",
       superseded_by: "runtime-new",
     });
-    const currentEntry = createEntry({
+    const currentDurable = createEntry({
       id: "runtime-new",
       subject: "deployment runtime",
       content: "Deployment runtime uses Node 24.",
@@ -101,7 +101,7 @@ describe("buildClaimTransitionExplanations", () => {
     });
 
     const transitions = buildClaimTransitionExplanations({
-      families: projectClaimCentricRecallEntries([createRecallOutput(currentEntry, 0.9), createRecallOutput(priorEntry, 0.7)]),
+      families: projectClaimCentricRecallDurables([createRecallOutput(currentDurable, 0.9), createRecallOutput(priorDurable, 0.7)]),
       episodes: [],
       detectedIntent: "factual",
     });
@@ -109,15 +109,15 @@ describe("buildClaimTransitionExplanations", () => {
     expect(transitions).toEqual([
       expect.objectContaining({
         claimKey: "deployment/runtime",
-        currentEntryId: "runtime-new",
-        priorEntryId: "runtime-old",
+        currentDurableId: "runtime-new",
+        priorDurableId: "runtime-old",
         summary: "deployment runtime changed from runtime-old to runtime-new.",
       }),
     ]);
   });
 
   it("keeps one-sided explanations limited to historical-state intent", () => {
-    const currentEntry = createEntry({
+    const currentDurable = createEntry({
       id: "runtime-new",
       subject: "deployment runtime",
       content: "Deployment runtime uses Node 24.",
@@ -126,7 +126,7 @@ describe("buildClaimTransitionExplanations", () => {
     });
 
     const transitions = buildClaimTransitionExplanations({
-      families: projectClaimCentricRecallEntries([createRecallOutput(currentEntry, 0.9)]),
+      families: projectClaimCentricRecallDurables([createRecallOutput(currentDurable, 0.9)]),
       episodes: [],
       detectedIntent: "factual",
     });
@@ -137,7 +137,7 @@ describe("buildClaimTransitionExplanations", () => {
 
 function createRecallOutput(entry: Durable, score: number): RecallOutput {
   return {
-    entry,
+    durable: entry,
     score,
     scores: {
       relevance: score,

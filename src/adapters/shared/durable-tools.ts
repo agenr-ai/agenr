@@ -9,7 +9,7 @@ export { formatErrorMessage };
 /**
  * Human-readable guidance shown in store tool schemas.
  */
-const ENTRY_TYPE_DESCRIPTION =
+const DURABLE_TYPE_DESCRIPTION =
   "Knowledge type to store. Use fact for durable truth about a person, system, place, or how something works. Use decision for a standing rule, constraint, policy, or chosen approach future sessions should follow - not a progress update or completed action. Use preference for what someone likes, wants, values, or wants avoided. Use lesson for a non-obvious takeaway learned from experience that should change future behavior. Use milestone for a rare one-time event with durable future significance - not ordinary execution progress. Use relationship for a meaningful durable connection between people, groups, or systems. Use directive for first-class memory behavior instructions under claim key user/memory_directive/<name>.";
 
 /**
@@ -28,7 +28,7 @@ const UPDATE_EXPIRY_DESCRIPTION = `${EXPIRY_DESCRIPTION} Accepted values: ${EXPI
  */
 const RECALL_MODES = ["auto", "durables", "episodes", "procedures"] as const;
 
-export { ENTRY_TYPE_DESCRIPTION, EXPIRY_DESCRIPTION, RECALL_MODES, UPDATE_EXPIRY_DESCRIPTION };
+export { DURABLE_TYPE_DESCRIPTION, EXPIRY_DESCRIPTION, RECALL_MODES, UPDATE_EXPIRY_DESCRIPTION };
 
 /**
  * Guards untrusted tool parameters and narrows them to a string-keyed object.
@@ -63,27 +63,27 @@ export function parseExpiry(value: string | undefined): Expiry | undefined {
 }
 
 /**
- * Parses optional recall/store type filters into validated agenr entry types.
+ * Parses optional recall/store type filters into validated agenr durable types.
  *
- * @param values - Candidate entry-type strings.
- * @returns Validated entry types.
+ * @param values - Candidate durable-type strings.
+ * @returns Validated durable types.
  */
 export function parseDurableKinds(values: string[] | undefined): DurableKind[] {
   return normalizeStringArray(values).map((value) => parseDurableKind(value));
 }
 
 /**
- * Parses one entry type string into the agenr domain union.
+ * Parses one durable type string into the agenr domain union.
  *
- * @param value - Candidate entry type.
- * @returns Validated entry type.
+ * @param value - Candidate durable type.
+ * @returns Validated durable type.
  */
 export function parseDurableKind(value: string): DurableKind {
   if (DURABLE_KINDS.includes(value as DurableKind)) {
     return value as DurableKind;
   }
 
-  throw new Error(`Unsupported entry type "${value}".`);
+  throw new Error(`Unsupported durable type "${value}".`);
 }
 
 /**
@@ -121,8 +121,8 @@ export function normalizeStringArray(values: string[] | undefined): string[] {
 /**
  * Formats a compact id-or-subject selector summary for tool call logs.
  *
- * @param id - Optional entry id.
- * @param subject - Optional entry subject.
+ * @param id - Optional durable id.
+ * @param subject - Optional durable subject.
  * @returns Log-friendly selector description.
  */
 export function formatTargetSelector(id?: string, subject?: string): string {

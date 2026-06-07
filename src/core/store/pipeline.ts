@@ -47,8 +47,8 @@ export interface StoreDurablesOptions extends StorePipelineOptions {
   onClaimExtractionDiagnostic?: (inputIndex: number, diagnostic: ClaimExtractionDiagnostic) => void;
 }
 
-/** Validated entry enriched with hashes needed by the store pipeline. */
-interface PreparedEntry {
+/** Validated durable enriched with hashes needed by the store pipeline. */
+interface PreparedDurable {
   input: StoreDurableInput;
   inputIndex: number;
   contentHash: string;
@@ -57,24 +57,24 @@ interface PreparedEntry {
 }
 
 /** Final pipeline outcome assigned to one store input. */
-type StoreEntryOutcome = "stored" | "skipped" | "rejected" | "dry_run";
+type StoreDurableOutcome = "stored" | "skipped" | "rejected" | "dry_run";
 /** Reason code recorded for a skipped or rejected store input. */
-type StoreEntryReason = "content_hash" | "norm_content_hash" | "validation" | "dry_run";
+type StoreDurableReason = "content_hash" | "norm_content_hash" | "validation" | "dry_run";
 
 /**
  * Per-input store decision emitted by the store pipeline.
  */
-export interface StoreEntryDetail {
+export interface StoreDurableDetail {
   inputIndex: number;
-  outcome: StoreEntryOutcome;
-  reason?: StoreEntryReason;
+  outcome: StoreDurableOutcome;
+  reason?: StoreDurableReason;
 }
 
 /**
  * Store result enriched with per-input decisions.
  */
 export interface StoreDurablesDetailedResult extends StoreResult {
-  details: StoreEntryDetail[];
+  details: StoreDurableDetail[];
 }
 
 /** Database port variant that can wrap multiple writes in one transaction. */
@@ -87,18 +87,18 @@ interface TransactionCapableDatabasePort extends DatabasePort {
  */
 interface AutoSupersessionPlan {
   kind: "link" | "skip";
-  oldEntryId?: string;
+  oldDurableId?: string;
   warning?: string;
 }
 
 /**
- * Validates, deduplicates, embeds, and persists a batch of entries.
+ * Validates, deduplicates, embeds, and persists a batch of durables.
  *
- * @param inputs - Candidate entries to store.
+ * @param inputs - Candidate durables to store.
  * @param db - Database port used for dedup checks and persistence.
  * @param embedding - Embedding port used for batch vector generation.
  * @param options - Optional pipeline execution flags.
- * @returns Aggregate store counts for stored, skipped, and rejected entries.
+ * @returns Aggregate store counts for stored, skipped, and rejected durables.
  */
 export async function storeDurables(
   inputs: StoreDurableInput[],
@@ -115,9 +115,9 @@ export async function storeDurables(
 }
 
 /**
- * Validates, deduplicates, embeds, and persists a batch of entries while preserving per-input decisions.
+ * Validates, deduplicates, embeds, and persists a batch of durables while preserving per-input decisions.
  *
- * @param inputs - Candidate entries to store.
+ * @param inputs - Candidate durables to store.
  * @param db - Database port used for dedup checks and persistence.
  * @param embedding - Embedding port used for batch vector generation.
  * @param options - Optional pipeline execution flags.
@@ -167,7 +167,7 @@ export async function storeDurablesDetailed(
   const extractedClaimKeys = await maybeExtractClaimKeys(pendingEntries, options);
   applyExtractedClaimKeyMetadata(pendingEntries, extractedClaimKeys);
   const embeddings = await resolvePendingEmbeddings(inputs, pendingEntries, embedding, options.precomputedEmbeddings);
-  await persistEntries(db, pendingEntries, embeddings, extractedClaimKeys, options.claimExtraction?.config, options.onWarning);
+  await persistDurables(db, pendingEntries, embeddings, extractedClaimKeys, options.claimExtraction?.config, options.onWarning);
   return {
     stored: pendingEntries.length,
     skipped: plan.skipped,
@@ -182,47 +182,47 @@ export async function storeDurablesDetailed(
   };
 }
 
-/** Resolves embeddings for pending entries from precomputed vectors or the embedding port. */
+/** Resolves embeddings for pending durables from precomputed vectors or the embedding port. */
 async function resolvePendingEmbeddings(
   inputs: StoreDurableInput[],
-  entries: PreparedEntry[],
+  durables: PreparedDurable[],
   embedding: EmbeddingPort,
   precomputedEmbeddings?: number[][],
 ): Promise<number[][]> {
   if (!precomputedEmbeddings) {
-    return embedPendingEntries(entries, embedding);
+    return embedPendingDurables(durables, embedding);
   }
 
   if (precomputedEmbeddings.length !== inputs.length) {
     throw new Error(`Precomputed embedding length mismatch: expected ${inputs.length}, received ${precomputedEmbeddings.length}.`);
   }
 
-  return entries.map((entry) => {
-    const vector = precomputedEmbeddings[entry.inputIndex];
+  return durables.map((prepared) => {
+    const vector = precomputedEmbeddings[prepared.inputIndex];
     if (!vector) {
-      throw new Error(`Missing precomputed embedding for input index ${entry.inputIndex}.`);
+      throw new Error(`Missing precomputed embedding for input index ${prepared.inputIndex}.`);
     }
 
     return vector;
   });
 }
 
-/** Embeds each pending entry using its canonical embedding text. */
-async function embedPendingEntries(entries: PreparedEntry[], embedding: EmbeddingPort): Promise<number[][]> {
-  const texts = entries.map(({ input }) => composeEmbeddingText(input));
+/** Embeds each pending durable using its canonical embedding text. */
+async function embedPendingDurables(durables: PreparedDurable[], embedding: EmbeddingPort): Promise<number[][]> {
+  const texts = durables.map(({ input }) => composeEmbeddingText(input));
   const vectors = await embedding.embed(texts);
 
-  if (vectors.length !== entries.length) {
-    throw new Error(`Embedding length mismatch: expected ${entries.length}, received ${vectors.length}.`);
+  if (vectors.length !== durables.length) {
+    throw new Error(`Embedding length mismatch: expected ${durables.length}, received ${vectors.length}.`);
   }
 
   return vectors;
 }
 
-/** Persists prepared entries, using a transaction when the adapter supports it. */
-async function persistEntries(
+/** Persists prepared durables, using a transaction when the adapter supports it. */
+async function persistDurables(
   db: DatabasePort,
-  preparedEntries: PreparedEntry[],
+  preparedEntries: PreparedDurable[],
   embeddings: number[][],
   extractedClaimKeys: Map<number, ClaimExtractionResult>,
   claimExtractionConfig: ClaimExtractionConfig | undefined,
@@ -235,22 +235,22 @@ async function persistEntries(
 
     for (const [index, preparedEntry] of preparedEntries.entries()) {
       const embedding = embeddings[index] ?? [];
-      const entry = buildEntry(preparedEntry, embedding);
-      const entryId = await targetDb.insertDurable(entry, embedding, preparedEntry.contentHash);
+      const entry = buildDurable(preparedEntry, embedding);
+      const durableId = await targetDb.insertDurable(entry, embedding, preparedEntry.contentHash);
       const supersededEntryId = preparedEntry.input.supersedes;
       if (supersededEntryId) {
-        const superseded = await targetDb.supersedeDurable(supersededEntryId, entryId, "update");
+        const superseded = await targetDb.supersedeDurable(supersededEntryId, durableId, "update");
         if (!superseded) {
-          onWarning?.(`Stored entry ${entryId} but could not supersede ${supersededEntryId} because the target was missing or inactive.`);
+          onWarning?.(`Stored durable ${durableId} but could not supersede ${supersededEntryId} because the target was missing or inactive.`);
         }
       }
 
       const autoSupersessionPlan = autoSupersessionPlans.get(preparedEntry.inputIndex);
-      if (autoSupersessionPlan?.kind === "link" && autoSupersessionPlan.oldEntryId) {
-        const superseded = await targetDb.supersedeDurable(autoSupersessionPlan.oldEntryId, entryId, "update");
+      if (autoSupersessionPlan?.kind === "link" && autoSupersessionPlan.oldDurableId) {
+        const superseded = await targetDb.supersedeDurable(autoSupersessionPlan.oldDurableId, durableId, "update");
         if (!superseded) {
           onWarning?.(
-            `Stored entry ${entryId} with claim_key "${preparedEntry.input.claim_key}" but could not auto-supersede ${autoSupersessionPlan.oldEntryId} because the target was missing or inactive.`,
+            `Stored durable ${durableId} with claim_key "${preparedEntry.input.claim_key}" but could not auto-supersede ${autoSupersessionPlan.oldDurableId} because the target was missing or inactive.`,
           );
         }
       }
@@ -277,8 +277,8 @@ async function persistEntries(
   return writeBatch(db);
 }
 
-/** Builds the canonical stored entry record for persistence. */
-function buildEntry(preparedEntry: PreparedEntry, embedding: number[]): Durable {
+/** Builds the canonical stored durable record for persistence. */
+function buildDurable(preparedEntry: PreparedDurable, embedding: number[]): Durable {
   const now = new Date().toISOString();
   const acceptedClaimKey = preparedEntry.claimKey;
 
@@ -321,8 +321,8 @@ function buildEntry(preparedEntry: PreparedEntry, embedding: number[]): Durable 
   };
 }
 
-/** Attempts best-effort claim-key extraction for pending entries before embedding. */
-async function maybeExtractClaimKeys(preparedEntries: PreparedEntry[], options: StoreDurablesOptions): Promise<Map<number, ClaimExtractionResult>> {
+/** Attempts best-effort claim-key extraction for pending durables before embedding. */
+async function maybeExtractClaimKeys(preparedEntries: PreparedDurable[], options: StoreDurablesOptions): Promise<Map<number, ClaimExtractionResult>> {
   const claimExtraction = options.claimExtraction;
   if (!claimExtraction || preparedEntries.length === 0) {
     return new Map();
@@ -332,7 +332,7 @@ async function maybeExtractClaimKeys(preparedEntries: PreparedEntry[], options: 
     const extractedEntries = await runBatchClaimExtraction(
       [
         {
-          entries: preparedEntries.map((preparedEntry) => preparedEntry.input),
+          durables: preparedEntries.map((preparedEntry) => preparedEntry.input),
         },
       ],
       {
@@ -371,8 +371,8 @@ function hasTransactionSupport(db: DatabasePort): db is TransactionCapableDataba
   return typeof (db as Partial<TransactionCapableDatabasePort>).withTransaction === "function";
 }
 
-/** Applies extracted claim-key lifecycle metadata to prepared entries after batch extraction. */
-function applyExtractedClaimKeyMetadata(preparedEntries: PreparedEntry[], extractedClaimKeys: Map<number, ClaimExtractionResult>): void {
+/** Applies extracted claim-key lifecycle metadata to prepared durables after batch extraction. */
+function applyExtractedClaimKeyMetadata(preparedEntries: PreparedDurable[], extractedClaimKeys: Map<number, ClaimExtractionResult>): void {
   for (const preparedEntry of preparedEntries) {
     if (preparedEntry.claimKey) {
       continue;
@@ -395,16 +395,16 @@ function applyExtractedClaimKeyMetadata(preparedEntries: PreparedEntry[], extrac
  * Plans conservative claim-key-driven supersession links before persistence begins.
  *
  * The plan is computed before any inserts run so it only considers pre-existing
- * active siblings, not other entries in the current store batch.
+ * active siblings, not other durables in the current store batch.
  */
 async function planAutoSupersession(
   db: DatabasePort,
-  preparedEntries: PreparedEntry[],
+  preparedEntries: PreparedDurable[],
   extractedClaimKeys: Map<number, ClaimExtractionResult>,
   claimExtractionConfig: ClaimExtractionConfig | undefined,
 ): Promise<Map<number, AutoSupersessionPlan>> {
   const plans = new Map<number, AutoSupersessionPlan>();
-  const preparedEntriesByClaimKey = groupPreparedEntriesByClaimKey(preparedEntries);
+  const preparedEntriesByClaimKey = groupPreparedDurablesByClaimKey(preparedEntries);
   const siblingCache = new Map<string, Durable[]>();
 
   for (const preparedEntry of preparedEntries) {
@@ -422,7 +422,7 @@ async function planAutoSupersession(
     if (batchSiblingCount > 1) {
       plans.set(preparedEntry.inputIndex, {
         kind: "skip",
-        warning: `Skipped auto-supersession for claim_key "${claimKey}" because this store batch contains ${batchSiblingCount} entries for the same slot.`,
+        warning: `Skipped auto-supersession for claim_key "${claimKey}" because this store batch contains ${batchSiblingCount} durables for the same slot.`,
       });
       continue;
     }
@@ -462,16 +462,16 @@ async function planAutoSupersession(
 
     plans.set(preparedEntry.inputIndex, {
       kind: "link",
-      oldEntryId: sibling.id,
+      oldDurableId: sibling.id,
     });
   }
 
   return plans;
 }
 
-/** Groups prepared entries by their canonical claim key. */
-function groupPreparedEntriesByClaimKey(preparedEntries: PreparedEntry[]): Map<string, PreparedEntry[]> {
-  const grouped = new Map<string, PreparedEntry[]>();
+/** Groups prepared durables by their canonical claim key. */
+function groupPreparedDurablesByClaimKey(preparedEntries: PreparedDurable[]): Map<string, PreparedDurable[]> {
+  const grouped = new Map<string, PreparedDurable[]>();
 
   for (const preparedEntry of preparedEntries) {
     const claimKey = preparedEntry.claimKey?.claim_key ?? preparedEntry.input.claim_key;
@@ -499,7 +499,7 @@ async function getClaimKeySiblings(db: DatabasePort, cache: Map<string, Durable[
   return siblings;
 }
 
-/** Returns whether one prepared entry may auto-link through claim-key supersession. */
+/** Returns whether one prepared durable may auto-link through claim-key supersession. */
 function isAutoSupersessionEligible(claimKey: ResolvedClaimKeyLifecycle | undefined, claimExtractionConfig: ClaimExtractionConfig | undefined): boolean {
   if (!claimKey || claimKey.claim_key_status !== "trusted") {
     return false;
@@ -517,27 +517,27 @@ function isAutoSupersessionEligible(claimKey: ResolvedClaimKeyLifecycle | undefi
 }
 
 /** Explains why one claim-key match stayed stored without an automatic link. */
-function buildAutoSupersessionEligibilityWarning(preparedEntry: PreparedEntry): string {
+function buildAutoSupersessionEligibilityWarning(preparedEntry: PreparedDurable): string {
   const acceptedClaimKey = preparedEntry.claimKey;
   const claimKey = acceptedClaimKey?.claim_key ?? preparedEntry.input.claim_key ?? "(missing)";
   if (!acceptedClaimKey) {
-    return `Stored entry "${preparedEntry.input.subject}" with claim_key "${claimKey}" but skipped auto-supersession because the claim-key provenance was not explicit or a tracked high-confidence extraction.`;
+    return `Stored durable "${preparedEntry.input.subject}" with claim_key "${claimKey}" but skipped auto-supersession because the claim-key provenance was not explicit or a tracked high-confidence extraction.`;
   }
 
   if (acceptedClaimKey.claim_key_source === "manual") {
-    return `Stored entry "${preparedEntry.input.subject}" with claim_key "${claimKey}" but skipped auto-supersession because the claim-key provenance was not eligible for automatic linking.`;
+    return `Stored durable "${preparedEntry.input.subject}" with claim_key "${claimKey}" but skipped auto-supersession because the claim-key provenance was not eligible for automatic linking.`;
   }
 
   if (acceptedClaimKey.claim_key_status !== "trusted") {
     return (
-      `Stored entry "${preparedEntry.input.subject}" with claim_key "${claimKey}" but skipped auto-supersession because the accepted claim key is ` +
+      `Stored durable "${preparedEntry.input.subject}" with claim_key "${claimKey}" but skipped auto-supersession because the accepted claim key is ` +
       `${acceptedClaimKey.claim_key_status} from ${acceptedClaimKey.claim_key_source} at confidence ${acceptedClaimKey.claim_key_confidence.toFixed(2)}. Only explicit/manual claim keys or model-extracted keys at ` +
       `${AUTO_SUPERSESSION_MIN_EXTRACTED_CONFIDENCE.toFixed(2)}+ auto-link.`
     );
   }
 
   return (
-    `Stored entry "${preparedEntry.input.subject}" with claim_key "${claimKey}" but skipped auto-supersession because the extracted claim key came from ` +
+    `Stored durable "${preparedEntry.input.subject}" with claim_key "${claimKey}" but skipped auto-supersession because the extracted claim key came from ` +
     `${acceptedClaimKey.claim_key_source} at confidence ${acceptedClaimKey.claim_key_confidence.toFixed(2)}. Only explicit/manual claim keys or model-extracted keys at ` +
     `${AUTO_SUPERSESSION_MIN_EXTRACTED_CONFIDENCE.toFixed(2)}+ auto-link.`
   );
@@ -545,36 +545,36 @@ function buildAutoSupersessionEligibilityWarning(preparedEntry: PreparedEntry): 
 
 /** Explains why a same-claim-key sibling failed the conservative type-policy checks. */
 function buildAutoSupersessionRuleWarning(
-  preparedEntry: PreparedEntry,
+  preparedEntry: PreparedDurable,
   sibling: Pick<Durable, "type" | "expiry">,
   reason: SupersessionRuleFailureReason,
 ): string {
   if (reason === "type_mismatch") {
     return (
-      `Stored entry "${preparedEntry.input.subject}" with claim_key "${preparedEntry.input.claim_key}" but skipped auto-supersession because the matching ` +
-      `active entry is type "${sibling.type}" and the new entry is type "${preparedEntry.input.type}". ${describeSupersessionRuleFailure(reason)}`
+      `Stored durable "${preparedEntry.input.subject}" with claim_key "${preparedEntry.input.claim_key}" but skipped auto-supersession because the matching ` +
+      `active durable is type "${sibling.type}" and the new durable is type "${preparedEntry.input.type}". ${describeSupersessionRuleFailure(reason)}`
     );
   }
 
   return (
-    `Stored entry "${preparedEntry.input.subject}" with claim_key "${preparedEntry.input.claim_key}" but skipped auto-supersession: ` +
+    `Stored durable "${preparedEntry.input.subject}" with claim_key "${preparedEntry.input.claim_key}" but skipped auto-supersession: ` +
     `${describeSupersessionRuleFailure(reason)}`
   );
 }
 
-/** Validates inputs and filters out entries that should not reach persistence. */
+/** Validates inputs and filters out durables that should not reach persistence. */
 async function buildStorePlan(
   inputs: StoreDurableInput[],
   db: DatabasePort,
 ): Promise<{
-  pendingEntries: PreparedEntry[];
+  pendingEntries: PreparedDurable[];
   skipped: number;
   rejected: number;
-  details: StoreEntryDetail[];
+  details: StoreDurableDetail[];
   warnings: string[];
 }> {
   const validation = validateEntriesWithIndexes(inputs);
-  const details: StoreEntryDetail[] = validation.rejectedInputIndexes.map((inputIndex) => ({
+  const details: StoreDurableDetail[] = validation.rejectedInputIndexes.map((inputIndex) => ({
     inputIndex,
     outcome: "rejected",
     reason: "validation",
@@ -604,17 +604,17 @@ async function buildStorePlan(
   };
 }
 
-/** Removes duplicate prepared entries within the current batch by hash field. */
+/** Removes duplicate prepared durables within the current batch by hash field. */
 function dedupePreparedEntries(
-  entries: PreparedEntry[],
+  durables: PreparedDurable[],
   field: "contentHash" | "normContentHash",
-  reason: Exclude<StoreEntryReason, "validation" | "dry_run">,
-  details: StoreEntryDetail[],
-): PreparedEntry[] {
+  reason: Exclude<StoreDurableReason, "validation" | "dry_run">,
+  details: StoreDurableDetail[],
+): PreparedDurable[] {
   const seen = new Set<string>();
-  const deduped: PreparedEntry[] = [];
+  const deduped: PreparedDurable[] = [];
 
-  for (const entry of entries) {
+  for (const entry of durables) {
     const key = entry[field];
     if (seen.has(key)) {
       details.push({
@@ -632,15 +632,15 @@ function dedupePreparedEntries(
   return deduped;
 }
 
-/** Filters out prepared entries whose hash field already exists in storage. */
+/** Filters out prepared durables whose hash field already exists in storage. */
 function filterExistingPreparedEntries(
-  entries: PreparedEntry[],
+  durables: PreparedDurable[],
   existing: Set<string>,
   field: "contentHash" | "normContentHash",
-  reason: Exclude<StoreEntryReason, "validation" | "dry_run">,
-  details: StoreEntryDetail[],
-): PreparedEntry[] {
-  return entries.filter((entry) => {
+  reason: Exclude<StoreDurableReason, "validation" | "dry_run">,
+  details: StoreDurableDetail[],
+): PreparedDurable[] {
+  return durables.filter((entry) => {
     if (!existing.has(entry[field])) {
       return true;
     }
@@ -664,7 +664,7 @@ function formatPipelineError(error: unknown): string {
 }
 
 /** Sorts per-input store details back into original input order. */
-function sortStoreDetails(details: StoreEntryDetail[]): StoreEntryDetail[] {
+function sortStoreDetails(details: StoreDurableDetail[]): StoreDurableDetail[] {
   return [...details].sort((left, right) => left.inputIndex - right.inputIndex);
 }
 

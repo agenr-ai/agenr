@@ -12,7 +12,7 @@ export interface SkelnSessionStartTransition {
 
 /** Skeln session_before_fork payload fields consumed by session-memory intake. */
 export interface SkelnSessionBeforeForkEvent {
-  entryId?: string;
+  durableId?: string;
   position: "before" | "at";
 }
 
@@ -106,7 +106,7 @@ export function buildSkelnSessionStartTriggerEvent(scope: AgenrSkelnSessionScope
  * @returns Canonical session-memory lifecycle event.
  */
 export function buildSkelnSessionBeforeForkTriggerEvent(scope: AgenrSkelnSessionScope, event: SkelnSessionBeforeForkEvent): SessionMemoryTriggerEvent {
-  const forkEntryId = event.entryId?.trim();
+  const forkEntryId = event.durableId?.trim();
 
   return {
     type: "session_before_fork",

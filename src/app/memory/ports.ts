@@ -4,7 +4,7 @@ import type { Durable } from "../../core/types.js";
 /**
  * Recent recall event metadata returned by memory trace surfaces.
  */
-export interface EntryRecallEvent {
+export interface DurableRecallEvent {
   query?: string;
   sessionKey?: string;
   recalledAt: string;
@@ -13,17 +13,17 @@ export interface EntryRecallEvent {
 /**
  * Recall summary returned by the trace read model.
  */
-export interface EntryTraceRecallSummary {
+export interface DurableTraceRecallSummary {
   /** Total persisted recall events for the durable. */
   totalCount: number;
   /** Most recent recall events, ordered newest first. */
-  recentEvents: EntryRecallEvent[];
+  recentEvents: DurableRecallEvent[];
 }
 
 /**
  * Dreaming audit action linked to one traced durable.
  */
-export interface EntryTraceDreamAction {
+export interface DurableTraceDreamAction {
   id: string;
   runId: string;
   actionType: string;
@@ -35,7 +35,7 @@ export interface EntryTraceDreamAction {
 /**
  * Profile snapshot that included one traced durable.
  */
-export interface EntryTraceProfileSnapshot {
+export interface DurableTraceProfileSnapshot {
   id: string;
   asOf: string;
   runId: string | null;
@@ -46,7 +46,7 @@ export interface EntryTraceProfileSnapshot {
 /**
  * Provenance facts surfaced by the trace read model.
  */
-export interface EntryTraceProvenance {
+export interface DurableTraceProvenance {
   sourceFile?: string;
   sourceContext?: string;
   claimKeySource?: string;
@@ -59,7 +59,7 @@ export interface EntryTraceProvenance {
 /**
  * One chronological audit event in a durable trace timeline.
  */
-export interface EntryTraceTimelineEvent {
+export interface DurableTraceTimelineEvent {
   at: string;
   kind: "created" | "updated" | "dream" | "recall" | "profile";
   label: string;
@@ -79,30 +79,30 @@ export interface ClaimFamily {
   /** Human-readable explanation of how the slot policy was chosen. */
   slotPolicyReason?: string;
   /** Family rows ordered oldest-first for lineage inspection. */
-  entries: Durable[];
+  durables: Durable[];
 }
 
 /**
  * Unified provenance and audit view for one durable.
  */
-export interface EntryTrace {
-  entry: Durable;
+export interface DurableTrace {
+  durable: Durable;
   supersededBy?: Durable;
   supersedes: Durable[];
   claimFamily?: ClaimFamily;
-  recall: EntryTraceRecallSummary;
-  provenance: EntryTraceProvenance;
-  dreamActions: EntryTraceDreamAction[];
-  profileSnapshots: EntryTraceProfileSnapshot[];
-  timeline: EntryTraceTimelineEvent[];
+  recall: DurableTraceRecallSummary;
+  provenance: DurableTraceProvenance;
+  dreamActions: DurableTraceDreamAction[];
+  profileSnapshots: DurableTraceProfileSnapshot[];
+  timeline: DurableTraceTimelineEvent[];
 }
 
 /**
  * Aggregate memory status facts used by host memory runtimes.
  */
 export interface MemoryStatusSnapshot {
-  activeEntries: number;
-  coreEntries: number;
+  activeDurables: number;
+  coreDurables: number;
   sourceFiles: number;
 }
 
@@ -111,27 +111,27 @@ export interface MemoryStatusSnapshot {
  */
 export interface MemoryRepository {
   /**
-   * Finds the most recent entry matching a subject string.
+   * Finds the most recent durable matching a subject string.
    *
    * @param subject - Free-form subject text to resolve.
-   * @returns Matching entry, or `null` when no match exists.
+   * @returns Matching durable, or `null` when no match exists.
    */
-  findEntryBySubject(subject: string): Promise<Durable | null>;
+  findDurableBySubject(subject: string): Promise<Durable | null>;
 
   /**
-   * Finds the most recently created entry from any state.
+   * Finds the most recently created durable from any state.
    *
-   * @returns Newest entry, or `null` when none exist.
+   * @returns Newest durable, or `null` when none exist.
    */
-  findMostRecentEntry(): Promise<Durable | null>;
+  findMostRecentDurable(): Promise<Durable | null>;
 
   /**
-   * Loads the current trace view for one entry.
+   * Loads the current trace view for one durable.
    *
-   * @param entryId - Entry identifier to inspect.
-   * @returns Trace payload, or `null` when the entry is missing.
+   * @param durableId - Durable identifier to inspect.
+   * @returns Trace payload, or `null` when the durable is missing.
    */
-  getEntryTrace(entryId: string): Promise<EntryTrace | null>;
+  getDurableTrace(durableId: string): Promise<DurableTrace | null>;
 
   /**
    * Reads aggregate counts for host status surfaces.

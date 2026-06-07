@@ -53,7 +53,7 @@ export interface RecallInput {
  * in the composite score directly now that RRF owns the fused signal.
  */
 export interface RecallOutput {
-  entry: Durable;
+  durable: Durable;
   score: number;
   scores: {
     /** Fused reciprocal rank fusion score used as the composite relevance signal. */
@@ -105,7 +105,7 @@ export type RecallCandidateDurable = Pick<
  * A candidate returned from vector search with ranking-time entry data.
  */
 export interface VectorCandidate {
-  entry: RecallCandidateDurable;
+  durable: RecallCandidateDurable;
   vectorSim: number;
 }
 
@@ -118,7 +118,7 @@ export interface VectorCandidate {
  * final composite score.
  */
 export interface FtsCandidate {
-  entry: RecallCandidateDurable;
+  durable: RecallCandidateDurable;
   rank: number;
   tier: "exact" | "all_tokens" | "any_tokens";
 }
@@ -129,7 +129,7 @@ export interface FtsCandidate {
  * in the vector channel.
  */
 export interface RecallMergedCandidate {
-  entry: RecallCandidateDurable;
+  durable: RecallCandidateDurable;
   vectorSim?: number;
 }
 

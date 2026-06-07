@@ -1,11 +1,11 @@
-import { projectClaimCentricRecallEntries } from "../../../../src/app/recall/claim-centric.js";
+import { projectClaimCentricRecallDurables } from "../../../../src/app/recall/claim-centric.js";
 import type { UnifiedRecallResult } from "../../../../src/app/recall/index.js";
 import type { RecallOutput } from "../../../../src/core/recall/types.js";
 
 /** Builds one recall output row for adapter formatting tests. */
 export function createRecallOutput(content: string): RecallOutput {
   return {
-    entry: {
+    durable: {
       id: "entry-1",
       type: "fact",
       subject: "Skeln architecture",
@@ -36,8 +36,8 @@ export function createRecallOutput(content: string): RecallOutput {
 
 /** Builds a minimal unified recall result containing one entry family. */
 export function createUnifiedRecallResult(content: string): UnifiedRecallResult {
-  const entries = [createRecallOutput(content)];
-  const entryFamilies = projectClaimCentricRecallEntries(entries);
+  const durables = [createRecallOutput(content)];
+  const durableFamilies = projectClaimCentricRecallDurables(durables);
   return {
     routing: {
       requested: "durables",
@@ -48,9 +48,9 @@ export function createUnifiedRecallResult(content: string): UnifiedRecallResult 
     procedureCandidates: [],
     procedureNotices: [],
     episodes: [],
-    entries,
-    projectedEntries: entryFamilies.flatMap((family) => family.entries),
-    entryFamilies,
+    durables,
+    projectedDurables: durableFamilies.flatMap((family) => family.durables),
+    durableFamilies,
     claimTransitions: [],
     notices: [],
     count: 1,

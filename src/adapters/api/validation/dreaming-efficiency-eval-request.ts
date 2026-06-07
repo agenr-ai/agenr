@@ -6,7 +6,7 @@ import type {
 import { DREAM_TIERS, type DreamCompletionSummary } from "../../../core/dreaming/types.js";
 import type { ValidationIssue } from "../../shared/validation.js";
 import { parseOptionalBoolean, parseOptionalTrimmedString, parseRequiredTrimmedString, pushIssue, pushUnexpectedFields } from "../../shared/validation.js";
-import { mapFixtureEntryDto, mapSandboxRequestDto, parseMemoryPool, parseObject, parseSandbox } from "./internal-eval-shared.js";
+import { mapFixtureDurableDto, mapSandboxRequestDto, parseMemoryPool, parseObject, parseSandbox } from "./internal-eval-shared.js";
 import { parseDreamCompletionSummary } from "./parse-dream-completion-summary.js";
 
 const ROOT_REQUEST_KEYS = new Set<string>(["caseId", "description", "sandbox", "memoryPool", "dreamRunFixture", "options"]);
@@ -103,7 +103,7 @@ export function mapDreamingEfficiencyEvalCaseRequestDto(dto: DreamingEfficiencyE
     caseId: dto.caseId,
     ...(dto.description ? { description: dto.description } : {}),
     ...(dto.sandbox ? { sandbox: mapSandboxRequestDto(dto.sandbox) } : {}),
-    memoryPool: dto.memoryPool.map((entry) => mapFixtureEntryDto(entry)),
+    memoryPool: dto.memoryPool.map((entry) => mapFixtureDurableDto(entry)),
     dreamRunFixture: mapDreamRunFixtureDto(dto.dreamRunFixture),
     ...(dto.options ? { options: mapCaseOptionsDto(dto.options) } : {}),
   };

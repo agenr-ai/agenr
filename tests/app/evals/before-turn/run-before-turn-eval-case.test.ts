@@ -36,7 +36,7 @@ afterEach(async () => {
 });
 
 describe("runBeforeTurnEvalCase", () => {
-  it("returns the selected durable entry id and rendered patch text for an inject case", async () => {
+  it("returns the selected durable id and rendered patch text for an inject case", async () => {
     process.env.OPENAI_API_KEY = "test-key";
     vi.stubGlobal("fetch", createEmbeddingFetchStub());
 
@@ -71,13 +71,13 @@ describe("runBeforeTurnEvalCase", () => {
       caseId: "before-turn-inject",
       output: {
         abstained: false,
-        selectedEntryIds: ["duke-identity"],
+        selectedDurableIds: ["duke-identity"],
         selectedProcedureKey: null,
         patch: {
           durableMemory: [
             expect.objectContaining({
               rank: 1,
-              entry: expect.objectContaining({
+              durable: expect.objectContaining({
                 id: "duke-identity",
               }),
             }),
@@ -103,7 +103,7 @@ describe("runBeforeTurnEvalCase", () => {
         preserved: false,
       },
     });
-    expect(response.output?.patch.durableMemory[0]?.entry).toMatchObject({
+    expect(response.output?.patch.durableMemory[0]?.durable).toMatchObject({
       claim_key: "duke/owner",
       claimKey: "duke/owner",
     });
@@ -138,7 +138,7 @@ describe("runBeforeTurnEvalCase", () => {
       caseId: "before-turn-greeting-abstain",
       output: {
         abstained: true,
-        selectedEntryIds: [],
+        selectedDurableIds: [],
         selectedProcedureKey: null,
         renderedPatchText: "",
       },
@@ -194,7 +194,7 @@ describe("runBeforeTurnEvalCase", () => {
       caseId: "before-turn-procedure",
       output: {
         abstained: false,
-        selectedEntryIds: [],
+        selectedDurableIds: [],
         selectedProcedureKey: "security/signing-key-rotation",
       },
       diagnostics: {
@@ -240,7 +240,7 @@ describe("runBeforeTurnEvalCase", () => {
     });
 
     expect(response.status).toBe("ok");
-    expect(response.output?.selectedEntryIds).toEqual(["duke-identity"]);
+    expect(response.output?.selectedDurableIds).toEqual(["duke-identity"]);
     expect(response.diagnostics).toMatchObject({
       query: "Who is Duke?",
       queryPolicy: "current_only",
@@ -259,13 +259,13 @@ describe("runBeforeTurnEvalCase", () => {
       directness: {
         queryKind: "entity_definition",
         entity: "Duke",
-        winnerEntryId: "duke-identity",
+        winnerDurableId: "duke-identity",
         candidates: expect.arrayContaining([
           expect.objectContaining({
-            entryId: "duke-identity",
+            durableId: "duke-identity",
           }),
           expect.objectContaining({
-            entryId: "duke-cousins",
+            durableId: "duke-cousins",
           }),
         ]),
       },
@@ -307,7 +307,7 @@ describe("runBeforeTurnEvalCase", () => {
     });
 
     expect(response.status).toBe("ok");
-    expect(response.output?.selectedEntryIds).toEqual(["duke-identity"]);
+    expect(response.output?.selectedDurableIds).toEqual(["duke-identity"]);
     expect(response.diagnostics).toMatchObject({
       query: "What about him?\nTopic: Duke is Jim's dog.",
       queryPolicy: "contextual_required",
@@ -414,7 +414,7 @@ describe("runBeforeTurnEvalCase", () => {
 
     const sourceRoot = await createTempDirectory("agenr-before-turn-snapshot-source-");
     const snapshotDbPath = path.join(sourceRoot, "knowledge.db");
-    await seedSnapshotEntry(snapshotDbPath, {
+    await seedSnapshotDurable(snapshotDbPath, {
       id: "snapshot-duke",
       type: "fact",
       subject: "duke identity",
@@ -457,7 +457,7 @@ describe("runBeforeTurnEvalCase", () => {
     });
 
     expect(response.status).toBe("ok");
-    expect(response.output?.selectedEntryIds).toEqual(["snapshot-duke"]);
+    expect(response.output?.selectedDurableIds).toEqual(["snapshot-duke"]);
     expect(response.sandbox).toMatchObject({
       root: sandboxRoot,
       preserved: true,
@@ -479,7 +479,7 @@ describe("runBeforeTurnEvalCase", () => {
 
     const sourceRoot = await createTempDirectory("agenr-before-turn-overlay-source-");
     const snapshotDbPath = path.join(sourceRoot, "knowledge.db");
-    await seedSnapshotEntry(snapshotDbPath, {
+    await seedSnapshotDurable(snapshotDbPath, {
       id: "snapshot-duke",
       type: "fact",
       subject: "duke identity",
@@ -525,7 +525,7 @@ describe("runBeforeTurnEvalCase", () => {
     });
 
     expect(response.status).toBe("ok");
-    expect(response.output?.selectedEntryIds).toEqual(["overlay-pager"]);
+    expect(response.output?.selectedDurableIds).toEqual(["overlay-pager"]);
 
     const overlaySandboxDb = await createDatabase(path.join(sandboxRoot, "knowledge.db"));
     try {
@@ -597,7 +597,7 @@ describe("runBeforeTurnEvalCase", () => {
       trigger: "unspecified",
       currentTurnText: "who is Duke?",
     });
-    expect(artifact.selectedEntryIds).toEqual(["duke-debug"]);
+    expect(artifact.selectedDurableIds).toEqual(["duke-debug"]);
     expect(artifact.selectedProcedureKey).toBeNull();
     expect(artifact.durableRecallTopCandidates).toBeDefined();
     expect(artifact.durableRecallTopCandidates!.length).toBeLessThanOrEqual(2);
@@ -611,7 +611,7 @@ describe("runBeforeTurnEvalCase", () => {
   it("keeps isolated eval state from leaking live database entries into results", async () => {
     const tempRoot = await createTempDirectory("agenr-before-turn-live-");
     const liveDbPath = path.join(tempRoot, "live.sqlite");
-    await seedLiveEntry(liveDbPath, {
+    await seedLiveDurable(liveDbPath, {
       id: "live-only",
       type: "fact",
       subject: "live state leak",
@@ -649,8 +649,8 @@ describe("runBeforeTurnEvalCase", () => {
     });
 
     expect(response.status).toBe("ok");
-    expect(response.output?.selectedEntryIds).toEqual(["fixture-entry"]);
-    expect(response.output?.selectedEntryIds).not.toContain("live-only");
+    expect(response.output?.selectedDurableIds).toEqual(["fixture-entry"]);
+    expect(response.output?.selectedDurableIds).not.toContain("live-only");
     await expect(access(response.sandbox?.dbPath ?? "")).rejects.toBeDefined();
   });
 });
@@ -663,7 +663,7 @@ async function createTempDirectory(prefix: string): Promise<string> {
 }
 
 /** Seeds one entry into a standalone live database used to detect state leaks. */
-async function seedLiveEntry(dbPath: string, entry: Parameters<Awaited<ReturnType<typeof createDatabase>>["insertDurable"]>[0]): Promise<void> {
+async function seedLiveDurable(dbPath: string, entry: Parameters<Awaited<ReturnType<typeof createDatabase>>["insertDurable"]>[0]): Promise<void> {
   const database = await createDatabase(dbPath);
   try {
     await database.insertDurable(entry, hashToVector(`${entry.subject} ${entry.content}`, 1024), entry.id);
@@ -677,7 +677,7 @@ async function seedLiveEntry(dbPath: string, entry: Parameters<Awaited<ReturnTyp
  * WAL so the main database file captures every seeded row before the
  * sandbox copyFile step runs.
  */
-async function seedSnapshotEntry(dbPath: string, entry: Parameters<Awaited<ReturnType<typeof createDatabase>>["insertDurable"]>[0]): Promise<void> {
+async function seedSnapshotDurable(dbPath: string, entry: Parameters<Awaited<ReturnType<typeof createDatabase>>["insertDurable"]>[0]): Promise<void> {
   const database = await createDatabase(dbPath);
   try {
     await database.insertDurable(entry, hashToVector(`${entry.subject} ${entry.content}`, 1024), entry.id);

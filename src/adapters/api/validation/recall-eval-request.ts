@@ -4,7 +4,7 @@ import {
   type RecallEvalCaseOptions,
   type RecallEvalCaseRequest,
   type RecallEvalFaultInjectionRequest,
-  type RecallEvalFixtureEntry,
+  type RecallEvalFixtureDurable,
   type RecallEvalPath,
   type RecallEvalQueryRequest,
   type RecallEvalSandboxRequest,
@@ -15,13 +15,13 @@ import type { RecallRankingPolicy } from "../../../core/recall/trace.js";
 import { DURABLE_KINDS } from "../../../core/types.js";
 import {
   extractParseableCaseId,
-  mapFixtureEntryDto as mapSharedFixtureEntryDto,
+  mapFixtureDurableDto,
   parseMemoryPool,
   parseObject,
   parseOptionalStringArray,
   parseOptionalThreshold,
   parseSandbox,
-  type InternalEvalFixtureEntryDto,
+  type InternalEvalFixtureDurableDto,
 } from "./internal-eval-shared.js";
 import {
   isRecord,
@@ -102,13 +102,13 @@ export interface RecallEvalSandboxRequestDto {
 }
 
 /**
- * Adapter-owned normalized fixture entry DTO.
+ * Adapter-owned normalized fixture durable DTO.
  */
-export interface RecallEvalFixtureEntryDto {
-  /** Optional stable entry identifier. */
+export interface RecallEvalFixtureDurableDto {
+  /** Optional stable durable identifier. */
   id?: string;
-  /** Durable entry type. */
-  type: InternalEvalFixtureEntryDto["type"];
+  /** Durable durable type. */
+  type: InternalEvalFixtureDurableDto["type"];
   /** Fixture subject line. */
   subject: string;
   /** Fixture content body. */
@@ -116,7 +116,7 @@ export interface RecallEvalFixtureEntryDto {
   /** Optional importance override. */
   importance?: number;
   /** Optional expiry override. */
-  expiry?: InternalEvalFixtureEntryDto["expiry"];
+  expiry?: InternalEvalFixtureDurableDto["expiry"];
   /** Optional normalized tag list. */
   tags?: string[];
   /** Optional source file path. */
@@ -127,14 +127,14 @@ export interface RecallEvalFixtureEntryDto {
   created_at?: string;
   /** Optional update timestamp. */
   updated_at?: string;
-  /** Optional successor entry identifier. */
+  /** Optional successor durable identifier. */
   superseded_by?: string;
   /** Optional canonical claim key. */
   claim_key?: string;
   /** Optional claim-key lifecycle status. */
-  claim_key_status?: InternalEvalFixtureEntryDto["claim_key_status"];
+  claim_key_status?: InternalEvalFixtureDurableDto["claim_key_status"];
   /** Optional claim-key provenance source. */
-  claim_key_source?: InternalEvalFixtureEntryDto["claim_key_source"];
+  claim_key_source?: InternalEvalFixtureDurableDto["claim_key_source"];
   /** Optional claim support source kind. */
   claim_support_source_kind?: string;
   /** Optional claim support locator. */
@@ -142,7 +142,7 @@ export interface RecallEvalFixtureEntryDto {
   /** Optional claim support observed-at timestamp. */
   claim_support_observed_at?: string;
   /** Optional claim support normalization mode. */
-  claim_support_mode?: InternalEvalFixtureEntryDto["claim_support_mode"];
+  claim_support_mode?: InternalEvalFixtureDurableDto["claim_support_mode"];
   /** Optional validity lower bound. */
   valid_from?: string;
   /** Optional validity upper bound. */
@@ -235,8 +235,8 @@ export interface RecallEvalCaseRequestDto {
   recallPath?: RecallEvalPath;
   /** Optional sandbox controls. */
   sandbox?: RecallEvalSandboxRequestDto;
-  /** Explicit fixture entries to provision. */
-  memoryPool: RecallEvalFixtureEntryDto[];
+  /** Explicit fixture durables to provision. */
+  memoryPool: RecallEvalFixtureDurableDto[];
   /** Normalized recall query payload. */
   recallRequest: RecallEvalQueryRequestDto;
   /** Optional unified-only caller context. */
@@ -331,7 +331,7 @@ export function mapRecallEvalCaseRequestDto(dto: RecallEvalCaseRequestDto): Reca
     description: dto.description,
     recallPath: dto.recallPath,
     sandbox: mapSandboxRequestDto(dto.sandbox),
-    memoryPool: dto.memoryPool.map(mapFixtureEntryDto),
+    memoryPool: dto.memoryPool.map((fixture) => mapFixtureDurableDto(fixture) as RecallEvalFixtureDurable),
     recallRequest: mapRecallRequestDto(dto.recallRequest),
     unified: mapUnifiedRequestDto(dto.unified),
     options: mapCaseOptionsDto(dto.options),
@@ -614,20 +614,20 @@ function parseUnifiedMemoryPolicy(value: unknown, issues: RecallEvalValidationIs
 }
 
 /**
- * Parses a valid entry type enum member.
+ * Parses a valid durable type enum member.
  *
  * @param value - Raw entry-type value.
  * @param path - Stable validation path.
  * @param issues - Mutable validation issue collection.
- * @returns Valid entry type when recognized.
+ * @returns Valid durable type when recognized.
  */
-function parseDurableKind(value: unknown, path: string, issues: RecallEvalValidationIssue[]): InternalEvalFixtureEntryDto["type"] | undefined {
-  if (typeof value !== "string" || !DURABLE_KINDS.includes(value as RecallEvalFixtureEntry["type"])) {
+function parseDurableKind(value: unknown, path: string, issues: RecallEvalValidationIssue[]): InternalEvalFixtureDurableDto["type"] | undefined {
+  if (typeof value !== "string" || !DURABLE_KINDS.includes(value as RecallEvalFixtureDurable["type"])) {
     pushIssue(issues, path, `Expected one of: ${DURABLE_KINDS.join(", ")}.`);
     return undefined;
   }
 
-  return value as InternalEvalFixtureEntryDto["type"];
+  return value as InternalEvalFixtureDurableDto["type"];
 }
 
 /**
@@ -695,7 +695,7 @@ function parseOptionalRankingProfile(value: unknown, path: string, issues: Recal
 
 /**
 /**
- * Parses an optional array of valid entry type enum members.
+ * Parses an optional array of valid durable type enum members.
  *
  * @param value - Raw entry-type array field.
  * @param path - Stable validation path.
@@ -854,16 +854,6 @@ function mapSandboxRequestDto(dto: RecallEvalSandboxRequestDto | undefined): Rec
     now: dto.now,
     profileSnapshot: dto.profileSnapshot,
   };
-}
-
-/**
- * Maps an adapter fixture-entry DTO into the app-layer fixture contract.
- *
- * @param dto - Adapter fixture-entry DTO.
- * @returns App fixture request.
- */
-function mapFixtureEntryDto(dto: RecallEvalFixtureEntryDto): RecallEvalFixtureEntry {
-  return mapSharedFixtureEntryDto(dto) as RecallEvalFixtureEntry;
 }
 
 /**

@@ -3,42 +3,42 @@ import type { DatabasePort } from "../../core/ports.js";
 import type { Durable } from "../../core/types.js";
 
 /** Database and memory ports used to resolve id/subject tool targets. */
-export interface EntryMemoryResolverServices {
-  entries: Pick<DatabasePort, "getDurable">;
-  memory: Pick<MemoryRepository, "findEntryBySubject" | "getEntryTrace">;
+export interface DurableMemoryResolverServices {
+  durables: Pick<DatabasePort, "getDurable">;
+  memory: Pick<MemoryRepository, "findDurableBySubject" | "getDurableTrace">;
 }
 
 /**
- * Builds entry lookup ports for shared store-side memory tools.
+ * Builds durable lookup ports for shared store-side memory tools.
  *
- * @param services - Entry database and memory repository services.
+ * @param services - Durable database and memory repository services.
  * @returns Host-neutral resolver ports.
  */
-export function buildEntryMemoryResolverPorts(services: EntryMemoryResolverServices): EntryResolverPorts {
+export function buildDurableMemoryResolverPorts(services: DurableMemoryResolverServices): DurableResolverPorts {
   return {
-    getDurableById: async (entryId) => (await services.entries.getDurable(entryId)) ?? (await services.memory.getEntryTrace(entryId))?.entry ?? null,
-    findEntryBySubject: async (subject) => services.memory.findEntryBySubject(subject),
+    getDurableById: async (durableId) => (await services.durables.getDurable(durableId)) ?? (await services.memory.getDurableTrace(durableId))?.durable ?? null,
+    findDurableBySubject: async (subject) => services.memory.findDurableBySubject(subject),
   };
 }
 
 /**
- * Ports needed to resolve a user-facing entry selector into a stored entry.
+ * Ports needed to resolve a user-facing durable selector into a stored durable.
  */
-export interface EntryResolverPorts {
-  /** Finds an entry by canonical id. */
+export interface DurableResolverPorts {
+  /** Finds a durable by canonical id. */
   getDurableById(id: string): Promise<Durable | null>;
-  /** Finds the newest entry matching a subject. */
-  findEntryBySubject(subject: string): Promise<Durable | null>;
+  /** Finds the newest durable matching a subject. */
+  findDurableBySubject(subject: string): Promise<Durable | null>;
 }
 
 /**
- * Resolves exactly one tool target selector into a concrete agenr entry.
+ * Resolves exactly one tool target selector into a concrete agenr durable.
  *
- * @param ports - Host-neutral entry lookup ports.
+ * @param ports - Host-neutral durable lookup ports.
  * @param params - Raw tool parameters.
- * @returns Matching agenr entry.
+ * @returns Matching agenr durable.
  */
-export async function resolveTargetDurable(ports: EntryResolverPorts, params: Record<string, unknown>): Promise<Durable> {
+export async function resolveTargetDurable(ports: DurableResolverPorts, params: Record<string, unknown>): Promise<Durable> {
   const id = readOptionalStringParam(params, "id");
   const subject = readOptionalStringParam(params, "subject");
   const selectorCount = (id ? 1 : 0) + (subject ? 1 : 0);
@@ -48,19 +48,19 @@ export async function resolveTargetDurable(ports: EntryResolverPorts, params: Re
   }
 
   if (id) {
-    const entry = await ports.getDurableById(id);
-    if (!entry) {
-      throw new Error(`No agenr entry found for id ${id}.`);
+    const durable = await ports.getDurableById(id);
+    if (!durable) {
+      throw new Error(`No agenr durable found for id ${id}.`);
     }
-    return entry;
+    return durable;
   }
 
-  const entry = await ports.findEntryBySubject(subject ?? "");
-  if (!entry) {
-    throw new Error(`No agenr entry found for subject "${subject}".`);
+  const durable = await ports.findDurableBySubject(subject ?? "");
+  if (!durable) {
+    throw new Error(`No agenr durable found for subject "${subject}".`);
   }
 
-  return entry;
+  return durable;
 }
 
 /**

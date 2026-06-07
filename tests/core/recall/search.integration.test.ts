@@ -47,7 +47,7 @@ describe("recall integration", () => {
 
     expect(results.length).toBeGreaterThan(0);
     expect(results[0]).toMatchObject({
-      entry: expect.objectContaining({
+      durable: expect.objectContaining({
         subject: expect.any(String),
       }),
       score: expect.any(Number),
@@ -59,7 +59,7 @@ describe("recall integration", () => {
         importance: expect.any(Number),
       },
     });
-    expect(results.some((result) => result.entry.subject === "agenr architecture")).toBe(true);
+    expect(results.some((result) => result.durable.subject === "agenr architecture")).toBe(true);
   });
 
   it("keeps recall behavior unchanged when tracing is disabled or no-op", async () => {
@@ -163,7 +163,7 @@ describe("recall integration", () => {
     );
 
     expect(results.length).toBeGreaterThan(0);
-    expect(results.every((result) => result.entry.type === "fact")).toBe(true);
+    expect(results.every((result) => result.durable.type === "fact")).toBe(true);
   });
 
   it("applies the tag filter", async () => {
@@ -179,7 +179,7 @@ describe("recall integration", () => {
     );
 
     expect(results.length).toBeGreaterThan(0);
-    expect(results.every((result) => result.entry.tags.includes("codex"))).toBe(true);
+    expect(results.every((result) => result.durable.tags.includes("codex"))).toBe(true);
   });
 
   it("matches literal tag values instead of wildcard-like patterns", async () => {
@@ -195,8 +195,8 @@ describe("recall integration", () => {
     );
 
     expect(results).toHaveLength(1);
-    expect(results[0]?.entry.subject).toBe("literal special tag");
-    expect(results[0]?.entry.tags).toEqual(["ops_100%"]);
+    expect(results[0]?.durable.subject).toBe("literal special tag");
+    expect(results[0]?.durable.tags).toEqual(["ops_100%"]);
   });
 
   it("applies the since filter", async () => {
@@ -212,7 +212,7 @@ describe("recall integration", () => {
     );
 
     expect(results.length).toBeGreaterThan(0);
-    expect(results.every((result) => new Date(result.entry.created_at) >= daysAgo(30))).toBe(true);
+    expect(results.every((result) => new Date(result.durable.created_at) >= daysAgo(30))).toBe(true);
   });
 
   it("applies the until filter", async () => {
@@ -228,7 +228,7 @@ describe("recall integration", () => {
     );
 
     expect(results.length).toBeGreaterThan(0);
-    expect(results.every((result) => new Date(result.entry.created_at) <= daysAgo(30))).toBe(true);
+    expect(results.every((result) => new Date(result.durable.created_at) <= daysAgo(30))).toBe(true);
   });
 
   it("supports natural-language explicit around values", async () => {
@@ -244,7 +244,7 @@ describe("recall integration", () => {
       fixture.adapter,
     );
 
-    expect(first?.entry.created_at).toBe(daysAgo(1).toISOString());
+    expect(first?.durable.created_at).toBe(daysAgo(1).toISOString());
   });
 
   it("returns empty when every result falls below the threshold", async () => {
@@ -288,7 +288,7 @@ describe("recall integration", () => {
       fixture.adapter,
     );
 
-    expect(results.map((result) => result.entry.id)).not.toContain(fixture.seed.staleId);
+    expect(results.map((result) => result.durable.id)).not.toContain(fixture.seed.staleId);
   });
 
   it("never returns superseded entries", async () => {
@@ -302,7 +302,7 @@ describe("recall integration", () => {
       fixture.adapter,
     );
 
-    expect(results.map((result) => result.entry.id)).not.toContain(fixture.seed.supersededId);
+    expect(results.map((result) => result.durable.id)).not.toContain(fixture.seed.supersededId);
   });
 
   it("returns empty for an empty query", async () => {
@@ -396,7 +396,7 @@ describe("recall concurrency", () => {
     const finishWrite = deferred<void>();
 
     const storePromise = fixture.database.withTransaction(async (tx) => {
-      const entry = buildEntry({
+      const entry = buildDurable({
         subject: "concurrent write",
         content: "Concurrent writes should not break recalls.",
         created_at: TEST_NOW.toISOString(),
@@ -457,7 +457,7 @@ async function createRecallFixture(options: { seed?: boolean; fileBacked?: boole
  * @returns Identifiers of notable seeded entries used by assertions.
  */
 async function seedEntries(database: SqlDatabase): Promise<SeedMetadata> {
-  const replacementEntry = buildEntry({
+  const replacementEntry = buildDurable({
     subject: "new workflow",
     content: "Replacement workflow entry remains active after superseding older guidance.",
     type: "decision",
@@ -470,7 +470,7 @@ async function seedEntries(database: SqlDatabase): Promise<SeedMetadata> {
   await insertSeedEntry(database, replacementEntry);
 
   const entries = [
-    buildEntry({
+    buildDurable({
       subject: "agenr architecture",
       content: "The recall pipeline uses hybrid retrieval with vector search and lexical fallback.",
       type: "fact",
@@ -478,7 +478,7 @@ async function seedEntries(database: SqlDatabase): Promise<SeedMetadata> {
       expiry: "permanent",
       created_at: daysAgo(1).toISOString(),
     }),
-    buildEntry({
+    buildDurable({
       subject: "scoring formula",
       content: "Use weighted scoring with relevance, recency, and importance in the recall pipeline.",
       type: "decision",
@@ -486,7 +486,7 @@ async function seedEntries(database: SqlDatabase): Promise<SeedMetadata> {
       expiry: "permanent",
       created_at: daysAgo(180).toISOString(),
     }),
-    buildEntry({
+    buildDurable({
       subject: "output format",
       content: "Prefer JSON output with stable field ordering for CLI integrations.",
       type: "preference",
@@ -494,7 +494,7 @@ async function seedEntries(database: SqlDatabase): Promise<SeedMetadata> {
       expiry: "temporary",
       created_at: daysAgo(3).toISOString(),
     }),
-    buildEntry({
+    buildDurable({
       subject: "embedding quality",
       content: "Embedding model selection matters more than aggressive reranking for useful recall.",
       type: "lesson",
@@ -502,7 +502,7 @@ async function seedEntries(database: SqlDatabase): Promise<SeedMetadata> {
       expiry: "core",
       created_at: daysAgo(365).toISOString(),
     }),
-    buildEntry({
+    buildDurable({
       subject: "deprecated skip embeddings path",
       content: "The deprecated skip embeddings code remains in the codebase until the recall v1 cleanup pass removes it.",
       type: "fact",
@@ -510,7 +510,7 @@ async function seedEntries(database: SqlDatabase): Promise<SeedMetadata> {
       expiry: "temporary",
       created_at: daysAgo(60).toISOString(),
     }),
-    buildEntry({
+    buildDurable({
       subject: "retired note",
       content: "Retired hidden memory should never be recalled.",
       type: "milestone",
@@ -521,7 +521,7 @@ async function seedEntries(database: SqlDatabase): Promise<SeedMetadata> {
       supersession_reason: "obsolete",
       created_at: daysAgo(2).toISOString(),
     }),
-    buildEntry({
+    buildDurable({
       subject: "old workflow",
       content: "Superseded secret note should never be recalled.",
       type: "decision",
@@ -530,7 +530,7 @@ async function seedEntries(database: SqlDatabase): Promise<SeedMetadata> {
       superseded_by: replacementEntry.id,
       created_at: daysAgo(90).toISOString(),
     }),
-    buildEntry({
+    buildDurable({
       subject: "codex workflow",
       content: "Codex workflow prefers branching from master and committing before merge.",
       type: "decision",
@@ -539,7 +539,7 @@ async function seedEntries(database: SqlDatabase): Promise<SeedMetadata> {
       tags: ["codex", "workflow"],
       created_at: daysAgo(5).toISOString(),
     }),
-    buildEntry({
+    buildDurable({
       subject: "temporal anchor entry",
       content: "Temporal anchor matching entry for explicit around date queries.",
       type: "milestone",
@@ -547,7 +547,7 @@ async function seedEntries(database: SqlDatabase): Promise<SeedMetadata> {
       expiry: "permanent",
       created_at: daysAgo(1).toISOString(),
     }),
-    buildEntry({
+    buildDurable({
       subject: "temporal anchor entry",
       content: "Temporal anchor matching entry for explicit around date queries.",
       type: "milestone",
@@ -555,7 +555,7 @@ async function seedEntries(database: SqlDatabase): Promise<SeedMetadata> {
       expiry: "permanent",
       created_at: daysAgo(240).toISOString(),
     }),
-    buildEntry({
+    buildDurable({
       subject: "literal special tag",
       content: "Exact tag filtering should match only the literal wildcard-like tag.",
       type: "fact",
@@ -564,7 +564,7 @@ async function seedEntries(database: SqlDatabase): Promise<SeedMetadata> {
       tags: ["ops_100%"],
       created_at: daysAgo(12).toISOString(),
     }),
-    buildEntry({
+    buildDurable({
       subject: "wildcard decoy tag",
       content: "Exact tag filtering should not match similar wildcard-like tags.",
       type: "fact",
@@ -573,7 +573,7 @@ async function seedEntries(database: SqlDatabase): Promise<SeedMetadata> {
       tags: ["opsA100x"],
       created_at: daysAgo(12).toISOString(),
     }),
-    buildEntry({
+    buildDurable({
       subject: "pipeline merge",
       content: "Hybrid retrieval merges vector and lexical candidates before scoring.",
       type: "fact",
@@ -581,7 +581,7 @@ async function seedEntries(database: SqlDatabase): Promise<SeedMetadata> {
       expiry: "permanent",
       created_at: daysAgo(20).toISOString(),
     }),
-    buildEntry({
+    buildDurable({
       subject: "exact subject match",
       content: "Exact subject matches should receive a lexical bonus in recall scoring.",
       type: "decision",
@@ -608,9 +608,9 @@ async function seedEntries(database: SqlDatabase): Promise<SeedMetadata> {
  * @param entry - Seed entry to persist.
  * @returns Promise that resolves after the insert finishes.
  */
-async function insertSeedEntry(database: SqlDatabase, entry: Durable): Promise<void> {
-  const embedding = hashToVector(composeEmbeddingText(entry), 1024);
-  await database.insertDurable(entry, embedding, hashText(`${entry.id}:${entry.subject}`));
+async function insertSeedEntry(database: SqlDatabase, durable: Durable): Promise<void> {
+  const embedding = hashToVector(composeEmbeddingText(durable), 1024);
+  await database.insertDurable(durable, embedding, hashText(`${durable.id}:${durable.subject}`));
 }
 
 /**
@@ -630,7 +630,7 @@ function createMockEmbeddingPort(): EmbeddingPort {
  * @param overrides - Field overrides for the seed entry.
  * @returns Fully populated entry object.
  */
-function buildEntry(overrides: Partial<Durable>): Durable {
+function buildDurable(overrides: Partial<Durable>): Durable {
   const createdAt = overrides.created_at ?? TEST_NOW.toISOString();
   const updatedAt = overrides.updated_at ?? createdAt;
 
@@ -738,13 +738,13 @@ function projectRecallResults(results: Awaited<ReturnType<typeof recall>>): Arra
   scores: Awaited<ReturnType<typeof recall>>[number]["scores"];
 }> {
   return results.map((result) => ({
-    subject: result.entry.subject,
-    content: result.entry.content,
-    type: result.entry.type,
-    importance: result.entry.importance,
-    expiry: result.entry.expiry,
-    tags: result.entry.tags,
-    created_at: result.entry.created_at,
+    subject: result.durable.subject,
+    content: result.durable.content,
+    type: result.durable.type,
+    importance: result.durable.importance,
+    expiry: result.durable.expiry,
+    tags: result.durable.tags,
+    created_at: result.durable.created_at,
     score: result.score,
     scores: result.scores,
   }));

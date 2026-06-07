@@ -93,7 +93,7 @@ describe("storeDurables", () => {
 
     expect(result).toEqual({ stored: 1, skipped: 1, rejected: 0 });
     expect(db.insertions).toHaveLength(1);
-    expect(db.insertions[0]?.entry.source_file).toBe("/tmp/source-a.md");
+    expect(db.insertions[0]?.durable.source_file).toBe("/tmp/source-a.md");
   });
 
   it("returns zero counts for empty input", async () => {
@@ -151,8 +151,8 @@ describe("storeDurables", () => {
 
     await storeDurables([input], db, embedding);
 
-    expect(db.insertions[0]?.entry.content_hash).toBe(computeContentHash(input.content, input.source_file));
-    expect(db.insertions[0]?.entry.norm_content_hash).toBe(computeNormContentHash(input.content));
+    expect(db.insertions[0]?.durable.content_hash).toBe(computeContentHash(input.content, input.source_file));
+    expect(db.insertions[0]?.durable.norm_content_hash).toBe(computeNormContentHash(input.content));
   });
 
   it("reuses precomputed embeddings instead of calling the embedding port", async () => {
@@ -191,7 +191,7 @@ describe("storeDurables", () => {
 
     expect(result).toEqual({ stored: 2, skipped: 1, rejected: 0 });
     expect(embedding.calls).toEqual([]);
-    expect(db.insertions.map(({ entry }) => entry.subject)).toEqual(["one", "three"]);
+    expect(db.insertions.map(({ durable }) => durable.subject)).toEqual(["one", "three"]);
     expect(db.insertions.map(({ embedding: vector }) => vector)).toEqual([
       [10, 11],
       [30, 31],
@@ -205,7 +205,7 @@ describe("storeDurables", () => {
 
     await storeDurables([createInput({ created_at: createdAt })], db, embedding);
 
-    const inserted = db.insertions[0]?.entry;
+    const inserted = db.insertions[0]?.durable;
     expect(inserted?.created_at).toBe(createdAt);
     expect(inserted?.updated_at).toMatch(/^20\d\d-/);
     expect(inserted?.updated_at).not.toBe(createdAt);
@@ -244,7 +244,7 @@ describe("storeDurables", () => {
       },
     );
 
-    expect(db.insertions[0]?.entry).toMatchObject({
+    expect(db.insertions[0]?.durable).toMatchObject({
       claim_key: "jim/home_city",
       claim_key_raw: "Jim/home city",
       claim_key_status: "trusted",
@@ -396,7 +396,7 @@ describe("storeDurables", () => {
       },
     );
 
-    expect(db.insertions[0]?.entry).toMatchObject({
+    expect(db.insertions[0]?.durable).toMatchObject({
       claim_key: "jim/timezone",
       claim_key_raw: "Jim/timezone",
       claim_key_status: "trusted",
@@ -441,7 +441,7 @@ describe("storeDurables", () => {
       },
     );
 
-    expect(db.insertions[0]?.entry.claim_key).toBe("jim/home_city");
+    expect(db.insertions[0]?.durable.claim_key).toBe("jim/home_city");
     expect(llm.calls).toEqual([]);
   });
 
@@ -472,7 +472,7 @@ describe("storeDurables", () => {
       embedding,
     );
 
-    expect(directDb.insertions[0]?.entry).toMatchObject({
+    expect(directDb.insertions[0]?.durable).toMatchObject({
       claim_key: "jim/timezone",
       claim_key_raw: "Jim / Timezone",
       claim_key_status: "trusted",
@@ -480,7 +480,7 @@ describe("storeDurables", () => {
       claim_key_confidence: 1,
       claim_key_rationale: "manual claim key supplied by caller",
     });
-    expect(ingestDb.insertions[0]?.entry).toMatchObject({
+    expect(ingestDb.insertions[0]?.durable).toMatchObject({
       claim_key: "jim/timezone",
       claim_key_raw: "Jim / Timezone",
       claim_key_status: "trusted",
@@ -506,7 +506,7 @@ describe("storeDurables", () => {
       embedding,
     );
 
-    expect(db.insertions[0]?.entry).toMatchObject({
+    expect(db.insertions[0]?.durable).toMatchObject({
       claim_key: "jim/home_city",
       claim_key_raw: "Jim / Home City",
       claim_key_status: "trusted",
@@ -537,7 +537,7 @@ describe("storeDurables", () => {
     );
 
     expect(result).toEqual({ stored: 1, skipped: 0, rejected: 0 });
-    expect(db.insertions[0]?.entry).toMatchObject({
+    expect(db.insertions[0]?.durable).toMatchObject({
       claim_key: undefined,
       claim_key_raw: undefined,
       claim_key_status: undefined,
@@ -571,7 +571,7 @@ describe("storeDurables", () => {
       embedding,
     );
 
-    expect(db.insertions[0]?.entry).toMatchObject({
+    expect(db.insertions[0]?.durable).toMatchObject({
       claim_key: "project_x/status",
       claim_key_raw: "Project X/status",
       claim_key_status: "trusted",
@@ -622,7 +622,7 @@ describe("storeDurables", () => {
       embedding,
     );
 
-    expect(db.insertions[0]?.entry).toMatchObject({
+    expect(db.insertions[0]?.durable).toMatchObject({
       claim_key: "jim/timezone",
       claim_key_status: "trusted",
       claim_key_source: "manual",
@@ -642,7 +642,7 @@ describe("storeDurables", () => {
       content: "Jim lived in Seattle, Washington.",
     });
     const db = new MockDatabase({
-      activeEntriesByClaimKey: {
+      activeDurablesByClaimKey: {
         "jim/home_city": [activeSibling],
       },
     });
@@ -665,7 +665,7 @@ describe("storeDurables", () => {
     expect(db.supersedeCalls).toEqual([
       {
         oldId: activeSibling.id,
-        newId: db.insertions[0]?.entry.id ?? "",
+        newId: db.insertions[0]?.durable.id ?? "",
         kind: "update",
         reason: undefined,
       },
@@ -680,7 +680,7 @@ describe("storeDurables", () => {
     });
     const db = new MockDatabase({
       claimKeyPrefixes: ["jim"],
-      activeEntriesByClaimKey: {
+      activeDurablesByClaimKey: {
         "jim/timezone": [activeSibling],
       },
     });
@@ -714,12 +714,12 @@ describe("storeDurables", () => {
     );
 
     expect(result).toEqual({ stored: 1, skipped: 0, rejected: 0 });
-    expect(db.insertions[0]?.entry.claim_key).toBe("jim/timezone");
+    expect(db.insertions[0]?.durable.claim_key).toBe("jim/timezone");
     expect(db.claimKeyLookupCalls).toEqual(["jim/timezone"]);
     expect(db.supersedeCalls).toEqual([
       {
         oldId: activeSibling.id,
-        newId: db.insertions[0]?.entry.id ?? "",
+        newId: db.insertions[0]?.durable.id ?? "",
         kind: "update",
         reason: undefined,
       },
@@ -749,7 +749,7 @@ describe("storeDurables", () => {
 
   it("skips auto-supersession and warns when multiple active siblings share the claim key", async () => {
     const db = new MockDatabase({
-      activeEntriesByClaimKey: {
+      activeDurablesByClaimKey: {
         "jim/home_city": [
           createExistingEntry({ claim_key: "jim/home_city", subject: "Jim home city v1" }),
           createExistingEntry({ claim_key: "jim/home_city", subject: "Jim home city v2" }),
@@ -786,7 +786,7 @@ describe("storeDurables", () => {
     });
     const db = new MockDatabase({
       claimKeyPrefixes: ["jim"],
-      activeEntriesByClaimKey: {
+      activeDurablesByClaimKey: {
         "jim/timezone": [activeSibling],
       },
     });
@@ -822,14 +822,14 @@ describe("storeDurables", () => {
     );
 
     expect(result).toEqual({ stored: 1, skipped: 0, rejected: 0 });
-    expect(db.insertions[0]?.entry).toMatchObject({
+    expect(db.insertions[0]?.durable).toMatchObject({
       claim_key: "jim/timezone",
       claim_key_raw: "Jim/timezone",
       claim_key_status: "tentative",
       claim_key_source: "deterministic_repair",
       claim_key_confidence: 0.86,
     });
-    expect(db.insertions[0]?.entry.claim_key_rationale).toMatch(/deterministic/i);
+    expect(db.insertions[0]?.durable.claim_key_rationale).toMatch(/deterministic/i);
     expect(db.supersedeCalls).toEqual([]);
     expect(warnings).toEqual([expect.stringMatching(/deterministic_repair/i)]);
   });
@@ -868,13 +868,13 @@ describe("storeDurables", () => {
       },
     );
 
-    expect(db.insertions[0]?.entry).toMatchObject({
+    expect(db.insertions[0]?.durable).toMatchObject({
       claim_key: "openclaw_before_prompt_build_hook/trigger_condition",
       claim_key_raw: "OpenClaw before prompt build hook/requires real agent turn or message to trigger",
       claim_key_status: "trusted",
       claim_key_source: "model",
     });
-    expect(db.insertions[0]?.entry.claim_key_rationale).toContain("collapsed a sentence-like trigger requirement into a stable condition slot");
+    expect(db.insertions[0]?.durable.claim_key_rationale).toContain("collapsed a sentence-like trigger requirement into a stable condition slot");
   });
 
   it("accepts a supported below-threshold candidate when trusted claim-key examples strongly match the same slot", async () => {
@@ -912,13 +912,13 @@ describe("storeDurables", () => {
       },
     );
 
-    expect(db.insertions[0]?.entry).toMatchObject({
+    expect(db.insertions[0]?.durable).toMatchObject({
       claim_key: "repo_workflow/source_of_truth",
       claim_key_status: "trusted",
       claim_key_source: "model",
       claim_key_confidence: 0.74,
     });
-    expect(db.insertions[0]?.entry.claim_key_rationale).toContain("trusted exact-key reuse");
+    expect(db.insertions[0]?.durable.claim_key_rationale).toContain("trusted exact-key reuse");
   });
 
   it("skips auto-supersession when the matching sibling has an incompatible type", async () => {
@@ -928,7 +928,7 @@ describe("storeDurables", () => {
       subject: "Jim home city",
     });
     const db = new MockDatabase({
-      activeEntriesByClaimKey: {
+      activeDurablesByClaimKey: {
         "jim/home_city": [activeSibling],
       },
     });
@@ -962,7 +962,7 @@ describe("storeDurables", () => {
       subject: "Jim home city",
     });
     const db = new MockDatabase({
-      activeEntriesByClaimKey: {
+      activeDurablesByClaimKey: {
         "jim/home_city": [sameClaimKeySibling],
       },
     });
@@ -986,7 +986,7 @@ describe("storeDurables", () => {
     expect(db.supersedeCalls).toEqual([
       {
         oldId: supersededId,
-        newId: db.insertions[0]?.entry.id ?? "",
+        newId: db.insertions[0]?.durable.id ?? "",
         kind: "update",
         reason: undefined,
       },
@@ -1024,12 +1024,12 @@ describe("storeDurables", () => {
 });
 
 class MockDatabase implements DatabasePort {
-  public readonly insertions: Array<{ entry: Durable; embedding: number[]; contentHash: string }> = [];
+  public readonly insertions: Array<{ durable: Durable; embedding: number[]; contentHash: string }> = [];
   public readonly existingHashes: Set<string>;
   public readonly existingNormHashes: Set<string>;
   public readonly claimKeyPrefixes: string[];
   public readonly claimKeyExamples: string[];
-  public readonly activeEntriesByClaimKey: Record<string, Durable[]>;
+  public readonly activeDurablesByClaimKey: Record<string, Durable[]>;
   public readonly claimKeyLookupCalls: string[] = [];
   public readonly supersedeCalls: Array<{ oldId: string; newId: string; kind?: string; reason?: string }> = [];
   public transactionCount = 0;
@@ -1041,7 +1041,7 @@ class MockDatabase implements DatabasePort {
       existingNormHashes?: Set<string>;
       claimKeyPrefixes?: string[];
       claimKeyExamples?: string[];
-      activeEntriesByClaimKey?: Record<string, Durable[]>;
+      activeDurablesByClaimKey?: Record<string, Durable[]>;
       supersedeResult?: boolean;
     } = {},
   ) {
@@ -1049,13 +1049,13 @@ class MockDatabase implements DatabasePort {
     this.existingNormHashes = options.existingNormHashes ?? new Set();
     this.claimKeyPrefixes = options.claimKeyPrefixes ?? [];
     this.claimKeyExamples = options.claimKeyExamples ?? [];
-    this.activeEntriesByClaimKey = options.activeEntriesByClaimKey ?? {};
+    this.activeDurablesByClaimKey = options.activeDurablesByClaimKey ?? {};
     this.supersedeResult = options.supersedeResult ?? true;
   }
 
   public async insertDurable(entry: Durable, embedding: number[], contentHash: string): Promise<string> {
     this.insertions.push({
-      entry,
+      durable: entry,
       embedding,
       contentHash,
     });
@@ -1093,7 +1093,7 @@ class MockDatabase implements DatabasePort {
 
   public async findActiveDurablesByClaimKey(claimKey: string): Promise<Durable[]> {
     this.claimKeyLookupCalls.push(claimKey);
-    return this.activeEntriesByClaimKey[claimKey] ?? [];
+    return this.activeDurablesByClaimKey[claimKey] ?? [];
   }
 
   public async getDistinctClaimKeyPrefixes(): Promise<string[]> {

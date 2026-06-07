@@ -1,9 +1,9 @@
 import { BEFORE_TURN_DEBUG_ARTIFACT_MAX_TOP_K, type BeforeTurnEvalCaseOptions, type BeforeTurnEvalCaseRequest } from "../../../app/evals/before-turn/index.js";
 import type { BeforeTurnInput, BeforeTurnPolicy, BeforeTurnRecentTurn } from "../../../app/before-turn/index.js";
-import type { RecallEvalFixtureEntry, RecallEvalFixtureProcedure, RecallEvalSandboxRequest } from "../../../app/evals/recall/index.js";
+import type { RecallEvalFixtureDurable, RecallEvalFixtureProcedure, RecallEvalSandboxRequest } from "../../../app/evals/recall/index.js";
 import {
   extractParseableCaseId,
-  mapFixtureEntryDto,
+  mapFixtureDurableDto,
   mapFixtureProcedureDto,
   mapSandboxRequestDto,
   parseMemoryPool,
@@ -13,7 +13,7 @@ import {
   parseRecentTurnRole,
   parseRequiredString,
   parseSandbox,
-  type InternalEvalFixtureEntryDto,
+  type InternalEvalFixtureDurableDto,
   type InternalEvalFixtureProcedureDto,
   type InternalEvalSandboxRequestDto,
 } from "./internal-eval-shared.js";
@@ -35,8 +35,8 @@ const BEFORE_TURN_POLICY_KEYS = new Set<string>([
   "enableProcedureSuggestion",
   "maxRecentTurns",
   "maxQueryChars",
-  "maxDurableEntries",
-  "maxHighConfidenceDurableEntries",
+  "maxDurables",
+  "maxHighConfidenceDurables",
   "maxProcedureCandidates",
   "recallThreshold",
   "highConfidenceRecallThreshold",
@@ -74,9 +74,9 @@ export interface BeforeTurnPolicyDto {
   /** Maximum total characters preserved in the derived query. */
   maxQueryChars?: number;
   /** Maximum durable-memory rows to return. */
-  maxDurableEntries?: number;
+  maxDurables?: number;
   /** Maximum durable rows allowed when all surfaced items are very high confidence. */
-  maxHighConfidenceDurableEntries?: number;
+  maxHighConfidenceDurables?: number;
   /** Maximum procedure candidates to consider before canonical selection. */
   maxProcedureCandidates?: number;
   /** Optional score threshold used for durable-memory recall. */
@@ -133,8 +133,8 @@ export interface BeforeTurnEvalCaseRequestDto {
   description?: string;
   /** Optional sandbox controls. */
   sandbox?: InternalEvalSandboxRequestDto;
-  /** Explicit fixture entries to provision. */
-  memoryPool: InternalEvalFixtureEntryDto[];
+  /** Explicit fixture durables to provision. */
+  memoryPool: InternalEvalFixtureDurableDto[];
   /** Optional fixture procedures to provision. */
   procedurePool?: InternalEvalFixtureProcedureDto[];
   /** Before-turn input facts to forward into the real service. */
@@ -225,7 +225,7 @@ export function mapBeforeTurnEvalCaseRequestDto(dto: BeforeTurnEvalCaseRequestDt
     caseId: dto.caseId,
     description: dto.description,
     sandbox: mapSandboxRequestDto(dto.sandbox) as RecallEvalSandboxRequest | undefined,
-    memoryPool: dto.memoryPool.map((entry) => mapFixtureEntryDto(entry) as RecallEvalFixtureEntry),
+    memoryPool: dto.memoryPool.map((entry) => mapFixtureDurableDto(entry) as RecallEvalFixtureDurable),
     procedurePool: dto.procedurePool?.map((procedure) => mapFixtureProcedureDto(procedure) as RecallEvalFixtureProcedure),
     beforeTurnInput: mapBeforeTurnInputDto(dto.beforeTurnInput),
     options: mapCaseOptionsDto(dto.options),
@@ -327,17 +327,12 @@ function parseBeforeTurnPolicy(value: unknown, issues: BeforeTurnEvalValidationI
     maxQueryChars: parseOptionalIntegerInRange(policy.maxQueryChars, "beforeTurnInput.policy.maxQueryChars", issues, {
       min: 0,
     }),
-    maxDurableEntries: parseOptionalIntegerInRange(policy.maxDurableEntries, "beforeTurnInput.policy.maxDurableEntries", issues, {
+    maxDurables: parseOptionalIntegerInRange(policy.maxDurables, "beforeTurnInput.policy.maxDurables", issues, {
       min: 0,
     }),
-    maxHighConfidenceDurableEntries: parseOptionalIntegerInRange(
-      policy.maxHighConfidenceDurableEntries,
-      "beforeTurnInput.policy.maxHighConfidenceDurableEntries",
-      issues,
-      {
-        min: 0,
-      },
-    ),
+    maxHighConfidenceDurables: parseOptionalIntegerInRange(policy.maxHighConfidenceDurables, "beforeTurnInput.policy.maxHighConfidenceDurables", issues, {
+      min: 0,
+    }),
     maxProcedureCandidates: parseOptionalIntegerInRange(policy.maxProcedureCandidates, "beforeTurnInput.policy.maxProcedureCandidates", issues, {
       min: 0,
     }),
@@ -415,8 +410,8 @@ function mapBeforeTurnPolicyDto(dto: BeforeTurnPolicyDto | undefined): BeforeTur
     enableProcedureSuggestion: dto.enableProcedureSuggestion,
     maxRecentTurns: dto.maxRecentTurns,
     maxQueryChars: dto.maxQueryChars,
-    maxDurableEntries: dto.maxDurableEntries,
-    maxHighConfidenceDurableEntries: dto.maxHighConfidenceDurableEntries,
+    maxDurables: dto.maxDurables,
+    maxHighConfidenceDurables: dto.maxHighConfidenceDurables,
     maxProcedureCandidates: dto.maxProcedureCandidates,
     recallThreshold: dto.recallThreshold,
     highConfidenceRecallThreshold: dto.highConfidenceRecallThreshold,

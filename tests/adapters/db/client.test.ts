@@ -170,7 +170,7 @@ describe("createDatabase", () => {
         limit: 2,
       });
       expect(results.length).toBeGreaterThan(0);
-      expect(results.map((result) => result.entry.id)).toContain(left.id);
+      expect(results.map((result) => result.durable.id)).toContain(left.id);
       expect(results.some((result) => result.vectorSim > 0)).toBe(true);
     } catch (error) {
       expect(String(error)).toMatch(/vector search is unavailable/i);
@@ -189,7 +189,7 @@ describe("createDatabase", () => {
 
     const results = await adapter.ftsSearch({ text: "pressure bottleneck", limit: 5 });
 
-    expect(results.map((result) => result.entry.id)).toContain(entry.id);
+    expect(results.map((result) => result.durable.id)).toContain(entry.id);
   });
 
   it("inserts entries while FTS triggers are dropped and makes them searchable after finalize", async () => {
@@ -209,7 +209,7 @@ describe("createDatabase", () => {
     await database.finalizeBulkWrites();
 
     const results = await adapter.ftsSearch({ text: "rebuild FTS", limit: 5 });
-    expect(results.map((result) => result.entry.id)).toContain(entry.id);
+    expect(results.map((result) => result.durable.id)).toContain(entry.id);
   });
 
   it("inserts entries while the vector index is dropped", async () => {
@@ -568,14 +568,14 @@ describe("createDatabase", () => {
     expect(await database.getDurable(original.id)).toBeNull();
     expect(await database.getDurable(replacement.id)).not.toBeNull();
     expect(activeClaimMatches.map((entry) => entry.id)).toEqual([replacement.id]);
-    expect((await adapter.ftsSearch({ text: "Austin", limit: 5 })).map((result) => result.entry.id)).not.toContain(original.id);
+    expect((await adapter.ftsSearch({ text: "Austin", limit: 5 })).map((result) => result.durable.id)).not.toContain(original.id);
 
     try {
       const vectorResults = await adapter.vectorSearch({
         embedding: createEmbedding(0, 1),
         limit: 5,
       });
-      expect(vectorResults.map((result) => result.entry.id)).not.toContain(original.id);
+      expect(vectorResults.map((result) => result.durable.id)).not.toContain(original.id);
     } catch (error) {
       expect(String(error)).toMatch(/vector search is unavailable/i);
     }
@@ -588,7 +588,7 @@ describe("createDatabase", () => {
 
     await database.insertDurable(entry, createEmbedding(0, 1), "recall-hash");
     await adapter.recordRecallEvents({
-      entryIds: [entry.id],
+      durableIds: [entry.id],
       query: "hexagonal",
       sessionKey: "session-1",
     });

@@ -44,8 +44,8 @@ export function applyTelemetryWriteGate(ports: RecallPorts, sandbox: RecallEvalS
           crossEncoder: ports.crossEncoder,
         }
       : {}),
-    async hydrateEntries(ids: string[]) {
-      return ports.hydrateEntries(ids);
+    async hydrateDurables(ids: string[]) {
+      return ports.hydrateDurables(ids);
     },
     async recordRecallEvents(): Promise<void> {
       return undefined;

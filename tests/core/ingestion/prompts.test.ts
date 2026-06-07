@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildChunkPrompt, buildExtractionSystemPrompt } from "../../../src/core/ingestion/prompts.js";
 import type { Durable, TranscriptChunk } from "../../../src/core/types.js";
 
-function buildEntry(overrides: Partial<Durable> = {}): Durable {
+function buildDurable(overrides: Partial<Durable> = {}): Durable {
   return {
     id: "entry-1",
     type: "fact",
@@ -109,7 +109,7 @@ describe("buildChunkPrompt", () => {
 
   it("includes related entries when provided", () => {
     const prompt = buildChunkPrompt(chunk, {
-      relatedEntries: [buildEntry()],
+      relatedEntries: [buildDurable()],
     });
 
     expect(prompt).toContain("Related existing memories");

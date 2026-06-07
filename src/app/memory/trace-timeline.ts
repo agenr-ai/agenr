@@ -1,5 +1,5 @@
 import type { Durable } from "../../core/types.js";
-import type { EntryRecallEvent, EntryTraceDreamAction, EntryTraceProfileSnapshot, EntryTraceProvenance, EntryTraceTimelineEvent } from "./ports.js";
+import type { DurableRecallEvent, DurableTraceDreamAction, DurableTraceProfileSnapshot, DurableTraceProvenance, DurableTraceTimelineEvent } from "./ports.js";
 
 /** Minimum delta between created and updated timestamps before emitting an updated event. */
 const UPDATED_EVENT_MIN_DELTA_MS = 1_000;
@@ -10,7 +10,7 @@ const UPDATED_EVENT_MIN_DELTA_MS = 1_000;
  * @param entry - Durable row being traced.
  * @returns Normalized provenance payload.
  */
-export function buildEntryTraceProvenance(entry: Durable): EntryTraceProvenance {
+export function buildDurableTraceProvenance(entry: Durable): DurableTraceProvenance {
   return {
     ...(entry.source_file ? { sourceFile: entry.source_file } : {}),
     ...(entry.source_context ? { sourceContext: entry.source_context } : {}),
@@ -28,29 +28,29 @@ export function buildEntryTraceProvenance(entry: Durable): EntryTraceProvenance 
  * @param input - Entry facts plus related audit rows.
  * @returns Timeline events ordered oldest first.
  */
-export function buildEntryTraceTimeline(input: {
-  entry: Durable;
-  dreamActions: EntryTraceDreamAction[];
-  recallEvents: EntryRecallEvent[];
-  profileSnapshots: EntryTraceProfileSnapshot[];
-}): EntryTraceTimelineEvent[] {
-  const events: EntryTraceTimelineEvent[] = [
+export function buildDurableTraceTimeline(input: {
+  durable: Durable;
+  dreamActions: DurableTraceDreamAction[];
+  recallEvents: DurableRecallEvent[];
+  profileSnapshots: DurableTraceProfileSnapshot[];
+}): DurableTraceTimelineEvent[] {
+  const events: DurableTraceTimelineEvent[] = [
     {
-      at: input.entry.created_at,
+      at: input.durable.created_at,
       kind: "created",
       label: "Durable created",
-      detail: formatProvenanceDetail(input.entry),
+      detail: formatProvenanceDetail(input.durable),
     },
   ];
 
-  const createdMs = Date.parse(input.entry.created_at);
-  const updatedMs = Date.parse(input.entry.updated_at);
+  const createdMs = Date.parse(input.durable.created_at);
+  const updatedMs = Date.parse(input.durable.updated_at);
   if (Number.isFinite(createdMs) && Number.isFinite(updatedMs) && updatedMs - createdMs >= UPDATED_EVENT_MIN_DELTA_MS) {
     events.push({
-      at: input.entry.updated_at,
+      at: input.durable.updated_at,
       kind: "updated",
       label: "Durable updated",
-      detail: formatUpdateDetail(input.entry),
+      detail: formatUpdateDetail(input.durable),
     });
   }
 
@@ -123,7 +123,7 @@ function formatUpdateDetail(entry: Durable): string | undefined {
 }
 
 /** Formats recall detail for a recall timeline event. */
-function formatRecallDetail(recall: EntryRecallEvent): string | undefined {
+function formatRecallDetail(recall: DurableRecallEvent): string | undefined {
   const parts: string[] = [];
   if (recall.query) {
     parts.push(`query=${recall.query}`);
@@ -136,7 +136,7 @@ function formatRecallDetail(recall: EntryRecallEvent): string | undefined {
 }
 
 /** Compares timeline events chronologically with stable tie-breakers. */
-function compareTimelineEvents(left: EntryTraceTimelineEvent, right: EntryTraceTimelineEvent): number {
+function compareTimelineEvents(left: DurableTraceTimelineEvent, right: DurableTraceTimelineEvent): number {
   const leftMs = Date.parse(left.at);
   const rightMs = Date.parse(right.at);
   if (Number.isFinite(leftMs) && Number.isFinite(rightMs) && leftMs !== rightMs) {
@@ -152,7 +152,7 @@ function compareTimelineEvents(left: EntryTraceTimelineEvent, right: EntryTraceT
 }
 
 /** Assigns stable ordering ranks to timeline kinds at equal timestamps. */
-function timelineKindRank(kind: EntryTraceTimelineEvent["kind"]): number {
+function timelineKindRank(kind: DurableTraceTimelineEvent["kind"]): number {
   switch (kind) {
     case "created":
       return 0;

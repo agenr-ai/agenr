@@ -47,10 +47,10 @@ export interface DedupProgressEvent {
   completedClusters: number;
   /** Total number of multi-entry clusters queued for arbitration. */
   totalClusters: number;
-  /** Number of entries covered by completed multi-entry cluster arbitrations. */
-  completedEntries: number;
-  /** Total number of entries that belong to arbitrated multi-entry clusters. */
-  totalEntries: number;
+  /** Number of durables covered by completed multi-durable cluster arbitrations. */
+  completedDurables: number;
+  /** Total number of durables that belong to arbitrated multi-durable clusters. */
+  totalDurables: number;
 }
 
 /**
@@ -199,7 +199,7 @@ export async function dedupBatch(entries: StoreDurableInput[], llm: LlmPort, emb
 
   const totalArbitratedEntries = arbitrationTasks.reduce((sum, task) => sum + task.cluster.length, 0);
   let completedClusters = 0;
-  let completedEntries = 0;
+  let completedDurables = 0;
 
   const arbitrationResults = await runBoundedArbitrations(
     arbitrationTasks,
@@ -207,12 +207,12 @@ export async function dedupBatch(entries: StoreDurableInput[], llm: LlmPort, emb
     async (task) => arbitrateCluster(task.clusterIndex, task.cluster, entries, llm, task.maxSimilarity),
     (task) => {
       completedClusters += 1;
-      completedEntries += task.cluster.length;
+      completedDurables += task.cluster.length;
       options.onProgress?.({
         completedClusters,
         totalClusters: arbitrationTasks.length,
-        completedEntries,
-        totalEntries: totalArbitratedEntries,
+        completedDurables,
+        totalDurables: totalArbitratedEntries,
       });
     },
   );
@@ -226,7 +226,7 @@ export async function dedupBatch(entries: StoreDurableInput[], llm: LlmPort, emb
     for (const keptIndex of arbitration.detail.kept) {
       const updatedEntry =
         arbitration.detail.merged === true && arbitration.detail.mergedContent && keptIndex === arbitration.detail.mergeTarget
-          ? mergeClusterEntry(arbitration.detail.entryIndices, keptIndex, arbitration.detail.mergedContent, entries)
+          ? mergeClusterDurable(arbitration.detail.entryIndices, keptIndex, arbitration.detail.mergedContent, entries)
           : entries[keptIndex];
       survivorByIndex.set(keptIndex, updatedEntry);
     }
@@ -587,9 +587,9 @@ function normalizeDedupDecision(decision: DedupDecision, clusterSize: number): N
 }
 
 /** Applies merged cluster content to the kept survivor entry. */
-function mergeClusterEntry(cluster: number[], keptIndex: number, mergedContent: string, entries: StoreDurableInput[]): StoreDurableInput {
-  const keptEntry = entries[keptIndex];
-  if (!keptEntry) {
+function mergeClusterDurable(cluster: number[], keptIndex: number, mergedContent: string, entries: StoreDurableInput[]): StoreDurableInput {
+  const keptDurable = entries[keptIndex];
+  if (!keptDurable) {
     throw new Error(`Cannot merge cluster entry ${keptIndex}: entry not found.`);
   }
 
@@ -597,7 +597,7 @@ function mergeClusterEntry(cluster: number[], keptIndex: number, mergedContent: 
   const mergedImportance = Math.max(...cluster.map((entryIndex) => entries[entryIndex]?.importance ?? 7));
 
   return {
-    ...keptEntry,
+    ...keptDurable,
     content: mergedContent,
     importance: mergedImportance,
     tags: mergedTags,

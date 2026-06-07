@@ -10,8 +10,8 @@ import type { BeforeTurnDebugArtifactV1, RecallDebugArtifactV1 } from "../../../
 export interface AgenrDebugSessionStartRecallSummary {
   /** Number of durable memory items surfaced at session start. */
   durableMemoryCount: number;
-  /** Stable entry identifiers surfaced at session start, in output order. */
-  selectedEntryIds: string[];
+  /** Stable durable identifiers surfaced at session start, in output order. */
+  selectedDurableIds: string[];
   /** Count of core candidates considered before merging. */
   coreCandidateCount: number;
   /** Count of artifact-grounded recall candidates considered before dedupe. */
@@ -25,7 +25,7 @@ export interface AgenrDebugSessionStartRecallSummary {
 /**
  * Compact summary payload embedded in `tool_result` events.
  *
- * Captures routing, selected entry ids, and notice state without
+ * Captures routing, selected durable ids, and notice state without
  * dumping raw candidate payloads.
  */
 export interface AgenrDebugRecallToolResultSummary {
@@ -38,8 +38,8 @@ export interface AgenrDebugRecallToolResultSummary {
     queried: string[];
     reason: string;
   };
-  /** Ranked entry identifiers in output order. */
-  selectedEntryIds: string[];
+  /** Ranked durable identifiers in output order. */
+  selectedDurableIds: string[];
   /** Ranked episode identifiers in output order. */
   episodeIds: string[];
   /** Selected canonical procedure key when one surfaced. */

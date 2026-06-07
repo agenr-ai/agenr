@@ -6,7 +6,7 @@ import {
   DEFAULT_STRONG_SEED_TOP_N,
   seededRerank,
   selectStrongSeeds,
-  sharesEntryLineage,
+  sharesDurableLineage,
   sharesEpisodeLineage,
   sharesProcedureLineage,
 } from "../../../src/core/recall/neighborhood.js";
@@ -116,7 +116,7 @@ describe("seededRerank", () => {
   });
 });
 
-describe("sharesEntryLineage", () => {
+describe("sharesDurableLineage", () => {
   const baseEntry: RecallCandidateDurable = {
     id: "base",
     subject: "webpack deployment packaging",
@@ -129,31 +129,31 @@ describe("sharesEntryLineage", () => {
   it("matches when two entries share a claim key", () => {
     const left = { ...baseEntry, id: "a", claim_key: "deployments/packaging" };
     const right = { ...baseEntry, id: "b", subject: "other subject", claim_key: "deployments/packaging" };
-    expect(sharesEntryLineage(left, right)).toBe(true);
+    expect(sharesDurableLineage(left, right)).toBe(true);
   });
 
   it("matches when one entry is superseded by the other", () => {
     const left = { ...baseEntry, id: "old", superseded_by: "new" };
     const right = { ...baseEntry, id: "new" };
-    expect(sharesEntryLineage(left, right)).toBe(true);
-    expect(sharesEntryLineage(right, left)).toBe(true);
+    expect(sharesDurableLineage(left, right)).toBe(true);
+    expect(sharesDurableLineage(right, left)).toBe(true);
   });
 
   it("matches when entries share a strong subject prefix", () => {
     const left = { ...baseEntry, id: "a", subject: "deployment packaging pipeline notes" };
     const right = { ...baseEntry, id: "b", subject: "deployment packaging retrospective" };
-    expect(sharesEntryLineage(left, right)).toBe(true);
+    expect(sharesDurableLineage(left, right)).toBe(true);
   });
 
   it("does not match unrelated subjects without claim keys", () => {
     const left = { ...baseEntry, id: "a", subject: "completely different topic" };
     const right = { ...baseEntry, id: "b", subject: "another unrelated subject" };
-    expect(sharesEntryLineage(left, right)).toBe(false);
+    expect(sharesDurableLineage(left, right)).toBe(false);
   });
 
   it("never treats an entry as sharing lineage with itself", () => {
     const entry = { ...baseEntry, id: "self", claim_key: "slot/x" };
-    expect(sharesEntryLineage(entry, entry)).toBe(false);
+    expect(sharesDurableLineage(entry, entry)).toBe(false);
   });
 });
 

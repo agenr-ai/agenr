@@ -14,7 +14,7 @@ describe("createInternalBeforeTurnEvalRoute", () => {
       caseId: request.caseId,
       output: {
         abstained: true,
-        selectedEntryIds: [],
+        selectedDurableIds: [],
         selectedProcedureKey: null,
         patch: {
           durableMemory: [],
@@ -75,7 +75,7 @@ describe("createInternalBeforeTurnEvalRoute", () => {
       caseId: "case-route",
       output: {
         abstained: true,
-        selectedEntryIds: [],
+        selectedDurableIds: [],
         selectedProcedureKey: null,
         patch: {
           durableMemory: [],
@@ -102,7 +102,7 @@ describe("createInternalBeforeTurnEvalRoute", () => {
       caseId: request.caseId,
       output: {
         abstained: true,
-        selectedEntryIds: [],
+        selectedDurableIds: [],
         selectedProcedureKey: null,
         patch: {
           durableMemory: [],

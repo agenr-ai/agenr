@@ -20,9 +20,9 @@ import { getDurables, type SqlExecutor } from "./queries.js";
  */
 export function createSessionStartRepository(executor: SqlExecutor): SessionStartRepository {
   return {
-    listCoreEntries: async (limit, now) => listCoreEntries(executor, limit, now),
+    listCoreDurables: async (limit, now) => listCoreDurables(executor, limit, now),
     getActiveProfileSnapshot: async (maxAgeMs, now) => getActiveProfileSnapshot(executor, maxAgeMs, now),
-    listEntriesByIds: async (ids) => getDurables(executor, ids),
+    listDurablesByIds: async (ids) => getDurables(executor, ids),
   };
 }
 
@@ -83,7 +83,7 @@ async function getActiveProfileSnapshot(
  * @param limit - Maximum number of entries to return.
  * @returns Active core entries ordered by importance and recency.
  */
-async function listCoreEntries(executor: SqlExecutor, limit: number, now = new Date()): Promise<Durable[]> {
+async function listCoreDurables(executor: SqlExecutor, limit: number, now = new Date()): Promise<Durable[]> {
   if (limit <= 0) {
     return [];
   }

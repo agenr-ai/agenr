@@ -1,7 +1,7 @@
 import type { WorkingMemoryFailure, WorkingMemoryResult } from "../../app/working-memory/results.js";
 import type { WorkingScope } from "../../app/working-memory/scope.js";
 import type { WorkingMemoryService } from "../../app/working-memory/service.js";
-import { asRecord } from "./entry-tools.js";
+import { asRecord } from "./durable-tools.js";
 import type { MemoryToolParamReader } from "./memory-tools.js";
 import { toGoalToolResponse } from "./goal-tool-presentations.js";
 import type { WorkToolOutcome } from "./work-tools.js";

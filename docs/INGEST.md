@@ -288,7 +288,7 @@ Current behavior:
 - failed files do not update the ingest log
 - dry runs do not update the ingest log
 
-The logged `entryCount` is the post-store stored count for that file, not the raw extracted count.
+The logged `durableCount` is the post-store stored count for that file, not the raw extracted count.
 
 ### Entry ingest reporting
 

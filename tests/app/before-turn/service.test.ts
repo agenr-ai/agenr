@@ -143,7 +143,7 @@ describe("runBeforeTurn", () => {
     });
     const deps = createDeps({
       ftsCandidates: [toRecallCandidateDurable(entry)],
-      hydratedEntries: [entry],
+      hydratedDurables: [entry],
     });
 
     const result = await runBeforeTurn(
@@ -162,7 +162,7 @@ describe("runBeforeTurn", () => {
     expect(result.durableMemory).toMatchObject([
       {
         rank: 1,
-        entry: {
+        durable: {
           id: "entry-decision",
         },
         sourceKind: "turn_recall",
@@ -187,7 +187,7 @@ describe("runBeforeTurn", () => {
     });
     const deps = createDeps({
       ftsCandidates: [toRecallCandidateDurable(entry)],
-      hydratedEntries: [entry],
+      hydratedDurables: [entry],
     });
 
     const result = await runBeforeTurn(
@@ -227,7 +227,7 @@ describe("runBeforeTurn", () => {
       if (params.text === "What should we do next?") {
         return [
           {
-            entry: toRecallCandidateDurable(entry),
+            durable: toRecallCandidateDurable(entry),
             rank: -1,
             tier: "all_tokens",
           },
@@ -238,7 +238,7 @@ describe("runBeforeTurn", () => {
     });
     const deps = createDeps({
       ftsSearchImplementation: ftsSearch,
-      hydratedEntries: [entry],
+      hydratedDurables: [entry],
     });
 
     const result = await runBeforeTurn(
@@ -254,7 +254,7 @@ describe("runBeforeTurn", () => {
       deps,
     );
 
-    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["entry-context-primary"]);
+    expect(result.durableMemory.map((item) => item.durable.id)).toEqual(["entry-context-primary"]);
     expect(result.diagnostics.queryPolicy).toBe("current_only");
     expect(result.diagnostics.queryVariants).toEqual([
       {
@@ -278,7 +278,7 @@ describe("runBeforeTurn", () => {
       if (params.text === "What should we do next?") {
         return [
           {
-            entry: toRecallCandidateDurable(entry),
+            durable: toRecallCandidateDurable(entry),
             rank: -1,
             tier: "all_tokens",
           },
@@ -288,7 +288,7 @@ describe("runBeforeTurn", () => {
       if (params.text.includes("Topic: Finish the release notes for the before-turn slice.")) {
         return [
           {
-            entry: toRecallCandidateDurable(entry),
+            durable: toRecallCandidateDurable(entry),
             rank: -1,
             tier: "all_tokens",
           },
@@ -299,7 +299,7 @@ describe("runBeforeTurn", () => {
     });
     const deps = createDeps({
       ftsSearchImplementation: ftsSearch,
-      hydratedEntries: [entry],
+      hydratedDurables: [entry],
     });
 
     const result = await runBeforeTurn(
@@ -315,7 +315,7 @@ describe("runBeforeTurn", () => {
       deps,
     );
 
-    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["entry-context-fallback"]);
+    expect(result.durableMemory.map((item) => item.durable.id)).toEqual(["entry-context-fallback"]);
     expect(result.diagnostics.queryPolicy).toBe("contextual_fallback");
     expect(result.diagnostics.query).toBe("What should we do next?\nTopic: Finish the release notes for the before-turn slice.");
     expect(result.diagnostics.queryVariants).toEqual([
@@ -355,14 +355,14 @@ describe("runBeforeTurn", () => {
       });
       const ftsSearch = vi.fn<RecallPorts["ftsSearch"]>(async () => [
         {
-          entry: toRecallCandidateDurable(entry),
+          durable: toRecallCandidateDurable(entry),
           rank: -1,
           tier: "all_tokens",
         },
       ]);
       const deps = createDeps({
         ftsSearchImplementation: ftsSearch,
-        hydratedEntries: [entry],
+        hydratedDurables: [entry],
       });
 
       const result = await runBeforeTurn(
@@ -417,14 +417,14 @@ describe("runBeforeTurn", () => {
       });
       const ftsSearch = vi.fn<RecallPorts["ftsSearch"]>(async () => [
         {
-          entry: toRecallCandidateDurable(entry),
+          durable: toRecallCandidateDurable(entry),
           rank: -1,
           tier: "all_tokens",
         },
       ]);
       const deps = createDeps({
         ftsSearchImplementation: ftsSearch,
-        hydratedEntries: [entry],
+        hydratedDurables: [entry],
       });
 
       const result = await runBeforeTurn(
@@ -473,14 +473,14 @@ describe("runBeforeTurn", () => {
       });
       const ftsSearch = vi.fn<RecallPorts["ftsSearch"]>(async () => [
         {
-          entry: toRecallCandidateDurable(entry),
+          durable: toRecallCandidateDurable(entry),
           rank: -1,
           tier: "all_tokens",
         },
       ]);
       const deps = createDeps({
         ftsSearchImplementation: ftsSearch,
-        hydratedEntries: [entry],
+        hydratedDurables: [entry],
       });
 
       const result = await runBeforeTurn(
@@ -517,7 +517,7 @@ describe("runBeforeTurn", () => {
       if (params.text === "What about him?\nTopic: Duke is Jim's dog.") {
         return [
           {
-            entry: toRecallCandidateDurable(entry),
+            durable: toRecallCandidateDurable(entry),
             rank: -1,
             tier: "all_tokens",
           },
@@ -528,7 +528,7 @@ describe("runBeforeTurn", () => {
     });
     const deps = createDeps({
       ftsSearchImplementation: ftsSearch,
-      hydratedEntries: [entry],
+      hydratedDurables: [entry],
     });
 
     const result = await runBeforeTurn(
@@ -543,7 +543,7 @@ describe("runBeforeTurn", () => {
       deps,
     );
 
-    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["entry-context-required"]);
+    expect(result.durableMemory.map((item) => item.durable.id)).toEqual(["entry-context-required"]);
     expect(result.diagnostics.queryPolicy).toBe("contextual_required");
     expect(result.diagnostics.queryVariants).toEqual([
       {
@@ -571,7 +571,7 @@ describe("runBeforeTurn", () => {
     });
     const deps = createDeps({
       ftsCandidates: [toRecallCandidateDurable(adjacent), toRecallCandidateDurable(identity)],
-      hydratedEntries: [adjacent, identity],
+      hydratedDurables: [adjacent, identity],
     });
 
     const result = await runBeforeTurn(
@@ -585,21 +585,21 @@ describe("runBeforeTurn", () => {
       deps,
     );
 
-    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["duke-identity"]);
+    expect(result.durableMemory.map((item) => item.durable.id)).toEqual(["duke-identity"]);
     expect(result.diagnostics.directness).toMatchObject({
       queryKind: "entity_definition",
       entity: "Duke",
       decision: "reranked",
-      winnerEntryId: "duke-identity",
-      runnerUpEntryId: "duke-family-relationships",
+      winnerDurableId: "duke-identity",
+      runnerUpDurableId: "duke-family-relationships",
     });
     expect(result.diagnostics.directness?.candidates).toEqual([
       expect.objectContaining({
-        entryId: "duke-identity",
+        durableId: "duke-identity",
         signals: expect.arrayContaining(["subject_identity_wrapper", "definitional_content"]),
       }),
       expect.objectContaining({
-        entryId: "duke-family-relationships",
+        durableId: "duke-family-relationships",
         signals: expect.arrayContaining(["definitional_content", "adjacent_relationship"]),
       }),
     ]);
@@ -620,7 +620,7 @@ describe("runBeforeTurn", () => {
     });
     const deps = createDeps({
       ftsCandidates: [toRecallCandidateDurable(familySummary), toRecallCandidateDurable(relationshipRole)],
-      hydratedEntries: [familySummary, relationshipRole],
+      hydratedDurables: [familySummary, relationshipRole],
     });
 
     const result = await runBeforeTurn(
@@ -634,21 +634,21 @@ describe("runBeforeTurn", () => {
       deps,
     );
 
-    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["martin-family-relationships"]);
+    expect(result.durableMemory.map((item) => item.durable.id)).toEqual(["martin-family-relationships"]);
     expect(result.diagnostics.directness).toMatchObject({
       queryKind: "entity_definition",
       entity: "Kurt",
       decision: "reranked",
-      winnerEntryId: "martin-family-relationships",
-      runnerUpEntryId: "kurt-martin-family",
+      winnerDurableId: "martin-family-relationships",
+      runnerUpDurableId: "kurt-martin-family",
     });
     expect(result.diagnostics.directness?.candidates).toEqual([
       expect.objectContaining({
-        entryId: "martin-family-relationships",
+        durableId: "martin-family-relationships",
         signals: expect.arrayContaining(["definitional_content", "adjacent_relationship"]),
       }),
       expect.objectContaining({
-        entryId: "kurt-martin-family",
+        durableId: "kurt-martin-family",
         signals: expect.arrayContaining(["adjacent_relationship"]),
       }),
     ]);
@@ -663,7 +663,7 @@ describe("runBeforeTurn", () => {
     });
     const deps = createDeps({
       ftsCandidates: [toRecallCandidateDurable(familySummary)],
-      hydratedEntries: [familySummary],
+      hydratedDurables: [familySummary],
     });
 
     const result = await runBeforeTurn(
@@ -677,16 +677,16 @@ describe("runBeforeTurn", () => {
       deps,
     );
 
-    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["kevin-martin-family"]);
+    expect(result.durableMemory.map((item) => item.durable.id)).toEqual(["kevin-martin-family"]);
     expect(result.diagnostics.directness).toMatchObject({
       queryKind: "entity_definition",
       entity: "Kevin",
       decision: "kept",
-      winnerEntryId: "kevin-martin-family",
+      winnerDurableId: "kevin-martin-family",
     });
     expect(result.diagnostics.directness?.candidates).toEqual([
       expect.objectContaining({
-        entryId: "kevin-martin-family",
+        durableId: "kevin-martin-family",
         signals: expect.arrayContaining(["definitional_content", "adjacent_relationship"]),
       }),
     ]);
@@ -717,7 +717,7 @@ describe("runBeforeTurn", () => {
     });
     const deps = createDeps({
       ftsCandidates: [toRecallCandidateDurable(cousins), toRecallCandidateDurable(bedNote), toRecallCandidateDurable(owner)],
-      hydratedEntries: [cousins, bedNote, owner],
+      hydratedDurables: [cousins, bedNote, owner],
     });
 
     const result = await runBeforeTurn(
@@ -731,17 +731,17 @@ describe("runBeforeTurn", () => {
       deps,
     );
 
-    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["jim-family-dogs"]);
+    expect(result.durableMemory.map((item) => item.durable.id)).toEqual(["jim-family-dogs"]);
     expect(result.diagnostics.durableRecallCandidateCount).toBe(3);
     expect(result.diagnostics.directness).toMatchObject({
       queryKind: "entity_definition",
       entity: "Duke",
-      winnerEntryId: "jim-family-dogs",
+      winnerDurableId: "jim-family-dogs",
     });
     expect(result.diagnostics.directness?.candidates).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          entryId: "jim-family-dogs",
+          durableId: "jim-family-dogs",
           signals: expect.arrayContaining(["definitional_content", "claim_key_entity_match"]),
         }),
       ]),
@@ -763,7 +763,7 @@ describe("runBeforeTurn", () => {
     });
     const deps = createDeps({
       ftsCandidates: [toRecallCandidateDurable(relationshipDefinition), toRecallCandidateDurable(habits)],
-      hydratedEntries: [relationshipDefinition, habits],
+      hydratedDurables: [relationshipDefinition, habits],
     });
 
     const result = await runBeforeTurn(
@@ -777,13 +777,13 @@ describe("runBeforeTurn", () => {
       deps,
     );
 
-    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["duke-family-relationships"]);
+    expect(result.durableMemory.map((item) => item.durable.id)).toEqual(["duke-family-relationships"]);
     expect(result.diagnostics.directness).toMatchObject({
       queryKind: "entity_definition",
       entity: "Duke",
       decision: "kept",
-      winnerEntryId: "duke-family-relationships",
-      runnerUpEntryId: "duke-habits",
+      winnerDurableId: "duke-family-relationships",
+      runnerUpDurableId: "duke-habits",
     });
     // The phase-4 small-pool RRF sharpening widens the relevance gap on
     // two-candidate pools, so the post-rerank `winnerGap` is larger than
@@ -795,11 +795,11 @@ describe("runBeforeTurn", () => {
     expect(result.diagnostics.directness?.reason).not.toContain("too close after reranking");
     expect(result.diagnostics.directness?.candidates).toEqual([
       expect.objectContaining({
-        entryId: "duke-family-relationships",
+        durableId: "duke-family-relationships",
         signals: expect.arrayContaining(["definitional_content", "adjacent_relationship"]),
       }),
       expect.objectContaining({
-        entryId: "duke-habits",
+        durableId: "duke-habits",
       }),
     ]);
     expect(result.diagnostics.directness?.candidates[1]?.signals).not.toContain("definitional_content");
@@ -822,7 +822,7 @@ describe("runBeforeTurn", () => {
     });
     const deps = createDeps({
       ftsCandidates: [toRecallCandidateDurable(identity), toRecallCandidateDurable(biography)],
-      hydratedEntries: [identity, biography],
+      hydratedDurables: [identity, biography],
     });
 
     const result = await runBeforeTurn(
@@ -845,11 +845,11 @@ describe("runBeforeTurn", () => {
     expect(result.diagnostics.directness?.reason).toContain("too close after reranking");
     expect(result.diagnostics.directness?.candidates).toEqual([
       expect.objectContaining({
-        entryId: "duke-identity",
+        durableId: "duke-identity",
         signals: expect.arrayContaining(["subject_identity_wrapper", "definitional_content"]),
       }),
       expect.objectContaining({
-        entryId: "duke-biography",
+        durableId: "duke-biography",
         signals: expect.arrayContaining(["subject_identity_wrapper", "definitional_content"]),
       }),
     ]);
@@ -870,7 +870,7 @@ describe("runBeforeTurn", () => {
     });
     const deps = createDeps({
       ftsCandidates: [toRecallCandidateDurable(notes), toRecallCandidateDurable(background)],
-      hydratedEntries: [notes, background],
+      hydratedDurables: [notes, background],
     });
 
     const result = await runBeforeTurn(
@@ -913,7 +913,7 @@ describe("runBeforeTurn", () => {
     });
     const deps = createDeps({
       ftsCandidates: [toRecallCandidateDurable(adjacent), toRecallCandidateDurable(identity)],
-      hydratedEntries: [adjacent, identity],
+      hydratedDurables: [adjacent, identity],
     });
 
     const result = await runBeforeTurn(
@@ -926,13 +926,13 @@ describe("runBeforeTurn", () => {
           // cannot surface the related identity entry alongside the primary
           // cousins hit; we only care that relationship questions skip the
           // definitional rerank path.
-          maxHighConfidenceDurableEntries: 1,
+          maxHighConfidenceDurables: 1,
         },
       },
       deps,
     );
 
-    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["duke-cousins"]);
+    expect(result.durableMemory.map((item) => item.durable.id)).toEqual(["duke-cousins"]);
     expect(result.diagnostics.directness).toBeUndefined();
   });
 
@@ -952,7 +952,7 @@ describe("runBeforeTurn", () => {
     });
     const deps = createDeps({
       ftsCandidates: [toRecallCandidateDurable(entry)],
-      hydratedEntries: [entry],
+      hydratedDurables: [entry],
       procedureFtsMatches: [{ procedure, rank: -1 }],
     });
 
@@ -1019,7 +1019,7 @@ describe("runBeforeTurn", () => {
     });
     const deps = createDeps({
       ftsCandidates: [toRecallCandidateDurable(entry)],
-      hydratedEntries: [entry],
+      hydratedDurables: [entry],
     });
 
     const result = await runBeforeTurn(
@@ -1033,7 +1033,9 @@ describe("runBeforeTurn", () => {
       deps,
     );
 
-    expect(result.diagnostics.notices).toEqual(expect.arrayContaining(["Embeddings failed during recall, so Agenr fell back to lexical-only entry ranking."]));
+    expect(result.diagnostics.notices).toEqual(
+      expect.arrayContaining(["Embeddings failed during recall, so Agenr fell back to lexical-only durable ranking."]),
+    );
     expect(result.durableMemory).toHaveLength(1);
   });
 
@@ -1058,14 +1060,14 @@ describe("runBeforeTurn", () => {
     });
     const deps = createDeps({
       ftsCandidates: [toRecallCandidateDurable(first), toRecallCandidateDurable(second), toRecallCandidateDurable(third)],
-      hydratedEntries: [first, second, third],
+      hydratedDurables: [first, second, third],
     });
 
     const result = await runBeforeTurn(
       {
         currentTurnText: "Find the most relevant durable matches for this turn.",
         policy: {
-          maxDurableEntries: 2,
+          maxDurables: 2,
           recallThreshold: 0,
           enableProcedureSuggestion: false,
         },
@@ -1073,7 +1075,7 @@ describe("runBeforeTurn", () => {
       deps,
     );
 
-    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["entry-1", "entry-2"]);
+    expect(result.durableMemory.map((item) => item.durable.id)).toEqual(["entry-1", "entry-2"]);
     expect(result.durableMemory.map((item) => item.rank)).toEqual([1, 2]);
     expect(result.diagnostics.durableRecallCandidateCount).toBe(2);
   });
@@ -1093,7 +1095,7 @@ describe("runBeforeTurn", () => {
     });
     const deps = createDeps({
       ftsCandidates: [toRecallCandidateDurable(first), toRecallCandidateDurable(second)],
-      hydratedEntries: [first, second],
+      hydratedDurables: [first, second],
     });
 
     const result = await runBeforeTurn(
@@ -1102,15 +1104,15 @@ describe("runBeforeTurn", () => {
         policy: {
           enableProcedureSuggestion: false,
           recallThreshold: 0,
-          maxDurableEntries: 1,
-          maxHighConfidenceDurableEntries: 2,
+          maxDurables: 1,
+          maxHighConfidenceDurables: 2,
           highConfidenceRecallThreshold: 1,
         },
       },
       deps,
     );
 
-    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["entry-1"]);
+    expect(result.durableMemory.map((item) => item.durable.id)).toEqual(["entry-1"]);
     expect(result.diagnostics.notices).toContain("Before-turn durable recall kept the top 1 item because additional candidates were not high confidence.");
   });
 
@@ -1129,7 +1131,7 @@ describe("runBeforeTurn", () => {
     });
     const deps = createDeps({
       ftsCandidates: [toRecallCandidateDurable(first), toRecallCandidateDurable(second)],
-      hydratedEntries: [first, second],
+      hydratedDurables: [first, second],
     });
 
     const result = await runBeforeTurn(
@@ -1138,15 +1140,15 @@ describe("runBeforeTurn", () => {
         policy: {
           enableProcedureSuggestion: false,
           recallThreshold: 0,
-          maxDurableEntries: 1,
-          maxHighConfidenceDurableEntries: 2,
+          maxDurables: 1,
+          maxHighConfidenceDurables: 2,
           highConfidenceRecallThreshold: 0,
         },
       },
       deps,
     );
 
-    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["entry-1", "entry-2"]);
+    expect(result.durableMemory.map((item) => item.durable.id)).toEqual(["entry-1", "entry-2"]);
     expect(result.diagnostics.notices).toContain("Before-turn durable recall expanded to 2 high-confidence items.");
   });
 
@@ -1164,7 +1166,7 @@ describe("runBeforeTurn", () => {
     });
     const deps = createDeps({
       ftsCandidates: [toRecallCandidateDurable(stanEntry)],
-      hydratedEntries: [stanEntry],
+      hydratedDurables: [stanEntry],
       listActiveAbstainDirectives: vi.fn(async () => [directiveRow]),
     });
 
@@ -1181,7 +1183,7 @@ describe("runBeforeTurn", () => {
 
     expect(result.durableMemory).toEqual([]);
     expect(result.diagnostics.directiveAbstentions).toEqual([
-      { entryId: "fact-stan", reason: "directive_topic", directiveId: "dir-stan", blockedTerm: "stan" },
+      { durableId: "fact-stan", reason: "directive_topic", directiveId: "dir-stan", blockedTerm: "stan" },
     ]);
     expect(result.diagnostics.abstained).toBe(true);
   });
@@ -1216,7 +1218,7 @@ describe("runBeforeTurn", () => {
     expect(result.durableMemory).toMatchObject([
       {
         sourceKind: "directive",
-        entry: { id: "dir-stan-topic" },
+        durable: { id: "dir-stan-topic" },
       },
     ]);
     expect(result.diagnostics.topicProactiveDirectiveCandidateCount).toBe(1);
@@ -1265,7 +1267,7 @@ describe("runBeforeTurn", () => {
 
     expect(result.durableMemory).toEqual([]);
     expect(result.diagnostics.directiveAbstentions).toEqual([
-      { entryId: "dir-stan-topic", reason: "directive_topic", directiveId: "dir-no-stan", blockedTerm: "stan" },
+      { durableId: "dir-stan-topic", reason: "directive_topic", directiveId: "dir-no-stan", blockedTerm: "stan" },
     ]);
     expect(result.diagnostics.abstained).toBe(true);
   });
@@ -1278,7 +1280,7 @@ describe("runBeforeTurn", () => {
     });
     const deps = createDeps({
       ftsCandidates: [toRecallCandidateDurable(stanEntry)],
-      hydratedEntries: [stanEntry],
+      hydratedDurables: [stanEntry],
     });
 
     const result = await runBeforeTurn(
@@ -1292,7 +1294,7 @@ describe("runBeforeTurn", () => {
       deps,
     );
 
-    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["fact-stan"]);
+    expect(result.durableMemory.map((item) => item.durable.id)).toEqual(["fact-stan"]);
     expect(result.diagnostics.directiveAbstentions).toBeUndefined();
   });
 });
@@ -1300,7 +1302,7 @@ describe("runBeforeTurn", () => {
 function createDeps(
   options: {
     ftsCandidates?: RecallCandidateDurable[];
-    hydratedEntries?: Durable[];
+    hydratedDurables?: Durable[];
     ftsSearchImplementation?: RecallPorts["ftsSearch"];
     procedureFtsMatches?: Array<{ procedure: Procedure; rank: number }>;
     procedureVectorMatches?: Array<{ procedure: Procedure; vectorSim: number }>;
@@ -1314,7 +1316,7 @@ function createDeps(
     procedureVectorSearch: ReturnType<typeof vi.fn>;
   };
 } {
-  const recallEntries = new Map((options.hydratedEntries ?? []).map((entry) => [entry.id, entry]));
+  const recallEntries = new Map((options.hydratedDurables ?? []).map((entry) => [entry.id, entry]));
   const recall: RecallPorts = {
     embed: vi.fn(async () => {
       throw new Error("embeddings unavailable");
@@ -1323,13 +1325,13 @@ function createDeps(
     ftsSearch:
       options.ftsSearchImplementation ??
       vi.fn(async (_params) =>
-        (options.ftsCandidates ?? []).map((entry) => ({
-          entry,
+        (options.ftsCandidates ?? []).map((durable) => ({
+          durable,
           rank: -1,
           tier: "all_tokens" as const,
         })),
       ),
-    hydrateEntries: vi.fn(async (ids: string[]) => ids.flatMap((id) => recallEntries.get(id) ?? [])),
+    hydrateDurables: vi.fn(async (ids: string[]) => ids.flatMap((id) => recallEntries.get(id) ?? [])),
     recordRecallEvents: vi.fn(async () => undefined),
   };
   const procedures = createProcedureDatabase({

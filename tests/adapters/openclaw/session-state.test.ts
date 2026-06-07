@@ -9,7 +9,7 @@ describe("createMidSessionTracker", () => {
     expect(tracker.recordTurn("session-1", "agent:main:webchat:first")).toMatchObject({
       turnCount: 1,
       nudgeCount: 0,
-      entriesStored: 0,
+      durablesStored: 0,
     });
     expect(tracker.recordTurn("session-1", "agent:main:webchat:first")).toMatchObject({
       turnCount: 2,

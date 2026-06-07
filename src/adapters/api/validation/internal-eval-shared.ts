@@ -139,12 +139,12 @@ export interface InternalEvalProfileSnapshotDto {
 }
 
 /**
- * Adapter-owned normalized fixture entry DTO shared across internal eval seams.
+ * Adapter-owned normalized fixture durable DTO shared across internal eval seams.
  */
-export interface InternalEvalFixtureEntryDto {
-  /** Optional stable entry identifier. */
+export interface InternalEvalFixtureDurableDto {
+  /** Optional stable durable identifier. */
   id?: string;
-  /** Durable entry type. */
+  /** Durable durable type. */
   type: DurableKind;
   /** Fixture subject line. */
   subject: string;
@@ -164,7 +164,7 @@ export interface InternalEvalFixtureEntryDto {
   created_at?: string;
   /** Optional update timestamp. */
   updated_at?: string;
-  /** Optional successor entry identifier. */
+  /** Optional successor durable identifier. */
   superseded_by?: string;
   /** Optional canonical claim key. */
   claim_key?: string;
@@ -367,14 +367,14 @@ function parseCorpusSeedMode(value: unknown, path: string, issues: ValidationIss
  * @param issues - Mutable validation issue collection.
  * @returns Normalized fixture DTO list when valid.
  */
-export function parseMemoryPool(value: unknown, issues: ValidationIssue[]): InternalEvalFixtureEntryDto[] | undefined {
+export function parseMemoryPool(value: unknown, issues: ValidationIssue[]): InternalEvalFixtureDurableDto[] | undefined {
   if (!Array.isArray(value)) {
-    pushIssue(issues, "memoryPool", "Expected an array of fixture entries.");
+    pushIssue(issues, "memoryPool", "Expected an array of fixture durables.");
     return undefined;
   }
 
   return value.flatMap((entry, index) => {
-    const parsed = parseFixtureEntry(entry, index, issues);
+    const parsed = parseFixtureDurable(entry, index, issues);
     return parsed ? [parsed] : [];
   });
 }
@@ -424,12 +424,12 @@ export function mapSandboxRequestDto(dto: InternalEvalSandboxRequestDto | undefi
 }
 
 /**
- * Maps an adapter fixture-entry DTO into the app-layer fixture contract.
+ * Maps an adapter fixture-durable DTO into the app-layer fixture contract.
  *
- * @param dto - Adapter fixture-entry DTO.
+ * @param dto - Adapter fixture-durable DTO.
  * @returns App fixture request.
  */
-export function mapFixtureEntryDto(dto: InternalEvalFixtureEntryDto): InternalEvalFixtureEntryDto {
+export function mapFixtureDurableDto(dto: InternalEvalFixtureDurableDto): InternalEvalFixtureDurableDto {
   return {
     id: dto.id,
     type: dto.type,
@@ -571,8 +571,8 @@ export function parseRecentTurnRole(value: unknown, path: string, issues: Valida
   return normalized;
 }
 
-/** Parses a single explicit memory fixture entry. */
-function parseFixtureEntry(value: unknown, index: number, issues: ValidationIssue[]): InternalEvalFixtureEntryDto | undefined {
+/** Parses a single explicit memory fixture durable. */
+function parseFixtureDurable(value: unknown, index: number, issues: ValidationIssue[]): InternalEvalFixtureDurableDto | undefined {
   const basePath = `memoryPool[${index}]`;
   const fixture = parseObject(value, basePath, issues);
   if (fixture === undefined) {
@@ -780,7 +780,7 @@ function parseFixtureProcedure(value: unknown, index: number, issues: Validation
   }
 }
 
-/** Parses a valid entry type enum member. */
+/** Parses a valid durable type enum member. */
 function parseDurableKind(value: unknown, path: string, issues: ValidationIssue[]): DurableKind | undefined {
   if (typeof value !== "string" || !DURABLE_KINDS.includes(value as DurableKind)) {
     pushIssue(issues, path, `Expected one of: ${DURABLE_KINDS.join(", ")}.`);

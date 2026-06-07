@@ -42,7 +42,7 @@ function buildTraceSummary(): RecallExecutionTraceSummary {
 }
 
 function buildMergeOutcome(entries: RecallCandidateDurable[]): RecallMergeOutcome {
-  const merged = new Map(entries.map((entry) => [entry.id, { entry }]));
+  const merged = new Map(entries.map((durable) => [durable.id, { durable }]));
   return {
     merged,
     vectorRanks: entries.map((entry) => entry.id),

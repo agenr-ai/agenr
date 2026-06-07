@@ -80,7 +80,7 @@ class LibsqlRecallAdapter implements RecallPorts {
     embedding: number[];
     limit: number;
     filters?: DurableFilters;
-  }): Promise<Array<{ entry: RecallCandidateDurable; vectorSim: number }>> {
+  }): Promise<Array<{ durable: RecallCandidateDurable; vectorSim: number }>> {
     if (params.limit <= 0 || params.embedding.length === 0) {
       return [];
     }
@@ -90,7 +90,7 @@ class LibsqlRecallAdapter implements RecallPorts {
       return [];
     }
 
-    const filters = buildEntryFilterClause(params.filters, "e");
+    const filters = buildDurableFilterClause(params.filters, "e");
     const activityClause = buildRecallActivityClause(params.filters, "e");
     let result: ResultSet;
 
@@ -113,7 +113,7 @@ class LibsqlRecallAdapter implements RecallPorts {
 
     return result.rows
       .map((row) => ({
-        entry: mapRecallCandidateRow(row),
+        durable: mapRecallCandidateRow(row),
         vectorSim: cosineSimilarity(params.embedding, readEmbedding(row, "embedding")),
       }))
       .filter((candidate) => candidate.vectorSim > 0)
@@ -132,7 +132,7 @@ class LibsqlRecallAdapter implements RecallPorts {
       return [];
     }
 
-    const filters = buildEntryFilterClause(params.filters, "e");
+    const filters = buildDurableFilterClause(params.filters, "e");
     const activityClause = buildRecallActivityClause(params.filters, "e");
     const matches = new Map<string, FtsCandidate>();
 
@@ -160,13 +160,13 @@ class LibsqlRecallAdapter implements RecallPorts {
       }
 
       for (const row of result.rows) {
-        const entryId = readRequiredString(row, "id");
-        if (matches.has(entryId)) {
+        const durableId = readRequiredString(row, "id");
+        if (matches.has(durableId)) {
           continue;
         }
 
-        matches.set(entryId, {
-          entry: mapRecallCandidateRow(row),
+        matches.set(durableId, {
+          durable: mapRecallCandidateRow(row),
           rank: readNumber(row, "rank", Number.POSITIVE_INFINITY),
           tier: tier.tier,
         });
@@ -248,7 +248,7 @@ class LibsqlRecallAdapter implements RecallPorts {
   }
 
   /** Hydrates full entries for the final ranked result set. */
-  public async hydrateEntries(ids: string[]): Promise<Durable[]> {
+  public async hydrateDurables(ids: string[]): Promise<Durable[]> {
     const normalizedIds = normalizeStrings(ids);
     if (normalizedIds.length === 0) {
       return [];
@@ -273,11 +273,11 @@ class LibsqlRecallAdapter implements RecallPorts {
    *
    * Errors are swallowed per entry because telemetry must never fail recall.
    */
-  public async recordRecallEvents(params: { entryIds: string[]; query: string; sessionKey?: string }): Promise<void> {
+  public async recordRecallEvents(params: { durableIds: string[]; query: string; sessionKey?: string }): Promise<void> {
     const task = this.pendingWrites.then(async () => {
-      for (const entryId of params.entryIds) {
+      for (const durableId of params.durableIds) {
         try {
-          await recordRecallEvent(this.executor, entryId, params.query, params.sessionKey);
+          await recordRecallEvent(this.executor, durableId, params.query, params.sessionKey);
         } catch {
           // Swallow telemetry failures so recall responses are never blocked by writes.
         }
@@ -311,7 +311,7 @@ function buildRecallActivityClause(filters: DurableFilters | undefined, alias: s
  * @param alias - Table alias used in the query.
  * @returns SQL fragment prefixed with `AND` clauses plus the matching args.
  */
-function buildEntryFilterClause(filters: DurableFilters | undefined, alias: string): { sql: string; args: Array<string | number> } {
+function buildDurableFilterClause(filters: DurableFilters | undefined, alias: string): { sql: string; args: Array<string | number> } {
   if (!filters) {
     return { sql: "", args: [] };
   }

@@ -10,12 +10,12 @@ import type { RecallEvalSnapshotMetadata } from "./contracts.js";
  */
 export interface RecallEvalFixtureStore {
   /**
-   * Inserts one exact fixture entry into isolated eval storage.
+   * Inserts one exact fixture durable into isolated eval storage.
    *
    * @param entry - Canonical entry payload to store.
    * @param embedding - Precomputed embedding vector for the entry.
    * @param contentHash - Stable content hash for the seeded row.
-   * @returns Persisted entry ID.
+   * @returns Persisted durable ID.
    */
   insertDurable(entry: Durable, embedding: number[], contentHash: string): Promise<string>;
 

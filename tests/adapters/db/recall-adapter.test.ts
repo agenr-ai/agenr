@@ -52,14 +52,14 @@ describe("createRecallAdapter historical expansion", () => {
       limit: 5,
     });
 
-    expect(vectorCandidates.find((candidate) => candidate.entry.id === withClaimKey.id)?.entry.claim_key).toBe("deployments/packaging");
-    expect(vectorCandidates.find((candidate) => candidate.entry.id === withClaimKey.id)?.entry.claim_key_status).toBe("trusted");
-    expect(vectorCandidates.find((candidate) => candidate.entry.id === withoutClaimKey.id)?.entry.claim_key).toBeUndefined();
-    expect(vectorCandidates.find((candidate) => candidate.entry.id === withoutClaimKey.id)?.entry.claim_key_status).toBeUndefined();
-    expect(lexicalWithClaim[0]?.entry.claim_key).toBe("deployments/packaging");
-    expect(lexicalWithClaim[0]?.entry.claim_key_status).toBe("trusted");
-    expect(lexicalWithoutClaim[0]?.entry.claim_key).toBeUndefined();
-    expect(lexicalWithoutClaim[0]?.entry.claim_key_status).toBeUndefined();
+    expect(vectorCandidates.find((candidate) => candidate.durable.id === withClaimKey.id)?.durable.claim_key).toBe("deployments/packaging");
+    expect(vectorCandidates.find((candidate) => candidate.durable.id === withClaimKey.id)?.durable.claim_key_status).toBe("trusted");
+    expect(vectorCandidates.find((candidate) => candidate.durable.id === withoutClaimKey.id)?.durable.claim_key).toBeUndefined();
+    expect(vectorCandidates.find((candidate) => candidate.durable.id === withoutClaimKey.id)?.durable.claim_key_status).toBeUndefined();
+    expect(lexicalWithClaim[0]?.durable.claim_key).toBe("deployments/packaging");
+    expect(lexicalWithClaim[0]?.durable.claim_key_status).toBe("trusted");
+    expect(lexicalWithoutClaim[0]?.durable.claim_key).toBeUndefined();
+    expect(lexicalWithoutClaim[0]?.durable.claim_key_status).toBeUndefined();
   });
 
   it("matches a sentence-final period query whose last token carries trailing punctuation", async () => {
@@ -77,7 +77,7 @@ describe("createRecallAdapter historical expansion", () => {
     // FTS5 word form throws "syntax error near ." and silently empties the tier.
     const candidates = await adapter.ftsSearch({ text: "Tell me the office hours schedule.", limit: 5 });
 
-    expect(candidates.map((candidate) => candidate.entry.id)).toContain("office-hours");
+    expect(candidates.map((candidate) => candidate.durable.id)).toContain("office-hours");
   });
 
   it("excludes expired and not-yet-valid durables when validAsOf is set on filters", async () => {
@@ -120,8 +120,8 @@ describe("createRecallAdapter historical expansion", () => {
       filters: { validAsOf: asOf },
     });
 
-    expect(vectorCandidates.map((candidate) => candidate.entry.id)).toEqual(["location-current"]);
-    expect(lexicalCandidates.map((candidate) => candidate.entry.id)).toEqual(["location-current"]);
+    expect(vectorCandidates.map((candidate) => candidate.durable.id)).toEqual(["location-current"]);
+    expect(lexicalCandidates.map((candidate) => candidate.durable.id)).toEqual(["location-current"]);
   });
 
   it("matches queries containing dotted or hyphenated tokens without dropping the tier", async () => {
@@ -139,7 +139,7 @@ describe("createRecallAdapter historical expansion", () => {
     // FTS5 word form throws and would otherwise return nothing for the tier.
     const candidates = await adapter.ftsSearch({ text: "which text-embedding-3-small model do we use", limit: 5 });
 
-    expect(candidates.map((candidate) => candidate.entry.id)).toContain("embedding-model");
+    expect(candidates.map((candidate) => candidate.durable.id)).toContain("embedding-model");
   });
 
   it("fetches direct predecessors, same-claim-key lineage siblings, and retired same-subject fallbacks", async () => {
@@ -333,7 +333,7 @@ describe("createRecallAdapter historical expansion", () => {
     await database.insertDurable(current, createEmbedding(0, 1), "tracking-current");
     await database.insertDurable(retired, createEmbedding(0, 0.8), "tracking-retired");
 
-    const hydrated = await adapter.hydrateEntries([retired.id, current.id]);
+    const hydrated = await adapter.hydrateDurables([retired.id, current.id]);
 
     expect(hydrated.map((entry) => entry.id)).toEqual(expect.arrayContaining([retired.id, current.id]));
     expect(hydrated.find((entry) => entry.id === retired.id)?.valid_to).toBe("2026-02-10T00:00:00.000Z");

@@ -25,16 +25,16 @@ export function buildLiveRecallDebugArtifact(params: {
   maxTopCandidates: number;
 }): RecallDebugArtifactV1 {
   const { caseId, query, result, eventLevel, maxTopCandidates } = params;
-  const selectedEntryIds = result.entries.map((entry) => entry.entry.id);
+  const selectedDurableIds = result.durables.map((entry) => entry.durable.id);
   const includeCandidateBreakdown = eventLevel === "detailed";
   const topK = includeCandidateBreakdown ? clampTopK(maxTopCandidates) : 0;
-  const reasonsByEntryId = new Map<string, string[]>();
-  for (const projected of result.projectedEntries) {
+  const reasonsByDurableId = new Map<string, string[]>();
+  for (const projected of result.projectedDurables) {
     if (projected.whySurfaced.reasons.length > 0) {
-      reasonsByEntryId.set(projected.entryId, [...projected.whySurfaced.reasons]);
+      reasonsByDurableId.set(projected.durableId, [...projected.whySurfaced.reasons]);
     }
   }
-  const topCandidates = includeCandidateBreakdown ? buildTopCandidates(result, reasonsByEntryId, topK) : [];
+  const topCandidates = includeCandidateBreakdown ? buildTopCandidates(result, reasonsByDurableId, topK) : [];
 
   return {
     schemaVersion: "recall-debug-artifact.v1",
@@ -44,7 +44,7 @@ export function buildLiveRecallDebugArtifact(params: {
       query,
     },
     routing: result.routing,
-    selectedEntryIds,
+    selectedDurableIds,
     ...(topCandidates.length > 0 ? { topCandidates } : {}),
   };
 }
@@ -67,15 +67,15 @@ function clampTopK(requested: number): number {
 }
 
 /** Shapes the bounded top-K recall candidate breakdown for live emission. */
-function buildTopCandidates(result: UnifiedRecallResult, reasonsByEntryId: Map<string, string[]>, topK: number): RecallDebugArtifactTopCandidate[] {
+function buildTopCandidates(result: UnifiedRecallResult, reasonsByDurableId: Map<string, string[]>, topK: number): RecallDebugArtifactTopCandidate[] {
   if (topK < 1) {
     return [];
   }
 
-  return result.entries.slice(0, topK).map((entry) => {
-    const reasons = reasonsByEntryId.get(entry.entry.id);
+  return result.durables.slice(0, topK).map((entry) => {
+    const reasons = reasonsByDurableId.get(entry.durable.id);
     return {
-      id: entry.entry.id,
+      id: entry.durable.id,
       score: entry.score,
       lexicalScore: entry.scores.lexical,
       vectorScore: entry.scores.vector,

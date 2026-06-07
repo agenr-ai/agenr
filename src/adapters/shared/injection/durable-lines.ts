@@ -3,9 +3,9 @@ import { truncate } from "../memory-tool-format.js";
 const MAX_CONTENT_CHARS = 220;
 
 /** Shared injection entry shape used by session-start and before-turn formatters. */
-export interface InjectionEntryItem {
+export interface InjectionDurableItem {
   rank: number;
-  entry: {
+  durable: {
     id: string;
     type: string;
     expiry: string;
@@ -21,36 +21,36 @@ export interface InjectionEntryItem {
 }
 
 /**
- * Formats one memory entry header line for prompt injection.
+ * Formats one durable memory header line for prompt injection.
  *
  * @param item - Injection entry item with rank and metadata.
  * @returns Header line for prompt injection.
  */
-export function formatInjectionEntryHeader(item: InjectionEntryItem): string {
+export function formatInjectionDurableHeader(item: InjectionDurableItem): string {
   const metadata = [
     `rank ${item.rank}`,
-    item.entry.id,
-    item.entry.type,
-    item.entry.expiry,
-    `importance ${item.entry.importance}`,
+    item.durable.id,
+    item.durable.type,
+    item.durable.expiry,
+    `importance ${item.durable.importance}`,
     item.score !== undefined ? `score ${item.score.toFixed(2)}` : undefined,
   ].filter((value): value is string => value !== undefined);
 
-  return `- [${metadata.join(" | ")}] ${item.entry.subject}`;
+  return `- [${metadata.join(" | ")}] ${item.durable.subject}`;
 }
 
 /**
- * Formats one memory entry body block for prompt injection.
+ * Formats one durable memory body block for prompt injection.
  *
  * @param item - Injection entry item with content and provenance metadata.
  * @returns Body lines for prompt injection.
  */
-export function formatInjectionEntryBodyLines(item: InjectionEntryItem): string[] {
-  const lines = [`  ${truncate(item.entry.content.trim(), MAX_CONTENT_CHARS)}`];
+export function formatInjectionDurableBodyLines(item: InjectionDurableItem): string[] {
+  const lines = [`  ${truncate(item.durable.content.trim(), MAX_CONTENT_CHARS)}`];
   lines.push(`  why: ${item.whySurfaced.summary}`);
 
   const metadata = [
-    item.entry.tags.length > 0 ? `tags: ${item.entry.tags.join(", ")}` : undefined,
+    item.durable.tags.length > 0 ? `tags: ${item.durable.tags.join(", ")}` : undefined,
     item.freshnessLabel ? `freshness: ${item.freshnessLabel}` : undefined,
     item.provenanceSummary ? `provenance: ${truncate(item.provenanceSummary, MAX_CONTENT_CHARS)}` : undefined,
   ].filter((value): value is string => value !== undefined);

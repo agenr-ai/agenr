@@ -128,7 +128,7 @@ function createMidSessionState(): MidSessionState {
     lastMemoryActionTurn: 0,
     lastExplicitMemoryActionTurn: 0,
     nudgeCount: 0,
-    entriesStored: 0,
+    durablesStored: 0,
     storedSubjects: [],
   };
 }

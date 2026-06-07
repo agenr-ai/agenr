@@ -24,8 +24,8 @@
   "policy": {
     "enableProcedureSuggestion": false,
     "recallThreshold": 1,
-    "maxDurableEntries": 5,
-    "maxHighConfidenceDurableEntries": 5,
+    "maxDurables": 5,
+    "maxHighConfidenceDurables": 5,
     "highConfidenceRecallThreshold": 0
   },
   "expect": {

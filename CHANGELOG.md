@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Durable terminology cleanup.** Finished the entry-to-durable rename across store, ingest progress events, eval normalization, adapter helpers, and related types (`StoreDurableDetail`, `TaggedDurable`, `DurableProjectScopeFields`). Removed the before-turn eval `entry` alias on patch items.
+
 ## [2026.6.3] - 2026-06-06
 
 Session-end episode alignment and review hardening release.

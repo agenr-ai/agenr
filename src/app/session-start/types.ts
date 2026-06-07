@@ -8,13 +8,13 @@ import type { Durable } from "../../core/types.js";
  */
 export interface SessionStartPolicy {
   /** Maximum always-on core entries to load before hybrid selection. */
-  maxCoreEntries?: number;
+  maxCoreDurables?: number;
   /** Enables or disables artifact-grounded durable recall for this pass. */
   enableArtifactRecall?: boolean;
   /** Maximum artifact-grounded recall candidates to consider. */
-  maxArtifactRecallEntries?: number;
+  maxArtifactRecallDurables?: number;
   /** Maximum durable memory items to return after merging and dedupe. */
-  maxDurableEntries?: number;
+  maxDurables?: number;
   /** Maximum artifact text characters to use while building the recall query. */
   maxArtifactChars?: number;
   /** Optional score threshold for artifact-grounded durable recall. */
@@ -39,8 +39,8 @@ export interface SessionStartInput {
 export interface SessionStartPatchItem {
   /** Stable final rank in the bounded durable-memory set. */
   rank: number;
-  /** Hydrated durable entry selected for session start. */
-  entry: Durable;
+  /** Hydrated durable selected for session start. */
+  durable: Durable;
   /** Whether the item came from profile, directive, core memory, or artifact-grounded recall. */
   sourceKind: "profile" | "directive" | "core" | "artifact_recall";
   /** Optional final ranking score when the item came from recall. */

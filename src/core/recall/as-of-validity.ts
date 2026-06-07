@@ -63,7 +63,7 @@ export function applyAsOfValidityFilter(mergeOutcome: RecallMergeOutcome, summar
   const asOfMs = asOf.getTime();
   const removed = new Set<string>();
   for (const [id, candidate] of mergeOutcome.merged) {
-    if (!isWithinValidityWindow(candidate.entry.valid_from, candidate.entry.valid_to, asOfMs)) {
+    if (!isWithinValidityWindow(candidate.durable.valid_from, candidate.durable.valid_to, asOfMs)) {
       mergeOutcome.merged.delete(id);
       removed.add(id);
     }

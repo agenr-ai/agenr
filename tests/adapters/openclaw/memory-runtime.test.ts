@@ -26,8 +26,8 @@ describe("createAgenrMemoryRuntime", () => {
       },
       memory: {
         getMemoryStatusSnapshot: vi.fn(async () => ({
-          activeEntries: 12,
-          coreEntries: 3,
+          activeDurables: 12,
+          coreDurables: 3,
           sourceFiles: 4,
         })),
         probeVectorAvailability: vi.fn(async () => true),

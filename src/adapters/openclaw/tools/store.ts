@@ -26,7 +26,13 @@ export function createAgenrStoreTool(ctx: OpenClawPluginToolContext, servicesPro
     async execute(_toolCallId, rawParams) {
       try {
         const params = parseStoreToolParams(rawParams, OPENCLAW_PARAM_READER);
-        logToolCall(logger, "agenr_store", ctx, `store 1 entry subject=${JSON.stringify(params.subject)} type=${params.type}`, sanitizeStoreToolParams(params));
+        logToolCall(
+          logger,
+          "agenr_store",
+          ctx,
+          `store 1 durable subject=${JSON.stringify(params.subject)} type=${params.type}`,
+          sanitizeStoreToolParams(params),
+        );
 
         const services = await servicesPromise;
         const outcome = await runStoreMemoryTool(params, services, {

@@ -13,8 +13,8 @@ export function createInstrumentedRecallPorts(
     recordQueryEmbedding(params: { durationMs: number; dimensions: number }): void;
     recordVectorSearch(params: { durationMs: number; count: number; limit: number }): void;
     recordLexicalSearch(params: { durationMs: number; count: number; limit: number }): void;
-    recordHydrateEntries(params: { durationMs: number; count: number }): void;
-    recordRecallTelemetry(params: { durationMs: number; entryCount: number }): void;
+    recordHydrateDurables(params: { durationMs: number; count: number }): void;
+    recordRecallTelemetry(params: { durationMs: number; durableCount: number }): void;
   },
 ): RecallPorts {
   return {
@@ -93,18 +93,18 @@ export function createInstrumentedRecallPorts(
           crossEncoder: ports.crossEncoder,
         }
       : {}),
-    async hydrateEntries(ids: string[]): Promise<Awaited<ReturnType<RecallPorts["hydrateEntries"]>>> {
+    async hydrateDurables(ids: string[]): Promise<Awaited<ReturnType<RecallPorts["hydrateDurables"]>>> {
       const startedAt = Date.now();
 
       try {
-        const entries = await ports.hydrateEntries(ids);
-        observer.recordHydrateEntries({
+        const entries = await ports.hydrateDurables(ids);
+        observer.recordHydrateDurables({
           durationMs: elapsedMs(startedAt),
           count: entries.length,
         });
         return entries;
       } catch (error) {
-        observer.recordHydrateEntries({
+        observer.recordHydrateDurables({
           durationMs: elapsedMs(startedAt),
           count: 0,
         });
@@ -119,7 +119,7 @@ export function createInstrumentedRecallPorts(
       } finally {
         observer.recordRecallTelemetry({
           durationMs: elapsedMs(startedAt),
-          entryCount: params.entryIds.length,
+          durableCount: params.durableIds.length,
         });
       }
     },

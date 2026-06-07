@@ -1,7 +1,7 @@
 import { Option, type Command } from "commander";
 
-import { loadEntryTraceRuntime } from "../../app/memory/inspect.js";
-import { renderEntryTraceJson, renderEntryTraceText } from "../../app/memory/render-trace.js";
+import { loadDurableTraceRuntime } from "../../app/memory/inspect.js";
+import { renderDurableTraceJson, renderDurableTraceText } from "../../app/memory/render-trace.js";
 
 /** Commander options accepted by the `agenr trace` command. */
 interface TraceCommandOptions {
@@ -26,13 +26,13 @@ export function registerTraceCommand(program: Command): void {
     .option("--json", "Emit structured JSON output")
     .action(async (options: TraceCommandOptions) => {
       try {
-        const trace = await loadEntryTraceRuntime({
+        const trace = await loadDurableTraceRuntime({
           id: options.id,
           subject: options.subject,
           last: options.last === true,
           env: process.env,
         });
-        process.stdout.write(options.json === true ? renderEntryTraceJson(trace) : renderEntryTraceText(trace));
+        process.stdout.write(options.json === true ? renderDurableTraceJson(trace) : renderDurableTraceText(trace));
       } catch (error) {
         process.exitCode = 1;
         process.stderr.write(`Failed to load trace: ${formatUnknownError(error)}\n`);

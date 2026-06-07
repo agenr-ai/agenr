@@ -1,4 +1,4 @@
-import type { EntryRecallEvent, EntryTraceDreamAction, EntryTraceProfileSnapshot } from "../../app/memory/ports.js";
+import type { DurableRecallEvent, DurableTraceDreamAction, DurableTraceProfileSnapshot } from "../../app/memory/ports.js";
 import { mapActionRow } from "./dreaming-run-shared.js";
 import { readNumber, readOptionalString, readRequiredString } from "./row-mapping.js";
 import type { SqlExecutor } from "./queries.js";
@@ -13,11 +13,11 @@ export /** Maximum profile snapshots returned by the trace read model. */ const 
  * Counts recall telemetry rows linked to one durable.
  *
  * @param executor - SQL executor used for the lookup.
- * @param entryId - Durable identifier to inspect.
+ * @param durableId - Durable identifier to inspect.
  * @returns Total recall-event count for the durable.
  */
-export async function countRecallEventsForDurable(executor: SqlExecutor, entryId: string): Promise<number> {
-  const normalizedId = entryId.trim();
+export async function countRecallEventsForDurable(executor: SqlExecutor, durableId: string): Promise<number> {
+  const normalizedId = durableId.trim();
   if (normalizedId.length === 0) {
     return 0;
   }
@@ -38,12 +38,12 @@ export async function countRecallEventsForDurable(executor: SqlExecutor, entryId
  * Lists recent recall telemetry rows for one durable.
  *
  * @param executor - SQL executor used for the lookup.
- * @param entryId - Durable identifier to inspect.
+ * @param durableId - Durable identifier to inspect.
  * @param limit - Maximum number of events to return.
  * @returns Recent recall events ordered newest first.
  */
-export async function listRecallEventsForDurable(executor: SqlExecutor, entryId: string, limit = TRACE_RECALL_EVENT_LIMIT): Promise<EntryRecallEvent[]> {
-  const normalizedId = entryId.trim();
+export async function listRecallEventsForDurable(executor: SqlExecutor, durableId: string, limit = TRACE_RECALL_EVENT_LIMIT): Promise<DurableRecallEvent[]> {
+  const normalizedId = durableId.trim();
   if (normalizedId.length === 0) {
     return [];
   }
@@ -74,12 +74,16 @@ export async function listRecallEventsForDurable(executor: SqlExecutor, entryId:
  * Lists dreaming audit actions that reference one durable.
  *
  * @param executor - SQL executor used for the lookup.
- * @param entryId - Durable identifier to inspect.
+ * @param durableId - Durable identifier to inspect.
  * @param limit - Maximum number of actions to return.
  * @returns Dream actions ordered oldest first.
  */
-export async function listDreamActionsForDurable(executor: SqlExecutor, entryId: string, limit = TRACE_DREAM_ACTION_LIMIT): Promise<EntryTraceDreamAction[]> {
-  const normalizedId = entryId.trim();
+export async function listDreamActionsForDurable(
+  executor: SqlExecutor,
+  durableId: string,
+  limit = TRACE_DREAM_ACTION_LIMIT,
+): Promise<DurableTraceDreamAction[]> {
+  const normalizedId = durableId.trim();
   if (normalizedId.length === 0) {
     return [];
   }
@@ -125,16 +129,16 @@ export async function listDreamActionsForDurable(executor: SqlExecutor, entryId:
  * Lists profile snapshots that included one durable as a profile or directive row.
  *
  * @param executor - SQL executor used for the lookup.
- * @param entryId - Durable identifier to inspect.
+ * @param durableId - Durable identifier to inspect.
  * @param limit - Maximum number of snapshots to return.
  * @returns Profile snapshots ordered newest first.
  */
 export async function listProfileSnapshotsForDurable(
   executor: SqlExecutor,
-  entryId: string,
+  durableId: string,
   limit = TRACE_PROFILE_SNAPSHOT_LIMIT,
-): Promise<EntryTraceProfileSnapshot[]> {
-  const normalizedId = entryId.trim();
+): Promise<DurableTraceProfileSnapshot[]> {
+  const normalizedId = durableId.trim();
   if (normalizedId.length === 0) {
     return [];
   }
@@ -168,7 +172,7 @@ export async function listProfileSnapshotsForDurable(
 
   return result.rows.map((row) => {
     const durableIds = parseJsonStringArray(readOptionalString(row, "durable_ids"));
-    const role: EntryTraceProfileSnapshot["role"] = durableIds.includes(normalizedId) ? "profile" : "directive";
+    const role: DurableTraceProfileSnapshot["role"] = durableIds.includes(normalizedId) ? "profile" : "directive";
 
     return {
       id: readRequiredString(row, "id"),

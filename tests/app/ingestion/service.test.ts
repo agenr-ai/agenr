@@ -64,12 +64,12 @@ describe("ingestPath", () => {
       {
         filePath: "/tmp/session-a.jsonl",
         fileHash: "hash-a",
-        entryCount: 1,
+        durableCount: 1,
       },
       {
         filePath: "/tmp/session-b.jsonl",
         fileHash: "hash-b",
-        entryCount: 1,
+        durableCount: 1,
       },
     ]);
   });
@@ -145,7 +145,7 @@ describe("ingestPath", () => {
 
     expect(claimCalls).toHaveLength(1);
     expect(db.insertions).toHaveLength(2);
-    expect(db.insertions[0]?.entry).toMatchObject({
+    expect(db.insertions[0]?.durable).toMatchObject({
       claim_key: "project_x/status",
       claim_key_status: "trusted",
       claim_key_source: "model",
@@ -156,7 +156,7 @@ describe("ingestPath", () => {
       claim_support_observed_at: "2026-04-01T09:01:00.000Z",
       claim_support_mode: "inferred",
     });
-    expect(db.insertions[1]?.entry.claim_key).toBeUndefined();
+    expect(db.insertions[1]?.durable.claim_key).toBeUndefined();
   });
 
   it("emits post-extraction stage progress during ingest", async () => {
@@ -193,7 +193,7 @@ describe("ingestPath", () => {
       {
         wholeFile: "never",
         onStageProgress: (event) => {
-          phases.push(`${event.phase}:${event.totalEntries}`);
+          phases.push(`${event.phase}:${event.totalDurables}`);
         },
       },
     );
@@ -231,8 +231,8 @@ describe("ingestPath", () => {
       [0, 1],
       [0, 1],
     ];
-    const dedupProgress: Array<{ completedClusters: number; totalClusters: number; completedEntries: number; totalEntries: number }> = [];
-    const claimProgress: Array<{ phase: string; completedEntries: number; totalEntries: number; totalEligibleEntries: number }> = [];
+    const dedupProgress: Array<{ completedClusters: number; totalClusters: number; completedDurables: number; totalDurables: number }> = [];
+    const claimProgress: Array<{ phase: string; completedDurables: number; totalDurables: number; totalEligibleDurables: number }> = [];
 
     const result = await ingestPath(
       "/tmp",
@@ -275,35 +275,35 @@ describe("ingestPath", () => {
       {
         completedClusters: 1,
         totalClusters: 2,
-        completedEntries: 2,
-        totalEntries: 4,
+        completedDurables: 2,
+        totalDurables: 4,
       },
       {
         completedClusters: 2,
         totalClusters: 2,
-        completedEntries: 4,
-        totalEntries: 4,
+        completedDurables: 4,
+        totalDurables: 4,
       },
     ]);
     expect(claimProgress).toEqual([
       {
         phase: "primary",
-        completedEntries: 1,
-        totalEntries: 2,
-        totalEligibleEntries: 2,
+        completedDurables: 1,
+        totalDurables: 2,
+        totalEligibleDurables: 2,
       },
       {
         phase: "primary",
-        completedEntries: 2,
-        totalEntries: 2,
-        totalEligibleEntries: 2,
+        completedDurables: 2,
+        totalDurables: 2,
+        totalEligibleDurables: 2,
       },
     ]);
   });
 
   it("propagates configured ingest concurrency into dedup arbitration", async () => {
     const filePath = "/tmp/session-dedup-concurrency.jsonl";
-    const { entries, vectors } = createPairedClusterScenario(3);
+    const { durables, vectors } = createPairedClusterScenario(3);
     const responses = [deferred<string>(), deferred<string>(), deferred<string>()];
     let dedupLlm: MockDedupLlm | undefined;
 
@@ -313,8 +313,8 @@ describe("ingestPath", () => {
         files: new MockFilePort([filePath], { [filePath]: "hash-dedup-concurrency" }),
         transcript: new MockTranscriptPort(buildTranscript()),
         db: new MockDatabase(),
-        embedding: new MockEmbeddingPort(entries, vectors),
-        createExtractionLlm: () => new MockIngestionLlm({ durables: entries }),
+        embedding: new MockEmbeddingPort(durables, vectors),
+        createExtractionLlm: () => new MockIngestionLlm({ durables }),
         createDedupLlm: () => {
           dedupLlm = new MockDedupLlm(responses.map((response) => response.promise));
           return dedupLlm;
@@ -344,7 +344,7 @@ describe("ingestPath", () => {
 
   it("defaults dedup arbitration concurrency to 10 when ingest concurrency is unset", async () => {
     const filePath = "/tmp/session-dedup-default-concurrency.jsonl";
-    const { entries, vectors } = createPairedClusterScenario(11);
+    const { durables, vectors } = createPairedClusterScenario(11);
     const responses = Array.from({ length: 11 }, () => deferred<string>());
     let dedupLlm: MockDedupLlm | undefined;
 
@@ -354,8 +354,8 @@ describe("ingestPath", () => {
         files: new MockFilePort([filePath], { [filePath]: "hash-dedup-default" }),
         transcript: new MockTranscriptPort(buildTranscript()),
         db: new MockDatabase(),
-        embedding: new MockEmbeddingPort(entries, vectors),
-        createExtractionLlm: () => new MockIngestionLlm({ durables: entries }),
+        embedding: new MockEmbeddingPort(durables, vectors),
+        createExtractionLlm: () => new MockIngestionLlm({ durables }),
         createDedupLlm: () => {
           dedupLlm = new MockDedupLlm(responses.map((response) => response.promise));
           return dedupLlm;
@@ -492,7 +492,7 @@ describe("ingestPath", () => {
       },
     );
 
-    expect(db.insertions[0]?.entry).toMatchObject({
+    expect(db.insertions[0]?.durable).toMatchObject({
       source_file: "openclaw-session:session-project-metadata",
       project: "project_x",
       claim_key: "project_x/status",
@@ -535,7 +535,7 @@ describe("ingestPath", () => {
     );
 
     expect(db.insertions).toHaveLength(1);
-    expect(db.insertions[0]?.entry.claim_key).toBe("postgres/connection_pooling_lesson");
+    expect(db.insertions[0]?.durable.claim_key).toBe("postgres/connection_pooling_lesson");
   });
 
   it("preserves explicit claim-key metadata when dedup keeps a sibling entry", async () => {
@@ -578,7 +578,7 @@ describe("ingestPath", () => {
     );
 
     expect(db.insertions).toHaveLength(1);
-    expect(db.insertions[0]?.entry).toMatchObject({
+    expect(db.insertions[0]?.durable).toMatchObject({
       claim_key: "jim/home_city",
       claim_key_raw: "Jim / Home City",
       claim_key_status: "trusted",
@@ -621,7 +621,7 @@ describe("ingestPath", () => {
     );
 
     expect(db.insertions).toHaveLength(1);
-    expect(db.insertions[0]?.entry.claim_key).toBeUndefined();
+    expect(db.insertions[0]?.durable.claim_key).toBeUndefined();
   });
 
   it("reuses entity hints across ingest runs", async () => {
@@ -695,8 +695,8 @@ describe("ingestPath", () => {
       },
     );
 
-    expect(db.insertions[0]?.entry.claim_key).toBe("project_x/status");
-    expect(db.insertions[1]?.entry.claim_key).toBe("project_x/status");
+    expect(db.insertions[0]?.durable.claim_key).toBe("project_x/status");
+    expect(db.insertions[1]?.durable.claim_key).toBe("project_x/status");
   });
 
   it("continues ingest when claim extraction fails", async () => {
@@ -729,7 +729,7 @@ describe("ingestPath", () => {
     );
 
     expect(db.insertions).toHaveLength(1);
-    expect(db.insertions[0]?.entry.claim_key).toBeUndefined();
+    expect(db.insertions[0]?.durable.claim_key).toBeUndefined();
   });
 
   it("finishes claim extraction before the bulk-write window opens", async () => {
@@ -885,8 +885,8 @@ class MockFilePort implements IngestFilePort {
 }
 
 class MockDatabase implements DatabasePort {
-  public readonly insertions: Array<{ entry: Durable; embedding: number[]; contentHash: string }> = [];
-  public readonly ingestLogInsertions: Array<{ filePath: string; fileHash: string; entryCount: number }> = [];
+  public readonly insertions: Array<{ durable: Durable; embedding: number[]; contentHash: string }> = [];
+  public readonly ingestLogInsertions: Array<{ filePath: string; fileHash: string; durableCount: number }> = [];
   public readonly callOrder: string[] = [];
   public transactionCount = 0;
   public prepareCalls = 0;
@@ -897,7 +897,7 @@ class MockDatabase implements DatabasePort {
   public async insertDurable(entry: Durable, embedding: number[], contentHash: string): Promise<string> {
     this.callOrder.push("insert");
     this.eventLog?.push("insert");
-    this.insertions.push({ entry, embedding, contentHash });
+    this.insertions.push({ durable: entry, embedding, contentHash });
     return entry.id;
   }
 
@@ -943,7 +943,7 @@ class MockDatabase implements DatabasePort {
 
   public async getDistinctClaimKeyPrefixes(): Promise<string[]> {
     return this.insertions
-      .map(({ entry }) => entry.claim_key?.split("/", 1)[0])
+      .map(({ durable }) => durable.claim_key?.split("/", 1)[0])
       .filter((prefix): prefix is string => typeof prefix === "string" && prefix.length > 0);
   }
 
@@ -955,8 +955,8 @@ class MockDatabase implements DatabasePort {
     return null;
   }
 
-  public async insertIngestLogEntry(filePath: string, fileHash: string, entryCount: number): Promise<void> {
-    this.ingestLogInsertions.push({ filePath, fileHash, entryCount });
+  public async insertIngestLogEntry(filePath: string, fileHash: string, durableCount: number): Promise<void> {
+    this.ingestLogInsertions.push({ filePath, fileHash, durableCount });
   }
 
   public async init(): Promise<void> {}
@@ -1109,13 +1109,13 @@ class MockClaimExtractionLlm implements LlmPort {
   }
 }
 
-function createPairedClusterScenario(clusterCount: number): { entries: StoreDurableInput[]; vectors: number[][] } {
-  const entries: StoreDurableInput[] = [];
+function createPairedClusterScenario(clusterCount: number): { durables: StoreDurableInput[]; vectors: number[][] } {
+  const durables: StoreDurableInput[] = [];
   const vectors: number[][] = [];
 
   for (let clusterIndex = 0; clusterIndex < clusterCount; clusterIndex += 1) {
     const vector = Array.from({ length: clusterCount }, (_, index) => (index === clusterIndex ? 1 : 0));
-    entries.push(
+    durables.push(
       createInput({
         subject: `cluster-${clusterIndex}-primary`,
         content: `cluster-${clusterIndex}-primary content`,
@@ -1128,7 +1128,7 @@ function createPairedClusterScenario(clusterCount: number): { entries: StoreDura
     vectors.push([...vector], [...vector]);
   }
 
-  return { entries, vectors };
+  return { durables, vectors };
 }
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {

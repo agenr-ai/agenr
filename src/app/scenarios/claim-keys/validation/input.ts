@@ -159,7 +159,7 @@ export function readStoreInput(value: unknown, filePath: string, rootDir: string
   }
 
   return {
-    entries,
+    durables: entries,
     ...(storeOptions ? { storeOptions } : {}),
     ...(modelFixtures ? { modelFixtures } : {}),
   };

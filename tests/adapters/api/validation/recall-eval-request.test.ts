@@ -120,7 +120,7 @@ describe("parseRecallEvalCaseRequest", () => {
         },
         {
           path: "memoryPool",
-          message: "Expected an array of fixture entries.",
+          message: "Expected an array of fixture durables.",
         },
         {
           path: "recallRequest",
@@ -130,7 +130,7 @@ describe("parseRecallEvalCaseRequest", () => {
     }
   });
 
-  it("rejects malformed fixture entries", () => {
+  it("rejects malformed fixture durables", () => {
     expect(() =>
       parseRecallEvalCaseRequest({
         caseId: "case-002",

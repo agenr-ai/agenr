@@ -1,4 +1,4 @@
-import { formatTargetSelectorFromParams } from "../../shared/entry-tools.js";
+import { formatTargetSelectorFromParams } from "../../shared/durable-tools.js";
 
 /** Maximum selector value length used in transcript-safe agenr_fetch summaries. */
 const AGENR_FETCH_TARGET_MAX_CHARS = 80;

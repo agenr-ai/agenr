@@ -29,7 +29,7 @@ export function evaluateMissingBackfillSupport(
         .map((durableId) => trustedHints.durables.find((trustedDurable) => trustedDurable.id === durableId))
         .filter((trustedDurable): trustedDurable is NonNullable<typeof trustedDurable> => Boolean(trustedDurable))
         .map((trustedDurable) => ({
-          entryId: trustedDurable.id,
+          durableId: trustedDurable.id,
           claimKey: trustedDurable.claimKey,
         })),
     }),

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 /**
  * Computes the exact-match content hash used for idempotent storage writes.
  *
- * @param content - Entry content body to hash.
+ * @param content - Durable content body to hash.
  * @param sourceFile - Optional source file path included in the hash input.
  * @returns SHA-256 hex digest for the source-aware content payload.
  */

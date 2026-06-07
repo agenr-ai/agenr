@@ -29,12 +29,12 @@
   "policy": {
     "enableProcedureSuggestion": false,
     "recallThreshold": 0,
-    "maxDurableEntries": 5,
-    "maxHighConfidenceDurableEntries": 5,
+    "maxDurables": 5,
+    "maxHighConfidenceDurables": 5,
     "highConfidenceRecallThreshold": 0
   },
   "expect": {
     "excludesEntryIds": ["fact-stan", "dir-stan"],
-    "directiveAbstentions": [{ "entryId": "fact-stan", "reason": "directive_topic", "directiveId": "dir-stan", "blockedTerm": "stan" }]
+    "directiveAbstentions": [{ "durableId": "fact-stan", "reason": "directive_topic", "directiveId": "dir-stan", "blockedTerm": "stan" }]
   }
 }

@@ -4,8 +4,8 @@ import type { StoreDurableInput } from "../types.js";
 
 const IGNORED_PROJECT_DIRECTORY_NAMES = new Set(["", ".", "..", "users", "user", "home", "tmp", "var"]);
 
-/** Entry fields consulted when deciding whether workspace context applies. */
-export type DurableProjectScopeEntry = Pick<StoreDurableInput, "project" | "subject" | "content" | "tags" | "source_context" | "claim_key">;
+/** Durable fields consulted when deciding whether workspace context applies. */
+export type DurableProjectScopeFields = Pick<StoreDurableInput, "project" | "subject" | "content" | "tags" | "source_context" | "claim_key">;
 
 /** Session context that may hint at workspace scope but never applies by default. */
 export interface DurableProjectScopeContext {
@@ -20,34 +20,34 @@ export interface DurableProjectScopeContext {
  *
  * `project` means the knowledge is about a specific workspace or product,
  * not merely that the conversation happened inside one. Personal, family, and
- * other cross-workspace facts stay unscoped unless the entry itself signals
+ * other cross-workspace facts stay unscoped unless the durable itself signals
  * otherwise.
  *
  * Resolution order:
- * 1. Explicit per-entry `project` from tool output or extract JSON.
+ * 1. Explicit per-durable `project` from tool output or extract JSON.
  * 2. Claim-key entity prefix that matches the session workspace.
  * 3. Session workspace when subject or source_context visibly reference it.
  * 4. Working-directory basename when subject or source_context visibly reference it.
  *
- * @param entry - Candidate durable fields from store, ingest, or dreaming extract.
+ * @param durable - Candidate durable fields from store, ingest, or dreaming extract.
  * @param context - Optional session workspace and working-directory hints.
  * @returns Project slug to persist, or `undefined` when knowledge stays global.
  */
-export function resolveDurableProjectScope(entry: DurableProjectScopeEntry, context: DurableProjectScopeContext = {}): string | undefined {
-  const entryProject = normalizeOptionalString(entry.project);
-  if (entryProject) {
-    return entryProject;
+export function resolveDurableProjectScope(durable: DurableProjectScopeFields, context: DurableProjectScopeContext = {}): string | undefined {
+  const durableProject = normalizeOptionalString(durable.project);
+  if (durableProject) {
+    return durableProject;
   }
 
   const sessionWorkspace = normalizeOptionalString(context.sessionWorkspace ?? undefined);
   if (sessionWorkspace) {
-    if (claimKeySuggestsProjectScope(entry.claim_key, sessionWorkspace) || entryContainsProjectSignal(entry, sessionWorkspace)) {
+    if (claimKeySuggestsProjectScope(durable.claim_key, sessionWorkspace) || durableContainsProjectSignal(durable, sessionWorkspace)) {
       return sessionWorkspace;
     }
   }
 
   const workingDirectoryProject = deriveWorkingDirectoryProject(context.workingDirectory);
-  if (workingDirectoryProject && entryContainsProjectSignal(entry, workingDirectoryProject)) {
+  if (workingDirectoryProject && durableContainsProjectSignal(durable, workingDirectoryProject)) {
     return workingDirectoryProject;
   }
 
@@ -80,14 +80,14 @@ function deriveWorkingDirectoryProject(workingDirectory?: string | null): string
   return candidate;
 }
 
-/** Returns whether one entry visibly references the candidate project identifier. */
-function entryContainsProjectSignal(entry: Pick<DurableProjectScopeEntry, "subject" | "content" | "tags" | "source_context">, project: string): boolean {
+/** Returns whether one durable visibly references the candidate project identifier. */
+function durableContainsProjectSignal(durable: Pick<DurableProjectScopeFields, "subject" | "content" | "tags" | "source_context">, project: string): boolean {
   const projectTokens = project.split("_").filter((token) => token.length > 0);
   if (projectTokens.length === 0) {
     return false;
   }
 
-  return [entry.subject, entry.source_context, ...(entry.tags ?? [])].some((value) => {
+  return [durable.subject, durable.source_context, ...(durable.tags ?? [])].some((value) => {
     const tokens = tokenizeText(value);
     return projectTokens.every((token) => tokens.has(token));
   });

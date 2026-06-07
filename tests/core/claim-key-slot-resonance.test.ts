@@ -9,15 +9,15 @@ describe("evaluateSiblingSlotResonance", () => {
       localLexicalTokens: ["openclaw", "session", "start", "context", "flag"],
       groundedSiblings: [
         {
-          entryId: "sib-1",
+          durableId: "sib-1",
           claimKey: "openclaw/session_start_context_window",
         },
         {
-          entryId: "sib-2",
+          durableId: "sib-2",
           claimKey: "openclaw/session_start_context_toggle",
         },
         {
-          entryId: "sib-3",
+          durableId: "sib-3",
           claimKey: "openclaw/cross_surface_session_pickup",
         },
       ],
@@ -31,7 +31,7 @@ describe("evaluateSiblingSlotResonance", () => {
       dominantShape: "session_start_context",
       dominantShapeCount: 2,
       localShapeTokenCoverage: 1,
-      dominantSiblingEntryIds: ["sib-1", "sib-2"],
+      dominantSiblingDurableIds: ["sib-1", "sib-2"],
     });
   });
 
@@ -41,15 +41,15 @@ describe("evaluateSiblingSlotResonance", () => {
       localLexicalTokens: ["jim", "project", "value", "prop", "focus"],
       groundedSiblings: [
         {
-          entryId: "sib-1",
+          durableId: "sib-1",
           claimKey: "jim/project_scope_boundary",
         },
         {
-          entryId: "sib-2",
+          durableId: "sib-2",
           claimKey: "jim/project_status_workflow",
         },
         {
-          entryId: "sib-3",
+          durableId: "sib-3",
           claimKey: "jim/project_priority_policy",
         },
       ],
@@ -72,7 +72,7 @@ describe("evaluateSiblingSlotResonance", () => {
       localLexicalTokens: ["docs", "style", "preference"],
       groundedSiblings: [
         {
-          entryId: "sib-1",
+          durableId: "sib-1",
           claimKey: "documentation/docs_style_policy",
         },
       ],

@@ -71,7 +71,7 @@ describe("memory repository entry trace", () => {
       args: [randomUUID(), JSON.stringify([durableId]), now, runId, now],
     });
 
-    const trace = await repository.getEntryTrace(durableId);
+    const trace = await repository.getDurableTrace(durableId);
 
     expect(trace).not.toBeNull();
     expect(trace?.provenance.sourceFile).toBe("episode:abc");

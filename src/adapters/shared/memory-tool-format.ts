@@ -6,70 +6,70 @@ const DEFAULT_RECALL_LIMIT = 10;
 const RESULT_SUBJECT_LOG_LIMIT = 5;
 
 /**
- * Maximum entry body characters included in agenr_recall previews.
+ * Maximum durable body characters included in agenr_recall previews.
  */
-const ENTRY_PREVIEW_MAX_CHARS = 220;
+const DURABLE_PREVIEW_MAX_CHARS = 220;
 
 /**
- * Maximum entry body characters returned by agenr_fetch in one tool result.
+ * Maximum durable body characters returned by agenr_fetch in one tool result.
  */
-const ENTRY_FETCH_MAX_CONTENT_CHARS = 32_768;
+const DURABLE_FETCH_MAX_CONTENT_CHARS = 32_768;
 
-export { ENTRY_FETCH_MAX_CONTENT_CHARS, ENTRY_PREVIEW_MAX_CHARS };
+export { DURABLE_FETCH_MAX_CONTENT_CHARS, DURABLE_PREVIEW_MAX_CHARS };
 
 /**
- * Preview metadata for one recalled entry body.
+ * Preview metadata for one recalled durable body.
  */
-export interface EntryRecallPreview {
+export interface DurableRecallPreview {
   contentPreview: string;
   contentChars: number;
   previewTruncated: boolean;
 }
 
 /**
- * Builds the recall preview slice for one entry body.
+ * Builds the recall preview slice for one durable body.
  *
  * Full bodies are returned only from agenr_fetch.
  *
- * @param content - Raw stored entry content.
+ * @param content - Raw stored durable content.
  * @returns Preview text and truncation metadata.
  */
-export function buildEntryRecallPreview(content: string): EntryRecallPreview {
+export function buildDurableRecallPreview(content: string): DurableRecallPreview {
   const trimmed = content.trim();
-  const previewTruncated = trimmed.length > ENTRY_PREVIEW_MAX_CHARS;
+  const previewTruncated = trimmed.length > DURABLE_PREVIEW_MAX_CHARS;
 
   return {
-    contentPreview: previewTruncated ? truncate(trimmed, ENTRY_PREVIEW_MAX_CHARS) : trimmed,
+    contentPreview: previewTruncated ? truncate(trimmed, DURABLE_PREVIEW_MAX_CHARS) : trimmed,
     contentChars: trimmed.length,
     previewTruncated,
   };
 }
 
 /**
- * Returns true when any recalled entry preview was truncated in agenr_recall output.
+ * Returns true when any recalled durable preview was truncated in agenr_recall output.
  *
  * @param result - Unified recall result payload.
  * @returns Whether the agent should consider agenr_fetch for full bodies.
  */
-export function recallResultHasTruncatedEntryPreviews(result: UnifiedRecallResult): boolean {
-  if (result.entries.some((entry) => buildEntryRecallPreview(entry.entry.content).previewTruncated)) {
+export function recallResultHasTruncatedDurablePreviews(result: UnifiedRecallResult): boolean {
+  if (result.durables.some((row) => buildDurableRecallPreview(row.durable.content).previewTruncated)) {
     return true;
   }
 
-  return result.entryFamilies.some((family) => family.entries.some((entry) => buildEntryRecallPreview(entry.recall.entry.content).previewTruncated));
+  return result.durableFamilies.some((family) => family.durables.some((row) => buildDurableRecallPreview(row.recall.durable.content).previewTruncated));
 }
 
 /**
- * Validates that one entry body is within the agenr_fetch size limit.
+ * Validates that one durable body is within the agenr_fetch size limit.
  *
- * @param content - Raw stored entry content.
- * @throws When content exceeds {@link ENTRY_FETCH_MAX_CONTENT_CHARS}.
+ * @param content - Raw stored durable content.
+ * @throws When content exceeds {@link DURABLE_FETCH_MAX_CONTENT_CHARS}.
  */
-export function assertEntryFetchableContentLength(content: string): void {
+export function assertDurableFetchableContentLength(content: string): void {
   const contentChars = content.trim().length;
-  if (contentChars > ENTRY_FETCH_MAX_CONTENT_CHARS) {
+  if (contentChars > DURABLE_FETCH_MAX_CONTENT_CHARS) {
     throw new Error(
-      `Entry content is ${contentChars} characters, which exceeds the agenr_fetch limit of ${ENTRY_FETCH_MAX_CONTENT_CHARS}. Use the CLI for full inspection.`,
+      `Durable content is ${contentChars} characters, which exceeds the agenr_fetch limit of ${DURABLE_FETCH_MAX_CONTENT_CHARS}. Use the CLI for full inspection.`,
     );
   }
 }
@@ -152,17 +152,17 @@ export function sanitizeRecallToolParams(params: RecallToolParams): Record<strin
 export function formatUnifiedRecallLogSummary(result: UnifiedRecallResult): string {
   const procedureCount = result.procedureCandidates.length;
   const procedureSummary = result.procedure ? ` [procedure: ${JSON.stringify(truncate(result.procedure.title, 80))}]` : "";
-  const entrySubjects = result.entries.map((entry) => entry.entry.subject.trim()).filter((subject) => subject.length > 0);
-  const displayed = entrySubjects.slice(0, RESULT_SUBJECT_LOG_LIMIT).map((subject) => JSON.stringify(truncate(subject, 80)));
-  const remaining = entrySubjects.length - RESULT_SUBJECT_LOG_LIMIT;
+  const durableSubjects = result.durables.map((row) => row.durable.subject.trim()).filter((subject) => subject.length > 0);
+  const displayed = durableSubjects.slice(0, RESULT_SUBJECT_LOG_LIMIT).map((subject) => JSON.stringify(truncate(subject, 80)));
+  const remaining = durableSubjects.length - RESULT_SUBJECT_LOG_LIMIT;
   const suffix = displayed.length === 0 ? "" : ` [durable subjects: ${displayed.join(", ")}${remaining > 0 ? `, ... and ${remaining} more` : ""}]`;
-  const durableLabel = result.entries.length === 1 ? "durable" : "durables";
-  const entryEpisodeSummary = `${result.episodes.length} episode${result.episodes.length === 1 ? "" : "s"}, ${result.entries.length} ${durableLabel}`;
+  const durableLabel = result.durables.length === 1 ? "durable" : "durables";
+  const durableEpisodeSummary = `${result.episodes.length} episode${result.episodes.length === 1 ? "" : "s"}, ${result.durables.length} ${durableLabel}`;
   if (procedureCount === 0 && !result.procedure) {
-    return `${entryEpisodeSummary}${suffix}`;
+    return `${durableEpisodeSummary}${suffix}`;
   }
 
-  return `${procedureCount} procedure candidate${procedureCount === 1 ? "" : "s"}, ${entryEpisodeSummary}${procedureSummary}${suffix}`;
+  return `${procedureCount} procedure candidate${procedureCount === 1 ? "" : "s"}, ${durableEpisodeSummary}${procedureSummary}${suffix}`;
 }
 
 /** Builds shared structured details for a successful recall result. */
@@ -211,50 +211,50 @@ export function buildRecallToolDetails(result: UnifiedRecallResult, extraDetails
       summary: episode.episode.summary,
       whyMatched: describeEpisodeWhyMatched(episode.scores.semantic, episode.scores.temporal),
     })),
-    entries: result.entries.map((entry) => {
-      const preview = buildEntryRecallPreview(entry.entry.content);
+    durables: result.durables.map((row) => {
+      const preview = buildDurableRecallPreview(row.durable.content);
 
       return {
-        id: entry.entry.id,
-        subject: entry.entry.subject,
-        type: entry.entry.type,
-        expiry: entry.entry.expiry,
-        importance: entry.entry.importance,
-        score: entry.score,
-        tags: entry.entry.tags,
+        id: row.durable.id,
+        subject: row.durable.subject,
+        type: row.durable.type,
+        expiry: row.durable.expiry,
+        importance: row.durable.importance,
+        score: row.score,
+        tags: row.durable.tags,
         contentPreview: preview.contentPreview,
         contentChars: preview.contentChars,
         previewTruncated: preview.previewTruncated,
       };
     }),
-    projectedEntries: result.projectedEntries.map((entry) => {
-      const preview = buildEntryRecallPreview(entry.recall.entry.content);
+    projectedDurables: result.projectedDurables.map((row) => {
+      const preview = buildDurableRecallPreview(row.recall.durable.content);
 
       return {
-        id: entry.entryId,
-        familyKey: entry.familyKey,
-        claimKey: entry.claimKey,
-        slotPolicy: entry.slotPolicy,
-        memoryState: entry.memoryState,
-        claimStatus: entry.claimStatus,
-        freshness: entry.freshness,
-        provenance: entry.provenance,
-        whySurfaced: entry.whySurfaced,
+        id: row.durableId,
+        familyKey: row.familyKey,
+        claimKey: row.claimKey,
+        slotPolicy: row.slotPolicy,
+        memoryState: row.memoryState,
+        claimStatus: row.claimStatus,
+        freshness: row.freshness,
+        provenance: row.provenance,
+        whySurfaced: row.whySurfaced,
         contentPreview: preview.contentPreview,
         contentChars: preview.contentChars,
         previewTruncated: preview.previewTruncated,
       };
     }),
-    entryFamilies: result.entryFamilies.map((family) => ({
+    durableFamilies: result.durableFamilies.map((family) => ({
       familyKey: family.familyKey,
       claimKey: family.claimKey,
       slotPolicy: family.slotPolicy,
       subject: family.subject,
-      primaryEntryId: family.primary.entryId,
-      entries: family.entries.map((entry) => ({
-        id: entry.entryId,
-        memoryState: entry.memoryState,
-        claimStatus: entry.claimStatus,
+      primaryDurableId: family.primary.durableId,
+      durables: family.durables.map((row) => ({
+        id: row.durableId,
+        memoryState: row.memoryState,
+        claimStatus: row.claimStatus,
       })),
     })),
     claimTransitions: result.claimTransitions,
@@ -263,24 +263,24 @@ export function buildRecallToolDetails(result: UnifiedRecallResult, extraDetails
 }
 
 /**
- * Formats one fetched entry for model-visible agenr_fetch output.
+ * Formats one fetched durable for model-visible agenr_fetch output.
  *
- * @param entry - Stored agenr entry.
- * @returns Full entry text with metadata header.
+ * @param durable - Stored agenr durable.
+ * @returns Full durable text with metadata header.
  */
-export function formatFetchedEntryText(entry: Durable): string {
+export function formatFetchedDurableText(durable: Durable): string {
   const metadata = [
-    `Entry ${entry.id}`,
-    `subject=${entry.subject}`,
-    `type=${entry.type} importance=${entry.importance} expiry=${entry.expiry} created=${entry.created_at}`,
-    entry.claim_key ? `claim_key=${entry.claim_key}` : undefined,
-    entry.tags.length > 0 ? `tags=${entry.tags.join(", ")}` : undefined,
-    entry.valid_from ? `valid_from=${entry.valid_from}` : undefined,
-    entry.valid_to ? `valid_to=${entry.valid_to}` : undefined,
-    entry.source_context ? `source_context=${entry.source_context}` : undefined,
+    `Durable ${durable.id}`,
+    `subject=${durable.subject}`,
+    `type=${durable.type} importance=${durable.importance} expiry=${durable.expiry} created=${durable.created_at}`,
+    durable.claim_key ? `claim_key=${durable.claim_key}` : undefined,
+    durable.tags.length > 0 ? `tags=${durable.tags.join(", ")}` : undefined,
+    durable.valid_from ? `valid_from=${durable.valid_from}` : undefined,
+    durable.valid_to ? `valid_to=${durable.valid_to}` : undefined,
+    durable.source_context ? `source_context=${durable.source_context}` : undefined,
   ].filter((value): value is string => value !== undefined);
 
-  return [...metadata, "", entry.content.trim()].join("\n");
+  return [...metadata, "", durable.content.trim()].join("\n");
 }
 
 /**
@@ -310,20 +310,20 @@ export function buildMemoryToolWarningDetails(warnings: string[]): Record<string
 }
 
 /** Builds shared structured details for a successful fetch result. */
-export function buildFetchToolDetails(entry: Durable, extraDetails: Record<string, unknown> = {}): Record<string, unknown> {
+export function buildFetchToolDetails(durable: Durable, extraDetails: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     status: "ok",
-    entryId: entry.id,
-    subject: entry.subject,
-    type: entry.type,
-    importance: entry.importance,
-    expiry: entry.expiry,
-    tags: entry.tags,
-    ...(entry.claim_key ? { claimKey: entry.claim_key } : {}),
-    ...(entry.valid_from ? { validFrom: entry.valid_from } : {}),
-    ...(entry.valid_to ? { validTo: entry.valid_to } : {}),
-    ...(entry.source_context ? { sourceContext: entry.source_context } : {}),
-    content: entry.content,
+    durableId: durable.id,
+    subject: durable.subject,
+    type: durable.type,
+    importance: durable.importance,
+    expiry: durable.expiry,
+    tags: durable.tags,
+    ...(durable.claim_key ? { claimKey: durable.claim_key } : {}),
+    ...(durable.valid_from ? { validFrom: durable.valid_from } : {}),
+    ...(durable.valid_to ? { validTo: durable.valid_to } : {}),
+    ...(durable.source_context ? { sourceContext: durable.source_context } : {}),
+    content: durable.content,
     ...extraDetails,
   };
 }

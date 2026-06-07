@@ -156,7 +156,7 @@ describe("dedupBatch", () => {
     });
   });
 
-  it("keeps the more accurate type when the cluster mixes entry types", async () => {
+  it("keeps the more accurate type when the cluster mixes durable types", async () => {
     const entries = [
       createInput({
         type: "preference",
@@ -344,7 +344,7 @@ describe("dedupBatch", () => {
       [0, 1, 0],
       [0, 0, 1],
     ];
-    const events: Array<{ completedClusters: number; totalClusters: number; completedEntries: number; totalEntries: number }> = [];
+    const events: Array<{ completedClusters: number; totalClusters: number; completedDurables: number; totalDurables: number }> = [];
 
     await dedupBatch(entries, new MockLlmPort(['{"keep":[0],"drop":[1]}', '{"keep":[1],"drop":[0]}']), new MockEmbeddingPort(vectors, entries), {
       onProgress: (event) => {
@@ -356,14 +356,14 @@ describe("dedupBatch", () => {
       {
         completedClusters: 1,
         totalClusters: 2,
-        completedEntries: 2,
-        totalEntries: 4,
+        completedDurables: 2,
+        totalDurables: 4,
       },
       {
         completedClusters: 2,
         totalClusters: 2,
-        completedEntries: 4,
-        totalEntries: 4,
+        completedDurables: 4,
+        totalDurables: 4,
       },
     ]);
   });
@@ -414,7 +414,7 @@ describe("dedupBatch", () => {
   it("reports monotonic arbitration progress when clusters resolve out of order", async () => {
     const { entries, vectors } = createPairedClusterScenario(3);
     const responses = [deferred<string>(), deferred<string>(), deferred<string>()];
-    const progressEvents: Array<{ completedClusters: number; totalClusters: number; completedEntries: number; totalEntries: number }> = [];
+    const progressEvents: Array<{ completedClusters: number; totalClusters: number; completedDurables: number; totalDurables: number }> = [];
     const llm = new MockLlmPort((callIndex) => responses[callIndex]?.promise ?? '{"keep":[0],"drop":[1]}');
     const embedding = new MockEmbeddingPort(vectors, entries);
 
@@ -439,20 +439,20 @@ describe("dedupBatch", () => {
       {
         completedClusters: 1,
         totalClusters: 3,
-        completedEntries: 2,
-        totalEntries: 6,
+        completedDurables: 2,
+        totalDurables: 6,
       },
       {
         completedClusters: 2,
         totalClusters: 3,
-        completedEntries: 4,
-        totalEntries: 6,
+        completedDurables: 4,
+        totalDurables: 6,
       },
       {
         completedClusters: 3,
         totalClusters: 3,
-        completedEntries: 6,
-        totalEntries: 6,
+        completedDurables: 6,
+        totalDurables: 6,
       },
     ]);
   });

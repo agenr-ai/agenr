@@ -98,7 +98,7 @@ async function emitRecallDebugArtifacts(
         queried: [...result.routing.queried],
         reason: result.routing.reason,
       },
-      selectedEntryIds: result.entries.map((entry) => entry.entry.id),
+      selectedDurableIds: result.durables.map((entry) => entry.durable.id),
       episodeIds: result.episodes.map((episode) => episode.episode.id),
       selectedProcedureKey: result.procedure?.procedure_key ?? null,
       notices: [...result.notices],

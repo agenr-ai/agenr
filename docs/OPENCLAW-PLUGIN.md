@@ -97,7 +97,7 @@ The runtime config is currently:
 - `storeNudge` - optional nested config with `enabled`, `threshold`, and `maxPerSession`
 - `memoryPolicy.beforeTurn.enabled` - optional toggle for the proactive before-turn patch path
 - `memoryPolicy.beforeTurn.procedureSuggestion` - optional toggle for the before-turn procedure section
-- `memoryPolicy.beforeTurn.maxDurableEntries` - optional normal durable-item cap for before-turn recall
+- `memoryPolicy.beforeTurn.maxDurables` - optional normal durable-item cap for before-turn recall
 - `memoryPolicy.beforeTurn.recallThreshold` - optional durable-recall score floor for before-turn recall
 - `memoryPolicy.beforeTurn.highConfidenceRecallThreshold` - optional score floor required before before-turn recall can expand beyond the normal durable-item cap
 - `memoryPolicy.beforeTurn.procedureThreshold` - optional score floor for proactive procedure suggestion
@@ -363,7 +363,7 @@ Current behavior:
 - rejects invalid temporal bounds, including equal or reversed `validFrom` / `validTo`
 - can also use the optional claim-extraction runtime when it is enabled
 - returns `stored`, `skipped`, or `failed`
-- resolves the stored subject again so the tool can return `entryId` when possible
+- resolves the stored subject again so the tool can return `durableId` when possible
 
 ### `agenr_recall`
 

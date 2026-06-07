@@ -148,7 +148,7 @@
                 "type": "boolean",
                 "description": "Enable or disable proactive high-confidence procedure suggestion inside the before-turn patch. Defaults to true."
               },
-              "maxDurableEntries": {
+              "maxDurables": {
                 "type": "integer",
                 "minimum": 1,
                 "description": "Normal durable-item cap for before-turn recall. Defaults to 1 and only expands when all surfaced items are very high confidence."

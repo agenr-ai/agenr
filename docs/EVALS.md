@@ -161,8 +161,8 @@ Top-level request shape:
       "enableProcedureSuggestion": false,
       "maxRecentTurns": 2,
       "maxQueryChars": 450,
-      "maxDurableEntries": 1,
-      "maxHighConfidenceDurableEntries": 2,
+      "maxDurables": 1,
+      "maxHighConfidenceDurables": 2,
       "maxProcedureCandidates": 3,
       "recallThreshold": 0.25,
       "highConfidenceRecallThreshold": 0.9,
@@ -182,7 +182,7 @@ Top-level request shape:
 Successful responses include:
 
 - `output.abstained`
-- `output.selectedEntryIds`
+- `output.selectedDurableIds`
 - `output.selectedProcedureKey`
 - `output.patch`
 - optional `output.renderedPatchText`
@@ -226,8 +226,8 @@ Supported `beforeTurnInput.policy` fields at the HTTP boundary:
 - `enableProcedureSuggestion`
 - `maxRecentTurns`
 - `maxQueryChars`
-- `maxDurableEntries`
-- `maxHighConfidenceDurableEntries`
+- `maxDurables`
+- `maxHighConfidenceDurables`
 - `maxProcedureCandidates`
 - `recallThreshold`
 - `highConfidenceRecallThreshold`
@@ -424,7 +424,7 @@ Boundary validation details:
 - `limit` and `budget` must be non-negative integers
 - `threshold` must be a number from `0-1`
 - `aroundRadius` must be a positive integer
-- `types` must be valid entry types
+- `types` must be valid durable types
 - `tags` must be a string array
 - `rankingProfile`, when present, must currently be `historical_state`
 - `since`, `until`, and `around` are only validated as non-empty strings at the HTTP boundary today
@@ -488,7 +488,7 @@ The HTTP boundary rejects unexpected fields for:
 - the top-level request object
 - `sandbox`
 - `sandbox.corpusSeed`
-- each fixture entry
+- each fixture durable
 - `recallRequest`
 - `options`
 
@@ -661,7 +661,7 @@ When `recallPath: "unified"`, the app service calls `runUnifiedRecall()` from [s
 Important unified-path behavior:
 
 - the unified router may query procedures, entries, episodes, or a supported combination internally
-- the eval response still returns only `result.entries` and `result.entryIds`
+- the eval response still returns only `result.durables` and `result.durableIds`
 - procedure and episode results are not surfaced in the top-level eval `result`
 - unified routing metadata is surfaced in `metadata.unified`
 
@@ -737,7 +737,7 @@ When timings are included, the response can contain:
 - `scoreCandidatesMs`
 - `thresholdMs`
 - `budgetMs`
-- `hydrateEntriesMs`
+- `hydrateDurablesMs`
 - `shapeResultsMs`
 - `recordRecallEventsMs`
 
@@ -771,7 +771,7 @@ When `options.includeDebugArtifact` is `true`, successful recall responses inclu
 - `candidateCounts` - stage-by-stage counts mirrored from diagnostics (merged, threshold-qualified, budget-accepted, final-ranked, returned)
 - `ranking` - effective `limit`, `threshold`, `budget`, and optional `noResultReason`
 - `degraded` - degraded-mode facts, including `active`, `reasons`, `lexicalOnly`, and product-facing `notices`
-- `selectedEntryIds` - ranked entry IDs returned by recall
+- `selectedDurableIds` - ranked durable IDs returned by recall
 - `topCandidates` - bounded top-K candidate breakdown containing `id`, `score`, `lexicalScore`, `vectorScore`, `recencyScore`, `importanceScore`, and optional concise `reasons` sourced from the claim-centric projection
 
 ### Before-turn replay debug artifact
@@ -786,7 +786,7 @@ When `options.includeDebugArtifact` is `true`, successful before-turn responses 
 - `queryPolicy` - stable durable-query policy decision (`current_only`, `contextual_fallback`, or `contextual_required`)
 - `queryVariants` - actual attempted durable-query variants with `kind`, `query`, `candidateCount`, and `selected`
 - `abstentionReasons` - typed abstention reasons when the selector abstained
-- `selectedEntryIds` - ranked durable entry IDs returned by the selector
+- `selectedDurableIds` - ranked durable durable IDs returned by the selector
 - `selectedProcedureKey` - selected canonical procedure key, or `null`
 - `durableRecallTopCandidates` - bounded top-K durable candidate breakdown with `id`, `score`, and optional concise `reasons`
 - `procedureTopCandidates` - bounded procedure candidate breakdown with `procedureKey`, `score`, and optional concise `reasons`
@@ -814,8 +814,8 @@ Successful responses include:
 
 - `status: "ok"`
 - `caseId`
-- `result.entries`
-- `result.entryIds`
+- `result.durables`
+- `result.durableIds`
 - `metadata`
 - `sandbox`
 - optional `diagnostics`
@@ -841,8 +841,8 @@ Each result entry includes:
 Current `metadata` fields:
 
 - `path`
-- `claim.projectedEntries`
-- `claim.entryFamilies` for unified-path cases
+- `claim.projectedDurables`
+- `claim.durableFamilies` for unified-path cases
 - `claim.transitions` for unified-path cases
 - `unified.routing` for unified-path cases
 - `unified.timeWindow` when unified recall resolved one
@@ -892,7 +892,7 @@ That matters because the real recall path still performs normal telemetry update
 
 If you need the exact fixture truth that existed before recall mutated anything, use:
 
-- `diagnostics.provision.seededEntries`
+- `diagnostics.provision.seededDurables`
 
 not the preserved on-disk database after the request has already run.
 
@@ -1145,13 +1145,13 @@ Preference/directive/profile cases use the dedicated session-start seam rather t
 
 ### Case expectation pattern
 
-`agenr-evals` uses **arm-suffixed case ids** when expectations differ by arm (for example `.memory-off` variants that expect empty `entryIds` or abstention). Manifests select the matching ids per arm. Shared case input is duplicated with stable fixture ids so scoreboard rows align across arms.
+`agenr-evals` uses **arm-suffixed case ids** when expectations differ by arm (for example `.memory-off` variants that expect empty `durableIds` or abstention). Manifests select the matching ids per arm. Shared case input is duplicated with stable fixture ids so scoreboard rows align across arms.
 
 Pass/fail policy:
 
-- injection before-turn cases: required ids present in `output.selectedEntryIds`, excluded ids absent
-- injection recall cases: ordered `output.entryIds`
-- session-start cases: ordered `output.selectedEntryIds`; profile cases may also assert `output.sourceKindsByEntryId`
+- injection before-turn cases: required ids present in `output.selectedDurableIds`, excluded ids absent
+- injection recall cases: ordered `output.durableIds`
+- session-start cases: ordered `output.selectedDurableIds`; profile cases may also assert `output.sourceKindsByDurableId`
 
 ### Operator loop (`agenr-evals`)
 

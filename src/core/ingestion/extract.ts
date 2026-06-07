@@ -34,7 +34,7 @@ export interface ExtractionOptions {
  * Aggregate extraction outcome across a parsed transcript.
  */
 export interface ExtractionResult {
-  entries: StoreDurableInput[];
+  durables: StoreDurableInput[];
   chunks: number;
   successfulChunks: number;
   failedChunks: number;
@@ -106,7 +106,7 @@ export async function extractFromTranscript(
 ): Promise<ExtractionResult> {
   if (transcript.messages.length === 0) {
     return {
-      entries: [],
+      durables: [],
       chunks: 0,
       successfulChunks: 0,
       failedChunks: 0,
@@ -120,7 +120,7 @@ export async function extractFromTranscript(
     ? [buildChunk(transcript.messages, 0, transcript.messages.length - 1, 0)]
     : chunkTranscript(transcript.messages, DEFAULT_MAX_TOKENS_PER_CHUNK);
   const systemPrompt = buildExtractionSystemPrompt({ wholeFile, extractionContext: options.extractionContext });
-  const entries: StoreDurableInput[] = [];
+  const durables: StoreDurableInput[] = [];
   const warnings: string[] = [];
   const chunkDetails: ExtractionResult["chunkDetails"] = [];
   const previouslyExtracted: PreviouslyExtractedSubject[] = [];
@@ -139,13 +139,13 @@ export async function extractFromTranscript(
       });
       const chunkTimestamp = resolveChunkTimestamp(transcript.messages, chunk.message_range, transcript.metadata.startedAt);
       if (chunkTimestamp) {
-        for (const entry of parsed.entries) {
+        for (const entry of parsed.durables) {
           entry.created_at = chunkTimestamp;
         }
       }
-      entries.push(...parsed.entries);
+      durables.push(...parsed.durables);
       warnings.push(...parsed.warnings.map((warning) => `Chunk ${chunk.chunk_index + 1}: ${warning}`));
-      previouslyExtracted.push(...parsed.entries.map(toPreviouslyExtractedSubject));
+      previouslyExtracted.push(...parsed.durables.map(toPreviouslyExtractedSubject));
     } else {
       failedChunks += 1;
       chunkDetails.push({
@@ -163,7 +163,7 @@ export async function extractFromTranscript(
   }
 
   return {
-    entries,
+    durables,
     chunks: chunks.length,
     successfulChunks,
     failedChunks,

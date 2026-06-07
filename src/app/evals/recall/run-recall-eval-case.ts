@@ -75,8 +75,8 @@ export async function runRecallEvalCase(request: RecallEvalCaseRequest, dependen
           embedding: request.memoryPool.length > 0 ? embeddingResolver.requirePort() : undefined,
           provisionedAt,
         });
-        if (provisionResult.entryProvisionResult) {
-          diagnostics.recordProvision(provisionResult.entryProvisionResult, elapsedMs(provisionStartedAt));
+        if (provisionResult.durableProvisionResult) {
+          diagnostics.recordProvision(provisionResult.durableProvisionResult, elapsedMs(provisionStartedAt));
         } else {
           diagnostics.recordFixtureProvisionTiming(elapsedMs(provisionStartedAt));
         }
@@ -251,8 +251,8 @@ function applyRecallEvalFaultInjection(ports: RecallPorts, request: RecallEvalCa
           crossEncoder: ports.crossEncoder,
         }
       : {}),
-    async hydrateEntries(ids: string[]) {
-      return ports.hydrateEntries(ids);
+    async hydrateDurables(ids: string[]) {
+      return ports.hydrateDurables(ids);
     },
     async recordRecallEvents(params) {
       return ports.recordRecallEvents(params);

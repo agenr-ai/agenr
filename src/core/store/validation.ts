@@ -33,7 +33,7 @@ export interface ValidationResult {
 /**
  * Validated store input paired with its original array index.
  */
-export interface IndexedValidEntry {
+export interface IndexedValidDurable {
   inputIndex: number;
   input: StoreDurableInput;
 }
@@ -42,7 +42,7 @@ export interface IndexedValidEntry {
  * Result of validating a batch while preserving input indexes.
  */
 export interface IndexedValidationResult {
-  valid: IndexedValidEntry[];
+  valid: IndexedValidDurable[];
   rejected: number;
   rejectedInputIndexes: number[];
   errors: string[];
@@ -73,7 +73,7 @@ export function validateEntries(inputs: StoreDurableInput[]): ValidationResult {
  * @returns Accepted entries, rejected indexes, and validation errors.
  */
 export function validateEntriesWithIndexes(inputs: StoreDurableInput[]): IndexedValidationResult {
-  const valid: IndexedValidEntry[] = [];
+  const valid: IndexedValidDurable[] = [];
   const errors: string[] = [];
   const warnings: string[] = [];
   const rejectedInputIndexes: number[] = [];
@@ -83,50 +83,50 @@ export function validateEntriesWithIndexes(inputs: StoreDurableInput[]): Indexed
     const content = normalizeString(input.content);
 
     if (!DURABLE_KINDS.includes(input.type)) {
-      errors.push(`Entry ${index} has an invalid type.`);
+      errors.push(`Durable ${index} has an invalid type.`);
       rejectedInputIndexes.push(index);
       continue;
     }
 
     if (subject.length === 0) {
-      errors.push(`Entry ${index} is missing a subject.`);
+      errors.push(`Durable ${index} is missing a subject.`);
       rejectedInputIndexes.push(index);
       continue;
     }
 
     if (content.length === 0) {
-      errors.push(`Entry ${index} is missing content.`);
+      errors.push(`Durable ${index} is missing content.`);
       rejectedInputIndexes.push(index);
       continue;
     }
 
     if (input.expiry !== undefined && !EXPIRY_LEVELS.includes(input.expiry)) {
-      errors.push(`Entry ${index} has an invalid expiry.`);
+      errors.push(`Durable ${index} has an invalid expiry.`);
       rejectedInputIndexes.push(index);
       continue;
     }
 
     if (input.tags !== undefined && !areValidTags(input.tags)) {
-      errors.push(`Entry ${index} has invalid tags.`);
+      errors.push(`Durable ${index} has invalid tags.`);
       rejectedInputIndexes.push(index);
       continue;
     }
 
     if (input.importance !== undefined && !Number.isFinite(input.importance)) {
-      errors.push(`Entry ${index} has an invalid importance.`);
+      errors.push(`Durable ${index} has an invalid importance.`);
       rejectedInputIndexes.push(index);
       continue;
     }
 
     if (input.supersedes !== undefined && !isUuid(input.supersedes)) {
-      errors.push(`Entry ${index} has an invalid supersedes id.`);
+      errors.push(`Durable ${index} has an invalid supersedes id.`);
       rejectedInputIndexes.push(index);
       continue;
     }
 
     const temporalValidity = validateTemporalValidityRange(input.valid_from, input.valid_to);
     if (!temporalValidity.ok) {
-      errors.push(`Entry ${index} ${temporalValidity.message}`);
+      errors.push(`Durable ${index} ${temporalValidity.message}`);
       rejectedInputIndexes.push(index);
       continue;
     }
@@ -134,11 +134,11 @@ export function validateEntriesWithIndexes(inputs: StoreDurableInput[]): Indexed
     let normalizedClaimKey: string | undefined;
     if (input.claim_key !== undefined) {
       if (typeof input.claim_key !== "string") {
-        warnings.push(`Entry ${index} provided a non-string claim key and it was dropped.`);
+        warnings.push(`Durable ${index} provided a non-string claim key and it was dropped.`);
       } else if (input.type === "directive") {
         normalizedClaimKey = normalizeMemoryDirectiveClaimKey(input.claim_key);
         if (!normalizedClaimKey) {
-          warnings.push(`Entry ${index} provided invalid directive claim key ${JSON.stringify(input.claim_key)} and it was dropped.`);
+          warnings.push(`Durable ${index} provided invalid directive claim key ${JSON.stringify(input.claim_key)} and it was dropped.`);
         }
       } else {
         const claimKey = normalizeClaimKey(input.claim_key);
@@ -146,7 +146,7 @@ export function validateEntriesWithIndexes(inputs: StoreDurableInput[]): Indexed
           normalizedClaimKey = claimKey.value.claimKey;
         } else {
           warnings.push(
-            `Entry ${index} provided invalid claim key ${JSON.stringify(input.claim_key)} and it was dropped: ${describeClaimKeyNormalizationFailure(claimKey.reason)}.`,
+            `Durable ${index} provided invalid claim key ${JSON.stringify(input.claim_key)} and it was dropped: ${describeClaimKeyNormalizationFailure(claimKey.reason)}.`,
           );
         }
       }
@@ -189,14 +189,14 @@ export function validateEntriesWithIndexes(inputs: StoreDurableInput[]): Indexed
 
     if (hasPrecomputedLifecycleFields) {
       if (!normalizedClaimKey) {
-        errors.push(`Entry ${index} provided claim-key lifecycle metadata without a valid claim key.`);
+        errors.push(`Durable ${index} provided claim-key lifecycle metadata without a valid claim key.`);
         rejectedInputIndexes.push(index);
         continue;
       }
 
       if (!resolvedPrecomputedLifecycle) {
         errors.push(
-          `Entry ${index} provided partial or invalid claim-key lifecycle metadata. Complete bundles require claim_key_status, claim_key_source, claim_key_confidence, and claim_key_rationale.`,
+          `Durable ${index} provided partial or invalid claim-key lifecycle metadata. Complete bundles require claim_key_status, claim_key_source, claim_key_confidence, and claim_key_rationale.`,
         );
         rejectedInputIndexes.push(index);
         continue;
@@ -257,7 +257,7 @@ function validateDirectiveMetadata(
   const hasDirectiveMetadata = input.directive_polarity !== undefined || input.directive_trigger !== undefined;
   if (input.type !== "directive") {
     if (hasDirectiveMetadata) {
-      errors.push(`Entry ${index} provided directive metadata on a non-directive durable.`);
+      errors.push(`Durable ${index} provided directive metadata on a non-directive durable.`);
       rejectedInputIndexes.push(index);
       return { ok: false };
     }
@@ -266,21 +266,21 @@ function validateDirectiveMetadata(
   }
 
   if (!normalizedClaimKey?.startsWith(MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX)) {
-    errors.push(`Entry ${index} directive claim_key must use the ${MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX} prefix.`);
+    errors.push(`Durable ${index} directive claim_key must use the ${MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX} prefix.`);
     rejectedInputIndexes.push(index);
     return { ok: false };
   }
 
   const polarity = parseDirectivePolarity(input.directive_polarity);
   if (!polarity) {
-    errors.push(`Entry ${index} directive_polarity must be abstain or proactive.`);
+    errors.push(`Durable ${index} directive_polarity must be abstain or proactive.`);
     rejectedInputIndexes.push(index);
     return { ok: false };
   }
 
   const trigger = input.directive_trigger === undefined ? defaultDirectiveTrigger(polarity) : parseDirectiveTrigger(input.directive_trigger);
   if (!trigger) {
-    errors.push(`Entry ${index} directive_trigger must be session_start, always, or topic:<term>.`);
+    errors.push(`Durable ${index} directive_trigger must be session_start, always, or topic:<term>.`);
     rejectedInputIndexes.push(index);
     return { ok: false };
   }
@@ -316,7 +316,7 @@ function normalizeClaimSupportObservedAt(value: string, index: number, warnings:
   }
 
   if (!isIsoTimestamp(normalized)) {
-    warnings.push(`Entry ${index} provided invalid claim_support_observed_at ${JSON.stringify(value)} and it was dropped.`);
+    warnings.push(`Durable ${index} provided invalid claim_support_observed_at ${JSON.stringify(value)} and it was dropped.`);
     return undefined;
   }
 
@@ -331,7 +331,7 @@ function normalizeClaimKeyStatus(value: StoreDurableInput["claim_key_status"], i
   }
 
   if (value !== undefined) {
-    warnings.push(`Entry ${index} provided invalid claim_key_status ${JSON.stringify(value)} and it was dropped.`);
+    warnings.push(`Durable ${index} provided invalid claim_key_status ${JSON.stringify(value)} and it was dropped.`);
   }
 
   return undefined;
@@ -345,7 +345,7 @@ function normalizeClaimKeySource(value: StoreDurableInput["claim_key_source"], i
   }
 
   if (value !== undefined) {
-    warnings.push(`Entry ${index} provided invalid claim_key_source ${JSON.stringify(value)} and it was dropped.`);
+    warnings.push(`Durable ${index} provided invalid claim_key_source ${JSON.stringify(value)} and it was dropped.`);
   }
 
   return undefined;
@@ -366,7 +366,7 @@ function normalizeClaimKeyConfidence(
     return parsed;
   }
 
-  warnings.push(`Entry ${index} provided invalid claim_key_confidence ${JSON.stringify(value)} and it was dropped.`);
+  warnings.push(`Durable ${index} provided invalid claim_key_confidence ${JSON.stringify(value)} and it was dropped.`);
   return undefined;
 }
 
@@ -377,7 +377,7 @@ function normalizeClaimSupportMode(value: StoreDurableInput["claim_support_mode"
     return parsed;
   }
 
-  warnings.push(`Entry ${index} provided invalid claim_support_mode ${JSON.stringify(value)} and it was dropped.`);
+  warnings.push(`Durable ${index} provided invalid claim_support_mode ${JSON.stringify(value)} and it was dropped.`);
   return undefined;
 }
 
@@ -395,7 +395,7 @@ function normalizeTags(tags?: string[]): string[] {
   return tags.map((tag) => tag.trim()).filter((tag) => tag.length > 0);
 }
 
-/** Returns whether an optional id string matches the UUID format used by agenr entry ids. */
+/** Returns whether an optional id string matches the UUID format used by agenr durable ids. */
 function isUuid(value: string): boolean {
   return UUID_PATTERN.test(value.trim());
 }

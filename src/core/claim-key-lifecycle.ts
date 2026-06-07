@@ -566,29 +566,29 @@ export function buildExplicitClaimKeyPreservationMetadata(
  * @returns Survivor with explicit claim metadata merged when the keys agree.
  */
 export function mergeExplicitClaimKeyMetadata(
-  entry: StoreDurableInput,
+  durable: StoreDurableInput,
   candidate: Pick<
     StoreDurableInput,
     "claim_key" | "claim_key_raw" | "claim_support_source_kind" | "claim_support_locator" | "claim_support_observed_at" | "claim_support_mode" | "created_at"
   >,
 ): StoreDurableInput {
   if (!candidate.claim_key) {
-    return entry;
+    return durable;
   }
 
-  if (entry.claim_key && entry.claim_key !== candidate.claim_key) {
-    return entry;
+  if (durable.claim_key && durable.claim_key !== candidate.claim_key) {
+    return durable;
   }
 
   const preserved = buildExplicitClaimKeyPreservationMetadata(candidate, {});
   return {
-    ...entry,
-    claim_key: entry.claim_key ?? candidate.claim_key,
-    claim_key_raw: entry.claim_key_raw ?? preserved.claim_key_raw,
-    claim_support_source_kind: entry.claim_support_source_kind ?? preserved.claim_support_source_kind,
-    claim_support_locator: entry.claim_support_locator ?? preserved.claim_support_locator,
-    claim_support_observed_at: entry.claim_support_observed_at ?? preserved.claim_support_observed_at,
-    claim_support_mode: entry.claim_support_mode ?? preserved.claim_support_mode,
+    ...durable,
+    claim_key: durable.claim_key ?? candidate.claim_key,
+    claim_key_raw: durable.claim_key_raw ?? preserved.claim_key_raw,
+    claim_support_source_kind: durable.claim_support_source_kind ?? preserved.claim_support_source_kind,
+    claim_support_locator: durable.claim_support_locator ?? preserved.claim_support_locator,
+    claim_support_observed_at: durable.claim_support_observed_at ?? preserved.claim_support_observed_at,
+    claim_support_mode: durable.claim_support_mode ?? preserved.claim_support_mode,
   };
 }
 

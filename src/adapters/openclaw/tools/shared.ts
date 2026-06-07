@@ -4,7 +4,7 @@ import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sd
 import { formatErrorMessage } from "../../shared/errors.js";
 import type { MemoryToolOutcome, MemoryToolParamReader } from "../../shared/memory-tools.js";
 import {
-  ENTRY_TYPE_DESCRIPTION,
+  DURABLE_TYPE_DESCRIPTION,
   EXPIRY_DESCRIPTION,
   RECALL_MODES,
   UPDATE_EXPIRY_DESCRIPTION,
@@ -16,7 +16,7 @@ import {
   parseExpiry,
   parseRecallMode,
   sanitizeUpdateToolParams,
-} from "../../shared/entry-tools.js";
+} from "../../shared/durable-tools.js";
 
 /** Shared OpenClaw param reader wired into host-neutral memory tool parsers. */
 const OPENCLAW_PARAM_READER: MemoryToolParamReader = {
@@ -27,7 +27,7 @@ const OPENCLAW_PARAM_READER: MemoryToolParamReader = {
 
 export {
   OPENCLAW_PARAM_READER,
-  ENTRY_TYPE_DESCRIPTION,
+  DURABLE_TYPE_DESCRIPTION,
   EXPIRY_DESCRIPTION,
   RECALL_MODES,
   UPDATE_EXPIRY_DESCRIPTION,

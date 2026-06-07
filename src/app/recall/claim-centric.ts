@@ -5,24 +5,24 @@ import type { ClaimKeyStatus, ClaimSupportMode } from "../../core/types.js";
 import type { RecallOutput } from "../../core/recall/types.js";
 
 /**
- * High-level memory-state label for one recalled entry.
+ * High-level memory-state label for one recalled durable.
  */
 export type ClaimCentricMemoryState = "current" | "historical" | "superseded";
 
 /**
- * Normalized claim-family lifecycle label for one recalled entry.
+ * Normalized claim-family lifecycle label for one recalled durable.
  */
 export type ClaimCentricClaimStatus = ClaimKeyStatus | "no_key";
 
 /**
- * Freshness metadata surfaced alongside one recalled entry.
+ * Freshness metadata surfaced alongside one recalled durable.
  */
 export interface ClaimCentricFreshness {
-  /** Original created-at timestamp from the durable entry row. */
+  /** Original created-at timestamp from the durable row. */
   createdAt: string;
-  /** Optional validity-window lower bound when the entry models a time range. */
+  /** Optional validity-window lower bound when the durable models a time range. */
   validFrom?: string;
-  /** Optional validity-window upper bound when the entry models a time range. */
+  /** Optional validity-window upper bound when the durable models a time range. */
   validTo?: string;
   /** Whether this recalled row still represents the current active state. */
   isCurrent: boolean;
@@ -47,12 +47,12 @@ export interface ClaimCentricAsOfResolution {
 }
 
 /**
- * Provenance metadata surfaced alongside one recalled entry.
+ * Provenance metadata surfaced alongside one recalled durable.
  */
 export interface ClaimCentricProvenance {
-  /** Successor row ID when this entry has been superseded. */
+  /** Successor row ID when this durable has been superseded. */
   supersededById?: string;
-  /** Optional supersession relationship kind persisted on the entry. */
+  /** Optional supersession relationship kind persisted on the durable. */
   supersessionKind?: string;
   /** Optional human rationale explaining the supersession relationship. */
   supersessionReason?: string;
@@ -77,12 +77,12 @@ export interface ClaimCentricRecallExplanation {
 }
 
 /**
- * Claim-aware annotation attached to one recalled entry row.
+ * Claim-aware annotation attached to one recalled durable row.
  */
-export interface ClaimCentricRecallEntry {
-  /** Stable entry identifier mirrored for convenience. */
-  entryId: string;
-  /** Claim-family grouping key. Claim-key rows group by claim key, others by entry ID. */
+export interface ClaimCentricRecallDurable {
+  /** Stable durable identifier mirrored for convenience. */
+  durableId: string;
+  /** Claim-family grouping key. Claim-key rows group by claim key, others by durable ID. */
   familyKey: string;
   /** Claim key when the row participates in a claim family. */
   claimKey?: string;
@@ -115,28 +115,28 @@ export interface ClaimCentricRecallFamily {
   /** Subject from the first ranked row in the family. */
   subject: string;
   /** Highest-ranked row in the family. */
-  primary: ClaimCentricRecallEntry;
+  primary: ClaimCentricRecallDurable;
   /** Family rows preserved in ranked order. */
-  entries: ClaimCentricRecallEntry[];
+  durables: ClaimCentricRecallDurable[];
 }
 
 /**
  * Projects raw recall rows into claim-aware families and annotations.
  *
- * @param entries - Ranked raw recall rows returned by the unified layer.
+ * @param durables - Ranked raw recall rows returned by the unified layer.
  * @returns Claim-aware grouped projection preserving ranked order.
  */
-export function projectClaimCentricRecallEntries(
-  entries: RecallOutput[],
+export function projectClaimCentricRecallDurables(
+  durables: RecallOutput[],
   options: { asOf?: string; slotPolicyConfig?: ClaimSlotPolicyConfig } = {},
 ): ClaimCentricRecallFamily[] {
   const families = new Map<string, ClaimCentricRecallFamily>();
 
-  for (const recall of entries) {
-    const projected = projectClaimCentricRecallEntry(recall, options);
+  for (const recall of durables) {
+    const projected = projectClaimCentricRecallDurable(recall, options);
     const family = families.get(projected.familyKey);
     if (family) {
-      family.entries.push(projected);
+      family.durables.push(projected);
       continue;
     }
 
@@ -144,9 +144,9 @@ export function projectClaimCentricRecallEntries(
       familyKey: projected.familyKey,
       claimKey: projected.claimKey,
       slotPolicy: projected.slotPolicy,
-      subject: recall.entry.subject,
+      subject: recall.durable.subject,
       primary: projected,
-      entries: [projected],
+      durables: [projected],
     });
   }
 
@@ -159,8 +159,8 @@ export function projectClaimCentricRecallEntries(
  * @param families - Claim-aware grouped projection.
  * @returns Flat projected rows in the same ranked order as recall output.
  */
-export function flattenClaimCentricRecallFamilies(families: ClaimCentricRecallFamily[]): ClaimCentricRecallEntry[] {
-  return families.flatMap((family) => family.entries);
+export function flattenClaimCentricRecallFamilies(families: ClaimCentricRecallFamily[]): ClaimCentricRecallDurable[] {
+  return families.flatMap((family) => family.durables);
 }
 
 /**
@@ -169,20 +169,20 @@ export function flattenClaimCentricRecallFamilies(families: ClaimCentricRecallFa
  * @param recall - Raw scored recall row from the core recall pipeline.
  * @returns Claim-aware projected row used by app and adapter surfaces.
  */
-export function projectClaimCentricRecallEntry(
+export function projectClaimCentricRecallDurable(
   recall: RecallOutput,
   options: { asOf?: string; slotPolicyConfig?: ClaimSlotPolicyConfig } = {},
-): ClaimCentricRecallEntry {
-  const entry = recall.entry;
+): ClaimCentricRecallDurable {
+  const entry = recall.durable;
   const claimKey = normalizeOptionalString(entry.claim_key);
-  const familyKey = claimKey ?? `entry:${entry.id}`;
+  const familyKey = claimKey ?? `durable:${entry.id}`;
   const slotPolicy = resolveClaimSlotPolicy(claimKey, options.slotPolicyConfig).policy;
   const asOfResolution = buildAsOfResolution(recall, options.asOf);
   const memoryState = resolveMemoryState(recall, asOfResolution);
   const claimStatus = resolveClaimStatus(recall);
 
   return {
-    entryId: entry.id,
+    durableId: entry.id,
     familyKey,
     ...(claimKey ? { claimKey } : {}),
     slotPolicy,
@@ -202,7 +202,7 @@ export function projectClaimCentricRecallEntry(
  * @returns Memory-state label for trust surfaces.
  */
 function resolveMemoryState(recall: RecallOutput, asOfResolution?: ClaimCentricAsOfResolution): ClaimCentricMemoryState {
-  const entry = recall.entry;
+  const entry = recall.durable;
   const referenceMs = asOfResolution ? (parseTimestamp(asOfResolution.asOf)?.getTime() ?? Date.now()) : Date.now();
   if (asOfResolution) {
     if (asOfResolution.clock === "validity") {
@@ -246,7 +246,7 @@ function resolveMemoryState(recall: RecallOutput, asOfResolution?: ClaimCentricA
  * @returns Claim-family lifecycle label for trust surfaces.
  */
 function resolveClaimStatus(recall: RecallOutput): ClaimCentricClaimStatus {
-  return resolveKeyedDurableLifecycleStatus(recall.entry);
+  return resolveKeyedDurableLifecycleStatus(recall.durable);
 }
 
 /**
@@ -257,7 +257,7 @@ function resolveClaimStatus(recall: RecallOutput): ClaimCentricClaimStatus {
  * @returns Freshness metadata for tool and CLI rendering.
  */
 function buildFreshness(recall: RecallOutput, memoryState: ClaimCentricMemoryState, asOfResolution?: ClaimCentricAsOfResolution): ClaimCentricFreshness {
-  const entry = recall.entry;
+  const entry = recall.durable;
   const validFrom = normalizeOptionalString(entry.valid_from);
   const validTo = normalizeOptionalString(entry.valid_to);
   const createdAt = entry.created_at;
@@ -296,7 +296,7 @@ function buildFreshness(recall: RecallOutput, memoryState: ClaimCentricMemorySta
  * @returns Persisted provenance cues relevant to trust surfaces.
  */
 function buildProvenance(recall: RecallOutput): ClaimCentricProvenance {
-  const entry = recall.entry;
+  const entry = recall.durable;
   return {
     ...(normalizeOptionalString(entry.superseded_by) ? { supersededById: entry.superseded_by } : {}),
     ...(normalizeOptionalString(entry.supersession_kind) ? { supersessionKind: entry.supersession_kind } : {}),
@@ -385,7 +385,7 @@ function buildAsOfResolution(recall: RecallOutput, asOf: string | undefined): Cl
     return undefined;
   }
 
-  const entry = recall.entry;
+  const entry = recall.durable;
   const validFrom = parseTimestamp(entry.valid_from);
   const validTo = parseTimestamp(entry.valid_to);
   if (validFrom || validTo) {

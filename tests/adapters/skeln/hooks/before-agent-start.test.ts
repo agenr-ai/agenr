@@ -426,17 +426,17 @@ describe("handleAgenrSkelnBeforeAgentStart", () => {
     const services = createServices({
       sessionStart: {
         repository: {
-          listCoreEntries: vi.fn(async () => {
+          listCoreDurables: vi.fn(async () => {
             throw new Error("session start failed");
           }),
           getActiveProfileSnapshot: vi.fn(async () => null),
-          listEntriesByIds: vi.fn(async () => []),
+          listDurablesByIds: vi.fn(async () => []),
         },
         recall: {
           embed: vi.fn(),
           ftsSearch: vi.fn(),
           vectorSearch: vi.fn(),
-          hydrateEntries: vi.fn(async () => []),
+          hydrateDurables: vi.fn(async () => []),
           recordRecallEvents: vi.fn(),
         },
       },
@@ -637,18 +637,18 @@ function renderTestWorkingProjection(request: string | { sourceRef: string }, in
   };
 }
 
-function createSessionStartDeps(coreEntries: Durable[]): SessionStartDeps {
+function createSessionStartDeps(coreDurables: Durable[]): SessionStartDeps {
   return {
     repository: {
-      listCoreEntries: vi.fn(async () => coreEntries),
+      listCoreDurables: vi.fn(async () => coreDurables),
       getActiveProfileSnapshot: vi.fn(async () => null),
-      listEntriesByIds: vi.fn(async () => []),
+      listDurablesByIds: vi.fn(async () => []),
     },
     recall: {
       embed: vi.fn(),
       ftsSearch: vi.fn(),
       vectorSearch: vi.fn(),
-      hydrateEntries: vi.fn(async () => []),
+      hydrateDurables: vi.fn(async () => []),
       recordRecallEvents: vi.fn(),
     },
   };

@@ -189,7 +189,7 @@ export function buildLexicalPlan(text: string): LexicalSearchTier[] {
  *
  * @param query - Raw recall query text.
  * @param subject - Entry subject text.
- * @param content - Entry content text.
+ * @param content - Durable content text.
  * @returns Normalized lexical overlap signal in the 0-1 range.
  */
 export function computeLexicalScore(query: string, subject: string, content: string): number {

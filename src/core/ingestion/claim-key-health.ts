@@ -95,21 +95,21 @@ export interface IngestClaimKeyHealthSummary {
  *
  * @param entries - Final store candidates after ingest extraction and within-batch dedup.
  * @param diagnosticsByIndex - Structured diagnostics keyed by flattened store-candidate index.
- * @param eligibleTypes - Claim-key-eligible entry types for the current run.
+ * @param eligibleTypes - Claim-key-eligible durable types for the current run.
  * @returns Compact claim-key health summary for operator-facing reporting.
  */
 export function summarizeIngestClaimKeyHealth(
-  entries: StoreDurableInput[],
+  durables: StoreDurableInput[],
   diagnosticsByIndex: Map<number, ClaimExtractionDiagnostic>,
   eligibleTypes: DurableKind[],
 ): IngestClaimKeyHealthSummary {
   const eligibleTypeSet = new Set(eligibleTypes);
-  const eligibleRows = entries.filter((entry) => eligibleTypeSet.has(entry.type));
+  const eligibleRows = durables.filter((entry) => eligibleTypeSet.has(entry.type));
   const keyedEligibleRows = eligibleRows.filter((entry) => hasClaimKey(entry)).length;
-  const rowsWithUserId = entries.filter((entry) => hasNonEmptyValue(entry.user_id)).length;
-  const rowsWithProject = entries.filter((entry) => hasNonEmptyValue(entry.project)).length;
-  const rowsWithSourceFile = entries.filter((entry) => hasNonEmptyValue(entry.source_file)).length;
-  const snapshotStyleSourceRows = entries.filter((entry) => isSnapshotStyleSourceFile(entry.source_file)).length;
+  const rowsWithUserId = durables.filter((entry) => hasNonEmptyValue(entry.user_id)).length;
+  const rowsWithProject = durables.filter((entry) => hasNonEmptyValue(entry.project)).length;
+  const rowsWithSourceFile = durables.filter((entry) => hasNonEmptyValue(entry.source_file)).length;
+  const snapshotStyleSourceRows = durables.filter((entry) => isSnapshotStyleSourceFile(entry.source_file)).length;
   const stableSourceRows = rowsWithSourceFile - snapshotStyleSourceRows;
   const lifecycle = {
     trusted: 0,
@@ -122,7 +122,7 @@ export function summarizeIngestClaimKeyHealth(
   let keyedMissingSupportCount = 0;
   const supportBySource = new Map<ClaimKeySource | "unknown", { keyed: number; withSupport: number }>();
 
-  for (const entry of entries) {
+  for (const entry of durables) {
     if (!hasClaimKey(entry)) {
       continue;
     }
@@ -161,7 +161,7 @@ export function summarizeIngestClaimKeyHealth(
   }
 
   const byType = (["fact", "decision", "preference", "lesson", "relationship", "milestone"] as const).map((type) => {
-    const rows = entries.filter((entry) => entry.type === type);
+    const rows = durables.filter((entry) => entry.type === type);
     const eligible = eligibleTypeSet.has(type);
     const keyed = eligible ? rows.filter((entry) => hasClaimKey(entry)).length : 0;
     const missing = eligible ? rows.length - keyed : rows.length;
@@ -180,7 +180,7 @@ export function summarizeIngestClaimKeyHealth(
         return [];
       }
 
-      const entry = entries[inputIndex];
+      const entry = durables[inputIndex];
       if (!entry) {
         return [];
       }
@@ -215,21 +215,21 @@ export function summarizeIngestClaimKeyHealth(
       return left.subject.localeCompare(right.subject);
     });
 
-  const suspiciousSingletonAliases = detectClaimKeySingletonAliasCandidates(toKeyedLifecycleObservations(entries));
+  const suspiciousSingletonAliases = detectClaimKeySingletonAliasCandidates(toKeyedLifecycleObservations(durables));
 
   return {
-    totalRows: entries.length,
+    totalRows: durables.length,
     eligibleRows: eligibleRows.length,
     keyedEligibleRows,
     missingEligibleRows: eligibleRows.length - keyedEligibleRows,
     coveragePct: eligibleRows.length > 0 ? keyedEligibleRows / eligibleRows.length : 0,
     metadataCoverage: {
       rowsWithUserId,
-      rowsWithoutUserId: entries.length - rowsWithUserId,
-      userIdFillRate: entries.length > 0 ? rowsWithUserId / entries.length : 0,
+      rowsWithoutUserId: durables.length - rowsWithUserId,
+      userIdFillRate: durables.length > 0 ? rowsWithUserId / durables.length : 0,
       rowsWithProject,
-      rowsWithoutProject: entries.length - rowsWithProject,
-      projectFillRate: entries.length > 0 ? rowsWithProject / entries.length : 0,
+      rowsWithoutProject: durables.length - rowsWithProject,
+      projectFillRate: durables.length > 0 ? rowsWithProject / durables.length : 0,
       rowsWithSourceFile,
       stableSourceRows,
       snapshotStyleSourceRows,

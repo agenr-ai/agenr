@@ -7,7 +7,7 @@ import { createRecallAdapter } from "../../adapters/db/recall-adapter.js";
 import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
 import { resolveModel } from "../../adapters/llm.js";
 import { attachCrossEncoderPort } from "../../adapters/plugin-runtime/attach-cross-encoder.js";
-import { projectClaimCentricRecallEntry } from "../../app/recall/index.js";
+import { projectClaimCentricRecallDurable } from "../../app/recall/index.js";
 import { normalizeOptionalString, normalizeStringList, parseCsvList, parsePositiveInteger, parsePositiveNumber, parseUnitInterval } from "../shared/parse.js";
 import { readConfig } from "../../config.js";
 import type { CrossEncoderPort } from "../../core/ports.js";
@@ -213,14 +213,14 @@ function tryCreateCrossEncoder(config: ReturnType<typeof readConfig>): CrossEnco
  * @returns Multi-line formatted CLI block.
  */
 function formatResult(result: RecallOutput, verbose: boolean, asOf?: string): string {
-  const projected = projectClaimCentricRecallEntry(result, {
+  const projected = projectClaimCentricRecallDurable(result, {
     asOf,
   });
   const contentLength = verbose ? 200 : 120;
   const lines = [
-    `${ui.bold(`[${result.score.toFixed(2)}]`)} ${result.entry.subject}`,
-    `  ${truncateText(result.entry.content, contentLength)}`,
-    `  type=${result.entry.type}  importance=${result.entry.importance}  expiry=${result.entry.expiry}  created=${formatDate(result.entry.created_at)}  state=${projected.memoryState}  claim_status=${formatClaimStatus(projected.claimStatus)}`,
+    `${ui.bold(`[${result.score.toFixed(2)}]`)} ${result.durable.subject}`,
+    `  ${truncateText(result.durable.content, contentLength)}`,
+    `  type=${result.durable.type}  importance=${result.durable.importance}  expiry=${result.durable.expiry}  created=${formatDate(result.durable.created_at)}  state=${projected.memoryState}  claim_status=${formatClaimStatus(projected.claimStatus)}`,
     `  family=${projected.claimKey ?? projected.familyKey}  slot_policy=${projected.slotPolicy}  freshness=${projected.freshness.label}`,
   ];
 
@@ -244,7 +244,7 @@ function formatResult(result: RecallOutput, verbose: boolean, asOf?: string): st
  * Parses and validates a comma-separated entry-type list.
  *
  * @param value - Raw commander option text.
- * @returns Normalized list of supported entry types.
+ * @returns Normalized list of supported durable types.
  */
 function parseDurableKinds(value: string): DurableKind[] {
   const parsed = parseCsvList(value);
@@ -277,12 +277,12 @@ function truncateText(text: string, maxLength: number): string {
 }
 
 /** Formats the normalized claim-status label for CLI output. */
-function formatClaimStatus(status: ReturnType<typeof projectClaimCentricRecallEntry>["claimStatus"]): string {
+function formatClaimStatus(status: ReturnType<typeof projectClaimCentricRecallDurable>["claimStatus"]): string {
   return status === "no_key" ? "no-key" : status;
 }
 
 /** Formats compact provenance metadata for one projected recall row. */
-function formatProvenance(projected: ReturnType<typeof projectClaimCentricRecallEntry>): string {
+function formatProvenance(projected: ReturnType<typeof projectClaimCentricRecallDurable>): string {
   const parts = [
     projected.provenance.supersededById ? `superseded_by=${projected.provenance.supersededById}` : undefined,
     projected.provenance.supersessionKind ? `kind=${projected.provenance.supersessionKind}` : undefined,

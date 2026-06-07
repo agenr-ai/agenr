@@ -10,7 +10,7 @@ import type { EntityAttributeKind, EntityAttributeQueryShape, RecallInput } from
 import type { ProcedureCrossEncoderOptions, ProcedureMmrOptions } from "../procedures/recall/types.js";
 import { runProcedureRecall } from "../procedures/recall/service.js";
 
-import { flattenClaimCentricRecallFamilies, projectClaimCentricRecallEntries } from "./claim-centric.js";
+import { flattenClaimCentricRecallFamilies, projectClaimCentricRecallDurables } from "./claim-centric.js";
 import { buildClaimTransitionExplanations } from "./transitions.js";
 import type { UnifiedRecallInput, UnifiedRecallMode, UnifiedRecallResult, UnifiedRecallRouting } from "./types.js";
 
@@ -98,7 +98,7 @@ export interface UnifiedRecallDeps {
 }
 
 /**
- * Runs unified recall across semantic entries and episodic memory using routing rules.
+ * Runs unified recall across semantic durables and episodic memory using routing rules.
  *
  * @param input - Agent-facing recall request.
  * @param deps - Episode database, durable recall ports, and embedding availability facts.
@@ -108,7 +108,7 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
   const now = deps.now ?? new Date();
   const requested = normalizeMode(input.mode);
   const parsedTimeWindow = parseTemporalWindow(input.text, now);
-  const hasDurableFilters = hasEntryScopedFilters(input);
+  const hasDurableFilters = hasDurableScopedFilters(input);
   const topicAnchor = hasTopicAnchor(input.text, hasDurableFilters);
   const entityAttributeQuery = detectEntityAttributeQuery(input.text);
   const historicalStatePattern = detectHistoricalStatePattern(input.text);
@@ -153,7 +153,7 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
     notices.push(...episodePlan.notices);
   }
 
-  if (routing.queried.includes("episodes") && hasEntryScopedFilters(input)) {
+  if (routing.queried.includes("episodes") && hasDurableScopedFilters(input)) {
     notices.push(ENTRY_FILTER_NOTICE);
   }
 
@@ -177,27 +177,27 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
         candidates: [],
         notices: [],
       };
-  const entries = await maybeRunEntryRecall({
+  const durableRecall = await maybeRunDurableRecall({
     input,
     deps,
     parsedTimeWindow,
     routing,
   });
-  if (routing.queried.includes("durables") && entries.kind === "skipped") {
-    notices.push(entries.notice);
+  if (routing.queried.includes("durables") && durableRecall.kind === "skipped") {
+    notices.push(durableRecall.notice);
   }
-  if (entries.kind === "results") {
-    notices.push(...entries.notices);
+  if (durableRecall.kind === "results") {
+    notices.push(...durableRecall.notices);
   }
 
-  const rawEntries = entries.kind === "results" ? entries.results : [];
-  const entryFamilies = projectClaimCentricRecallEntries(rawEntries, {
+  const rawDurables = durableRecall.kind === "results" ? durableRecall.results : [];
+  const durableFamilies = projectClaimCentricRecallDurables(rawDurables, {
     asOf: input.asOf,
     slotPolicyConfig: deps.claimSlotPolicyConfig,
   });
-  const projectedEntries = flattenClaimCentricRecallFamilies(entryFamilies);
+  const projectedDurables = flattenClaimCentricRecallFamilies(durableFamilies);
   const claimTransitions = buildClaimTransitionExplanations({
-    families: entryFamilies,
+    families: durableFamilies,
     episodes,
     detectedIntent: routing.detectedIntent,
   });
@@ -220,12 +220,12 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
     procedureCandidates: procedureResults.candidates,
     procedureNotices: dedupePreservingOrder(procedureResults.notices),
     episodes,
-    entries: rawEntries,
-    projectedEntries,
-    entryFamilies,
+    durables: rawDurables,
+    projectedDurables,
+    durableFamilies,
     claimTransitions,
     notices: dedupePreservingOrder(notices),
-    count: procedureResults.candidates.length + episodes.length + rawEntries.length,
+    count: procedureResults.candidates.length + episodes.length + rawDurables.length,
   };
 }
 
@@ -572,7 +572,7 @@ function resolveProcedureCrossEncoderOptions(
  * @param params - Recall inputs, dependencies, parsed time window, and routing result.
  * @returns Entry results, a skip notice, or an error for explicit entry mode failures.
  */
-async function maybeRunEntryRecall(params: {
+async function maybeRunDurableRecall(params: {
   input: UnifiedRecallInput;
   deps: UnifiedRecallDeps;
   parsedTimeWindow: ReturnType<typeof parseTemporalWindow>;
@@ -608,7 +608,7 @@ async function maybeRunEntryRecall(params: {
 
   return {
     kind: "results",
-    results: await recall(buildEntryRecallInput(params.input, params.parsedTimeWindow, params.routing), params.deps.recall, {
+    results: await recall(buildDurableRecallInput(params.input, params.parsedTimeWindow, params.routing), params.deps.recall, {
       ...params.deps.recallOptions,
       now: params.deps.recallOptions?.now ?? params.deps.now,
       trace,
@@ -641,7 +641,7 @@ function composeRecallTrace(upstream: RecallTraceSink | undefined, onSummary: (s
  * @param parsedTimeWindow - Optional resolved episode-style time window.
  * @returns Core durable recall input.
  */
-function buildEntryRecallInput(
+function buildDurableRecallInput(
   input: UnifiedRecallInput,
   parsedTimeWindow: ReturnType<typeof parseTemporalWindow>,
   routing: UnifiedRecallRouting,
@@ -895,7 +895,7 @@ function normalizeMode(value: UnifiedRecallMode | undefined): UnifiedRecallMode 
  * @param input - Unified recall input.
  * @returns True when entry-only filters were supplied.
  */
-function hasEntryScopedFilters(input: UnifiedRecallInput): boolean {
+function hasDurableScopedFilters(input: UnifiedRecallInput): boolean {
   return Boolean(hasNonEmptyArray(input.types) || hasNonEmptyArray(input.tags));
 }
 

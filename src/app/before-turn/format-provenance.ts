@@ -1,4 +1,4 @@
-import type { projectClaimCentricRecallEntry } from "../recall/claim-centric.js";
+import type { projectClaimCentricRecallDurable } from "../recall/claim-centric.js";
 
 /**
  * Formats the projected claim-centric provenance shape into one compact string.
@@ -6,7 +6,7 @@ import type { projectClaimCentricRecallEntry } from "../recall/claim-centric.js"
  * @param provenance - Claim-centric projected provenance metadata.
  * @returns Compact provenance summary, or undefined when none exists.
  */
-export function formatProjectedProvenance(provenance: ReturnType<typeof projectClaimCentricRecallEntry>["provenance"]): string | undefined {
+export function formatProjectedProvenance(provenance: ReturnType<typeof projectClaimCentricRecallDurable>["provenance"]): string | undefined {
   const parts = [
     provenance.supersededById ? `superseded_by=${provenance.supersededById}` : undefined,
     provenance.supersessionKind ? `kind=${provenance.supersessionKind}` : undefined,

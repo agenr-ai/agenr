@@ -255,8 +255,8 @@ class LibsqlDatabase implements SqlDatabase {
   }
 
   /** Upserts ingest metadata for a processed transcript file. */
-  public async insertIngestLogEntry(filePath: string, fileHash: string, entryCount: number): Promise<void> {
-    return insertIngestLogEntry(this.executor, filePath, fileHash, entryCount);
+  public async insertIngestLogEntry(filePath: string, fileHash: string, durableCount: number): Promise<void> {
+    return insertIngestLogEntry(this.executor, filePath, fileHash, durableCount);
   }
 
   /** Ensures the schema exists before the adapter is used. */

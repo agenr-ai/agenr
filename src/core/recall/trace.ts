@@ -104,7 +104,7 @@ export interface RecallCoreCandidateCountsTrace {
   budgetAccepted: number;
   /** Candidates retained after the final limit slice. */
   finalRanked: number;
-  /** Entries returned after hydration and shaping. */
+  /** Durables returned after hydration and shaping. */
   returned: number;
 }
 
@@ -211,7 +211,7 @@ export interface RecallNeighborhoodTrace {
   familiesRequested: string[];
   /** Whether historical rows were allowed into the expansion. */
   includeHistorical: boolean;
-  /** Seed entry IDs chosen before the adapter expansion. */
+  /** Seed durable IDs chosen before the adapter expansion. */
   seedIds: string[];
   /** Unique candidates returned by the adapter expansion. */
   expansionCandidates: number;

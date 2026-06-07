@@ -50,7 +50,7 @@ export async function searchAgenrDurablesThroughMemoryHost(
     },
   );
 
-  return result.entries
+  return result.durables
     .filter((entry) => entry.score >= minScore)
     .slice(0, limit)
     .map((entry) => toMemorySearchResult(entry));
@@ -58,7 +58,7 @@ export async function searchAgenrDurablesThroughMemoryHost(
 
 /** Maps one durable recall hit into the OpenClaw memory-host search shape. */
 function toMemorySearchResult(entry: RecallOutput): MemorySearchResult {
-  const durable = entry.entry;
+  const durable = entry.durable;
   const path = durable.claim_key?.trim() || durable.subject.trim() || durable.id;
   const snippet = durable.content.trim().slice(0, 400);
 

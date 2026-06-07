@@ -1,4 +1,4 @@
-import { projectClaimCentricRecallEntry } from "../../recall/claim-centric.js";
+import { projectClaimCentricRecallDurable } from "../../recall/claim-centric.js";
 import type { RecallOutput } from "../../../core/recall/types.js";
 import type { UnifiedRecallResult } from "../../recall/types.js";
 import { buildRecallDebugArtifact } from "./build-debug-artifact.js";
@@ -11,7 +11,7 @@ import type {
   RecallEvalCaseResponse,
   RecallEvalCaseTimings,
   RecallEvalClaimFamilyMetadata,
-  RecallEvalProjectedEntryMetadata,
+  RecallEvalProjectedDurableMetadata,
   RecallEvalSandboxResult,
 } from "./contracts.js";
 import type { RecallEvalSandboxContext } from "./ports.js";
@@ -30,17 +30,17 @@ export function buildRecallEvalSuccessResponse(params: {
   sandbox: RecallEvalSandboxContext;
   observedArtifactFacts?: RecallEvalObservedArtifactFacts;
 }): RecallEvalCaseResponse {
-  const entryResults = Array.isArray(params.results) ? params.results : params.results.entries;
-  const projectedEntries = Array.isArray(params.results)
-    ? entryResults.map((result) => projectClaimCentricRecallEntry(result, { asOf: params.request.recallRequest.asOf }))
-    : params.results.projectedEntries;
-  const metadata = buildMetadata(params.request, params.results, projectedEntries);
+  const durableResults = Array.isArray(params.results) ? params.results : params.results.durables;
+  const projectedDurables = Array.isArray(params.results)
+    ? durableResults.map((result) => projectClaimCentricRecallDurable(result, { asOf: params.request.recallRequest.asOf }))
+    : params.results.projectedDurables;
+  const metadata = buildMetadata(params.request, params.results, projectedDurables);
   const debugArtifact: RecallDebugArtifactV1 | undefined =
     params.request.options?.includeDebugArtifact === true && params.observedArtifactFacts
       ? buildRecallDebugArtifact({
           request: params.request,
           results: params.results,
-          projectedEntries,
+          projectedDurables,
           sandbox: params.sandbox,
           observed: params.observedArtifactFacts,
         })
@@ -50,36 +50,36 @@ export function buildRecallEvalSuccessResponse(params: {
     status: "ok",
     caseId: params.request.caseId,
     result: {
-      entries: entryResults.map((result, index) => ({
-        id: result.entry.id,
-        subject: result.entry.subject,
-        content: result.entry.content,
-        type: result.entry.type,
-        importance: result.entry.importance,
-        expiry: result.entry.expiry,
-        tags: result.entry.tags,
-        created_at: result.entry.created_at,
+      durables: durableResults.map((result, index) => ({
+        id: result.durable.id,
+        subject: result.durable.subject,
+        content: result.durable.content,
+        type: result.durable.type,
+        importance: result.durable.importance,
+        expiry: result.durable.expiry,
+        tags: result.durable.tags,
+        created_at: result.durable.created_at,
         score: result.score,
         scores: result.scores,
         claim: {
-          familyKey: projectedEntries[index]?.familyKey ?? `entry:${result.entry.id}`,
-          claimKey: projectedEntries[index]?.claimKey,
-          slotPolicy: projectedEntries[index]?.slotPolicy ?? "exclusive",
-          memoryState: projectedEntries[index]?.memoryState ?? "current",
-          claimStatus: projectedEntries[index]?.claimStatus ?? "no_key",
-          freshness: projectedEntries[index]?.freshness ?? {
-            createdAt: result.entry.created_at,
+          familyKey: projectedDurables[index]?.familyKey ?? `durable:${result.durable.id}`,
+          claimKey: projectedDurables[index]?.claimKey,
+          slotPolicy: projectedDurables[index]?.slotPolicy ?? "exclusive",
+          memoryState: projectedDurables[index]?.memoryState ?? "current",
+          claimStatus: projectedDurables[index]?.claimStatus ?? "no_key",
+          freshness: projectedDurables[index]?.freshness ?? {
+            createdAt: result.durable.created_at,
             isCurrent: true,
-            label: `created ${result.entry.created_at} | current state`,
+            label: `created ${result.durable.created_at} | current state`,
           },
-          provenance: projectedEntries[index]?.provenance ?? {},
-          whySurfaced: projectedEntries[index]?.whySurfaced ?? {
+          provenance: projectedDurables[index]?.provenance ?? {},
+          whySurfaced: projectedDurables[index]?.whySurfaced ?? {
             summary: `ranked score ${result.score.toFixed(2)}`,
             reasons: [],
           },
         },
       })),
-      entryIds: entryResults.map((result) => result.entry.id),
+      durableIds: durableResults.map((result) => result.durable.id),
     },
     metadata,
     diagnostics: params.diagnostics,
@@ -132,23 +132,23 @@ function buildSandboxResult(sandbox: RecallEvalSandboxContext): RecallEvalSandbo
 function buildMetadata(
   request: RecallEvalCaseRequest,
   results: RecallOutput[] | UnifiedRecallResult,
-  projectedEntries: Array<{
-    entryId: string;
+  projectedDurables: Array<{
+    durableId: string;
     familyKey: string;
     claimKey?: string;
-    slotPolicy: RecallEvalProjectedEntryMetadata["slotPolicy"];
-    memoryState: RecallEvalProjectedEntryMetadata["memoryState"];
-    claimStatus: RecallEvalProjectedEntryMetadata["claimStatus"];
-    freshness: RecallEvalProjectedEntryMetadata["freshness"];
-    provenance: RecallEvalProjectedEntryMetadata["provenance"];
-    whySurfaced: RecallEvalProjectedEntryMetadata["whySurfaced"];
+    slotPolicy: RecallEvalProjectedDurableMetadata["slotPolicy"];
+    memoryState: RecallEvalProjectedDurableMetadata["memoryState"];
+    claimStatus: RecallEvalProjectedDurableMetadata["claimStatus"];
+    freshness: RecallEvalProjectedDurableMetadata["freshness"];
+    provenance: RecallEvalProjectedDurableMetadata["provenance"];
+    whySurfaced: RecallEvalProjectedDurableMetadata["whySurfaced"];
   }>,
 ): RecallEvalCaseMetadata {
   if (Array.isArray(results)) {
     return {
       path: request.recallPath ?? "core",
       claim: {
-        projectedEntries: projectedEntries.map(buildProjectedEntryMetadata),
+        projectedDurables: projectedDurables.map(buildProjectedDurableMetadata),
       },
     };
   }
@@ -156,8 +156,8 @@ function buildMetadata(
   return {
     path: "unified",
     claim: {
-      projectedEntries: projectedEntries.map(buildProjectedEntryMetadata),
-      entryFamilies: results.entryFamilies.map(buildClaimFamilyMetadata),
+      projectedDurables: projectedDurables.map(buildProjectedDurableMetadata),
+      durableFamilies: results.durableFamilies.map(buildClaimFamilyMetadata),
       transitions: results.claimTransitions,
     },
     unified: {
@@ -188,19 +188,19 @@ function buildMetadata(
 }
 
 /** Maps one projected claim-centric row into stable response metadata. */
-function buildProjectedEntryMetadata(entry: {
-  entryId: string;
+function buildProjectedDurableMetadata(entry: {
+  durableId: string;
   familyKey: string;
   claimKey?: string;
-  slotPolicy: RecallEvalProjectedEntryMetadata["slotPolicy"];
-  memoryState: RecallEvalProjectedEntryMetadata["memoryState"];
-  claimStatus: RecallEvalProjectedEntryMetadata["claimStatus"];
-  freshness: RecallEvalProjectedEntryMetadata["freshness"];
-  provenance: RecallEvalProjectedEntryMetadata["provenance"];
-  whySurfaced: RecallEvalProjectedEntryMetadata["whySurfaced"];
-}): RecallEvalProjectedEntryMetadata {
+  slotPolicy: RecallEvalProjectedDurableMetadata["slotPolicy"];
+  memoryState: RecallEvalProjectedDurableMetadata["memoryState"];
+  claimStatus: RecallEvalProjectedDurableMetadata["claimStatus"];
+  freshness: RecallEvalProjectedDurableMetadata["freshness"];
+  provenance: RecallEvalProjectedDurableMetadata["provenance"];
+  whySurfaced: RecallEvalProjectedDurableMetadata["whySurfaced"];
+}): RecallEvalProjectedDurableMetadata {
   return {
-    entryId: entry.entryId,
+    durableId: entry.durableId,
     familyKey: entry.familyKey,
     claimKey: entry.claimKey,
     slotPolicy: entry.slotPolicy,
@@ -213,17 +213,17 @@ function buildProjectedEntryMetadata(entry: {
 }
 
 /** Maps one claim family into compact family metadata for eval assertions. */
-function buildClaimFamilyMetadata(family: UnifiedRecallResult["entryFamilies"][number]): RecallEvalClaimFamilyMetadata {
+function buildClaimFamilyMetadata(family: UnifiedRecallResult["durableFamilies"][number]): RecallEvalClaimFamilyMetadata {
   return {
     familyKey: family.familyKey,
     claimKey: family.claimKey,
     slotPolicy: family.slotPolicy,
     subject: family.subject,
-    primaryEntryId: family.primary.entryId,
-    entries: family.entries.map((entry) => ({
-      id: entry.entryId,
-      memoryState: entry.memoryState,
-      claimStatus: entry.claimStatus,
+    primaryDurableId: family.primary.durableId,
+    durables: family.durables.map((durable) => ({
+      id: durable.durableId,
+      memoryState: durable.memoryState,
+      claimStatus: durable.claimStatus,
     })),
   };
 }

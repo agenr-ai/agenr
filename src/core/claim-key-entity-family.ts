@@ -125,14 +125,14 @@ export interface ClaimKeyEntityPrefixObservation {
  */
 export interface ClaimKeyEntityPrefixStats {
   entityPrefix: string;
-  activeEntryCount: number;
-  trustedEntryCount: number;
-  tentativeEntryCount: number;
-  unresolvedEntryCount: number;
-  deterministicRepairEntryCount: number;
-  manualEntryCount: number;
-  modelEntryCount: number;
-  jsonRetryEntryCount: number;
+  activeDurableCount: number;
+  trustedDurableCount: number;
+  tentativeDurableCount: number;
+  unresolvedDurableCount: number;
+  deterministicRepairDurableCount: number;
+  manualDurableCount: number;
+  modelDurableCount: number;
+  jsonRetryDurableCount: number;
   dreamingFamilyReuseDurableCount: number;
 }
 
@@ -178,7 +178,7 @@ interface TrustedClaimKeyEntityProfile {
   tags: Set<string>;
   sourceContextTokens: Set<string>;
   subjectTokens: Set<string>;
-  entryCount: number;
+  durableCount: number;
   totalQualityScore: number;
   tokenList: string[];
   sortedTokenSignature: string;
@@ -215,7 +215,7 @@ interface SingletonAliasLexicalRelation {
  * candidate, and it only marks a family as auto-convergeable when every alias in the
  * family can be mapped through a low-risk lexical variant.
  *
- * @param entries - Working-set entries to inspect.
+ * @param entries - Working-set durables to inspect.
  * @returns Conservatively detected entity-family convergence candidates.
  */
 export function detectClaimKeyEntityFamilyCandidates(entries: Durable[]): ClaimKeyEntityFamilyCandidate[] {
@@ -302,7 +302,7 @@ export function detectClaimKeyEntityFamilyCandidates(entries: Durable[]): ClaimK
 /**
  * Summarizes active claim-key rows into per-prefix corpus stats.
  *
- * @param observations - Keyed entry observations to aggregate.
+ * @param observations - Keyed durable observations to aggregate.
  * @returns Sorted per-prefix counts used by write-time and health detectors.
  */
 export function summarizeClaimKeyEntityPrefixStats(observations: ClaimKeyEntityPrefixObservation[]): ClaimKeyEntityPrefixStats[] {
@@ -326,42 +326,42 @@ export function summarizeClaimKeyEntityPrefixStats(observations: ClaimKeyEntityP
       counts.get(entityPrefix) ??
       ({
         entityPrefix,
-        activeEntryCount: 0,
-        trustedEntryCount: 0,
-        tentativeEntryCount: 0,
-        unresolvedEntryCount: 0,
-        deterministicRepairEntryCount: 0,
-        manualEntryCount: 0,
-        modelEntryCount: 0,
-        jsonRetryEntryCount: 0,
+        activeDurableCount: 0,
+        trustedDurableCount: 0,
+        tentativeDurableCount: 0,
+        unresolvedDurableCount: 0,
+        deterministicRepairDurableCount: 0,
+        manualDurableCount: 0,
+        modelDurableCount: 0,
+        jsonRetryDurableCount: 0,
         dreamingFamilyReuseDurableCount: 0,
       } satisfies ClaimKeyEntityPrefixStats);
 
-    existing.activeEntryCount += 1;
+    existing.activeDurableCount += 1;
     switch (observation.claim_key_status) {
       case "trusted":
-        existing.trustedEntryCount += 1;
+        existing.trustedDurableCount += 1;
         break;
       case "tentative":
-        existing.tentativeEntryCount += 1;
+        existing.tentativeDurableCount += 1;
         break;
       case "unresolved":
-        existing.unresolvedEntryCount += 1;
+        existing.unresolvedDurableCount += 1;
         break;
     }
 
     switch (observation.claim_key_source) {
       case "deterministic_repair":
-        existing.deterministicRepairEntryCount += 1;
+        existing.deterministicRepairDurableCount += 1;
         break;
       case "manual":
-        existing.manualEntryCount += 1;
+        existing.manualDurableCount += 1;
         break;
       case "model":
-        existing.modelEntryCount += 1;
+        existing.modelDurableCount += 1;
         break;
       case "json_retry":
-        existing.jsonRetryEntryCount += 1;
+        existing.jsonRetryDurableCount += 1;
         break;
       case "dreaming_reconcile":
         existing.dreamingFamilyReuseDurableCount += 1;
@@ -374,12 +374,12 @@ export function summarizeClaimKeyEntityPrefixStats(observations: ClaimKeyEntityP
   }
 
   return [...counts.values()].sort((left, right) => {
-    if (right.activeEntryCount !== left.activeEntryCount) {
-      return right.activeEntryCount - left.activeEntryCount;
+    if (right.activeDurableCount !== left.activeDurableCount) {
+      return right.activeDurableCount - left.activeDurableCount;
     }
 
-    if (right.trustedEntryCount !== left.trustedEntryCount) {
-      return right.trustedEntryCount - left.trustedEntryCount;
+    if (right.trustedDurableCount !== left.trustedDurableCount) {
+      return right.trustedDurableCount - left.trustedDurableCount;
     }
 
     return left.entityPrefix.localeCompare(right.entityPrefix);
@@ -405,19 +405,19 @@ export function detectClaimKeySingletonAliasCandidates(observations: ClaimKeyEnt
  */
 export function detectClaimKeySingletonAliasCandidatesFromStats(stats: ClaimKeyEntityPrefixStats[]): ClaimKeySingletonAliasCandidate[] {
   const candidatesByAlias = new Map<string, ClaimKeySingletonAliasCandidate[]>();
-  const dominantFamilies = stats.filter((profile) => profile.trustedEntryCount >= SINGLETON_ALIAS_MIN_DOMINANT_TRUSTED_COUNT);
+  const dominantFamilies = stats.filter((profile) => profile.trustedDurableCount >= SINGLETON_ALIAS_MIN_DOMINANT_TRUSTED_COUNT);
   const aliasFamilies = stats.filter((profile) => {
     return (
-      profile.activeEntryCount > 0 &&
-      profile.activeEntryCount <= SINGLETON_ALIAS_MAX_FAMILY_SIZE &&
-      profile.trustedEntryCount < profile.activeEntryCount &&
-      buildLowTrustEntryCount(profile) >= 1
+      profile.activeDurableCount > 0 &&
+      profile.activeDurableCount <= SINGLETON_ALIAS_MAX_FAMILY_SIZE &&
+      profile.trustedDurableCount < profile.activeDurableCount &&
+      buildLowTrustDurableCount(profile) >= 1
     );
   });
 
   for (const aliasProfile of aliasFamilies) {
     for (const dominantProfile of dominantFamilies) {
-      if (aliasProfile.entityPrefix === dominantProfile.entityPrefix || dominantProfile.activeEntryCount <= aliasProfile.activeEntryCount) {
+      if (aliasProfile.entityPrefix === dominantProfile.entityPrefix || dominantProfile.activeDurableCount <= aliasProfile.activeDurableCount) {
         continue;
       }
 
@@ -473,7 +473,7 @@ function buildTrustedClaimKeyEntityProfiles(entries: Durable[]): Map<string, Tru
     for (const token of tokenizeGrounding(entry.subject)) {
       profile.subjectTokens.add(token);
     }
-    profile.entryCount += 1;
+    profile.durableCount += 1;
     profile.totalQualityScore += entry.quality_score;
   }
 
@@ -496,7 +496,7 @@ function getOrCreateProfile(profiles: Map<string, TrustedClaimKeyEntityProfile>,
     tags: new Set<string>(),
     sourceContextTokens: new Set<string>(),
     subjectTokens: new Set<string>(),
-    entryCount: 0,
+    durableCount: 0,
     totalQualityScore: 0,
     tokenList,
     sortedTokenSignature: [...tokenList].sort().join("_"),
@@ -737,7 +737,9 @@ function selectCanonicalEntityPrefix(
     }
 
     let score =
-      Math.min(profile.attributeSet.size, 6) * 2 + Math.min(profile.entryCount, 6) + Math.round(profile.totalQualityScore / Math.max(profile.entryCount, 1));
+      Math.min(profile.attributeSet.size, 6) * 2 +
+      Math.min(profile.durableCount, 6) +
+      Math.round(profile.totalQualityScore / Math.max(profile.durableCount, 1));
     const reasons: string[] = [];
 
     if (profile.attributeSet.size >= 2) {
@@ -892,12 +894,12 @@ function evaluateSingletonAliasCandidate(
     return null;
   }
 
-  const dominantTrustedCount = dominantProfile.trustedEntryCount;
+  const dominantTrustedCount = dominantProfile.trustedDurableCount;
   if (dominantTrustedCount < SINGLETON_ALIAS_MIN_DOMINANT_TRUSTED_COUNT) {
     return null;
   }
 
-  const aliasLowTrustCount = buildLowTrustEntryCount(aliasProfile);
+  const aliasLowTrustCount = buildLowTrustDurableCount(aliasProfile);
   if (aliasLowTrustCount === 0) {
     return null;
   }
@@ -905,11 +907,11 @@ function evaluateSingletonAliasCandidate(
   const evidence: ClaimKeySingletonAliasEvidence[] = [
     {
       kind: "singleton_family_size",
-      detail: `"${aliasProfile.entityPrefix}" has ${aliasProfile.activeEntryCount} active keyed ${pluralize(aliasProfile.activeEntryCount, "entry")}.`,
+      detail: `"${aliasProfile.entityPrefix}" has ${aliasProfile.activeDurableCount} active keyed ${pluralize(aliasProfile.activeDurableCount, "durable")}.`,
     },
     {
       kind: "dominant_trusted_family",
-      detail: `"${dominantProfile.entityPrefix}" already has ${dominantTrustedCount} trusted ${pluralize(dominantTrustedCount, "entry")}.`,
+      detail: `"${dominantProfile.entityPrefix}" already has ${dominantTrustedCount} trusted ${pluralize(dominantTrustedCount, "durable")}.`,
     },
     {
       kind: "low_trust_creation_path",
@@ -926,22 +928,22 @@ function evaluateSingletonAliasCandidate(
     0.58 +
       Math.min(dominantTrustedCount, 6) * 0.05 +
       Math.min(aliasLowTrustCount, 2) * 0.05 +
-      Math.min(dominantProfile.activeEntryCount - aliasProfile.activeEntryCount, 6) * 0.02 +
+      Math.min(dominantProfile.activeDurableCount - aliasProfile.activeDurableCount, 6) * 0.02 +
       lexicalRelation.strengthScore * 0.08,
   );
 
   return {
     aliasEntityPrefix: aliasProfile.entityPrefix,
     dominantEntityPrefix: dominantProfile.entityPrefix,
-    aliasFamilySize: aliasProfile.activeEntryCount,
-    dominantFamilySize: dominantProfile.activeEntryCount,
+    aliasFamilySize: aliasProfile.activeDurableCount,
+    dominantFamilySize: dominantProfile.activeDurableCount,
     dominantTrustedCount,
     aliasLowTrustCount,
     confidence,
     canonicalReuseSafe:
       lexicalRelation.canonicalReuseSafe &&
-      aliasProfile.activeEntryCount === 1 &&
-      aliasLowTrustCount === aliasProfile.activeEntryCount &&
+      aliasProfile.activeDurableCount === 1 &&
+      aliasLowTrustCount === aliasProfile.activeDurableCount &&
       dominantTrustedCount >= SINGLETON_ALIAS_MIN_DOMINANT_TRUSTED_COUNT,
     evidence,
   };
@@ -1011,21 +1013,21 @@ function evaluateSingletonAliasLexicalRelation(aliasEntityPrefix: string, domina
   };
 }
 
-function buildLowTrustEntryCount(profile: ClaimKeyEntityPrefixStats): number {
-  const deterministicOnlyCount = Math.max(0, profile.deterministicRepairEntryCount - profile.tentativeEntryCount);
-  return profile.tentativeEntryCount + profile.unresolvedEntryCount + deterministicOnlyCount;
+function buildLowTrustDurableCount(profile: ClaimKeyEntityPrefixStats): number {
+  const deterministicOnlyCount = Math.max(0, profile.deterministicRepairDurableCount - profile.tentativeDurableCount);
+  return profile.tentativeDurableCount + profile.unresolvedDurableCount + deterministicOnlyCount;
 }
 
 function describeLowTrustAliasFamily(profile: ClaimKeyEntityPrefixStats): string {
   const reasons: string[] = [];
-  if (profile.deterministicRepairEntryCount > 0) {
-    reasons.push(`${profile.deterministicRepairEntryCount} deterministic repair ${pluralize(profile.deterministicRepairEntryCount, "entry")}`);
+  if (profile.deterministicRepairDurableCount > 0) {
+    reasons.push(`${profile.deterministicRepairDurableCount} deterministic repair ${pluralize(profile.deterministicRepairDurableCount, "durable")}`);
   }
-  if (profile.tentativeEntryCount > 0) {
-    reasons.push(`${profile.tentativeEntryCount} tentative ${pluralize(profile.tentativeEntryCount, "entry")}`);
+  if (profile.tentativeDurableCount > 0) {
+    reasons.push(`${profile.tentativeDurableCount} tentative ${pluralize(profile.tentativeDurableCount, "durable")}`);
   }
-  if (profile.unresolvedEntryCount > 0) {
-    reasons.push(`${profile.unresolvedEntryCount} unresolved ${pluralize(profile.unresolvedEntryCount, "entry")}`);
+  if (profile.unresolvedDurableCount > 0) {
+    reasons.push(`${profile.unresolvedDurableCount} unresolved ${pluralize(profile.unresolvedDurableCount, "durable")}`);
   }
 
   if (reasons.length === 0) {

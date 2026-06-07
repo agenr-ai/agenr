@@ -1,7 +1,7 @@
 import { resolveClaimSlotPolicy } from "../../core/claim-slot-policy.js";
-import { describeDurableLineageState, formatDurableClaimLifecycle, summarizeClaimFamilyTransition } from "../../core/recall/entry-lineage.js";
+import { describeDurableLineageState, formatDurableClaimLifecycle, summarizeClaimFamilyTransition } from "../../core/recall/durable-lineage.js";
 import type { Durable } from "../../core/types.js";
-import type { EntryTrace } from "./ports.js";
+import type { DurableTrace } from "./ports.js";
 
 /**
  * Formats one trace payload for human-readable CLI and tool output.
@@ -9,14 +9,14 @@ import type { EntryTrace } from "./ports.js";
  * @param trace - Loaded trace payload.
  * @returns Human-readable trace output block.
  */
-export function renderEntryTraceText(trace: EntryTrace): string {
+export function renderDurableTraceText(trace: DurableTrace): string {
   const nowMs = Date.now();
   const slotPolicy = resolveTraceSlotPolicy(trace);
   const lines = [
-    `Trace for ${trace.entry.id} | ${trace.entry.subject}`,
-    `type=${trace.entry.type} expiry=${trace.entry.expiry} importance=${trace.entry.importance} memory_state=${describeDurableLineageState(trace.entry, nowMs)}`,
-    `recall_count=${trace.entry.recall_count}${trace.entry.last_recalled_at ? ` last_recalled_at=${trace.entry.last_recalled_at}` : ""}`,
-    `content=${truncate(trace.entry.content, 220)}`,
+    `Trace for ${trace.durable.id} | ${trace.durable.subject}`,
+    `type=${trace.durable.type} expiry=${trace.durable.expiry} importance=${trace.durable.importance} memory_state=${describeDurableLineageState(trace.durable, nowMs)}`,
+    `recall_count=${trace.durable.recall_count}${trace.durable.last_recalled_at ? ` last_recalled_at=${trace.durable.last_recalled_at}` : ""}`,
+    `content=${truncate(trace.durable.content, 220)}`,
   ];
 
   appendProvenanceLines(lines, trace);
@@ -33,8 +33,8 @@ export function renderEntryTraceText(trace: EntryTrace): string {
  * @param trace - Loaded trace payload.
  * @returns Pretty-printed JSON output.
  */
-export function renderEntryTraceJson(trace: EntryTrace): string {
-  return `${JSON.stringify(serializeEntryTrace(trace), null, 2)}\n`;
+export function renderDurableTraceJson(trace: DurableTrace): string {
+  return `${JSON.stringify(serializeDurableTrace(trace), null, 2)}\n`;
 }
 
 /**
@@ -43,16 +43,16 @@ export function renderEntryTraceJson(trace: EntryTrace): string {
  * @param trace - Loaded trace payload.
  * @returns Structured trace payload for JSON surfaces.
  */
-export function serializeEntryTrace(trace: EntryTrace): Record<string, unknown> {
+export function serializeDurableTrace(trace: DurableTrace): Record<string, unknown> {
   const nowMs = Date.now();
   const slotPolicy = resolveTraceSlotPolicy(trace);
-  const transitionSummary = trace.claimFamily ? summarizeClaimFamilyTransition(trace.claimFamily.entries, nowMs) : undefined;
+  const transitionSummary = trace.claimFamily ? summarizeClaimFamilyTransition(trace.claimFamily.durables, nowMs) : undefined;
 
   return {
-    entry: serializeTraceEntry(trace.entry, nowMs, slotPolicy),
+    durable: serializeTraceDurable(trace.durable, nowMs, slotPolicy),
     provenance: trace.provenance,
-    ...(trace.supersededBy ? { supersededBy: serializeTraceEntry(trace.supersededBy, nowMs) } : {}),
-    supersedes: trace.supersedes.map((entry) => serializeTraceEntry(entry, nowMs)),
+    ...(trace.supersededBy ? { supersededBy: serializeTraceDurable(trace.supersededBy, nowMs) } : {}),
+    supersedes: trace.supersedes.map((entry) => serializeTraceDurable(entry, nowMs)),
     ...(trace.claimFamily
       ? {
           claimFamily: {
@@ -60,7 +60,7 @@ export function serializeEntryTrace(trace: EntryTrace): Record<string, unknown> 
             slotPolicy: slotPolicy.policy,
             slotPolicyReason: slotPolicy.reason,
             ...(transitionSummary ? { transition: transitionSummary } : {}),
-            entries: trace.claimFamily.entries.map((entry) => serializeTraceEntry(entry, nowMs)),
+            durables: trace.claimFamily.durables.map((entry) => serializeTraceDurable(entry, nowMs)),
           },
         }
       : {}),
@@ -72,7 +72,7 @@ export function serializeEntryTrace(trace: EntryTrace): Record<string, unknown> 
 }
 
 /** Appends provenance lines when source or claim metadata exists. */
-function appendProvenanceLines(lines: string[], trace: EntryTrace): void {
+function appendProvenanceLines(lines: string[], trace: DurableTrace): void {
   const provenanceEntries = Object.entries(trace.provenance).filter(([, value]) => value !== undefined && value !== "");
   if (provenanceEntries.length === 0) {
     return;
@@ -86,7 +86,7 @@ function appendProvenanceLines(lines: string[], trace: EntryTrace): void {
 }
 
 /** Appends lineage and validity lines for one trace payload. */
-function appendLineageLines(lines: string[], trace: EntryTrace, nowMs: number, slotPolicy: { policy: string; reason: string }): void {
+function appendLineageLines(lines: string[], trace: DurableTrace, nowMs: number, slotPolicy: { policy: string; reason: string }): void {
   const lineageLines: string[] = [];
 
   if (trace.supersededBy) {
@@ -97,31 +97,31 @@ function appendLineageLines(lines: string[], trace: EntryTrace, nowMs: number, s
     lineageLines.push(`supersedes=${trace.supersedes.map((entry) => `${entry.id} (${entry.subject})`).join(", ")}`);
   }
 
-  if (trace.entry.claim_key) {
-    lineageLines.push(`claim_key=${trace.entry.claim_key}`);
+  if (trace.durable.claim_key) {
+    lineageLines.push(`claim_key=${trace.durable.claim_key}`);
     lineageLines.push(`slot_policy=${slotPolicy.policy}`);
     lineageLines.push(`slot_policy_reason=${slotPolicy.reason}`);
   }
 
-  if (trace.claimFamily && trace.claimFamily.entries.length > 0) {
+  if (trace.claimFamily && trace.claimFamily.durables.length > 0) {
     lineageLines.push(
-      `claim_family=${trace.claimFamily.claimKey} | ${trace.claimFamily.entries
+      `claim_family=${trace.claimFamily.claimKey} | ${trace.claimFamily.durables
         .map((entry) => `${entry.id}:${describeDurableLineageState(entry, nowMs)}:${formatDurableClaimLifecycle(entry)}`)
         .join(", ")}`,
     );
-    const transitionSummary = summarizeClaimFamilyTransition(trace.claimFamily.entries, nowMs);
+    const transitionSummary = summarizeClaimFamilyTransition(trace.claimFamily.durables, nowMs);
     if (transitionSummary) {
       lineageLines.push(`transition=${transitionSummary}`);
     }
   }
 
-  if (trace.entry.valid_from || trace.entry.valid_to) {
-    lineageLines.push(`validity=${trace.entry.valid_from ?? "?"} -> ${trace.entry.valid_to ?? "ongoing"}`);
+  if (trace.durable.valid_from || trace.durable.valid_to) {
+    lineageLines.push(`validity=${trace.durable.valid_from ?? "?"} -> ${trace.durable.valid_to ?? "ongoing"}`);
   }
 
-  if (trace.entry.supersession_kind || trace.entry.supersession_reason) {
+  if (trace.durable.supersession_kind || trace.durable.supersession_reason) {
     lineageLines.push(
-      `supersession=${trace.entry.supersession_kind ?? "unknown"}${trace.entry.supersession_reason ? ` reason=${truncate(trace.entry.supersession_reason, 120)}` : ""}`,
+      `supersession=${trace.durable.supersession_kind ?? "unknown"}${trace.durable.supersession_reason ? ` reason=${truncate(trace.durable.supersession_reason, 120)}` : ""}`,
     );
   }
 
@@ -135,7 +135,7 @@ function appendLineageLines(lines: string[], trace: EntryTrace, nowMs: number, s
 }
 
 /** Appends recall summary lines for one trace payload. */
-function appendRecallLines(lines: string[], trace: EntryTrace): void {
+function appendRecallLines(lines: string[], trace: DurableTrace): void {
   if (trace.recall.totalCount === 0) {
     return;
   }
@@ -148,7 +148,7 @@ function appendRecallLines(lines: string[], trace: EntryTrace): void {
 }
 
 /** Appends chronological audit timeline lines for one trace payload. */
-function appendTimelineLines(lines: string[], trace: EntryTrace): void {
+function appendTimelineLines(lines: string[], trace: DurableTrace): void {
   if (trace.timeline.length === 0) {
     return;
   }
@@ -173,7 +173,7 @@ function appendTimelineLines(lines: string[], trace: EntryTrace): void {
  * @param trace - Loaded trace payload.
  * @returns Effective slot-policy metadata for the traced family.
  */
-export function resolveTraceSlotPolicy(trace: EntryTrace): { policy: string; reason: string } {
+export function resolveTraceSlotPolicy(trace: DurableTrace): { policy: string; reason: string } {
   if (trace.claimFamily) {
     const resolved = resolveClaimSlotPolicy(trace.claimFamily.claimKey);
     return {
@@ -182,8 +182,8 @@ export function resolveTraceSlotPolicy(trace: EntryTrace): { policy: string; rea
     };
   }
 
-  if (trace.entry.claim_key) {
-    const resolved = resolveClaimSlotPolicy(trace.entry.claim_key);
+  if (trace.durable.claim_key) {
+    const resolved = resolveClaimSlotPolicy(trace.durable.claim_key);
     return {
       policy: resolved.policy,
       reason: resolved.reason,
@@ -204,7 +204,7 @@ export function resolveTraceSlotPolicy(trace: EntryTrace): { policy: string; rea
  * @param slotPolicy - Optional slot-policy metadata when the entry has a claim key.
  * @returns Structured trace entry payload.
  */
-export function serializeTraceEntry(entry: Durable, nowMs: number, slotPolicy?: { policy: string; reason: string }): Record<string, unknown> {
+export function serializeTraceDurable(entry: Durable, nowMs: number, slotPolicy?: { policy: string; reason: string }): Record<string, unknown> {
   return {
     id: entry.id,
     subject: entry.subject,

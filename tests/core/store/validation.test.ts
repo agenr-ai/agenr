@@ -79,7 +79,7 @@ describe("validateEntries", () => {
     ]);
 
     expect(result.rejected).toBe(1);
-    expect(result.errors).toEqual(["Entry 0 valid_from must be earlier than valid_to."]);
+    expect(result.errors).toEqual(["Durable 0 valid_from must be earlier than valid_to."]);
   });
 
   it("passes through optional scoping fields", () => {
@@ -207,7 +207,7 @@ describe("validateEntries", () => {
     ]);
 
     expect(result.rejected).toBe(1);
-    expect(result.errors).toEqual(["Entry 0 directive claim_key must use the user/memory_directive/ prefix."]);
+    expect(result.errors).toEqual(["Durable 0 directive claim_key must use the user/memory_directive/ prefix."]);
   });
 
   it("rejects malformed directive polarity and trigger values", () => {
@@ -223,7 +223,7 @@ describe("validateEntries", () => {
     ]);
 
     expect(result.rejected).toBe(1);
-    expect(result.errors).toEqual(["Entry 0 directive_polarity must be abstain or proactive."]);
+    expect(result.errors).toEqual(["Durable 0 directive_polarity must be abstain or proactive."]);
   });
 
   it("rejects directive metadata on non-directive rows", () => {
@@ -237,7 +237,7 @@ describe("validateEntries", () => {
     ]);
 
     expect(result.rejected).toBe(1);
-    expect(result.errors).toEqual(["Entry 0 provided directive metadata on a non-directive durable."]);
+    expect(result.errors).toEqual(["Durable 0 provided directive metadata on a non-directive durable."]);
   });
 
   it("defaults importance to 7", () => {
@@ -298,7 +298,7 @@ describe("validateEntries", () => {
     expect(result.rejected).toBe(1);
     expect(result.valid).toEqual([]);
     expect(result.errors).toEqual([
-      "Entry 0 provided partial or invalid claim-key lifecycle metadata. Complete bundles require claim_key_status, claim_key_source, claim_key_confidence, and claim_key_rationale.",
+      "Durable 0 provided partial or invalid claim-key lifecycle metadata. Complete bundles require claim_key_status, claim_key_source, claim_key_confidence, and claim_key_rationale.",
     ]);
     expect(result.warnings).toEqual([
       expect.stringMatching(/claim_key_status/i),

@@ -363,7 +363,7 @@ async function runStoreScenario(
   rootDir: string,
 ): Promise<StoreResult> {
   const claimExtractionResponses = await loadClaimExtractionFixtureResponses(rootDir, scenario.input.modelFixtures?.claimExtractionResponsesFile);
-  const result = await storeDurablesDetailed(scenario.input.entries, database, createDeterministicEmbeddingPort(), {
+  const result = await storeDurablesDetailed(scenario.input.durables, database, createDeterministicEmbeddingPort(), {
     ...(scenario.input.storeOptions?.claimExtraction === true && claimExtractionResponses
       ? {
           claimExtraction: {

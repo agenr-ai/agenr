@@ -229,7 +229,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     );
     const recall = createObservedRecallPorts({
       ftsCandidates: [toRecallCandidateDurable(durableEntry)],
-      hydratedEntries: [durableEntry],
+      hydratedDurables: [durableEntry],
     });
     const tracker = createSessionStartTracker();
 
@@ -321,7 +321,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     });
     const recall = createObservedRecallPorts({
       ftsCandidates: [toRecallCandidateDurable(adjacent), toRecallCandidateDurable(identity)],
-      hydratedEntries: [adjacent, identity],
+      hydratedDurables: [adjacent, identity],
     });
     const tracker = createSessionStartTracker();
 
@@ -357,7 +357,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     recall.embed.mockClear();
     recall.vectorSearch.mockClear();
     recall.ftsSearch.mockClear();
-    recall.hydrateEntries.mockClear();
+    recall.hydrateDurables.mockClear();
     recall.recordRecallEvents.mockClear();
 
     const result = await handleAgenrBeforePromptBuild(
@@ -409,7 +409,7 @@ describe("handleAgenrBeforePromptBuild", () => {
         expect.stringContaining(
           '[agenr] before_prompt_build: before-turn diagnostics for session=session-before-turn-directness key=agent:main:webchat:test: {"query":"Who is Duke?","queryPolicy":"current_only"',
         ),
-        expect.stringContaining('"directness":{"queryKind":"entity_definition","entity":"Duke","decision":"reranked","winnerEntryId":"duke-identity"'),
+        expect.stringContaining('"directness":{"queryKind":"entity_definition","entity":"Duke","decision":"reranked","winnerDurableId":"duke-identity"'),
       ]),
     );
   });
@@ -425,7 +425,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     });
     const recall = createObservedRecallPorts({
       ftsCandidates: [toRecallCandidateDurable(identity)],
-      hydratedEntries: [identity],
+      hydratedDurables: [identity],
     });
     const tracker = createSessionStartTracker();
 
@@ -461,7 +461,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     recall.embed.mockClear();
     recall.vectorSearch.mockClear();
     recall.ftsSearch.mockClear();
-    recall.hydrateEntries.mockClear();
+    recall.hydrateDurables.mockClear();
     recall.recordRecallEvents.mockClear();
 
     const result = await handleAgenrBeforePromptBuild(
@@ -545,7 +545,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     });
     const recall = createObservedRecallPorts({
       ftsCandidates: [toRecallCandidateDurable(logsEntry)],
-      hydratedEntries: [logsEntry],
+      hydratedDurables: [logsEntry],
     });
     const tracker = createSessionStartTracker();
 
@@ -581,7 +581,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     recall.embed.mockClear();
     recall.vectorSearch.mockClear();
     recall.ftsSearch.mockClear();
-    recall.hydrateEntries.mockClear();
+    recall.hydrateDurables.mockClear();
     recall.recordRecallEvents.mockClear();
     logger.debug.mockClear();
 
@@ -731,7 +731,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     );
     const recall = createObservedRecallPorts({
       ftsCandidates: [toRecallCandidateDurable(durableEntry)],
-      hydratedEntries: [durableEntry],
+      hydratedDurables: [durableEntry],
     });
     const tracker = createSessionStartTracker();
 
@@ -1196,7 +1196,7 @@ function createServices(
       async ftsSearch() {
         return [];
       },
-      async hydrateEntries() {
+      async hydrateDurables() {
         return [];
       },
       async recordRecallEvents() {
@@ -1233,7 +1233,7 @@ function createServices(
     },
     pluginConfig: options.pluginConfig ?? {},
     agenrConfig: {},
-    entries: database,
+    durables: database,
     episodes: database,
     procedures: database,
     memory: createMemoryRepository(database),
@@ -1333,21 +1333,21 @@ function createLlmPort(complete: LlmPort["complete"]): LlmPort {
 function createObservedRecallPorts(
   options: {
     ftsCandidates?: RecallCandidateDurable[];
-    hydratedEntries?: Durable[];
+    hydratedDurables?: Durable[];
   } = {},
 ) {
-  const hydratedEntriesById = new Map((options.hydratedEntries ?? []).map((entry) => [entry.id, entry]));
+  const hydratedDurablesById = new Map((options.hydratedDurables ?? []).map((durable) => [durable.id, durable]));
   return {
     embed: vi.fn(async (): Promise<number[]> => createEmbedding(0, 1)),
     vectorSearch: vi.fn(async () => []),
     ftsSearch: vi.fn(async () =>
-      (options.ftsCandidates ?? []).map((entry) => ({
-        entry,
+      (options.ftsCandidates ?? []).map((durable) => ({
+        durable,
         rank: -1,
         tier: "all_tokens" as const,
       })),
     ),
-    hydrateEntries: vi.fn(async (ids: string[]) => ids.flatMap((id) => hydratedEntriesById.get(id) ?? [])),
+    hydrateDurables: vi.fn(async (ids: string[]) => ids.flatMap((id) => hydratedDurablesById.get(id) ?? [])),
     recordRecallEvents: vi.fn(async () => undefined),
   } satisfies RecallPorts;
 }

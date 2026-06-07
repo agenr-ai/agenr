@@ -26,7 +26,7 @@ type InjectionSourceKind = "profile" | "directive" | "core" | "artifact_recall" 
 
 /** Minimal injection item shape accepted by the abstain filter. */
 interface AbstainFilterItem {
-  entry: Durable;
+  durable: Durable;
   sourceKind?: InjectionSourceKind;
 }
 
@@ -43,7 +43,7 @@ export type AbstainSuppressionReason = "directive_self" | "directive_topic";
  */
 export interface AbstainSuppression {
   /** Durable id of the suppressed candidate. */
-  entryId: string;
+  durableId: string;
   /** Why the candidate was suppressed. */
   reason: AbstainSuppressionReason;
   /** Directive id responsible for a topic suppression, when applicable. */
@@ -77,7 +77,7 @@ export interface AbstainFilterResult<T> {
 /**
  * Applies memory-directive abstention to injection candidates.
  *
- * @param items - Candidate injection items, each wrapping a durable entry.
+ * @param items - Candidate injection items, each wrapping a durable.
  * @param listActiveAbstainDirectives - Optional lookup for active directive durables.
  * @returns Kept candidates plus a record of every suppression.
  */
@@ -92,8 +92,8 @@ export async function applyAbstainDirectives<T extends AbstainFilterItem>(
   const suppressed: AbstainSuppression[] = [];
   const nonDirectiveItems: T[] = [];
   for (const item of items) {
-    if (isDirectiveDurable(item.entry) && !isAllowedDirectiveInjectionItem(item)) {
-      suppressed.push({ entryId: item.entry.id, reason: "directive_self" });
+    if (isDirectiveDurable(item.durable) && !isAllowedDirectiveInjectionItem(item)) {
+      suppressed.push({ durableId: item.durable.id, reason: "directive_self" });
       continue;
     }
 
@@ -121,10 +121,10 @@ export async function applyAbstainDirectives<T extends AbstainFilterItem>(
 
   const kept: T[] = [];
   for (const item of nonDirectiveItems) {
-    const violation = findAbstainViolation(item.entry, directives);
+    const violation = findAbstainViolation(item.durable, directives);
     if (violation) {
       suppressed.push({
-        entryId: item.entry.id,
+        durableId: item.durable.id,
         reason: "directive_topic",
         directiveId: violation.directiveId,
         blockedTerm: violation.blockedTerm,
@@ -156,18 +156,18 @@ export interface AbstainInjectionDiagnostics {
  */
 export function buildAbstentionNotice(suppression: AbstainSuppression): string {
   if (suppression.reason === "directive_self") {
-    return `Skipped injecting memory directive ${suppression.entryId}; directives are not surfaced as memory.`;
+    return `Skipped injecting memory directive ${suppression.durableId}; directives are not surfaced as memory.`;
   }
 
   const directive = suppression.directiveId ?? "unknown";
   const term = suppression.blockedTerm ?? "a blocked topic";
-  return `Suppressed durable ${suppression.entryId} because memory directive ${directive} blocks "${term}".`;
+  return `Suppressed durable ${suppression.durableId} because memory directive ${directive} blocks "${term}".`;
 }
 
 /**
  * Applies memory-directive abstention to injection candidates and records diagnostics.
  *
- * @param items - Candidate injection items, each wrapping a durable entry.
+ * @param items - Candidate injection items, each wrapping a durable.
  * @param listActiveAbstainDirectives - Optional lookup for active directive durables.
  * @param diagnostics - Mutable diagnostics sink updated when suppressions occur.
  * @returns Candidates that survived the abstain filter.
@@ -194,5 +194,5 @@ export async function applyAbstainDirectivesForInjection<T extends AbstainFilter
 
 /** Returns whether a directive can be injected into the prompt surface. */
 function isAllowedDirectiveInjectionItem(item: AbstainFilterItem): boolean {
-  return item.sourceKind === "directive" && isProactiveDirectiveDurable(item.entry);
+  return item.sourceKind === "directive" && isProactiveDirectiveDurable(item.durable);
 }

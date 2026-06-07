@@ -481,14 +481,14 @@ describe("extractClaimKey", () => {
         entityPrefixStats: [
           {
             entityPrefix: "jim",
-            activeEntryCount: 4,
-            trustedEntryCount: 4,
-            tentativeEntryCount: 0,
-            unresolvedEntryCount: 0,
-            deterministicRepairEntryCount: 0,
-            manualEntryCount: 0,
-            modelEntryCount: 4,
-            jsonRetryEntryCount: 0,
+            activeDurableCount: 4,
+            trustedDurableCount: 4,
+            tentativeDurableCount: 0,
+            unresolvedDurableCount: 0,
+            deterministicRepairDurableCount: 0,
+            manualDurableCount: 0,
+            modelDurableCount: 4,
+            jsonRetryDurableCount: 0,
             dreamingFamilyReuseDurableCount: 0,
           },
         ],
@@ -530,14 +530,14 @@ describe("extractClaimKey", () => {
         entityPrefixStats: [
           {
             entityPrefix: "agenr",
-            activeEntryCount: 5,
-            trustedEntryCount: 5,
-            tentativeEntryCount: 0,
-            unresolvedEntryCount: 0,
-            deterministicRepairEntryCount: 0,
-            manualEntryCount: 0,
-            modelEntryCount: 5,
-            jsonRetryEntryCount: 0,
+            activeDurableCount: 5,
+            trustedDurableCount: 5,
+            tentativeDurableCount: 0,
+            unresolvedDurableCount: 0,
+            deterministicRepairDurableCount: 0,
+            manualDurableCount: 0,
+            modelDurableCount: 5,
+            jsonRetryDurableCount: 0,
             dreamingFamilyReuseDurableCount: 0,
           },
         ],
@@ -682,7 +682,7 @@ describe("runBatchClaimExtraction", () => {
     });
 
     const extractionPromise = runBatchClaimExtraction(
-      [{ entries }],
+      [{ durables: entries }],
       {
         createLlm: () => llm,
         db: new MockDatabasePort(),
@@ -755,10 +755,10 @@ describe("runBatchClaimExtraction", () => {
         content: "AGENTS.md is the source of truth for the repo workflow.",
       },
     ];
-    const progressEvents: Array<{ phase: string; completedEntries: number; totalEntries: number; totalEligibleEntries: number }> = [];
+    const progressEvents: Array<{ phase: string; completedDurables: number; totalDurables: number; totalEligibleDurables: number }> = [];
 
     await runBatchClaimExtraction(
-      [{ entries }],
+      [{ durables: entries }],
       {
         createLlm: () =>
           new MockLlmPort((callIndex) =>
@@ -792,15 +792,15 @@ describe("runBatchClaimExtraction", () => {
     expect(progressEvents).toEqual([
       {
         phase: "primary",
-        completedEntries: 1,
-        totalEntries: 2,
-        totalEligibleEntries: 2,
+        completedDurables: 1,
+        totalDurables: 2,
+        totalEligibleDurables: 2,
       },
       {
         phase: "primary",
-        completedEntries: 2,
-        totalEntries: 2,
-        totalEligibleEntries: 2,
+        completedDurables: 2,
+        totalDurables: 2,
+        totalEligibleDurables: 2,
       },
     ]);
     expect(entries[0]?.claim_key).toBe("jim/timezone");
@@ -846,7 +846,7 @@ describe("runBatchClaimExtraction", () => {
     });
 
     await runBatchClaimExtraction(
-      [{ entries }],
+      [{ durables: entries }],
       {
         createLlm: () => llm,
         db: new MockDatabasePort(),
@@ -919,7 +919,7 @@ describe("runBatchClaimExtraction", () => {
     });
 
     await runBatchClaimExtraction(
-      [{ entries }],
+      [{ durables: entries }],
       {
         createLlm: () => llm,
         db,
@@ -976,7 +976,7 @@ describe("runBatchClaimExtraction", () => {
     });
 
     await runBatchClaimExtraction(
-      [{ entries }],
+      [{ durables: entries }],
       {
         createLlm: () => llm,
         db: new MockDatabasePort(),
@@ -1012,10 +1012,10 @@ describe("runBatchClaimExtraction", () => {
         content: "The repo workflow uses AGENTS.md as its source of truth.",
       },
     ];
-    const progressEvents: Array<{ phase: string; completedEntries: number; totalEntries: number; totalEligibleEntries: number }> = [];
+    const progressEvents: Array<{ phase: string; completedDurables: number; totalDurables: number; totalEligibleDurables: number }> = [];
 
     await runBatchClaimExtraction(
-      [{ entries }],
+      [{ durables: entries }],
       {
         createLlm: () =>
           new MockLlmPort((callIndex) => {
@@ -1059,21 +1059,21 @@ describe("runBatchClaimExtraction", () => {
     expect(progressEvents).toEqual([
       {
         phase: "primary",
-        completedEntries: 1,
-        totalEntries: 2,
-        totalEligibleEntries: 2,
+        completedDurables: 1,
+        totalDurables: 2,
+        totalEligibleDurables: 2,
       },
       {
         phase: "primary",
-        completedEntries: 2,
-        totalEntries: 2,
-        totalEligibleEntries: 2,
+        completedDurables: 2,
+        totalDurables: 2,
+        totalEligibleDurables: 2,
       },
       {
         phase: "retry",
-        completedEntries: 1,
-        totalEntries: 1,
-        totalEligibleEntries: 2,
+        completedDurables: 1,
+        totalDurables: 1,
+        totalEligibleDurables: 2,
       },
     ]);
     expect(entries[0]?.claim_key).toBe("repo_workflow/source_of_truth");

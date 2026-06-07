@@ -1,6 +1,6 @@
 import type { SessionStartPatch, SessionStartPatchItem } from "../../../app/session-start/index.js";
 
-import { formatInjectionEntryBodyLines, formatInjectionEntryHeader } from "./entry-lines.js";
+import { formatInjectionDurableBodyLines, formatInjectionDurableHeader } from "./durable-lines.js";
 import { wrapAgenrMemoryContext } from "./memory-context.js";
 
 /**
@@ -27,9 +27,9 @@ export function formatAgenrSessionStartRecall(patch: SessionStartPatch): string 
     for (const section of durableSections) {
       recallLines.push(`### ${section.title}`);
 
-      for (const item of section.entries) {
-        recallLines.push(formatInjectionEntryHeader(item));
-        recallLines.push(...formatInjectionEntryBodyLines(item));
+      for (const item of section.items) {
+        recallLines.push(formatInjectionDurableHeader(item));
+        recallLines.push(...formatInjectionDurableBodyLines(item));
       }
 
       recallLines.push("");
@@ -47,27 +47,27 @@ export function formatAgenrSessionStartRecall(patch: SessionStartPatch): string 
  * @param patch - Structured patch payload grouped by source kind.
  * @returns Non-empty prompt sections ready for rendering.
  */
-export function buildSections(patch: SessionStartPatch): Array<{ title: string; entries: SessionStartPatchItem[] }> {
-  const sections: Array<{ title: string; entries: SessionStartPatchItem[] }> = [];
+export function buildSections(patch: SessionStartPatch): Array<{ title: string; items: SessionStartPatchItem[] }> {
+  const sections: Array<{ title: string; items: SessionStartPatchItem[] }> = [];
 
-  const profileEntries = patch.durableMemory.filter((item) => item.sourceKind === "profile");
-  if (profileEntries.length > 0) {
-    sections.push({ title: "Profile Memory", entries: profileEntries });
+  const profileDurables = patch.durableMemory.filter((item) => item.sourceKind === "profile");
+  if (profileDurables.length > 0) {
+    sections.push({ title: "Profile Memory", items: profileDurables });
   }
 
-  const directiveEntries = patch.durableMemory.filter((item) => item.sourceKind === "directive");
-  if (directiveEntries.length > 0) {
-    sections.push({ title: "Memory Directives", entries: directiveEntries });
+  const directiveDurables = patch.durableMemory.filter((item) => item.sourceKind === "directive");
+  if (directiveDurables.length > 0) {
+    sections.push({ title: "Memory Directives", items: directiveDurables });
   }
 
-  const coreEntries = patch.durableMemory.filter((item) => item.sourceKind === "core");
-  if (coreEntries.length > 0) {
-    sections.push({ title: "Core Memory", entries: coreEntries });
+  const coreDurables = patch.durableMemory.filter((item) => item.sourceKind === "core");
+  if (coreDurables.length > 0) {
+    sections.push({ title: "Core Memory", items: coreDurables });
   }
 
-  const artifactRecallEntries = patch.durableMemory.filter((item) => item.sourceKind === "artifact_recall");
-  if (artifactRecallEntries.length > 0) {
-    sections.push({ title: "Relevant Durable Memory", entries: artifactRecallEntries });
+  const artifactRecallDurables = patch.durableMemory.filter((item) => item.sourceKind === "artifact_recall");
+  if (artifactRecallDurables.length > 0) {
+    sections.push({ title: "Relevant Durable Memory", items: artifactRecallDurables });
   }
 
   return sections;

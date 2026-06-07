@@ -13,13 +13,13 @@ import { DURABLE_KINDS, type StoreDurableInput } from "../../src/core/types.js";
 describe("composeEmbeddingText", () => {
   it("produces the expected format for each entry type", () => {
     for (const type of DURABLE_KINDS) {
-      const entry: StoreDurableInput = {
+      const durable: StoreDurableInput = {
         type,
         subject: "memory subject",
         content: "memory content",
       };
 
-      expect(composeEmbeddingText(entry)).toBe(`${type}: memory subject - memory content`);
+      expect(composeEmbeddingText(durable)).toBe(`${type}: memory subject - memory content`);
     }
   });
 });

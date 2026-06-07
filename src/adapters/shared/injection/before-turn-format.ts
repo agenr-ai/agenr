@@ -1,6 +1,6 @@
 import type { BeforeTurnPatch, BeforeTurnProcedureSuggestion } from "../../../app/before-turn/index.js";
 
-import { formatInjectionEntryBodyLines, formatInjectionEntryHeader } from "./entry-lines.js";
+import { formatInjectionDurableBodyLines, formatInjectionDurableHeader } from "./durable-lines.js";
 import { truncate } from "../memory-tool-format.js";
 import { wrapAgenrMemoryContext } from "./memory-context.js";
 
@@ -26,8 +26,8 @@ export function formatAgenrBeforeTurnRecall(patch: BeforeTurnPatch): string {
   if (patch.durableMemory.length > 0) {
     lines.push("### Relevant Durable Memory");
     for (const item of patch.durableMemory) {
-      lines.push(formatInjectionEntryHeader(item));
-      lines.push(...formatInjectionEntryBodyLines(item));
+      lines.push(formatInjectionDurableHeader(item));
+      lines.push(...formatInjectionDurableBodyLines(item));
     }
     lines.push("");
   }

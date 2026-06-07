@@ -416,8 +416,8 @@ async function handleRelevanceWarning(support: EpisodeIngestSupportPort, files: 
     return true;
   }
 
-  const entryCount = await support.countEntries();
-  if (entryCount === 0) {
+  const durableCount = await support.countDurables();
+  if (durableCount === 0) {
     return true;
   }
 

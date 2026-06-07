@@ -4,7 +4,7 @@ import { isWithinValidityWindow } from "../../core/temporal-validity.js";
 import type { RecallOutput } from "../../core/recall/index.js";
 import type { Durable } from "../../core/types.js";
 
-import { projectClaimCentricRecallEntry } from "../recall/claim-centric.js";
+import { projectClaimCentricRecallDurable } from "../recall/claim-centric.js";
 
 import { formatProjectedProvenance } from "./format-provenance.js";
 import type { BeforeTurnDeps } from "./ports.js";
@@ -44,7 +44,7 @@ export async function injectTopicProactiveDirectives(
 
   const now = deps.now ?? new Date();
   const nowMs = now.getTime();
-  const activeDirectives = filterCurrentEntries(directiveRows, nowMs);
+  const activeDirectives = filterCurrentDurables(directiveRows, nowMs);
   diagnostics.topicProactiveDirectiveCandidateCount = activeDirectives.length;
 
   const normalizedTurn = normalizeTextForPhraseMatch(currentTurnText);
@@ -62,21 +62,21 @@ export async function injectTopicProactiveDirectives(
 }
 
 /** Filters before-turn directive entries to those valid at the current time. */
-export function filterCurrentEntries(entries: Durable[], nowMs: number): Durable[] {
+export function filterCurrentDurables(entries: Durable[], nowMs: number): Durable[] {
   return entries.filter((entry) => isWithinValidityWindow(entry.valid_from, entry.valid_to, nowMs));
 }
 
 /** Builds one before-turn patch item from a proactive topic directive durable. */
 function buildTopicDirectivePatchItem(entry: Durable, deps: BeforeTurnDeps, score: number): BeforeTurnPatchItem {
   const metadata = parseDirectiveMetadata(entry);
-  const projected = projectClaimCentricRecallEntry(buildSyntheticRecallOutput(entry, score), {
+  const projected = projectClaimCentricRecallDurable(buildSyntheticRecallOutput(entry, score), {
     slotPolicyConfig: deps.slotPolicyConfig,
   });
   const provenanceSummary = formatProjectedProvenance(projected.provenance);
 
   return {
     rank: 0,
-    entry,
+    durable: entry,
     sourceKind: "directive",
     score,
     whySurfaced: {
@@ -93,7 +93,7 @@ function buildTopicDirectivePatchItem(entry: Durable, deps: BeforeTurnDeps, scor
 /** Builds a synthetic recall output used to render directive provenance in before-turn patches. */
 function buildSyntheticRecallOutput(entry: Durable, score: number): RecallOutput {
   return {
-    entry,
+    durable: entry,
     score,
     scores: {
       relevance: score,
@@ -117,15 +117,15 @@ function mergeTopicDirectivePatchItems(
   policy: Required<BeforeTurnPolicy>,
   diagnostics: BeforeTurnPatchDiagnostics,
 ): BeforeTurnPatchItem[] {
-  const seenEntryIds = new Set<string>();
+  const seenDurableIds = new Set<string>();
   const merged: BeforeTurnPatchItem[] = [];
 
   for (const item of [...directiveItems, ...recalledItems]) {
-    if (seenEntryIds.has(item.entry.id)) {
+    if (seenDurableIds.has(item.durable.id)) {
       continue;
     }
 
-    seenEntryIds.add(item.entry.id);
+    seenDurableIds.add(item.durable.id);
     merged.push(item);
   }
 

@@ -44,7 +44,7 @@ export function buildBeforeTurnDebugArtifact(params: {
     ...(diagnostics.queryPolicy ? { queryPolicy: diagnostics.queryPolicy } : {}),
     ...(diagnostics.queryVariants.length > 0 ? { queryVariants: [...diagnostics.queryVariants] } : {}),
     ...(diagnostics.abstentionReasons.length > 0 ? { abstentionReasons: [...diagnostics.abstentionReasons] } : {}),
-    selectedEntryIds: patch.durableMemory.map((item) => item.entry.id),
+    selectedDurableIds: patch.durableMemory.map((item) => item.durable.id),
     selectedProcedureKey: patch.procedure?.procedure.procedure_key ?? null,
     ...(durableTopCandidates.length > 0 ? { durableRecallTopCandidates: durableTopCandidates } : {}),
     ...(procedureTopCandidates.length > 0 ? { procedureTopCandidates: procedureTopCandidates } : {}),
@@ -86,7 +86,7 @@ function buildDurableCandidates(patch: BeforeTurnPatch, topK: number): BeforeTur
   return patch.durableMemory.slice(0, topK).map((item) => {
     const reasons = item.whySurfaced.reasons.length > 0 ? [...item.whySurfaced.reasons] : undefined;
     return {
-      id: item.entry.id,
+      id: item.durable.id,
       score: item.score,
       ...(reasons ? { reasons } : {}),
     };

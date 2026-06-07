@@ -53,13 +53,13 @@ describe("createInternalRecallEvalRoute", () => {
       status: "ok",
       caseId: request.caseId,
       result: {
-        entries: [],
-        entryIds: [],
+        durables: [],
+        durableIds: [],
       },
       metadata: {
         path: request.recallPath ?? "core",
         claim: {
-          projectedEntries: [],
+          projectedDurables: [],
         },
       },
       diagnostics: {
@@ -126,13 +126,13 @@ describe("createInternalRecallEvalRoute", () => {
       status: "ok",
       caseId: "case-route",
       result: {
-        entries: [],
-        entryIds: [],
+        durables: [],
+        durableIds: [],
       },
       metadata: {
         path: "core",
         claim: {
-          projectedEntries: [],
+          projectedDurables: [],
         },
       },
       diagnostics: {
@@ -152,7 +152,7 @@ describe("createInternalRecallEvalRoute", () => {
   it("runs one real recall eval case end to end through the HTTP route against isolated state", async () => {
     const tempRoot = await createTempDirectory("agenr-eval-route-");
     const liveDbPath = path.join(tempRoot, "live.sqlite");
-    await seedLiveEntry(
+    await seedLiveDurable(
       liveDbPath,
       createEntry({
         id: "live-only",
@@ -224,14 +224,14 @@ describe("createInternalRecallEvalRoute", () => {
       status: "ok",
       caseId: "case-route-e2e",
       result: {
-        entryIds: ["fixture-new"],
+        durableIds: ["fixture-new"],
       },
       metadata: {
         path: "core",
         claim: {
-          projectedEntries: [
+          projectedDurables: [
             expect.objectContaining({
-              entryId: "fixture-new",
+              durableId: "fixture-new",
               memoryState: "current",
             }),
           ],
@@ -377,13 +377,13 @@ describe("createInternalRecallEvalRoute", () => {
       status: "ok",
       caseId: request.caseId,
       result: {
-        entries: [],
-        entryIds: [],
+        durables: [],
+        durableIds: [],
       },
       metadata: {
         path: request.recallPath ?? "core",
         claim: {
-          projectedEntries: [],
+          projectedDurables: [],
         },
       },
     }));
@@ -573,10 +573,10 @@ async function createTempDirectory(prefix: string): Promise<string> {
 }
 
 /** Seeds a live database entry that should never affect isolated eval execution. */
-async function seedLiveEntry(databasePath: string, entry: Durable): Promise<void> {
+async function seedLiveDurable(databasePath: string, durable: Durable): Promise<void> {
   const database = await createDatabase(databasePath);
   try {
-    await database.insertDurable(entry, hashToVector(composeEmbeddingText(entry), 1024), hashText(entry.content));
+    await database.insertDurable(durable, hashToVector(composeEmbeddingText(durable), 1024), hashText(durable.content));
   } finally {
     await database.close();
   }

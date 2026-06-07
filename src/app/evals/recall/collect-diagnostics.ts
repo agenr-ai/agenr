@@ -93,17 +93,17 @@ export interface RecallEvalDiagnosticsCollector {
    */
   recordLexicalSearch(params: { durationMs: number; count: number; limit: number }): void;
   /**
-   * Records hydrate timing and the number of hydrated entries returned.
+   * Records hydrate timing and the number of hydrated durables returned.
    *
    * @param params - Observed hydration facts.
    */
-  recordHydrateEntries(params: { durationMs: number; count: number }): void;
+  recordHydrateDurables(params: { durationMs: number; count: number }): void;
   /**
-   * Records telemetry timing and the number of entry IDs targeted for updates.
+   * Records telemetry timing and the number of durable IDs targeted for updates.
    *
    * @param params - Observed recall-telemetry facts.
    */
-  recordRecallTelemetry(params: { durationMs: number; entryCount: number }): void;
+  recordRecallTelemetry(params: { durationMs: number; durableCount: number }): void;
   /**
    * Builds the stable diagnostics payload when the caller requested it.
    *
@@ -151,7 +151,7 @@ export function createRecallEvalDiagnosticsCollector(request: RecallEvalCaseRequ
     scoreCandidatesMs: 0,
     thresholdMs: 0,
     budgetMs: 0,
-    hydrateEntriesMs: 0,
+    hydrateDurablesMs: 0,
     shapeResultsMs: 0,
     recordRecallEventsMs: 0,
   };
@@ -302,15 +302,15 @@ export function createRecallEvalDiagnosticsCollector(request: RecallEvalCaseRequ
         supersededCount: result.supersededCount,
         createdAtDefaultedCount: result.createdAtDefaultedCount,
         updatedAtDefaultedCount: result.updatedAtDefaultedCount,
-        seededEntries: result.seededEntries.map((entry) => ({
-          id: entry.id,
-          created_at: entry.created_at,
-          updated_at: entry.updated_at,
-          superseded_by: entry.superseded_by,
-          claim_key: entry.claim_key,
-          claim_key_status: entry.claim_key_status,
-          valid_from: entry.valid_from,
-          valid_to: entry.valid_to,
+        seededDurables: result.seededDurables.map((durable) => ({
+          id: durable.id,
+          created_at: durable.created_at,
+          updated_at: durable.updated_at,
+          superseded_by: durable.superseded_by,
+          claim_key: durable.claim_key,
+          claim_key_status: durable.claim_key_status,
+          valid_from: durable.valid_from,
+          valid_to: durable.valid_to,
         })),
       };
     },
@@ -334,15 +334,15 @@ export function createRecallEvalDiagnosticsCollector(request: RecallEvalCaseRequ
       retrieval.lexicalSearchLimit = params.limit;
       candidateCounts.lexicalRetrieved = params.count;
     },
-    recordHydrateEntries(params: { durationMs: number; count: number }): void {
+    recordHydrateDurables(params: { durationMs: number; count: number }): void {
       retrievalObserved = true;
-      stageTimings.hydrateEntriesMs = params.durationMs;
+      stageTimings.hydrateDurablesMs = params.durationMs;
       candidateCounts.hydrated = params.count;
     },
-    recordRecallTelemetry(params: { durationMs: number; entryCount: number }): void {
+    recordRecallTelemetry(params: { durationMs: number; durableCount: number }): void {
       retrievalObserved = true;
       stageTimings.recordRecallEventsMs = params.durationMs;
-      candidateCounts.telemetryAttempted = params.entryCount;
+      candidateCounts.telemetryAttempted = params.durableCount;
     },
     buildDiagnostics(): RecallEvalCaseDiagnostics | undefined {
       if (!diagnosticsRequested) {
@@ -381,7 +381,7 @@ export function createRecallEvalDiagnosticsCollector(request: RecallEvalCaseRequ
         scoreCandidatesMs: stageTimings.scoreCandidatesMs,
         thresholdMs: stageTimings.thresholdMs,
         budgetMs: stageTimings.budgetMs,
-        hydrateEntriesMs: stageTimings.hydrateEntriesMs,
+        hydrateDurablesMs: stageTimings.hydrateDurablesMs,
         shapeResultsMs: stageTimings.shapeResultsMs,
         recordRecallEventsMs: stageTimings.recordRecallEventsMs,
       };

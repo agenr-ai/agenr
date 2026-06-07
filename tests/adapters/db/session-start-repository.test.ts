@@ -11,7 +11,7 @@ import type { Durable } from "../../../src/core/types.js";
 const databases: SqlDatabase[] = [];
 const databasePaths: string[] = [];
 
-describe("createSessionStartRepository.listCoreEntries", () => {
+describe("createSessionStartRepository.listCoreDurables", () => {
   afterEach(async () => {
     await closeTestDatabases(databases);
 
@@ -55,9 +55,9 @@ describe("createSessionStartRepository.listCoreEntries", () => {
     await database.insertDurable(nonCore, [], "permanent-hash");
 
     const repository = createSessionStartRepository(database);
-    const coreEntries = await repository.listCoreEntries(10);
+    const coreDurables = await repository.listCoreDurables(10);
 
-    expect(coreEntries.map((entry) => entry.id).sort()).toEqual(["core-open", "core-valid"]);
+    expect(coreDurables.map((entry) => entry.id).sort()).toEqual(["core-open", "core-valid"]);
   });
 });
 

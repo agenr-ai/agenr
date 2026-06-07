@@ -9,7 +9,7 @@ import {
   type BeforeTurnDebugArtifactSnapshot,
   type BeforeTurnDebugArtifactV1,
 } from "../../debug-artifacts/index.js";
-import type { RecallEvalFixtureEntry, RecallEvalFixtureProcedure, RecallEvalSandboxRequest, RecallEvalSandboxResult } from "../recall/contracts.js";
+import type { RecallEvalFixtureDurable, RecallEvalFixtureProcedure, RecallEvalSandboxRequest, RecallEvalSandboxResult } from "../recall/contracts.js";
 
 export {
   BEFORE_TURN_DEBUG_ARTIFACT_DEFAULT_TOP_K,
@@ -61,7 +61,7 @@ export interface BeforeTurnEvalCaseRequest {
   /** Optional sandbox configuration for the case execution. */
   sandbox?: RecallEvalSandboxRequest;
   /** Explicit memory fixtures to provision for the isolated case. */
-  memoryPool: RecallEvalFixtureEntry[];
+  memoryPool: RecallEvalFixtureDurable[];
   /** Optional procedure fixtures to provision for procedure-aware cases. */
   procedurePool?: RecallEvalFixtureProcedure[];
   /** Before-turn input facts forwarded to the real app-layer selector. */
@@ -76,8 +76,8 @@ export interface BeforeTurnEvalCaseRequest {
 export interface BeforeTurnEvalCaseOutput {
   /** Whether the before-turn selector abstained from surfacing any patch content. */
   abstained: boolean;
-  /** Convenience list of ranked durable entry IDs in output order. */
-  selectedEntryIds: string[];
+  /** Convenience list of ranked durable durable IDs in output order. */
+  selectedDurableIds: string[];
   /** Selected canonical procedure key when one surfaced, otherwise null. */
   selectedProcedureKey: string | null;
   /** Structured patch returned by the real app-layer before-turn service. */

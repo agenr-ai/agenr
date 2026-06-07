@@ -11,7 +11,7 @@ import type { PluginClaimExtractionRuntime, PluginEmbeddingStatus, PluginMemoryR
 import { runUnifiedRecall, type UnifiedRecallMode, type UnifiedRecallResult } from "../../app/recall/index.js";
 import { buildSessionSourceFile, buildToolCallClaimSupport, type SessionSourcePrefix, type ToolSessionLike } from "./claim-support.js";
 import {
-  ENTRY_TYPE_DESCRIPTION,
+  DURABLE_TYPE_DESCRIPTION,
   EXPIRY_DESCRIPTION,
   RECALL_MODES,
   UPDATE_EXPIRY_DESCRIPTION,
@@ -21,14 +21,14 @@ import {
   parseDurableKinds,
   parseExpiry,
   parseRecallMode,
-} from "./entry-tools.js";
+} from "./durable-tools.js";
 import { CLAIM_KEY_DESCRIPTION, RECALL_MODE_SCHEMA_DESCRIPTION } from "./memory-prompt-doctrine.js";
-import { buildEntryMemoryResolverPorts, resolveTargetDurable } from "./resolve-target.js";
+import { buildDurableMemoryResolverPorts, resolveTargetDurable } from "./resolve-target.js";
 import {
-  assertEntryFetchableContentLength,
+  assertDurableFetchableContentLength,
   buildFetchToolDetails,
   buildMemoryToolWarningDetails,
-  formatFetchedEntryText,
+  formatFetchedDurableText,
   formatMemoryToolOutcomeText,
 } from "./memory-tool-format.js";
 
@@ -104,10 +104,10 @@ export interface MemoryToolOutcome {
 }
 
 /** Runtime services needed by the store/update tools. */
-export interface EntryMemoryToolServices {
-  entries: DatabasePort;
+export interface DurableMemoryToolServices {
+  durables: DatabasePort;
   embedding: EmbeddingPort;
-  memory: Pick<MemoryRepository, "findEntryBySubject" | "getEntryTrace">;
+  memory: Pick<MemoryRepository, "findDurableBySubject" | "getDurableTrace">;
   claimExtraction?: PluginClaimExtractionRuntime;
 }
 
@@ -144,7 +144,7 @@ const STORE_TOOL_PARAMETERS = {
     type: {
       type: "string",
       enum: [...DURABLE_KINDS],
-      description: ENTRY_TYPE_DESCRIPTION,
+      description: DURABLE_TYPE_DESCRIPTION,
     },
     subject: {
       type: "string",
@@ -176,7 +176,7 @@ const STORE_TOOL_PARAMETERS = {
     },
     supersedes: {
       type: "string",
-      description: "ID of an entry this replaces. The old entry will be marked as superseded.",
+      description: "ID of a durable this replaces. The old durable will be marked as superseded.",
     },
     claimKey: {
       type: "string",
@@ -270,7 +270,7 @@ const UPDATE_TOOL_PARAMETERS = {
   properties: {
     id: {
       type: "string",
-      description: "Entry id to update. Provide exactly one of id or subject.",
+      description: "Durable id to update. Provide exactly one of id or subject.",
     },
     subject: {
       type: "string",
@@ -311,7 +311,7 @@ const FETCH_TOOL_PARAMETERS = {
   properties: {
     id: {
       type: "string",
-      description: "Entry id to fetch. Provide exactly one of id or subject.",
+      description: "Durable id to fetch. Provide exactly one of id or subject.",
     },
     subject: {
       type: "string",
@@ -389,7 +389,7 @@ export function parseFetchToolParams(rawParams: unknown, reader: MemoryToolParam
 /** Executes the host-neutral agenr_store business flow. */
 export async function runStoreMemoryTool(
   params: StoreToolParams,
-  services: EntryMemoryToolServices,
+  services: DurableMemoryToolServices,
   options: {
     session: ToolSessionLike & { project?: string };
     sourcePrefix: SessionSourcePrefix;
@@ -443,14 +443,14 @@ export async function runStoreMemoryTool(
         ...(project ? { project } : {}),
       },
     ],
-    services.entries,
+    services.durables,
     services.embedding,
     {
       ...(services.claimExtraction
         ? {
             claimExtraction: {
               llm: services.claimExtraction.llm,
-              db: services.entries,
+              db: services.durables,
               config: services.claimExtraction.config,
             },
           }
@@ -458,7 +458,7 @@ export async function runStoreMemoryTool(
       onWarning: handleWarning,
     },
   );
-  const storedEntry = await services.memory.findEntryBySubject(params.subject);
+  const storedDurable = await services.memory.findDurableBySubject(params.subject);
 
   if (result.stored > 0) {
     return okOutcome(
@@ -466,7 +466,7 @@ export async function runStoreMemoryTool(
       {
         status: "stored",
         subject: params.subject,
-        entryId: storedEntry?.id,
+        durableId: storedDurable?.id,
         result,
         ...options.extraDetails,
       },
@@ -480,7 +480,7 @@ export async function runStoreMemoryTool(
       {
         status: "skipped",
         subject: params.subject,
-        entryId: storedEntry?.id,
+        durableId: storedDurable?.id,
         result,
         ...options.extraDetails,
       },
@@ -541,21 +541,21 @@ export async function runRecallMemoryTool(
 /** Executes the host-neutral agenr_fetch business flow. */
 export async function runFetchMemoryTool(
   params: FetchToolParams,
-  services: EntryMemoryToolServices,
+  services: DurableMemoryToolServices,
   options: {
     extraDetails?: Record<string, unknown>;
   } = {},
 ): Promise<MemoryToolOutcome> {
-  const entry = await resolveTargetDurable(buildEntryMemoryResolverPorts(services), { id: params.id, subject: params.subject });
-  assertEntryFetchableContentLength(entry.content);
+  const durable = await resolveTargetDurable(buildDurableMemoryResolverPorts(services), { id: params.id, subject: params.subject });
+  assertDurableFetchableContentLength(durable.content);
 
-  return okOutcome(formatFetchedEntryText(entry), buildFetchToolDetails(entry, options.extraDetails));
+  return okOutcome(formatFetchedDurableText(durable), buildFetchToolDetails(durable, options.extraDetails));
 }
 
 /** Executes the host-neutral agenr_update business flow. */
 export async function runUpdateMemoryTool(
   params: UpdateToolParams,
-  services: EntryMemoryToolServices,
+  services: DurableMemoryToolServices,
   options: {
     session: ToolSessionLike;
     sourcePrefix: SessionSourcePrefix;
@@ -582,9 +582,9 @@ export async function runUpdateMemoryTool(
             throw new Error("claimKey must use canonical entity/attribute format.");
           }
         })();
-  const entry = await resolveTargetDurable(buildEntryMemoryResolverPorts(services), { id: params.id, subject: params.subject });
+  const durable = await resolveTargetDurable(buildDurableMemoryResolverPorts(services), { id: params.id, subject: params.subject });
 
-  const mergedValidity = validateTemporalValidityRange(params.validFrom ?? entry.valid_from, params.validTo ?? entry.valid_to);
+  const mergedValidity = validateTemporalValidityRange(params.validFrom ?? durable.valid_from, params.validTo ?? durable.valid_to);
   if (!mergedValidity.ok) {
     throw new Error(mergedValidity.message);
   }
@@ -596,20 +596,20 @@ export async function runUpdateMemoryTool(
     throw new Error("Provide at least one update field.");
   }
 
-  const updated = await services.entries.updateDurable(entry.id, patch.dbFields);
+  const updated = await services.durables.updateDurable(durable.id, patch.dbFields);
 
   if (!updated) {
-    return failedOutcome(`Entry ${entry.id} is not active, so it could not be updated.`, {
+    return failedOutcome(`Durable ${durable.id} is not active, so it could not be updated.`, {
       status: "failed",
-      entryId: entry.id,
+      durableId: durable.id,
       ...options.failureDetails,
     });
   }
 
-  return okOutcome(`Updated "${entry.subject}".`, {
+  return okOutcome(`Updated "${durable.subject}".`, {
     status: "updated",
-    entryId: entry.id,
-    subject: entry.subject,
+    durableId: durable.id,
+    subject: durable.subject,
     ...patch.details,
     ...options.successDetails,
   });

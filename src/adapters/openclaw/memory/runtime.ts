@@ -22,15 +22,15 @@ export function createAgenrMemoryRuntime(servicesPromise: Promise<AgenrOpenClawS
           model: services.embeddingStatus.model,
           dbPath: services.config.dbPath,
           files: snapshot.sourceFiles,
-          chunks: snapshot.activeEntries,
+          chunks: snapshot.activeDurables,
           vector: {
             enabled: true,
             available: vectorAvailable,
             dims: EMBEDDING_DIMENSIONS,
           },
           custom: {
-            activeEntries: snapshot.activeEntries,
-            coreEntries: snapshot.coreEntries,
+            activeDurables: snapshot.activeDurables,
+            coreDurables: snapshot.coreDurables,
             sourceFiles: snapshot.sourceFiles,
           },
         };

@@ -258,7 +258,7 @@ const DEFAULT_CLAIM_EXTRACTION_CONCURRENCY = 10;
 const DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD = 0.8;
 
 /**
- * Default claim-extraction entry types.
+ * Default claim-extraction durable types.
  */
 const DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES = ["fact", "preference", "decision", "lesson"] as const satisfies readonly DurableKind[];
 
@@ -393,7 +393,7 @@ export function getAuthMethodDefinition(auth: AgenrAuthMethod): AuthMethodDefini
  *
  * @param left - Left candidate list.
  * @param right - Right candidate list.
- * @returns True when both lists contain the same entry types in the same order.
+ * @returns True when both lists contain the same durable types in the same order.
  */
 export function sameEligibleKinds(left: readonly DurableKind[], right: readonly DurableKind[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
@@ -403,7 +403,7 @@ export function sameEligibleKinds(left: readonly DurableKind[], right: readonly 
  * Returns whether a string is a supported entry type.
  *
  * @param value - Candidate string to inspect.
- * @returns True when the string is one of agenr's entry types.
+ * @returns True when the string is one of agenr's durable types.
  */
 export function isDurableKind(value: string): value is DurableKind {
   return DURABLE_KINDS.includes(value as DurableKind);

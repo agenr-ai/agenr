@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { renderEntryTraceJson, renderEntryTraceText } from "../../../src/app/memory/render-trace.js";
-import type { EntryTrace } from "../../../src/app/memory/ports.js";
+import { renderDurableTraceJson, renderDurableTraceText } from "../../../src/app/memory/render-trace.js";
+import type { DurableTrace } from "../../../src/app/memory/ports.js";
 
-describe("renderEntryTrace", () => {
+describe("renderDurableTrace", () => {
   it("renders provenance, lineage, recall, and timeline sections", () => {
     const trace = createTrace();
 
-    const output = renderEntryTraceText(trace);
+    const output = renderDurableTraceText(trace);
 
     expect(output).toContain("[provenance]");
     expect(output).toContain("source_file=episode:abc");
@@ -20,7 +20,7 @@ describe("renderEntryTrace", () => {
 
   it("renders structured JSON with audit fields", () => {
     const trace = createTrace();
-    const payload = JSON.parse(renderEntryTraceJson(trace));
+    const payload = JSON.parse(renderDurableTraceJson(trace));
 
     expect(payload.provenance.sourceFile).toBe("episode:abc");
     expect(payload.recall.totalCount).toBe(3);
@@ -29,9 +29,9 @@ describe("renderEntryTrace", () => {
   });
 });
 
-function createTrace(): EntryTrace {
+function createTrace(): DurableTrace {
   return {
-    entry: {
+    durable: {
       id: "entry-1",
       type: "fact",
       subject: "Jim's dog Duke",
@@ -56,7 +56,7 @@ function createTrace(): EntryTrace {
       claimKey: "jim/dog",
       slotPolicy: "exclusive",
       slotPolicyReason: 'Attribute head "dog" defaults to exclusive current-state shaping.',
-      entries: [
+      durables: [
         {
           id: "entry-1",
           type: "fact",

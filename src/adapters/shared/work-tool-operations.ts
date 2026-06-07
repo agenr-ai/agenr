@@ -1,7 +1,7 @@
 import type { AgenrWorkParams, AgenrWorkUpdateOperation } from "../../app/working-memory/mutations.js";
 import type { WorkingScope } from "../../app/working-memory/scope.js";
 import { isModelVisibleOperationType } from "../../app/working-memory/operations/manifest.js";
-import { asRecord } from "./entry-tools.js";
+import { asRecord } from "./durable-tools.js";
 import type { MemoryToolParamReader } from "./memory-tools.js";
 import { isModelVisibleWorkAction, MODEL_VISIBLE_WORK_ACTIONS } from "./work-tool-policy.js";
 import { MODEL_VISIBLE_OPERATIONS, MODEL_VISIBLE_OPERATION_SCHEMAS } from "./work-tool-operation-registry.js";

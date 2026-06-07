@@ -70,9 +70,9 @@ export interface RecallDebugArtifactCandidateCounts {
   budgetAccepted: number;
   /** Candidates retained after the final limit slice. */
   finalRanked: number;
-  /** Fully hydrated entries fetched for the final ranked IDs. */
+  /** Fully hydrated durables fetched for the final ranked IDs. */
   hydrated: number;
-  /** Entries returned after hydration and shaping. */
+  /** Durables returned after hydration and shaping. */
   returned: number;
   /** Entries targeted by standard recall telemetry writes. */
   telemetryAttempted: number;
@@ -96,7 +96,7 @@ export interface RecallDebugArtifactRankingDiagnostics {
  * Compact top-K candidate breakdown carried inside the recall debug artifact.
  */
 export interface RecallDebugArtifactTopCandidate {
-  /** Stable entry identifier surfaced by recall. */
+  /** Stable durable identifier surfaced by recall. */
   id: string;
   /** Final composite recall score for this candidate. */
   score: number;
@@ -135,8 +135,8 @@ export interface RecallDebugArtifactV1 {
   ranking?: RecallDebugArtifactRankingDiagnostics;
   /** Degraded-mode facts mirrored from diagnostics. */
   degraded?: RecallDegradedTrace;
-  /** Ranked entry IDs returned by recall, in output order. */
-  selectedEntryIds: string[];
+  /** Ranked durable IDs returned by recall, in output order. */
+  selectedDurableIds: string[];
   /** Optional bounded top-K candidate breakdown for post-hoc review. */
   topCandidates?: RecallDebugArtifactTopCandidate[];
 }

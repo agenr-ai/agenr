@@ -18,9 +18,9 @@ import type { RecallCandidateDurable } from "./types.js";
  * - `seededRerank()` applies a small positive delta to ranked candidates
  *   that share lineage with at least one strong seed, without ever lifting
  *   a candidate that has no lineage signal.
- * - The domain-specific predicates (`sharesEntryLineage`,
+ * - The domain-specific predicates (`sharesDurableLineage`,
  *   `sharesEpisodeLineage`, `sharesProcedureLineage`) encode what "shares
- *   lineage" means for entries, episodes, and procedures respectively.
+ *   lineage" means for durables, episodes, and procedures respectively.
  */
 
 /**
@@ -46,7 +46,7 @@ export type NeighborhoodFamily = "supersession_chain" | "claim_key_sibling" | "p
  * never pulls historical rows into the candidate pool.
  */
 export interface DurableNeighborhoodRequest {
-  /** Seed entry IDs to expand around. */
+  /** Seed durable IDs to expand around. */
   seedIds: string[];
   /** Maximum total rows the adapter may return. */
   budget: number;
@@ -202,7 +202,7 @@ export function seededRerank<TCandidate extends SeededRerankCandidate>(
  * @param seed - Strong-seed entry the candidate is being compared to.
  * @returns True when the two entries share lineage, false otherwise.
  */
-export function sharesEntryLineage(candidate: RecallCandidateDurable, seed: RecallCandidateDurable): boolean {
+export function sharesDurableLineage(candidate: RecallCandidateDurable, seed: RecallCandidateDurable): boolean {
   if (candidate.id === seed.id) {
     return false;
   }

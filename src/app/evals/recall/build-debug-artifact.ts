@@ -1,5 +1,5 @@
 import type { RecallOutput } from "../../../core/recall/types.js";
-import type { ClaimCentricRecallEntry } from "../../recall/claim-centric.js";
+import type { ClaimCentricRecallDurable } from "../../recall/claim-centric.js";
 import type { UnifiedRecallResult } from "../../recall/types.js";
 import type { RecallEvalObservedArtifactFacts } from "./collect-diagnostics.js";
 import {
@@ -26,23 +26,23 @@ import type { RecallEvalSandboxContext } from "./ports.js";
 export function buildRecallDebugArtifact(params: {
   request: RecallEvalCaseRequest;
   results: RecallOutput[] | UnifiedRecallResult;
-  projectedEntries: ClaimCentricRecallEntry[];
+  projectedDurables: ClaimCentricRecallDurable[];
   sandbox: RecallEvalSandboxContext;
   observed: RecallEvalObservedArtifactFacts;
 }): RecallDebugArtifactV1 {
-  const { request, results, projectedEntries, sandbox, observed } = params;
+  const { request, results, projectedDurables, sandbox, observed } = params;
   const recallPath = request.recallPath ?? "core";
-  const entryResults: RecallOutput[] = Array.isArray(results) ? results : results.entries;
-  const selectedEntryIds = entryResults.map((result) => result.entry.id);
+  const durableResults: RecallOutput[] = Array.isArray(results) ? results : results.durables;
+  const selectedDurableIds = durableResults.map((result) => result.durable.id);
   const topK = resolveTopK(request.options?.topKCandidates);
-  const reasonsByEntryId = new Map<string, string[]>();
-  for (const entry of projectedEntries) {
+  const reasonsByDurableId = new Map<string, string[]>();
+  for (const entry of projectedDurables) {
     if (entry.whySurfaced.reasons.length > 0) {
-      reasonsByEntryId.set(entry.entryId, [...entry.whySurfaced.reasons]);
+      reasonsByDurableId.set(entry.durableId, [...entry.whySurfaced.reasons]);
     }
   }
 
-  const topCandidates = buildTopCandidates(entryResults, reasonsByEntryId, topK);
+  const topCandidates = buildTopCandidates(durableResults, reasonsByDurableId, topK);
   const artifact: RecallDebugArtifactV1 = {
     schemaVersion: "recall-debug-artifact.v1",
     caseId: request.caseId,
@@ -55,7 +55,7 @@ export function buildRecallDebugArtifact(params: {
     ...(observed.traceObserved ? { candidateCounts: observed.candidateCounts } : {}),
     ...(observed.ranking ? { ranking: observed.ranking } : {}),
     ...(observed.degraded ? { degraded: observed.degraded } : {}),
-    selectedEntryIds,
+    selectedDurableIds,
     ...(topCandidates.length > 0 ? { topCandidates } : {}),
   };
 
@@ -93,12 +93,12 @@ function resolveTopK(requested: number | undefined): number {
 }
 
 /** Shapes the compact top-K candidate breakdown from recall outputs. */
-function buildTopCandidates(entryResults: RecallOutput[], reasonsByEntryId: Map<string, string[]>, topK: number): RecallDebugArtifactTopCandidate[] {
-  const sliced = entryResults.slice(0, topK);
+function buildTopCandidates(durableResults: RecallOutput[], reasonsByDurableId: Map<string, string[]>, topK: number): RecallDebugArtifactTopCandidate[] {
+  const sliced = durableResults.slice(0, topK);
   return sliced.map((result) => {
-    const reasons = reasonsByEntryId.get(result.entry.id);
+    const reasons = reasonsByDurableId.get(result.durable.id);
     return {
-      id: result.entry.id,
+      id: result.durable.id,
       score: result.score,
       lexicalScore: result.scores.lexical,
       vectorScore: result.scores.vector,

@@ -50,7 +50,7 @@ interface ScenarioExpectation {
   injectedEntryIds?: string[];
   includesEntryIds?: string[];
   excludesEntryIds?: string[];
-  directiveAbstentions?: Array<{ entryId: string; reason: string; directiveId?: string; blockedTerm?: string }>;
+  directiveAbstentions?: Array<{ durableId: string; reason: string; directiveId?: string; blockedTerm?: string }>;
 }
 
 interface DreamingScenario {
@@ -131,7 +131,7 @@ async function runScenario(scenario: DreamingScenario, database: SqlDatabase, re
     );
 
     assertDirectiveAbstentions(scenario, result.diagnostics.directiveAbstentions);
-    return result.durableMemory.map((item) => item.entry.id);
+    return result.durableMemory.map((item) => item.durable.id);
   }
 
   const result = await runSessionStart(
@@ -146,7 +146,7 @@ async function runScenario(scenario: DreamingScenario, database: SqlDatabase, re
   );
 
   assertDirectiveAbstentions(scenario, result.diagnostics.directiveAbstentions);
-  return result.durableMemory.map((item) => item.entry.id);
+  return result.durableMemory.map((item) => item.durable.id);
 }
 
 /**
@@ -171,7 +171,7 @@ function assertExpectations(scenario: DreamingScenario, injectedEntryIds: string
  */
 function assertDirectiveAbstentions(
   scenario: DreamingScenario,
-  actual: Array<{ entryId: string; reason: string; directiveId?: string; blockedTerm?: string }> | undefined,
+  actual: Array<{ durableId: string; reason: string; directiveId?: string; blockedTerm?: string }> | undefined,
 ): void {
   if (!scenario.expect.directiveAbstentions) {
     return;

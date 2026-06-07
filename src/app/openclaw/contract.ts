@@ -60,7 +60,7 @@ export interface MidSessionState {
   /** Count of nudges already injected for the active session. */
   nudgeCount: number;
   /** Count of successful agenr_store calls during the active session. */
-  entriesStored: number;
+  durablesStored: number;
   /** Deduplicated list of recently stored subjects for nudge copy. */
   storedSubjects: string[];
 }

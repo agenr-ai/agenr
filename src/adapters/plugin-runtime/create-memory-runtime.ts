@@ -56,7 +56,7 @@ export async function createPluginMemoryRuntime(input: CreatePluginMemoryRuntime
   let closed = false;
 
   return {
-    entries: database,
+    durables: database,
     episodes: database,
     procedures: database,
     memory: createMemoryRepository(database, {

@@ -4,7 +4,7 @@ import { applyDefaultClaimKeyLifecycle } from "../../fixtures/default-claim-key-
 import type { EmbeddingPort } from "../../../core/ports.js";
 import { composeEmbeddingText } from "../../../core/store/embedding-text.js";
 import type { Durable, Expiry } from "../../../core/types.js";
-import type { RecallEvalFixtureEntry, RecallEvalProvisionedEntrySummary } from "./contracts.js";
+import type { RecallEvalFixtureDurable, RecallEvalProvisionedDurableSummary } from "./contracts.js";
 import type { RecallEvalFixtureStore } from "./ports.js";
 
 const DEFAULT_IMPORTANCE = 6;
@@ -15,28 +15,28 @@ const DEFAULT_QUALITY_SCORE = 0.5;
  * Summary of exact fixture provisioning into isolated recall eval storage.
  */
 export interface RecallEvalProvisioningResult {
-  /** Number of fixture entries written into the isolated database. */
+  /** Number of fixture durables written into the isolated database. */
   provisionedCount: number;
-  /** Number of fixture entries that supplied explicit IDs. */
+  /** Number of fixture durables that supplied explicit IDs. */
   providedIdCount: number;
-  /** Number of fixture entries that received generated IDs. */
+  /** Number of fixture durables that received generated IDs. */
   generatedIdCount: number;
-  /** Number of stale fixture entries seeded into storage. */
+  /** Number of stale fixture durables seeded into storage. */
   staleCount: number;
-  /** Number of fixture entries that reference a successor entry. */
+  /** Number of fixture durables that reference a successor entry. */
   supersededCount: number;
-  /** Number of fixture entries that defaulted `created_at` during seeding. */
+  /** Number of fixture durables that defaulted `created_at` during seeding. */
   createdAtDefaultedCount: number;
-  /** Number of fixture entries that defaulted `updated_at` during seeding. */
+  /** Number of fixture durables that defaulted `updated_at` during seeding. */
   updatedAtDefaultedCount: number;
   /** Seeded-state summary captured before recall telemetry can mutate rows. */
-  seededEntries: RecallEvalProvisionedEntrySummary[];
+  seededDurables: RecallEvalProvisionedDurableSummary[];
 }
 
 /** Prepared direct-seed fixture ready for isolated database insertion. */
 interface PreparedFixture {
   fixtureIndex: number;
-  entry: Durable;
+  durable: Durable;
   contentHash: string;
   embeddingText: string;
 }
@@ -50,7 +50,7 @@ interface PreparedFixtureBatch {
   supersededCount: number;
   createdAtDefaultedCount: number;
   updatedAtDefaultedCount: number;
-  seededEntries: RecallEvalProvisionedEntrySummary[];
+  seededDurables: RecallEvalProvisionedDurableSummary[];
 }
 
 /**
@@ -65,7 +65,7 @@ interface PreparedFixtureBatch {
  */
 export async function provisionRecallEvalFixtures(params: {
   caseId: string;
-  memoryPool: RecallEvalFixtureEntry[];
+  memoryPool: RecallEvalFixtureDurable[];
   store: RecallEvalFixtureStore;
   embedding: EmbeddingPort;
   provisionedAt: string;
@@ -80,7 +80,7 @@ export async function provisionRecallEvalFixtures(params: {
       supersededCount: 0,
       createdAtDefaultedCount: 0,
       updatedAtDefaultedCount: 0,
-      seededEntries: [],
+      seededDurables: [],
     };
   }
 
@@ -91,7 +91,7 @@ export async function provisionRecallEvalFixtures(params: {
 
   await params.store.withTransaction(async (store) => {
     for (const [index, fixture] of preparedBatch.insertionOrder.entries()) {
-      await store.insertDurable(fixture.entry, embeddings[index] ?? [], fixture.contentHash);
+      await store.insertDurable(fixture.durable, embeddings[index] ?? [], fixture.contentHash);
     }
   });
 
@@ -103,12 +103,12 @@ export async function provisionRecallEvalFixtures(params: {
     supersededCount: preparedBatch.supersededCount,
     createdAtDefaultedCount: preparedBatch.createdAtDefaultedCount,
     updatedAtDefaultedCount: preparedBatch.updatedAtDefaultedCount,
-    seededEntries: preparedBatch.seededEntries,
+    seededDurables: preparedBatch.seededDurables,
   };
 }
 
-/** Prepares validated fixture entries for exact insertion order and storage defaults. */
-function prepareFixtures(caseId: string, fixtures: RecallEvalFixtureEntry[], provisionedAt: string): PreparedFixtureBatch {
+/** Prepares validated fixture durables for exact insertion order and storage defaults. */
+function prepareFixtures(caseId: string, fixtures: RecallEvalFixtureDurable[], provisionedAt: string): PreparedFixtureBatch {
   const resolvedIds = fixtures.map((fixture, index) => fixture.id ?? createFixtureId(caseId, index, fixture));
   const duplicateIds = findDuplicateIds(resolvedIds);
   if (duplicateIds.length > 0) {
@@ -122,10 +122,10 @@ function prepareFixtures(caseId: string, fixtures: RecallEvalFixtureEntry[], pro
       throw new Error(`memoryPool[${index}].superseded_by references unknown fixture id "${supersededBy}".`);
     }
 
-    const entry = buildEntry(fixture, resolvedIds[index] ?? "", provisionedAt);
+    const entry = buildDurable(fixture, resolvedIds[index] ?? "", provisionedAt);
     return {
       fixtureIndex: index,
-      entry,
+      durable: entry,
       contentHash: hashText(`${entry.type}\n${entry.subject}\n${entry.content}`),
       embeddingText: composeEmbeddingText(entry),
     };
@@ -135,16 +135,16 @@ function prepareFixtures(caseId: string, fixtures: RecallEvalFixtureEntry[], pro
     insertionOrder: topologicallySortFixtures(prepared),
     providedIdCount: fixtures.filter((fixture) => fixture.id !== undefined).length,
     generatedIdCount: fixtures.filter((fixture) => fixture.id === undefined).length,
-    staleCount: prepared.filter((fixture) => fixture.entry.valid_to !== undefined).length,
-    supersededCount: prepared.filter((fixture) => fixture.entry.superseded_by !== undefined).length,
+    staleCount: prepared.filter((fixture) => fixture.durable.valid_to !== undefined).length,
+    supersededCount: prepared.filter((fixture) => fixture.durable.superseded_by !== undefined).length,
     createdAtDefaultedCount: fixtures.filter((fixture) => fixture.created_at === undefined).length,
     updatedAtDefaultedCount: fixtures.filter((fixture) => fixture.updated_at === undefined).length,
-    seededEntries: prepared.map((fixture) => summarizePreparedFixture(fixture.entry)),
+    seededDurables: prepared.map((fixture) => summarizePreparedFixture(fixture.durable)),
   };
 }
 
 /** Builds the canonical entry row used for direct isolated fixture seeding. */
-function buildEntry(fixture: RecallEvalFixtureEntry, id: string, provisionedAt: string): Durable {
+function buildDurable(fixture: RecallEvalFixtureDurable, id: string, provisionedAt: string): Durable {
   const createdAt = fixture.created_at ?? provisionedAt;
   const updatedAt = fixture.updated_at ?? createdAt;
 
@@ -183,7 +183,7 @@ function buildEntry(fixture: RecallEvalFixtureEntry, id: string, provisionedAt: 
 }
 
 /** Captures the exact seeded state that existed before recall telemetry mutations. */
-function summarizePreparedFixture(entry: Durable): RecallEvalProvisionedEntrySummary {
+function summarizePreparedFixture(entry: Durable): RecallEvalProvisionedDurableSummary {
   return {
     id: entry.id,
     created_at: entry.created_at,
@@ -197,7 +197,7 @@ function summarizePreparedFixture(entry: Durable): RecallEvalProvisionedEntrySum
 }
 
 /** Creates a deterministic fallback fixture ID for repeatable eval runs. */
-function createFixtureId(caseId: string, index: number, fixture: RecallEvalFixtureEntry): string {
+function createFixtureId(caseId: string, index: number, fixture: RecallEvalFixtureDurable): string {
   const digest = createHash("sha256")
     .update(caseId)
     .update(":")
@@ -234,22 +234,22 @@ function findDuplicateIds(ids: string[]): string[] {
 
 /** Orders fixtures so superseding entries exist before superseded entries are inserted. */
 function topologicallySortFixtures(fixtures: PreparedFixture[]): PreparedFixture[] {
-  const indegree = new Map(fixtures.map((fixture) => [fixture.entry.id, 0]));
+  const indegree = new Map(fixtures.map((fixture) => [fixture.durable.id, 0]));
   const dependents = new Map<string, PreparedFixture[]>();
 
   for (const fixture of fixtures) {
-    const successorId = fixture.entry.superseded_by;
+    const successorId = fixture.durable.superseded_by;
     if (!successorId) {
       continue;
     }
 
-    indegree.set(fixture.entry.id, (indegree.get(fixture.entry.id) ?? 0) + 1);
+    indegree.set(fixture.durable.id, (indegree.get(fixture.durable.id) ?? 0) + 1);
     const successorDependents = dependents.get(successorId) ?? [];
     successorDependents.push(fixture);
     dependents.set(successorId, successorDependents);
   }
 
-  const ready = fixtures.filter((fixture) => (indegree.get(fixture.entry.id) ?? 0) === 0).sort((left, right) => left.fixtureIndex - right.fixtureIndex);
+  const ready = fixtures.filter((fixture) => (indegree.get(fixture.durable.id) ?? 0) === 0).sort((left, right) => left.fixtureIndex - right.fixtureIndex);
   const sorted: PreparedFixture[] = [];
 
   while (ready.length > 0) {
@@ -260,10 +260,10 @@ function topologicallySortFixtures(fixtures: PreparedFixture[]): PreparedFixture
 
     sorted.push(current);
 
-    const currentDependents = (dependents.get(current.entry.id) ?? []).sort((left, right) => left.fixtureIndex - right.fixtureIndex);
+    const currentDependents = (dependents.get(current.durable.id) ?? []).sort((left, right) => left.fixtureIndex - right.fixtureIndex);
     for (const dependent of currentDependents) {
-      const remaining = (indegree.get(dependent.entry.id) ?? 0) - 1;
-      indegree.set(dependent.entry.id, remaining);
+      const remaining = (indegree.get(dependent.durable.id) ?? 0) - 1;
+      indegree.set(dependent.durable.id, remaining);
       if (remaining === 0) {
         ready.push(dependent);
         ready.sort((left, right) => left.fixtureIndex - right.fixtureIndex);
@@ -272,7 +272,7 @@ function topologicallySortFixtures(fixtures: PreparedFixture[]): PreparedFixture
   }
 
   if (sorted.length !== fixtures.length) {
-    const unresolved = fixtures.filter((fixture) => !sorted.includes(fixture)).map((fixture) => fixture.entry.id);
+    const unresolved = fixtures.filter((fixture) => !sorted.includes(fixture)).map((fixture) => fixture.durable.id);
     throw new Error(`Fixture supersession metadata contains a cycle: ${unresolved.join(", ")}.`);
   }
 

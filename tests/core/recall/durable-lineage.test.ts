@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { describeDurableLineageState, summarizeClaimFamilyTransition } from "../../../src/core/recall/entry-lineage.js";
+import { describeDurableLineageState, summarizeClaimFamilyTransition } from "../../../src/core/recall/durable-lineage.js";
 import type { Durable } from "../../../src/core/types.js";
 
 const NOW_MS = Date.parse("2026-03-15T00:00:00.000Z");

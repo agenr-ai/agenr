@@ -20,8 +20,8 @@ export function buildClaimTransitionExplanations(params: {
   }
 
   return params.families.flatMap((family) => {
-    const current = family.entries.find((entry) => entry.memoryState === "current");
-    const prior = family.entries.find((entry) => entry.memoryState === "superseded" || entry.memoryState === "historical");
+    const current = family.durables.find((entry) => entry.memoryState === "current");
+    const prior = family.durables.find((entry) => entry.memoryState === "superseded" || entry.memoryState === "historical");
     if (!shouldExplainFamilyTransition(current, prior, params.detectedIntent)) {
       return [];
     }
@@ -33,9 +33,9 @@ export function buildClaimTransitionExplanations(params: {
         claimKey: family.claimKey,
         slotPolicy: family.slotPolicy,
         subject: family.subject,
-        ...(current ? { currentEntryId: current.entryId } : {}),
-        ...(prior ? { priorEntryId: prior.entryId } : {}),
-        summary: summarizeTransition(family.subject, current?.entryId, prior?.entryId),
+        ...(current ? { currentDurableId: current.durableId } : {}),
+        ...(prior ? { priorDurableId: prior.durableId } : {}),
+        summary: summarizeTransition(family.subject, current?.durableId, prior?.durableId),
         ...(episodeContext ? { episodeContext } : {}),
       },
     ];
@@ -55,8 +55,8 @@ export function buildClaimTransitionExplanations(params: {
  * @returns True when the family should produce a transition explanation.
  */
 function shouldExplainFamilyTransition(
-  current: ClaimCentricRecallFamily["entries"][number] | undefined,
-  prior: ClaimCentricRecallFamily["entries"][number] | undefined,
+  current: ClaimCentricRecallFamily["durables"][number] | undefined,
+  prior: ClaimCentricRecallFamily["durables"][number] | undefined,
   detectedIntent: UnifiedRecallDetectedIntent,
 ): boolean {
   if (detectedIntent === "historical_state") {
@@ -70,20 +70,20 @@ function shouldExplainFamilyTransition(
  * Formats a concise transition summary for one claim family.
  *
  * @param subject - Family subject shown to the caller.
- * @param currentEntryId - Current entry when available.
- * @param priorEntryId - Prior entry when available.
+ * @param currentDurableId - Current entry when available.
+ * @param priorDurableId - Prior entry when available.
  * @returns Human-readable transition explanation.
  */
-function summarizeTransition(subject: string, currentEntryId: string | undefined, priorEntryId: string | undefined): string {
-  if (currentEntryId && priorEntryId) {
-    return `${subject} changed from ${priorEntryId} to ${currentEntryId}.`;
+function summarizeTransition(subject: string, currentDurableId: string | undefined, priorDurableId: string | undefined): string {
+  if (currentDurableId && priorDurableId) {
+    return `${subject} changed from ${priorDurableId} to ${currentDurableId}.`;
   }
 
-  if (priorEntryId) {
-    return `${subject} previously matched ${priorEntryId}; no current sibling was recalled.`;
+  if (priorDurableId) {
+    return `${subject} previously matched ${priorDurableId}; no current sibling was recalled.`;
   }
 
-  return `${subject} is currently represented by ${currentEntryId}; no prior sibling was recalled.`;
+  return `${subject} is currently represented by ${currentDurableId}; no prior sibling was recalled.`;
 }
 
 /**

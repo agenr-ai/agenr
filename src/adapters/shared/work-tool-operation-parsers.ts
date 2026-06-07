@@ -8,7 +8,7 @@ import type {
   WorkingFileNote,
   WorkingNextAction,
 } from "../../app/working-memory/snapshot.js";
-import { asRecord } from "./entry-tools.js";
+import { asRecord } from "./durable-tools.js";
 import type { MemoryToolParamReader } from "./memory-tools.js";
 
 /** Reads an optional string parameter. */

@@ -49,7 +49,7 @@ describe("agenr OpenClaw debug sink", () => {
       summary: {
         count: 0,
         routing: { requested: "auto", detectedIntent: "durables", queried: ["durables"], reason: "ok" },
-        selectedEntryIds: [],
+        selectedDurableIds: [],
         episodeIds: [],
         selectedProcedureKey: null,
         notices: [],

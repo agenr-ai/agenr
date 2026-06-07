@@ -23,7 +23,7 @@ export interface SessionStartRepository {
    * @param limit - Maximum number of core entries to return.
    * @returns Ordered active core entries.
    */
-  listCoreEntries(limit: number, now?: Date): Promise<Durable[]>;
+  listCoreDurables(limit: number, now?: Date): Promise<Durable[]>;
   /**
    * Loads the active profile snapshot when it is fresh enough.
    *
@@ -37,7 +37,7 @@ export interface SessionStartRepository {
    * @param ids - Ordered durable ids to hydrate.
    * @returns Hydrated active durables in requested order.
    */
-  listEntriesByIds(ids: string[]): Promise<Durable[]>;
+  listDurablesByIds(ids: string[]): Promise<Durable[]>;
 }
 
 /**

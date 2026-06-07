@@ -105,7 +105,7 @@ export interface ClaimKeyScenarioStoreOptions {
  * Store scenario input payload.
  */
 export interface ClaimKeyStoreScenarioInput {
-  entries: StoreDurableInput[];
+  durables: StoreDurableInput[];
   storeOptions?: ClaimKeyScenarioStoreOptions;
   modelFixtures?: ClaimKeyScenarioModelFixtures;
 }

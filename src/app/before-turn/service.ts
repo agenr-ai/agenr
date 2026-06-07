@@ -4,7 +4,7 @@ import { formatProjectedProvenance } from "./format-provenance.js";
 import { selectDurablePatchItems } from "./select-patch-items.js";
 import { injectTopicProactiveDirectives } from "./topic-directives.js";
 import { runProcedureRecall } from "../procedures/recall/service.js";
-import { projectClaimCentricRecallEntry } from "../recall/claim-centric.js";
+import { projectClaimCentricRecallDurable } from "../recall/claim-centric.js";
 
 import type { BeforeTurnDeps } from "./ports.js";
 import type {
@@ -25,8 +25,8 @@ import type {
   BeforeTurnSuppressedTurnCategory,
 } from "./types.js";
 
-const DEFAULT_MAX_DURABLE_ENTRIES = 1;
-const DEFAULT_MAX_HIGH_CONFIDENCE_DURABLE_ENTRIES = 2;
+const DEFAULT_MAX_DURABLES = 1;
+const DEFAULT_MAX_HIGH_CONFIDENCE_DURABLES = 2;
 const DEFAULT_MAX_RECENT_TURNS = 2;
 const DEFAULT_MAX_QUERY_CHARS = 450;
 const DEFAULT_MAX_PROCEDURE_CANDIDATES = 3;
@@ -39,7 +39,7 @@ const DEFAULT_RECALL_THRESHOLD = 0.6;
  * 1. Whether `shouldRetryWeakPrimaryWithContext` accepts the current-turn-only
  *    winner as strong enough to skip the contextual-fallback retry.
  * 2. Whether `selectDurablePatchItems` may expand past the normal one-item
- *    cap up to `maxHighConfidenceDurableEntries`.
+ *    cap up to `maxHighConfidenceDurables`.
  *
  * The pre-RRF default of `0.85` was tuned for the legacy continuous blend,
  * where composite scores rarely cleared `0.85` without a dominant-on-both-
@@ -340,8 +340,8 @@ async function runDurableRecallAttempt(
 ): Promise<DurableRecallAttemptResult> {
   const directnessQuery = detectEntityDefinitionTurn(currentTurnText);
   const durableRecallLimit = directnessQuery
-    ? Math.max(policy.maxDurableEntries, policy.maxHighConfidenceDurableEntries, ENTITY_DIRECTNESS_RECALL_CANDIDATE_LIMIT)
-    : Math.max(policy.maxDurableEntries, policy.maxHighConfidenceDurableEntries);
+    ? Math.max(policy.maxDurables, policy.maxHighConfidenceDurables, ENTITY_DIRECTNESS_RECALL_CANDIDATE_LIMIT)
+    : Math.max(policy.maxDurables, policy.maxHighConfidenceDurables);
 
   let durableRecallTrace: RecallExecutionTraceSummary | undefined;
   try {
@@ -464,12 +464,12 @@ async function runProcedureSelection(
  * @returns Structured patch item enriched with claim-centric inspection metadata.
  */
 function buildDurablePatchItem(recalled: RecallOutput, deps: BeforeTurnDeps): BeforeTurnPatchItem {
-  const projected = projectClaimCentricRecallEntry(recalled, {
+  const projected = projectClaimCentricRecallDurable(recalled, {
     slotPolicyConfig: deps.slotPolicyConfig,
   });
   return {
     rank: 0,
-    entry: recalled.entry,
+    durable: recalled.durable,
     sourceKind: "turn_recall",
     score: recalled.score,
     whySurfaced: projected.whySurfaced,
@@ -758,8 +758,8 @@ function applyDirectnessSelection(
   const decision = winner.baseRank === 1 ? "kept" : "reranked";
   const reason =
     decision === "kept"
-      ? `Before-turn directness check kept ${winner.item.entry.id} because it stayed the clearest definitional match for "${queryMatch.entity}".`
-      : `Before-turn directness check reranked ${winner.item.entry.id} ahead of an adjacent match for "${queryMatch.entity}".`;
+      ? `Before-turn directness check kept ${winner.item.durable.id} because it stayed the clearest definitional match for "${queryMatch.entity}".`
+      : `Before-turn directness check reranked ${winner.item.durable.id} ahead of an adjacent match for "${queryMatch.entity}".`;
   return {
     items: [winner.item],
     diagnostics: buildDirectnessDiagnostics(queryMatch, decision, reason, rerankedCandidates, winnerGap),
@@ -834,8 +834,8 @@ function normalizeDirectnessEntity(entityText: string | undefined): string | und
  * @returns Candidate with directness deltas and stable signals.
  */
 function scoreDirectnessCandidate(queryMatch: DirectnessQueryMatch, item: BeforeTurnPatchItem, baseRank: number): DirectnessCandidateScore {
-  const subject = normalizeDirectnessText(item.entry.subject);
-  const content = normalizeDirectnessText(item.entry.content);
+  const subject = normalizeDirectnessText(item.durable.subject);
+  const content = normalizeDirectnessText(item.durable.content);
   const signals: BeforeTurnDirectnessSignal[] = [];
   let directnessDelta = 0;
 
@@ -852,7 +852,7 @@ function scoreDirectnessCandidate(queryMatch: DirectnessQueryMatch, item: Before
     directnessDelta += DIRECTNESS_DEFINITIONAL_CONTENT_BONUS;
   }
 
-  if (hasEntityClaimKey(item.entry.claim_key, queryMatch.normalizedEntity)) {
+  if (hasEntityClaimKey(item.durable.claim_key, queryMatch.normalizedEntity)) {
     signals.push("claim_key_entity_match");
     directnessDelta += DIRECTNESS_CLAIM_KEY_ENTITY_MATCH_BONUS;
   }
@@ -900,12 +900,12 @@ function buildDirectnessDiagnostics(
     queryKind: queryMatch.kind,
     entity: queryMatch.entity,
     decision,
-    winnerEntryId: winner?.item.entry.id,
-    runnerUpEntryId: runnerUp?.item.entry.id,
+    winnerDurableId: winner?.item.durable.id,
+    runnerUpDurableId: runnerUp?.item.durable.id,
     ...(winnerGap !== undefined ? { winnerGap: roundToThreeDecimals(winnerGap) } : {}),
     reason,
     candidates: candidates.map((candidate) => ({
-      entryId: candidate.item.entry.id,
+      durableId: candidate.item.durable.id,
       baseRank: candidate.baseRank,
       baseScore: roundToThreeDecimals(candidate.baseScore),
       directnessDelta: roundToThreeDecimals(candidate.directnessDelta),
@@ -1211,18 +1211,15 @@ function assignRanks(items: BeforeTurnPatchItem[]): BeforeTurnPatchItem[] {
  * @returns Concrete effective policy.
  */
 function normalizePolicy(policy: BeforeTurnPolicy | undefined): Required<BeforeTurnPolicy> {
-  const maxDurableEntries = normalizeCount(policy?.maxDurableEntries, DEFAULT_MAX_DURABLE_ENTRIES);
-  const maxHighConfidenceDurableEntries = Math.max(
-    maxDurableEntries,
-    normalizeCount(policy?.maxHighConfidenceDurableEntries, DEFAULT_MAX_HIGH_CONFIDENCE_DURABLE_ENTRIES),
-  );
+  const maxDurables = normalizeCount(policy?.maxDurables, DEFAULT_MAX_DURABLES);
+  const maxHighConfidenceDurables = Math.max(maxDurables, normalizeCount(policy?.maxHighConfidenceDurables, DEFAULT_MAX_HIGH_CONFIDENCE_DURABLES));
   return {
     enableDurableRecall: policy?.enableDurableRecall !== false,
     enableProcedureSuggestion: policy?.enableProcedureSuggestion !== false,
     maxRecentTurns: normalizeCount(policy?.maxRecentTurns, DEFAULT_MAX_RECENT_TURNS),
     maxQueryChars: normalizeCount(policy?.maxQueryChars, DEFAULT_MAX_QUERY_CHARS),
-    maxDurableEntries,
-    maxHighConfidenceDurableEntries,
+    maxDurables,
+    maxHighConfidenceDurables,
     maxProcedureCandidates: normalizeCount(policy?.maxProcedureCandidates, DEFAULT_MAX_PROCEDURE_CANDIDATES),
     recallThreshold: normalizeThreshold(policy?.recallThreshold, DEFAULT_RECALL_THRESHOLD),
     highConfidenceRecallThreshold: normalizeThreshold(policy?.highConfidenceRecallThreshold, DEFAULT_HIGH_CONFIDENCE_RECALL_THRESHOLD),

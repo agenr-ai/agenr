@@ -160,7 +160,7 @@ describe("registerIngestEpisodesCommand", () => {
     }));
     vi.doMock("../../../src/adapters/db/episode-ingest-support.js", () => ({
       createEpisodeIngestSupportPort: vi.fn(() => ({
-        countEntries: vi.fn(async () => 0),
+        countDurables: vi.fn(async () => 0),
         hasRelevantProvenanceMatch: vi.fn(async () => true),
       })),
     }));

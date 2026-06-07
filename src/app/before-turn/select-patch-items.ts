@@ -13,19 +13,18 @@ export function selectDurablePatchItems(
   policy: Required<BeforeTurnPolicy>,
   diagnostics: BeforeTurnPatchDiagnostics,
 ): BeforeTurnPatchItem[] {
-  if (policy.maxDurableEntries <= 0 || items.length === 0) {
+  if (policy.maxDurables <= 0 || items.length === 0) {
     return [];
   }
 
-  const boundedItems = items.slice(0, policy.maxDurableEntries);
-  const expandedLimit = Math.max(policy.maxDurableEntries, policy.maxHighConfidenceDurableEntries);
-  if (expandedLimit <= policy.maxDurableEntries || items.length <= policy.maxDurableEntries) {
+  const boundedItems = items.slice(0, policy.maxDurables);
+  const expandedLimit = Math.max(policy.maxDurables, policy.maxHighConfidenceDurables);
+  if (expandedLimit <= policy.maxDurables || items.length <= policy.maxDurables) {
     return boundedItems;
   }
 
   const expansionCandidates = items.slice(0, expandedLimit);
-  const canExpand =
-    expansionCandidates.length > policy.maxDurableEntries && expansionCandidates.every((item) => item.score >= policy.highConfidenceRecallThreshold);
+  const canExpand = expansionCandidates.length > policy.maxDurables && expansionCandidates.every((item) => item.score >= policy.highConfidenceRecallThreshold);
   if (canExpand) {
     diagnostics.notices.push(`Before-turn durable recall expanded to ${expansionCandidates.length} high-confidence items.`);
     return expansionCandidates;

@@ -63,14 +63,14 @@ function handleStoreToolResult(event: AgenrOpenClawAfterToolCallEvent, ctx: Agen
   const hasExplicitMemoryParams = hasNonEmptyString(event.params.claimKey) || hasNonEmptyString(event.params.supersedes);
 
   if (status === "stored" && !event.error) {
-    state.entriesStored += 1;
+    state.durablesStored += 1;
     state.lastSuccessfulStoreTurn = state.turnCount;
     state.lastMemoryActionTurn = state.turnCount;
     if (hasExplicitMemoryParams) {
       state.lastExplicitMemoryActionTurn = state.turnCount;
     }
     pushMidSessionStoredSubject(state, readString(event.params.subject));
-    logger.debug?.(`[agenr] after_tool_call: store recorded status=stored turn=${state.turnCount} entriesStored=${state.entriesStored} ${sessionContext}`);
+    logger.debug?.(`[agenr] after_tool_call: store recorded status=stored turn=${state.turnCount} durablesStored=${state.durablesStored} ${sessionContext}`);
     return;
   }
 

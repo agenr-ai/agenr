@@ -127,7 +127,7 @@ export async function runExtractStage(options: DreamExtractOptions, deps: DreamE
       status = "cost_capped";
     }
 
-    for (const entry of extraction.entries) {
+    for (const entry of extraction.durables) {
       mined.push(toMinedCandidate(entry, episode));
     }
 

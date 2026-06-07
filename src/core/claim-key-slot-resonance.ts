@@ -11,7 +11,7 @@ const MIN_RESONANT_SHAPE_COUNT = 2;
  * One grounded sibling candidate inspected for slot-resonance support.
  */
 export interface SiblingSlotResonanceSibling {
-  entryId: string;
+  durableId: string;
   claimKey: string;
 }
 
@@ -29,7 +29,7 @@ export interface SiblingSlotResonanceEvaluation {
   localShapeTokenCoverage: number;
   discriminativeCandidateTokens: string[];
   familyGenericTokens: string[];
-  dominantSiblingEntryIds: string[];
+  dominantSiblingDurableIds: string[];
   dominantSiblingClaimKeys: string[];
 }
 
@@ -51,7 +51,7 @@ export function evaluateSiblingSlotResonance(input: {
   const candidateTokens = extractAttributeTokens(input.candidateClaimKey);
   const groundedSiblingAttributes = input.groundedSiblings
     .map((sibling) => ({
-      entryId: sibling.entryId,
+      durableId: sibling.durableId,
       claimKey: sibling.claimKey,
       tokens: extractAttributeTokens(sibling.claimKey),
     }))
@@ -66,7 +66,7 @@ export function evaluateSiblingSlotResonance(input: {
   const familyGenericTokens = candidateTokens.filter((token) => (familyTokenFrequency.get(token) ?? 0) >= familyGenericCutoff);
   const discriminativeCandidateTokens = candidateTokens.filter((token) => !familyGenericTokens.includes(token));
   const localLexicalTokenSet = new Set(input.localLexicalTokens);
-  const resonantShapes = new Map<string, { siblingEntryIds: string[]; siblingClaimKeys: string[] }>();
+  const resonantShapes = new Map<string, { siblingDurableIds: string[]; siblingClaimKeys: string[] }>();
   let resonantSiblingCount = 0;
 
   for (const sibling of groundedSiblingAttributes) {
@@ -79,19 +79,19 @@ export function evaluateSiblingSlotResonance(input: {
     const resonanceShape = resonanceShapeTokens.join("_");
     const existing = resonantShapes.get(resonanceShape);
     if (existing) {
-      existing.siblingEntryIds.push(sibling.entryId);
+      existing.siblingDurableIds.push(sibling.durableId);
       existing.siblingClaimKeys.push(sibling.claimKey);
       continue;
     }
 
     resonantShapes.set(resonanceShape, {
-      siblingEntryIds: [sibling.entryId],
+      siblingDurableIds: [sibling.durableId],
       siblingClaimKeys: [sibling.claimKey],
     });
   }
 
   const dominantShapeEntry = [...resonantShapes.entries()].sort((left, right) => {
-    const countDelta = right[1].siblingEntryIds.length - left[1].siblingEntryIds.length;
+    const countDelta = right[1].siblingDurableIds.length - left[1].siblingDurableIds.length;
     if (countDelta !== 0) {
       return countDelta;
     }
@@ -104,7 +104,7 @@ export function evaluateSiblingSlotResonance(input: {
     return left[0].localeCompare(right[0]);
   })[0];
   const dominantShape = dominantShapeEntry?.[0] ?? null;
-  const dominantShapeCount = dominantShapeEntry?.[1].siblingEntryIds.length ?? 0;
+  const dominantShapeCount = dominantShapeEntry?.[1].siblingDurableIds.length ?? 0;
   const dominantShapeTokens = dominantShape ? dominantShape.split("_").filter((token) => token.length > 0) : [];
   const localShapeTokenCoverage =
     dominantShapeTokens.length > 0 ? dominantShapeTokens.filter((token) => localLexicalTokenSet.has(token)).length / dominantShapeTokens.length : 0;
@@ -121,7 +121,7 @@ export function evaluateSiblingSlotResonance(input: {
     localShapeTokenCoverage,
     discriminativeCandidateTokens,
     familyGenericTokens,
-    dominantSiblingEntryIds: dominantShapeEntry ? [...dominantShapeEntry[1].siblingEntryIds] : [],
+    dominantSiblingDurableIds: dominantShapeEntry ? [...dominantShapeEntry[1].siblingDurableIds] : [],
     dominantSiblingClaimKeys: dominantShapeEntry ? [...dominantShapeEntry[1].siblingClaimKeys] : [],
   };
 }
@@ -144,7 +144,7 @@ export function createEmptySiblingSlotResonanceEvaluation(groundedSiblingCount: 
     localShapeTokenCoverage: 0,
     discriminativeCandidateTokens: [],
     familyGenericTokens: [],
-    dominantSiblingEntryIds: [],
+    dominantSiblingDurableIds: [],
     dominantSiblingClaimKeys: [],
   };
 }

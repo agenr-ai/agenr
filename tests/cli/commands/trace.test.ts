@@ -1,12 +1,12 @@
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { loadEntryTraceRuntimeMock } = vi.hoisted(() => ({
-  loadEntryTraceRuntimeMock: vi.fn(),
+const { loadDurableTraceRuntimeMock } = vi.hoisted(() => ({
+  loadDurableTraceRuntimeMock: vi.fn(),
 }));
 
 vi.mock("../../../src/app/memory/inspect.js", () => ({
-  loadEntryTraceRuntime: loadEntryTraceRuntimeMock,
+  loadDurableTraceRuntime: loadDurableTraceRuntimeMock,
 }));
 
 import { registerTraceCommand } from "../../../src/cli/commands/trace.js";
@@ -14,7 +14,7 @@ import { registerTraceCommand } from "../../../src/cli/commands/trace.js";
 describe("registerTraceCommand", () => {
   afterEach(() => {
     vi.restoreAllMocks();
-    loadEntryTraceRuntimeMock.mockReset();
+    loadDurableTraceRuntimeMock.mockReset();
     process.exitCode = undefined;
   });
 
@@ -27,11 +27,11 @@ describe("registerTraceCommand", () => {
 
   it("renders claim-family lineage and timeline sections for one traced entry", async () => {
     const { program, stdout } = createProgramWithCapturedOutput();
-    loadEntryTraceRuntimeMock.mockResolvedValue(createTrace());
+    loadDurableTraceRuntimeMock.mockResolvedValue(createTrace());
 
     await program.parseAsync(["trace", "--id", "entry-1"], { from: "user" });
 
-    expect(loadEntryTraceRuntimeMock).toHaveBeenCalledWith(
+    expect(loadDurableTraceRuntimeMock).toHaveBeenCalledWith(
       expect.objectContaining({
         id: "entry-1",
         env: process.env,
@@ -46,13 +46,13 @@ describe("registerTraceCommand", () => {
 
   it("renders structured JSON trace output when requested", async () => {
     const { program, stdout } = createProgramWithCapturedOutput();
-    loadEntryTraceRuntimeMock.mockResolvedValue(createTrace());
+    loadDurableTraceRuntimeMock.mockResolvedValue(createTrace());
 
     await program.parseAsync(["trace", "--id", "entry-1", "--json"], { from: "user" });
 
     expect(JSON.parse(stdout.join(""))).toEqual(
       expect.objectContaining({
-        entry: expect.objectContaining({
+        durable: expect.objectContaining({
           id: "entry-1",
           memoryState: "superseded",
         }),
@@ -82,7 +82,7 @@ describe("registerTraceCommand", () => {
 
 function createTrace() {
   return {
-    entry: {
+    durable: {
       id: "entry-1",
       type: "fact",
       subject: "Jim home city",
@@ -118,7 +118,7 @@ function createTrace() {
       claimKey: "jim/home_city",
       slotPolicy: "exclusive",
       slotPolicyReason: 'Attribute head "home" defaults to exclusive current-state shaping.',
-      entries: [
+      durables: [
         {
           id: "entry-1",
           type: "fact",

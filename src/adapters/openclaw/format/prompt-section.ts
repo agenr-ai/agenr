@@ -63,9 +63,9 @@ export function buildAgenrMemoryPromptSection({
   }
 
   if (citationsMode === "off") {
-    lines.push("Citations are disabled: do not mention agenr entry IDs in user-facing replies unless the user asks for them.");
+    lines.push("Citations are disabled: do not mention agenr durable IDs in user-facing replies unless the user asks for them.");
   } else {
-    lines.push("Citations: mention the relevant agenr entry ID only when it helps the user verify a claim.");
+    lines.push("Citations: mention the relevant agenr durable ID only when it helps the user verify a claim.");
   }
 
   lines.push("");

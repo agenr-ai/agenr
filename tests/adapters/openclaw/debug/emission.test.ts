@@ -120,7 +120,7 @@ describe("agenr debug sink event emission", () => {
     const recall = events.find((event) => event.type === "session_start_recall");
     expect(recall.debug).toMatchObject({
       durableMemoryCount: expect.any(Number),
-      selectedEntryIds: expect.any(Array),
+      selectedDurableIds: expect.any(Array),
       notices: expect.any(Array),
     });
   });
@@ -169,7 +169,7 @@ function createEmptyRecallPorts(): RecallPorts {
     async ftsSearch() {
       return [];
     },
-    async hydrateEntries() {
+    async hydrateDurables() {
       return [];
     },
     async recordRecallEvents() {
@@ -221,7 +221,7 @@ function createTestServices(
     },
     pluginConfig: {},
     agenrConfig: {},
-    entries: database,
+    durables: database,
     episodes: database,
     procedures: database,
     memory: createMemoryRepository(database),

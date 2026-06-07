@@ -6,14 +6,14 @@ import { resolveKeyedDurableLifecycleStatus } from "../../core/keyed-durable-lif
 import { parseDirectiveMetadata } from "../../core/directives/model.js";
 import { resolvePredecessorSessionArtifacts } from "../session-memory/predecessor-artifacts.js";
 import { applyAbstainDirectivesForInjection } from "../directives/abstain-filter.js";
-import { projectClaimCentricRecallEntry } from "../recall/claim-centric.js";
+import { projectClaimCentricRecallDurable } from "../recall/claim-centric.js";
 import { buildSessionStartArtifactRecallQuery } from "./artifact-recall-query.js";
 import type { SessionStartDeps } from "./ports.js";
 import type { SessionStartInput, SessionStartPatch, SessionStartPatchDiagnostics, SessionStartPatchItem, SessionStartPolicy } from "./types.js";
 
-const DEFAULT_MAX_CORE_ENTRIES = 4;
-const DEFAULT_MAX_ARTIFACT_RECALL_ENTRIES = 3;
-const DEFAULT_MAX_DURABLE_ENTRIES = 5;
+const DEFAULT_MAX_CORE_DURABLES = 4;
+const DEFAULT_MAX_ARTIFACT_RECALL_DURABLES = 3;
+const DEFAULT_MAX_DURABLES = 5;
 const DEFAULT_MAX_ARTIFACT_CHARS = 1_200;
 const DEFAULT_MAX_PROFILE_SNAPSHOT_AGE_HOURS = 48;
 
@@ -30,17 +30,17 @@ export async function runSessionStart(input: SessionStartInput, deps: SessionSta
   const now = deps.now ?? new Date();
   const nowMs = now.getTime();
   const profileSnapshot = await deps.repository.getActiveProfileSnapshot(policy.maxProfileSnapshotAgeHours * 60 * 60 * 1000, now);
-  const profileEntries = profileSnapshot ? filterCurrentEntries(await deps.repository.listEntriesByIds(profileSnapshot.durableIds), nowMs) : [];
-  const profileItems = profileEntries.map((entry) => buildProfilePatchItem(entry, profileSnapshot?.id ?? "unknown", nowMs));
-  const proactiveDirectiveEntries = filterCurrentEntries((await deps.listActiveProactiveDirectives?.()) ?? [], nowMs);
-  const proactiveDirectiveItems = proactiveDirectiveEntries.map((entry) => buildDirectivePatchItem(entry, nowMs));
-  const coreEntries = await deps.repository.listCoreEntries(policy.maxCoreEntries, now);
-  const coreItems = coreEntries.map((entry) => buildCorePatchItem(entry, nowMs));
+  const profileDurables = profileSnapshot ? filterCurrentDurables(await deps.repository.listDurablesByIds(profileSnapshot.durableIds), nowMs) : [];
+  const profileItems = profileDurables.map((entry) => buildProfilePatchItem(entry, profileSnapshot?.id ?? "unknown", nowMs));
+  const proactiveDirectiveDurables = filterCurrentDurables((await deps.listActiveProactiveDirectives?.()) ?? [], nowMs);
+  const proactiveDirectiveItems = proactiveDirectiveDurables.map((entry) => buildDirectivePatchItem(entry, nowMs));
+  const coreDurables = await deps.repository.listCoreDurables(policy.maxCoreDurables, now);
+  const coreItems = coreDurables.map((entry) => buildCorePatchItem(entry, nowMs));
   const diagnostics: SessionStartPatchDiagnostics = {
-    coreCandidateCount: coreEntries.length,
-    profileCandidateCount: profileEntries.length,
+    coreCandidateCount: coreDurables.length,
+    profileCandidateCount: profileDurables.length,
     ...(profileSnapshot ? { activeProfileSnapshotId: profileSnapshot.id } : {}),
-    proactiveDirectiveCandidateCount: proactiveDirectiveEntries.length,
+    proactiveDirectiveCandidateCount: proactiveDirectiveDurables.length,
     artifactRecallCandidateCount: 0,
     artifactRecallUsed: false,
     notices: [],
@@ -54,7 +54,7 @@ export async function runSessionStart(input: SessionStartInput, deps: SessionSta
     ? await runArtifactRecallSelection(artifactRecallQuery, input.sessionKey, policy, deps, diagnostics)
     : [];
 
-  const mergedDurableMemory = mergeDurableMemory(profileItems, proactiveDirectiveItems, coreItems, artifactRecallItems, policy.maxDurableEntries);
+  const mergedDurableMemory = mergeDurableMemory(profileItems, proactiveDirectiveItems, coreItems, artifactRecallItems, policy.maxDurables);
   const visibleDurableMemory = await applyAbstainDirectivesForInjection(mergedDurableMemory, deps.listActiveAbstainDirectives, diagnostics);
   const durableMemory = assignRanks(visibleDurableMemory);
 
@@ -96,7 +96,7 @@ async function resolveSessionStartArtifactRecallQuery(
 function buildProfilePatchItem(entry: Durable, snapshotId: string, nowMs: number): SessionStartPatchItem {
   return {
     rank: 0,
-    entry,
+    durable: entry,
     sourceKind: "profile",
     whySurfaced: {
       summary: `active profile snapshot ${snapshotId}`,
@@ -116,7 +116,7 @@ function buildDirectivePatchItem(entry: Durable, nowMs: number): SessionStartPat
   const metadata = parseDirectiveMetadata(entry);
   return {
     rank: 0,
-    entry,
+    durable: entry,
     sourceKind: "directive",
     whySurfaced: {
       summary: `proactive memory directive; trigger ${metadata?.trigger ?? "session_start"}`,
@@ -154,7 +154,7 @@ async function runArtifactRecallSelection(
     const recalled = await recall(
       {
         text: query,
-        limit: policy.maxArtifactRecallEntries,
+        limit: policy.maxArtifactRecallDurables,
         threshold: policy.recallThreshold,
         sessionKey,
       },
@@ -193,7 +193,7 @@ async function runArtifactRecallSelection(
 function buildCorePatchItem(entry: Durable, nowMs: number): SessionStartPatchItem {
   return {
     rank: 0,
-    entry,
+    durable: entry,
     sourceKind: "core",
     whySurfaced: {
       summary: `always-on core memory; importance ${entry.importance}`,
@@ -214,12 +214,12 @@ function buildCorePatchItem(entry: Durable, nowMs: number): SessionStartPatchIte
  * @returns Structured patch item enriched with claim-centric inspection metadata.
  */
 function buildArtifactRecallPatchItem(recalled: RecallOutput, deps: SessionStartDeps): SessionStartPatchItem {
-  const projected = projectClaimCentricRecallEntry(recalled, {
+  const projected = projectClaimCentricRecallDurable(recalled, {
     slotPolicyConfig: deps.slotPolicyConfig,
   });
   return {
     rank: 0,
-    entry: recalled.entry,
+    durable: recalled.durable,
     sourceKind: "artifact_recall",
     score: recalled.score,
     whySurfaced: projected.whySurfaced,
@@ -234,13 +234,13 @@ function buildArtifactRecallPatchItem(recalled: RecallOutput, deps: SessionStart
  * Merges profile, directive, core, and artifact-grounded recall candidates.
  *
  * Profile snapshot entries lead, proactive directives rank above generic
- * memory, and later duplicates are dropped by entry ID.
+ * memory, and later duplicates are dropped by durable ID.
  *
  * @param profileItems - Profile snapshot memory items.
  * @param directiveItems - Proactive directive items.
  * @param coreItems - Always-on core memory items.
  * @param artifactRecallItems - Artifact-grounded recall items.
- * @param maxDurableEntries - Final bounded durable-memory limit.
+ * @param maxDurables - Final bounded durable-memory limit.
  * @returns Deduplicated bounded durable-memory items.
  */
 function mergeDurableMemory(
@@ -248,17 +248,17 @@ function mergeDurableMemory(
   directiveItems: SessionStartPatchItem[],
   coreItems: SessionStartPatchItem[],
   artifactRecallItems: SessionStartPatchItem[],
-  maxDurableEntries: number,
+  maxDurables: number,
 ): SessionStartPatchItem[] {
   const merged: SessionStartPatchItem[] = [];
-  const seenEntryIds = new Set<string>();
+  const seenDurableIds = new Set<string>();
 
   const tryAdd = (item: SessionStartPatchItem): boolean => {
-    if (merged.length >= maxDurableEntries || seenEntryIds.has(item.entry.id)) {
+    if (merged.length >= maxDurables || seenDurableIds.has(item.durable.id)) {
       return false;
     }
 
-    seenEntryIds.add(item.entry.id);
+    seenDurableIds.add(item.durable.id);
     merged.push(item);
     return true;
   };
@@ -266,7 +266,7 @@ function mergeDurableMemory(
   const addFrom = (items: SessionStartPatchItem[], maxAdd = Number.POSITIVE_INFINITY): void => {
     let added = 0;
     for (const item of items) {
-      if (merged.length >= maxDurableEntries || added >= maxAdd) {
+      if (merged.length >= maxDurables || added >= maxAdd) {
         return;
       }
 
@@ -278,12 +278,12 @@ function mergeDurableMemory(
 
   addFrom(profileItems);
   addFrom(directiveItems);
-  if (merged.length >= maxDurableEntries) {
+  if (merged.length >= maxDurables) {
     return merged;
   }
 
-  const uniqueArtifact = artifactRecallItems.find((item) => !seenEntryIds.has(item.entry.id));
-  const remainingSlots = maxDurableEntries - merged.length;
+  const uniqueArtifact = artifactRecallItems.find((item) => !seenDurableIds.has(item.durable.id));
+  const remainingSlots = maxDurables - merged.length;
   const coreLimit = uniqueArtifact ? Math.max(0, remainingSlots - 1) : remainingSlots;
   addFrom(coreItems, coreLimit);
   if (uniqueArtifact) {
@@ -315,14 +315,14 @@ function assignRanks(items: SessionStartPatchItem[]): SessionStartPatchItem[] {
  * @returns Concrete effective policy.
  */
 function normalizePolicy(policy: SessionStartPolicy | undefined): Required<SessionStartPolicy> {
-  const maxCoreEntries = normalizeCount(policy?.maxCoreEntries, DEFAULT_MAX_CORE_ENTRIES);
-  const maxArtifactRecallEntries = normalizeCount(policy?.maxArtifactRecallEntries, DEFAULT_MAX_ARTIFACT_RECALL_ENTRIES);
-  const maxDurableEntries = Math.max(maxCoreEntries, normalizeCount(policy?.maxDurableEntries, DEFAULT_MAX_DURABLE_ENTRIES));
+  const maxCoreDurables = normalizeCount(policy?.maxCoreDurables, DEFAULT_MAX_CORE_DURABLES);
+  const maxArtifactRecallDurables = normalizeCount(policy?.maxArtifactRecallDurables, DEFAULT_MAX_ARTIFACT_RECALL_DURABLES);
+  const maxDurables = Math.max(maxCoreDurables, normalizeCount(policy?.maxDurables, DEFAULT_MAX_DURABLES));
   return {
-    maxCoreEntries,
+    maxCoreDurables,
     enableArtifactRecall: policy?.enableArtifactRecall !== false,
-    maxArtifactRecallEntries,
-    maxDurableEntries,
+    maxArtifactRecallDurables,
+    maxDurables,
     maxArtifactChars: normalizeCount(policy?.maxArtifactChars, DEFAULT_MAX_ARTIFACT_CHARS),
     recallThreshold: normalizeThreshold(policy?.recallThreshold),
     maxProfileSnapshotAgeHours: normalizeCount(policy?.maxProfileSnapshotAgeHours, DEFAULT_MAX_PROFILE_SNAPSHOT_AGE_HOURS),
@@ -330,7 +330,7 @@ function normalizePolicy(policy: SessionStartPolicy | undefined): Required<Sessi
 }
 
 /** Filters session-start entries to those valid at the current time. */
-function filterCurrentEntries(entries: Durable[], nowMs: number): Durable[] {
+function filterCurrentDurables(entries: Durable[], nowMs: number): Durable[] {
   return entries.filter((entry) => isWithinValidityWindow(entry.valid_from, entry.valid_to, nowMs));
 }
 
@@ -397,7 +397,7 @@ function resolveClaimStatus(entry: Durable): SessionStartPatchItem["claimStatus"
 }
 
 /**
- * Builds a concise freshness label for one durable entry.
+ * Builds a concise freshness label for one durable.
  *
  * @param entry - Durable entry being surfaced at session start.
  * @returns Compact freshness summary.
@@ -414,7 +414,7 @@ function buildFreshnessLabel(entry: Durable): string {
 }
 
 /**
- * Formats a compact provenance summary from one durable entry.
+ * Formats a compact provenance summary from one durable.
  *
  * @param entry - Durable entry being surfaced at session start.
  * @returns Compact provenance summary, or undefined when none exists.
@@ -439,7 +439,7 @@ function buildProvenanceSummary(entry: Durable): string | undefined {
  * @param provenance - Claim-centric projected provenance metadata.
  * @returns Compact provenance summary, or undefined when none exists.
  */
-function formatProjectedProvenance(provenance: ReturnType<typeof projectClaimCentricRecallEntry>["provenance"]): string | undefined {
+function formatProjectedProvenance(provenance: ReturnType<typeof projectClaimCentricRecallDurable>["provenance"]): string | undefined {
   const parts = [
     provenance.supersededById ? `superseded_by=${provenance.supersededById}` : undefined,
     provenance.supersessionKind ? `kind=${provenance.supersessionKind}` : undefined,

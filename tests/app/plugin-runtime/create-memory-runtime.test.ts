@@ -223,7 +223,7 @@ describe("createPluginMemoryRuntime", () => {
       dbPath: resolvedConfig.dbPath,
       agenrConfig,
     });
-    const closeSpy = vi.spyOn(services.entries, "close");
+    const closeSpy = vi.spyOn(services.durables, "close");
 
     await services.close();
     await services.close();
@@ -249,7 +249,7 @@ describe("createPluginMemoryRuntime", () => {
         events.push("before-close");
       },
     });
-    const closeSpy = vi.spyOn(services.entries, "close").mockImplementation(async () => {
+    const closeSpy = vi.spyOn(services.durables, "close").mockImplementation(async () => {
       events.push("database-close");
     });
 

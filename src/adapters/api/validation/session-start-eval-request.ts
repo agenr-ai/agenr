@@ -1,15 +1,15 @@
 import type { SessionStartEvalCaseOptions, SessionStartEvalCaseRequest } from "../../../app/evals/session-start/index.js";
 import type { SessionStartInput, SessionStartPolicy } from "../../../app/session-start/index.js";
-import type { RecallEvalFixtureEntry, RecallEvalSandboxRequest } from "../../../app/evals/recall/index.js";
+import type { RecallEvalFixtureDurable, RecallEvalSandboxRequest } from "../../../app/evals/recall/index.js";
 import {
   extractParseableCaseId,
-  mapFixtureEntryDto,
+  mapFixtureDurableDto,
   mapSandboxRequestDto,
   parseMemoryPool,
   parseObject,
   parseOptionalThreshold,
   parseSandbox,
-  type InternalEvalFixtureEntryDto,
+  type InternalEvalFixtureDurableDto,
   type InternalEvalSandboxRequestDto,
 } from "./internal-eval-shared.js";
 import {
@@ -24,10 +24,10 @@ import {
 const ROOT_REQUEST_KEYS = new Set<string>(["caseId", "description", "sandbox", "memoryPool", "sessionStartInput", "options"]);
 const SESSION_START_INPUT_KEYS = new Set<string>(["sessionKey", "policy"]);
 const SESSION_START_POLICY_KEYS = new Set<string>([
-  "maxCoreEntries",
+  "maxCoreDurables",
   "enableArtifactRecall",
-  "maxArtifactRecallEntries",
-  "maxDurableEntries",
+  "maxArtifactRecallDurables",
+  "maxDurables",
   "maxArtifactChars",
   "recallThreshold",
   "maxProfileSnapshotAgeHours",
@@ -56,7 +56,7 @@ export interface SessionStartEvalCaseRequestDto {
   caseId: string;
   description?: string;
   sandbox?: InternalEvalSandboxRequestDto;
-  memoryPool: InternalEvalFixtureEntryDto[];
+  memoryPool: InternalEvalFixtureDurableDto[];
   sessionStartInput: SessionStartInputDto;
   options?: SessionStartEvalCaseOptionsDto;
 }
@@ -69,10 +69,10 @@ interface SessionStartInputDto {
 
 /** Adapter-owned normalized DTO for session-start policy. */
 interface SessionStartPolicyDto {
-  maxCoreEntries?: number;
+  maxCoreDurables?: number;
   enableArtifactRecall?: boolean;
-  maxArtifactRecallEntries?: number;
-  maxDurableEntries?: number;
+  maxArtifactRecallDurables?: number;
+  maxDurables?: number;
   maxArtifactChars?: number;
   recallThreshold?: number;
   maxProfileSnapshotAgeHours?: number;
@@ -124,7 +124,7 @@ export function mapSessionStartEvalCaseRequestDto(dto: SessionStartEvalCaseReque
     caseId: dto.caseId,
     ...(dto.description ? { description: dto.description } : {}),
     sandbox: mapSandboxRequestDto(dto.sandbox) as RecallEvalSandboxRequest | undefined,
-    memoryPool: dto.memoryPool.map((entry) => mapFixtureEntryDto(entry)) as RecallEvalFixtureEntry[],
+    memoryPool: dto.memoryPool.map((entry) => mapFixtureDurableDto(entry)) as RecallEvalFixtureDurable[],
     sessionStartInput: mapSessionStartInputDto(dto.sessionStartInput),
     ...(dto.options ? { options: mapCaseOptionsDto(dto.options) } : {}),
   };
@@ -159,12 +159,12 @@ function parseSessionStartPolicy(value: unknown, issues: ValidationIssue[]): Ses
   pushUnexpectedFields(policy, SESSION_START_POLICY_KEYS, "sessionStartInput.policy", issues);
 
   return {
-    maxCoreEntries: parseOptionalIntegerInRange(policy.maxCoreEntries, "sessionStartInput.policy.maxCoreEntries", issues, { min: 0 }),
+    maxCoreDurables: parseOptionalIntegerInRange(policy.maxCoreDurables, "sessionStartInput.policy.maxCoreDurables", issues, { min: 0 }),
     enableArtifactRecall: parseOptionalBoolean(policy.enableArtifactRecall, "sessionStartInput.policy.enableArtifactRecall", issues),
-    maxArtifactRecallEntries: parseOptionalIntegerInRange(policy.maxArtifactRecallEntries, "sessionStartInput.policy.maxArtifactRecallEntries", issues, {
+    maxArtifactRecallDurables: parseOptionalIntegerInRange(policy.maxArtifactRecallDurables, "sessionStartInput.policy.maxArtifactRecallDurables", issues, {
       min: 0,
     }),
-    maxDurableEntries: parseOptionalIntegerInRange(policy.maxDurableEntries, "sessionStartInput.policy.maxDurableEntries", issues, { min: 0 }),
+    maxDurables: parseOptionalIntegerInRange(policy.maxDurables, "sessionStartInput.policy.maxDurables", issues, { min: 0 }),
     maxArtifactChars: parseOptionalIntegerInRange(policy.maxArtifactChars, "sessionStartInput.policy.maxArtifactChars", issues, { min: 0 }),
     recallThreshold: parseOptionalThreshold(policy.recallThreshold, "sessionStartInput.policy.recallThreshold", issues),
     maxProfileSnapshotAgeHours: parseOptionalIntegerInRange(policy.maxProfileSnapshotAgeHours, "sessionStartInput.policy.maxProfileSnapshotAgeHours", issues, {
@@ -203,10 +203,10 @@ function mapSessionStartInputDto(dto: SessionStartInputDto): SessionStartInput {
 /** Maps policy DTO fields into the app-layer policy contract. */
 function mapSessionStartPolicyDto(dto: SessionStartPolicyDto): SessionStartPolicy {
   return {
-    maxCoreEntries: dto.maxCoreEntries,
+    maxCoreDurables: dto.maxCoreDurables,
     enableArtifactRecall: dto.enableArtifactRecall,
-    maxArtifactRecallEntries: dto.maxArtifactRecallEntries,
-    maxDurableEntries: dto.maxDurableEntries,
+    maxArtifactRecallDurables: dto.maxArtifactRecallDurables,
+    maxDurables: dto.maxDurables,
     maxArtifactChars: dto.maxArtifactChars,
     recallThreshold: dto.recallThreshold,
     maxProfileSnapshotAgeHours: dto.maxProfileSnapshotAgeHours,

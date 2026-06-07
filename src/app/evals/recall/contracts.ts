@@ -114,32 +114,32 @@ export interface RecallEvalSnapshotMetadata {
 }
 
 /**
- * Explicit fixture entry schema for seeding a recall eval memory pool.
+ * Explicit fixture durable schema for seeding a recall eval memory pool.
  */
-export interface RecallEvalFixtureEntry {
-  /** Optional stable entry identifier supplied by the eval harness. */
+export interface RecallEvalFixtureDurable {
+  /** Optional stable durable identifier supplied by the eval harness. */
   id?: string;
-  /** Durable knowledge category aligned with the core entry model. */
+  /** Durable knowledge category aligned with the core durable model. */
   type: DurableKind;
-  /** Short subject line for the memory entry. */
+  /** Short subject line for the memory durable. */
   subject: string;
-  /** Full memory content for the fixture entry. */
+  /** Full memory content for the fixture durable. */
   content: string;
   /** Optional explicit importance override on the 1-10 scale. */
   importance?: number;
-  /** Optional explicit expiry aligned with the core entry model. */
+  /** Optional explicit expiry aligned with the core durable model. */
   expiry?: Expiry;
   /** Optional tag list used for recall filtering and ranking. */
   tags?: string[];
-  /** Optional source path attached to the fixture entry. */
+  /** Optional source path attached to the fixture durable. */
   source_file?: string;
-  /** Optional source context attached to the fixture entry. */
+  /** Optional source context attached to the fixture durable. */
   source_context?: string;
   /** Optional creation timestamp for deterministic temporal behavior. */
   created_at?: string;
   /** Optional update timestamp for deterministic temporal behavior. */
   updated_at?: string;
-  /** Optional successor entry ID when the fixture is superseded. */
+  /** Optional successor durable ID when the fixture is superseded. */
   superseded_by?: string;
   /** Optional canonical claim key for deterministic lineage scenarios. */
   claim_key?: string;
@@ -323,7 +323,7 @@ export interface RecallEvalCaseRequest {
   /** Optional sandbox configuration for the case execution. */
   sandbox?: RecallEvalSandboxRequest;
   /** Explicit memory fixtures to provision for the isolated case. */
-  memoryPool: RecallEvalFixtureEntry[];
+  memoryPool: RecallEvalFixtureDurable[];
   /** Optional procedure fixtures to provision for unified procedural cases. */
   procedurePool?: RecallEvalFixtureProcedure[];
   /** Recall query configuration for the case under test. */
@@ -335,26 +335,26 @@ export interface RecallEvalCaseRequest {
 }
 
 /**
- * Ranked recall entry returned from a recall eval case run.
+ * Ranked recall durable returned from a recall eval case run.
  */
-export interface RecallEvalResultEntry {
-  /** Stable entry identifier emitted by the recall path. */
+export interface RecallEvalResultDurable {
+  /** Stable durable identifier emitted by the recall path. */
   id: string;
-  /** Subject of the recalled memory entry. */
+  /** Subject of the recalled memory durable. */
   subject: string;
-  /** Content of the recalled memory entry. */
+  /** Content of the recalled memory durable. */
   content: string;
-  /** Durable knowledge category of the recalled entry. */
+  /** Durable knowledge category of the recalled durable. */
   type: DurableKind;
-  /** Importance score of the recalled entry. */
+  /** Importance score of the recalled durable. */
   importance: number;
-  /** Expiry level of the recalled entry. */
+  /** Expiry level of the recalled durable. */
   expiry: Expiry;
-  /** Tags attached to the recalled entry. */
+  /** Tags attached to the recalled durable. */
   tags: string[];
-  /** Creation timestamp of the recalled entry. */
+  /** Creation timestamp of the recalled durable. */
   created_at: string;
-  /** Final aggregate recall score for the entry. */
+  /** Final aggregate recall score for the durable. */
   score: number;
   /** Signal-level score breakdown returned by the recall engine. */
   scores: RecallOutput["scores"];
@@ -384,17 +384,17 @@ export interface RecallEvalResultEntry {
  */
 export interface RecallEvalCaseResult {
   /** Fully shaped ranked entries returned by recall. */
-  entries: RecallEvalResultEntry[];
-  /** Convenience list of ranked entry IDs in output order. */
-  entryIds: string[];
+  durables: RecallEvalResultDurable[];
+  /** Convenience list of ranked durable IDs in output order. */
+  durableIds: string[];
 }
 
 /**
  * Claim-centric row metadata exposed separately from the primary result rows.
  */
-export interface RecallEvalProjectedEntryMetadata {
-  /** Stable entry identifier mirrored for machine-readable assertions. */
-  entryId: string;
+export interface RecallEvalProjectedDurableMetadata {
+  /** Stable durable identifier mirrored for machine-readable assertions. */
+  durableId: string;
   /** Grouping key used for claim-family views. */
   familyKey: string;
   /** Shared claim key when the row belongs to a claim family. */
@@ -416,8 +416,8 @@ export interface RecallEvalProjectedEntryMetadata {
 /**
  * Compact family-member summary used in claim-family metadata.
  */
-export interface RecallEvalClaimFamilyEntryMetadata {
-  /** Stable entry identifier for the family member. */
+export interface RecallEvalClaimFamilyDurableMetadata {
+  /** Stable durable identifier for the family member. */
   id: string;
   /** High-level current vs historical state label. */
   memoryState: ClaimCentricMemoryState;
@@ -438,9 +438,9 @@ export interface RecallEvalClaimFamilyMetadata {
   /** Family subject shown to callers. */
   subject: string;
   /** Highest-ranked row in the family. */
-  primaryEntryId: string;
+  primaryDurableId: string;
   /** Compact family-member summaries in ranked order. */
-  entries: RecallEvalClaimFamilyEntryMetadata[];
+  durables: RecallEvalClaimFamilyDurableMetadata[];
 }
 
 /**
@@ -448,9 +448,9 @@ export interface RecallEvalClaimFamilyMetadata {
  */
 export interface RecallEvalClaimMetadata {
   /** Flat projected rows in ranked order. */
-  projectedEntries: RecallEvalProjectedEntryMetadata[];
+  projectedDurables: RecallEvalProjectedDurableMetadata[];
   /** Grouped claim families when unified recall produced them. */
-  entryFamilies?: RecallEvalClaimFamilyMetadata[];
+  durableFamilies?: RecallEvalClaimFamilyMetadata[];
   /** Compact transition summaries when unified recall produced them. */
   transitions?: ClaimTransitionExplanation[];
 }
@@ -502,16 +502,16 @@ export interface RecallEvalCaseMetadata {
 }
 
 /**
- * Minimal seeded-state summary for one provisioned fixture entry.
+ * Minimal seeded-state summary for one provisioned fixture durable.
  */
-export interface RecallEvalProvisionedEntrySummary {
-  /** Stable entry identifier after exact fixture seeding. */
+export interface RecallEvalProvisionedDurableSummary {
+  /** Stable durable identifier after exact fixture seeding. */
   id: string;
   /** Seeded created-at timestamp before recall telemetry runs. */
   created_at: string;
   /** Seeded updated-at timestamp before recall telemetry runs. */
   updated_at: string;
-  /** Optional successor entry ID preserved during exact seeding. */
+  /** Optional successor durable ID preserved during exact seeding. */
   superseded_by?: string;
   /** Optional canonical claim key preserved during exact seeding. */
   claim_key?: string;
@@ -527,9 +527,9 @@ export interface RecallEvalProvisionedEntrySummary {
  * Structured provisioning diagnostics for the isolated fixture seed step.
  */
 export interface RecallEvalProvisionDiagnostics {
-  /** Number of fixture entries supplied in the request. */
+  /** Number of fixture durables supplied in the request. */
   requestedCount: number;
-  /** Number of fixture entries written into isolated storage. */
+  /** Number of fixture durables written into isolated storage. */
   provisionedCount: number;
   /** Number of fixtures that supplied their own IDs. */
   providedIdCount: number;
@@ -537,14 +537,14 @@ export interface RecallEvalProvisionDiagnostics {
   generatedIdCount: number;
   /** Number of stale fixtures seeded into isolated storage. */
   staleCount: number;
-  /** Number of fixtures that reference a successor entry. */
+  /** Number of fixtures that reference a successor durable. */
   supersededCount: number;
   /** Number of fixtures that defaulted `created_at` during seeding. */
   createdAtDefaultedCount: number;
   /** Number of fixtures that defaulted `updated_at` during seeding. */
   updatedAtDefaultedCount: number;
   /** Seeded-state summary captured before recall telemetry can mutate rows. */
-  seededEntries: RecallEvalProvisionedEntrySummary[];
+  seededDurables: RecallEvalProvisionedDurableSummary[];
 }
 
 /**
@@ -612,11 +612,11 @@ export interface RecallEvalCandidateCounts {
   budgetAccepted: number;
   /** Candidates retained after the final limit slice. */
   finalRanked: number;
-  /** Fully hydrated entries fetched for the final ranked IDs. */
+  /** Fully hydrated durables fetched for the final ranked IDs. */
   hydrated: number;
-  /** Entries returned after hydration and shaping. */
+  /** Durables returned after hydration and shaping. */
   returned: number;
-  /** Entries targeted by standard recall telemetry writes. */
+  /** Durables targeted by standard recall telemetry writes. */
   telemetryAttempted: number;
 }
 
@@ -638,9 +638,9 @@ export interface RecallEvalCaseDiagnostics {
     provisioning: "exact-fixture-seed";
     /** Selected recall execution path for the case. */
     recallPath: RecallEvalPath;
-    /** Number of fixture entries supplied in the request. */
+    /** Number of fixture durables supplied in the request. */
     memoryPoolCount: number;
-    /** Number of fixture entries provisioned into isolated storage. */
+    /** Number of fixture durables provisioned into isolated storage. */
     provisionedCount: number;
     /** Whether diagnostics were explicitly requested by the caller. */
     requestedDiagnostics: boolean;
@@ -696,7 +696,7 @@ export interface RecallEvalCaseTimings {
   totalMs: number;
   /** Time spent creating the isolated sandbox. */
   sandboxSetupMs: number;
-  /** Time spent exact-seeding fixture entries into isolated storage. */
+  /** Time spent exact-seeding fixture durables into isolated storage. */
   fixtureProvisionMs: number;
   /** Time spent inside the real recall call. */
   recallMs: number;
@@ -715,8 +715,8 @@ export interface RecallEvalCaseTimings {
   /** Time spent applying the token budget. */
   budgetMs: number;
   /** Time spent hydrating the final ranked entries. */
-  hydrateEntriesMs: number;
-  /** Time spent shaping hydrated entries into the response payload. */
+  hydrateDurablesMs: number;
+  /** Time spent shaping hydrated durables into the response payload. */
   shapeResultsMs: number;
   /** Time spent attempting normal recall telemetry writes. */
   recordRecallEventsMs: number;

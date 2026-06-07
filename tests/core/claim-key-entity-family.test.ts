@@ -11,28 +11,28 @@ import type { Durable } from "../../src/core/types.js";
 describe("detectClaimKeyEntityFamilyCandidates", () => {
   it("detects strong short-name and full-name style family splits when structural grounding is repeated", () => {
     const candidates = detectClaimKeyEntityFamilyCandidates([
-      buildEntry({
+      buildDurable({
         id: "jim-timezone",
         subject: "Jim timezone",
         claim_key: "jim/timezone",
         tags: ["profile", "user"],
         source_context: "Jim profile handbook timezone defaults",
       }),
-      buildEntry({
+      buildDurable({
         id: "jim-review",
         subject: "Jim review preference",
         claim_key: "jim/code_review_preference",
         tags: ["profile", "user"],
         source_context: "Jim profile handbook review defaults",
       }),
-      buildEntry({
+      buildDurable({
         id: "james-timezone",
         subject: "James Martin timezone",
         claim_key: "james_martin/timezone",
         tags: ["profile", "user"],
         source_context: "Jim profile handbook timezone defaults",
       }),
-      buildEntry({
+      buildDurable({
         id: "james-review",
         subject: "James Martin review preference",
         claim_key: "james_martin/code_review_preference",
@@ -65,28 +65,28 @@ describe("detectClaimKeyEntityFamilyCandidates", () => {
 
   it("does not merge unrelated entities that only overlap on common attributes", () => {
     const candidates = detectClaimKeyEntityFamilyCandidates([
-      buildEntry({
+      buildDurable({
         id: "postgres-version",
         subject: "Postgres version",
         claim_key: "postgres/version",
         tags: ["database"],
         source_context: "Database runtime checklist",
       }),
-      buildEntry({
+      buildDurable({
         id: "postgres-status",
         subject: "Postgres status",
         claim_key: "postgres/status",
         tags: ["database"],
         source_context: "Database runtime checklist",
       }),
-      buildEntry({
+      buildDurable({
         id: "redis-version",
         subject: "Redis version",
         claim_key: "redis/version",
         tags: ["cache"],
         source_context: "Cache runtime checklist",
       }),
-      buildEntry({
+      buildDurable({
         id: "redis-status",
         subject: "Redis status",
         claim_key: "redis/status",
@@ -100,7 +100,7 @@ describe("detectClaimKeyEntityFamilyCandidates", () => {
 
   it("prefers a dominant higher-quality canonical family over a compact alias", () => {
     const candidates = detectClaimKeyEntityFamilyCandidates([
-      buildEntry({
+      buildDurable({
         id: "gateway-canonical-restart",
         subject: "Gateway restart policy",
         claim_key: "openclaw_gateway/restart_policy",
@@ -108,7 +108,7 @@ describe("detectClaimKeyEntityFamilyCandidates", () => {
         tags: ["gateway", "auth"],
         source_context: "Gateway auth docs",
       }),
-      buildEntry({
+      buildDurable({
         id: "gateway-canonical-log-level",
         subject: "Gateway log level",
         claim_key: "openclaw_gateway/log_level",
@@ -116,7 +116,7 @@ describe("detectClaimKeyEntityFamilyCandidates", () => {
         tags: ["gateway", "auth"],
         source_context: "Gateway auth docs",
       }),
-      buildEntry({
+      buildDurable({
         id: "gateway-alias-restart",
         subject: "Gateway restart policy alias",
         claim_key: "openclawgateway/restart_policy",
@@ -124,7 +124,7 @@ describe("detectClaimKeyEntityFamilyCandidates", () => {
         tags: ["gateway", "auth"],
         source_context: "Gateway auth docs",
       }),
-      buildEntry({
+      buildDurable({
         id: "gateway-alias-log-level",
         subject: "Gateway log level alias",
         claim_key: "openclawgateway/log_level",
@@ -132,7 +132,7 @@ describe("detectClaimKeyEntityFamilyCandidates", () => {
         tags: ["gateway", "auth"],
         source_context: "Gateway auth docs",
       }),
-      buildEntry({
+      buildDurable({
         id: "gateway-alias-auth-mode",
         subject: "Gateway auth mode alias",
         claim_key: "openclawgateway/auth_mode",
@@ -153,42 +153,42 @@ describe("detectClaimKeyEntityFamilyCandidates", () => {
 
   it("keeps three-way family splits unresolved when more than one canonical prefix is plausible", () => {
     const candidates = detectClaimKeyEntityFamilyCandidates([
-      buildEntry({
+      buildDurable({
         id: "jim-timezone",
         subject: "Jim timezone",
         claim_key: "jim/timezone",
         tags: ["profile", "user"],
         source_context: "Personal profile handbook",
       }),
-      buildEntry({
+      buildDurable({
         id: "jim-editor",
         subject: "Jim editor preference",
         claim_key: "jim/editor_preference",
         tags: ["profile", "user"],
         source_context: "Personal profile handbook",
       }),
-      buildEntry({
+      buildDurable({
         id: "james-timezone",
         subject: "James Martin timezone",
         claim_key: "james_martin/timezone",
         tags: ["profile", "user"],
         source_context: "Personal profile handbook",
       }),
-      buildEntry({
+      buildDurable({
         id: "james-editor",
         subject: "James Martin editor preference",
         claim_key: "james_martin/editor_preference",
         tags: ["profile", "user"],
         source_context: "Personal profile handbook",
       }),
-      buildEntry({
+      buildDurable({
         id: "jm-timezone",
         subject: "JM timezone",
         claim_key: "jm/timezone",
         tags: ["profile", "user"],
         source_context: "Personal profile handbook",
       }),
-      buildEntry({
+      buildDurable({
         id: "jm-editor",
         subject: "JM editor preference",
         claim_key: "jm/editor_preference",
@@ -210,22 +210,22 @@ describe("detectClaimKeyEntityFamilyCandidates", () => {
 describe("detectClaimKeySingletonAliasCandidates", () => {
   it("detects a low-trust singleton alias next to a dominant trusted family", () => {
     const candidates = detectClaimKeySingletonAliasCandidates([
-      buildEntry({ id: "jim-timezone", subject: "Jim timezone", claim_key: "jim/timezone", claim_key_status: "trusted", claim_key_source: "model" }),
-      buildEntry({
+      buildDurable({ id: "jim-timezone", subject: "Jim timezone", claim_key: "jim/timezone", claim_key_status: "trusted", claim_key_source: "model" }),
+      buildDurable({
         id: "jim-review",
         subject: "Jim review preference",
         claim_key: "jim/code_review_preference",
         claim_key_status: "trusted",
         claim_key_source: "model",
       }),
-      buildEntry({
+      buildDurable({
         id: "jim-editor",
         subject: "Jim editor preference",
         claim_key: "jim/editor_preference",
         claim_key_status: "trusted",
         claim_key_source: "model",
       }),
-      buildEntry({
+      buildDurable({
         id: "jim-skunk",
         subject: "Jim Martin skunk identity",
         claim_key: "jim_martin/skunk_theme",
@@ -264,28 +264,28 @@ describe("detectClaimKeySingletonAliasCandidates", () => {
 
   it("does not treat intentional scope nesting as a singleton alias family", () => {
     const stats = summarizeClaimKeyEntityPrefixStats([
-      buildEntry({
+      buildDurable({
         id: "agenr-policy-1",
         subject: "Agenr policy one",
         claim_key: "agenr/release_strategy",
         claim_key_status: "trusted",
         claim_key_source: "model",
       }),
-      buildEntry({
+      buildDurable({
         id: "agenr-policy-2",
         subject: "Agenr policy two",
         claim_key: "agenr/store_input_format",
         claim_key_status: "trusted",
         claim_key_source: "model",
       }),
-      buildEntry({
+      buildDurable({
         id: "agenr-policy-3",
         subject: "Agenr policy three",
         claim_key: "agenr/brain_rebuild_workflow",
         claim_key_status: "trusted",
         claim_key_source: "model",
       }),
-      buildEntry({
+      buildDurable({
         id: "scoped-repo",
         subject: "MacBook agenr repo path",
         claim_key: "macbook_agenr_repo/source_of_truth",
@@ -298,7 +298,7 @@ describe("detectClaimKeySingletonAliasCandidates", () => {
   });
 });
 
-function buildEntry(overrides: Partial<Durable> & Pick<Durable, "id" | "subject" | "claim_key">): Durable {
+function buildDurable(overrides: Partial<Durable> & Pick<Durable, "id" | "subject" | "claim_key">): Durable {
   return {
     id: overrides.id,
     type: overrides.type ?? "fact",

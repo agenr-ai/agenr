@@ -16,7 +16,7 @@ import {
 } from "../../core/ingestion/index.js";
 import type { LlmPort } from "../../core/ports.js";
 import {
-  applyClaimExtractionResultToEntry,
+  applyClaimExtractionResultToDurable,
   runBatchClaimExtraction,
   type ClaimExtractionConfig,
   type ClaimExtractionDiagnostic,
@@ -33,7 +33,7 @@ export { DEFAULT_INGEST_CONCURRENCY };
 /** High-level ingest phases surfaced to callers for user-facing progress. */
 export interface IngestStageProgressEvent {
   phase: "dedup_start" | "claim_extraction_start" | "store_start";
-  totalEntries: number;
+  totalDurables: number;
 }
 
 /** Application-layer dedup progress payload forwarded from core ingestion. */
@@ -90,9 +90,9 @@ export interface IngestPathResult {
   claimKeyHealth: IngestClaimKeyHealthSummary | null;
 }
 
-/** Extracted entry annotated with its source file and flattened order. */
-interface TaggedEntry {
-  entry: StoreDurableInput;
+/** Extracted durable annotated with its source file and flattened order. */
+interface TaggedDurable {
+  durable: StoreDurableInput;
   fileIndex: number;
   originalIndex: number;
 }
@@ -133,7 +133,7 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
   const extractionRuns = await runParallelExtractions(files, ports, options, options.concurrency ?? DEFAULT_INGEST_CONCURRENCY);
   const extractedResults = extractionRuns.map((run) => run.result);
   const extractedSuccesses = extractedResults.filter((result) => result.skipped !== true && result.error === undefined);
-  const taggedEntries = collectTaggedEntries(extractedSuccesses);
+  const taggedDurables = collectTaggedDurables(extractedSuccesses);
 
   let dedupResult = buildEmptyDedupResult();
   let dedupUsage = createEmptyUsageStats();
@@ -141,16 +141,16 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
   let precomputedEmbeddings: number[][] | undefined;
   const claimKeyDiagnostics = new Map<number, ClaimExtractionDiagnostic>();
 
-  if (taggedEntries.length > 0) {
+  if (taggedDurables.length > 0) {
     if (options.skipDedup !== true) {
       options.onStageProgress?.({
         phase: "dedup_start",
-        totalEntries: taggedEntries.length,
+        totalDurables: taggedDurables.length,
       });
     }
     const dedupLlm = options.skipDedup === true ? createNoopLlmPort() : (ports.createDedupLlm?.() ?? ports.createExtractionLlm());
     dedupResult = await dedupBatch(
-      taggedEntries.map((taggedEntry) => taggedEntry.entry),
+      taggedDurables.map((taggedDurable) => taggedDurable.durable),
       dedupLlm,
       ports.embedding,
       {
@@ -163,11 +163,11 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
     const preservedDedupResult: DedupResult = {
       ...dedupResult,
       survivors: restoreExplicitClaimKeysAfterDedup(
-        taggedEntries.map((taggedEntry) => taggedEntry.entry),
+        taggedDurables.map((taggedDurable) => taggedDurable.durable),
         dedupResult,
       ),
     };
-    resultsToStore = rebuildResultsWithSurvivors(extractedSuccesses, taggedEntries, preservedDedupResult);
+    resultsToStore = rebuildResultsWithSurvivors(extractedSuccesses, taggedDurables, preservedDedupResult);
     precomputedEmbeddings = dedupResult.embeddings;
     dedupUsage = isIngestionLlmPort(dedupLlm) ? cloneUsageStats(dedupLlm.metadata.usage) : createEmptyUsageStats();
   }
@@ -181,7 +181,7 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
     if (claimConfig.enabled) {
       options.onStageProgress?.({
         phase: "claim_extraction_start",
-        totalEntries: flattenEntries(resultsToStore).length,
+        totalDurables: flattenDurables(resultsToStore).length,
       });
     }
     const extractedClaimKeys = await runBatchClaimExtraction(
@@ -194,7 +194,7 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
       claimConfig.concurrency ?? options.concurrency ?? DEFAULT_INGEST_CONCURRENCY,
       options.onWarning,
       (entry, diagnostic) => {
-        const flattenedIndex = findFlattenedEntryIndex(resultsToStore, entry);
+        const flattenedIndex = findFlattenedDurableIndex(resultsToStore, entry);
         if (flattenedIndex >= 0) {
           claimKeyDiagnostics.set(flattenedIndex, diagnostic);
         }
@@ -203,14 +203,14 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
     );
 
     for (const [entry, extractedClaimKey] of extractedClaimKeys) {
-      applyClaimExtractionResultToEntry(entry, extractedClaimKey);
+      applyClaimExtractionResultToDurable(entry, extractedClaimKey);
     }
   }
 
   const claimKeyHealth =
     resultsToStore.length > 0
       ? summarizeIngestClaimKeyHealth(
-          flattenEntries(resultsToStore),
+          flattenDurables(resultsToStore),
           claimKeyDiagnostics,
           (
             options.claimExtractionConfig ?? {
@@ -228,7 +228,7 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
       : await (async () => {
           options.onStageProgress?.({
             phase: "store_start",
-            totalEntries: flattenEntries(resultsToStore).length,
+            totalDurables: flattenDurables(resultsToStore).length,
           });
           return storeExtractedResults(
             resultsToStore,
@@ -343,15 +343,15 @@ function buildEmptyDedupResult(): DedupResult {
 }
 
 /** Flattens extracted file entries into the final store-candidate order. */
-function flattenEntries(results: ExtractedFileResult[]): StoreDurableInput[] {
-  return results.flatMap((result) => result.entries);
+function flattenDurables(results: ExtractedFileResult[]): StoreDurableInput[] {
+  return results.flatMap((result) => result.durables);
 }
 
 /** Resolves one flattened store-candidate index for a concrete entry object. */
-function findFlattenedEntryIndex(results: ExtractedFileResult[], target: StoreDurableInput): number {
+function findFlattenedDurableIndex(results: ExtractedFileResult[], target: StoreDurableInput): number {
   let index = 0;
   for (const result of results) {
-    for (const entry of result.entries) {
+    for (const entry of result.durables) {
       if (entry === target) {
         return index;
       }
@@ -364,14 +364,14 @@ function findFlattenedEntryIndex(results: ExtractedFileResult[], target: StoreDu
 }
 
 /** Flattens extracted entries while tracking their source file and original order. */
-function collectTaggedEntries(results: ExtractedFileResult[]): TaggedEntry[] {
-  const taggedEntries: TaggedEntry[] = [];
+function collectTaggedDurables(results: ExtractedFileResult[]): TaggedDurable[] {
+  const taggedDurables: TaggedDurable[] = [];
   let originalIndex = 0;
 
   for (const [fileIndex, result] of results.entries()) {
-    for (const entry of result.entries) {
-      taggedEntries.push({
-        entry,
+    for (const entry of result.durables) {
+      taggedDurables.push({
+        durable: entry,
         fileIndex,
         originalIndex,
       });
@@ -379,11 +379,11 @@ function collectTaggedEntries(results: ExtractedFileResult[]): TaggedEntry[] {
     }
   }
 
-  return taggedEntries;
+  return taggedDurables;
 }
 
 /** Rebuilds per-file extraction results using the dedup survivor set. */
-function rebuildResultsWithSurvivors(results: ExtractedFileResult[], taggedEntries: TaggedEntry[], dedupResult: DedupResult): ExtractedFileResult[] {
+function rebuildResultsWithSurvivors(results: ExtractedFileResult[], taggedDurables: TaggedDurable[], dedupResult: DedupResult): ExtractedFileResult[] {
   const survivorsByOriginalIndex = new Map<number, StoreDurableInput>();
   for (const [offset, originalIndex] of dedupResult.survivorIndices.entries()) {
     const survivor = dedupResult.survivors[offset];
@@ -393,20 +393,20 @@ function rebuildResultsWithSurvivors(results: ExtractedFileResult[], taggedEntri
   }
 
   const entriesByFileIndex = new Map<number, StoreDurableInput[]>();
-  for (const taggedEntry of taggedEntries) {
-    const survivor = survivorsByOriginalIndex.get(taggedEntry.originalIndex);
+  for (const taggedDurable of taggedDurables) {
+    const survivor = survivorsByOriginalIndex.get(taggedDurable.originalIndex);
     if (!survivor) {
       continue;
     }
 
-    const entries = entriesByFileIndex.get(taggedEntry.fileIndex) ?? [];
+    const entries = entriesByFileIndex.get(taggedDurable.fileIndex) ?? [];
     entries.push(survivor);
-    entriesByFileIndex.set(taggedEntry.fileIndex, entries);
+    entriesByFileIndex.set(taggedDurable.fileIndex, entries);
   }
 
   return results.map((result, fileIndex) => ({
     ...result,
-    entries: entriesByFileIndex.get(fileIndex) ?? [],
+    durables: entriesByFileIndex.get(fileIndex) ?? [],
   }));
 }
 

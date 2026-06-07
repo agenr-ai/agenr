@@ -164,7 +164,7 @@ describe("registerRecallCommand", () => {
         return [];
       }
 
-      public async hydrateEntries(): Promise<[]> {
+      public async hydrateDurables(): Promise<[]> {
         return [];
       }
 
@@ -225,7 +225,7 @@ describe("registerRecallCommand", () => {
         crossEncoder: expect.any(Object),
         ftsSearch: expect.any(Function),
         vectorSearch: expect.any(Function),
-        hydrateEntries: expect.any(Function),
+        hydrateDurables: expect.any(Function),
         recordRecallEvents: expect.any(Function),
       }),
       expect.objectContaining({
@@ -267,7 +267,7 @@ describe("registerRecallCommand", () => {
     vi.doMock("../../../src/core/recall/index.js", () => ({
       recall: vi.fn(async () => [
         {
-          entry: {
+          durable: {
             id: "entry-1",
             type: "decision",
             subject: "deployment approach",
@@ -380,7 +380,7 @@ describe("registerRecallCommand", () => {
           active: true,
           reasons: ["query_embedding_failed"],
           lexicalOnly: true,
-          notices: ["Embeddings failed during recall, so Agenr fell back to lexical-only entry ranking."],
+          notices: ["Embeddings failed during recall, so Agenr fell back to lexical-only durable ranking."],
         },
         timings: {
           mergeCandidatesMs: 0,
@@ -408,7 +408,7 @@ describe("registerRecallCommand", () => {
 
     await program.parseAsync(["recall", "who is on call"], { from: "user" });
 
-    expect(warnMock).toHaveBeenCalledWith("Embeddings failed during recall, so Agenr fell back to lexical-only entry ranking.");
+    expect(warnMock).toHaveBeenCalledWith("Embeddings failed during recall, so Agenr fell back to lexical-only durable ranking.");
   });
 });
 

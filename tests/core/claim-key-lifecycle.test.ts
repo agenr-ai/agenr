@@ -247,21 +247,21 @@ describe("claim-key lifecycle helpers", () => {
   });
 
   it("applies one resolved lifecycle payload directly onto store inputs", () => {
-    const entry: StoreDurableInput = {
+    const durable: StoreDurableInput = {
       type: "fact",
       subject: "Jim timezone",
       content: "Jim uses America/Chicago.",
     };
 
     applyClaimKeyLifecycle(
-      entry,
+      durable,
       buildManualClaimKeyLifecycle({
         claimKey: "jim/timezone",
         rawClaimKey: "Jim/timezone",
       }),
     );
 
-    expect(entry).toMatchObject({
+    expect(durable).toMatchObject({
       claim_key: "jim/timezone",
       claim_key_raw: "Jim/timezone",
       claim_key_status: "trusted",

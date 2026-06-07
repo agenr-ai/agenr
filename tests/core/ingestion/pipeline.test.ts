@@ -63,8 +63,8 @@ describe("extractFile", () => {
       messageCount: 2,
       warnings: ["Parser warning"],
     });
-    expect(result.entries).toHaveLength(1);
-    expect(result.entries[0]?.source_file).toBe(filePath);
+    expect(result.durables).toHaveLength(1);
+    expect(result.durables[0]?.source_file).toBe(filePath);
     expect(db.insertions).toEqual([]);
     expect(db.ingestLogInsertions).toEqual([]);
     expect(transcript.parseCalls).toEqual([filePath]);
@@ -112,7 +112,7 @@ describe("extractFile", () => {
       },
     );
 
-    expect(result.entries[0]).toMatchObject({
+    expect(result.durables[0]).toMatchObject({
       source_file: "openclaw-session:session-project-metadata",
       project: "agenr",
     });
@@ -136,7 +136,7 @@ describe("extractFile", () => {
       fileHash,
       skipped: true,
       messageCount: 0,
-      entries: [],
+      durables: [],
     });
     expect(transcript.parseCalls).toEqual([]);
     expect(llm.completeJsonCalls).toBe(0);
@@ -155,7 +155,7 @@ describe("extractFile", () => {
       fileHash,
       skipped: false,
       messageCount: 0,
-      entries: [],
+      durables: [],
       error: "Malformed transcript",
       warnings: ["Malformed transcript"],
     });
@@ -171,12 +171,12 @@ describe("storeExtractedResults", () => {
       createExtractedFileResult({
         file: "/tmp/session-a.jsonl",
         fileHash: "hash-a",
-        entries: [createInput({ subject: "one", content: "content-one", source_file: "/tmp/session-a.jsonl" })],
+        durables: [createInput({ subject: "one", content: "content-one", source_file: "/tmp/session-a.jsonl" })],
       }),
       createExtractedFileResult({
         file: "/tmp/session-b.jsonl",
         fileHash: "hash-b",
-        entries: [createInput({ subject: "two", content: "content-two", source_file: "/tmp/session-b.jsonl" })],
+        durables: [createInput({ subject: "two", content: "content-two", source_file: "/tmp/session-b.jsonl" })],
       }),
     ];
 
@@ -204,12 +204,12 @@ describe("storeExtractedResults", () => {
       createExtractedFileResult({
         file: "/tmp/session-a.jsonl",
         fileHash: "hash-a",
-        entries: [createInput({ content: "Hello, world!", source_file: "/tmp/session-a.jsonl" })],
+        durables: [createInput({ content: "Hello, world!", source_file: "/tmp/session-a.jsonl" })],
       }),
       createExtractedFileResult({
         file: "/tmp/session-b.jsonl",
         fileHash: "hash-b",
-        entries: [createInput({ content: "  hello world  ", source_file: "/tmp/session-b.jsonl" })],
+        durables: [createInput({ content: "  hello world  ", source_file: "/tmp/session-b.jsonl" })],
       }),
     ];
 
@@ -237,12 +237,12 @@ describe("storeExtractedResults", () => {
       createExtractedFileResult({
         file: "/tmp/session-a.jsonl",
         fileHash: "hash-a",
-        entries: [createInput({ content: "content-a", source_file: "/tmp/session-a.jsonl" })],
+        durables: [createInput({ content: "content-a", source_file: "/tmp/session-a.jsonl" })],
       }),
       createExtractedFileResult({
         file: "/tmp/session-b.jsonl",
         fileHash: "hash-b",
-        entries: [],
+        durables: [],
       }),
     ];
 
@@ -252,12 +252,12 @@ describe("storeExtractedResults", () => {
       {
         filePath: "/tmp/session-a.jsonl",
         fileHash: "hash-a",
-        entryCount: 1,
+        durableCount: 1,
       },
       {
         filePath: "/tmp/session-b.jsonl",
         fileHash: "hash-b",
-        entryCount: 0,
+        durableCount: 0,
       },
     ]);
   });
@@ -271,12 +271,12 @@ describe("storeExtractedResults", () => {
       createExtractedFileResult({
         file: "/tmp/session-a.jsonl",
         fileHash: "hash-a",
-        entries: [firstEntry],
+        durables: [firstEntry],
       }),
       createExtractedFileResult({
         file: "/tmp/session-b.jsonl",
         fileHash: "hash-b",
-        entries: [secondEntry],
+        durables: [secondEntry],
       }),
     ];
     const precomputedEmbeddings = [
@@ -306,7 +306,7 @@ describe("storeExtractedResults", () => {
       createExtractedFileResult({
         file: "/tmp/session-a.jsonl",
         fileHash: "hash-a",
-        entries: [createInput({ content: "content-a", source_file: "/tmp/session-a.jsonl" })],
+        durables: [createInput({ content: "content-a", source_file: "/tmp/session-a.jsonl" })],
       }),
     ];
 
@@ -326,7 +326,7 @@ describe("storeExtractedResults", () => {
       createExtractedFileResult({
         file: "/tmp/session-a.jsonl",
         fileHash: "hash-a",
-        entries: [createInput({ content: "content-a", source_file: "/tmp/session-a.jsonl" })],
+        durables: [createInput({ content: "content-a", source_file: "/tmp/session-a.jsonl" })],
       }),
     ];
 
@@ -343,7 +343,7 @@ describe("storeExtractedResults", () => {
       createExtractedFileResult({
         file: "/tmp/session-a.jsonl",
         fileHash: "hash-a",
-        entries: [createInput({ content: "content-a", source_file: "/tmp/session-a.jsonl" })],
+        durables: [createInput({ content: "content-a", source_file: "/tmp/session-a.jsonl" })],
       }),
     ];
 
@@ -408,10 +408,10 @@ describe("ingestFile", () => {
       {
         filePath,
         fileHash,
-        entryCount: 1,
+        durableCount: 1,
       },
     ]);
-    expect(db.insertions[0]?.entry.source_file).toBe(filePath);
+    expect(db.insertions[0]?.durable.source_file).toBe(filePath);
   });
 
   it("stamps claim keys before storing when a claim-extraction LLM is provided", async () => {
@@ -456,12 +456,12 @@ describe("ingestFile", () => {
       },
     );
 
-    expect(db.insertions[0]?.entry.claim_key).toBe("project_x/status");
+    expect(db.insertions[0]?.durable.claim_key).toBe("project_x/status");
   });
 
   it("propagates configured concurrency through single-file dedup arbitration", async () => {
     const { filePath, fileHash } = await writeTranscriptFile("session-four-dedup-concurrency");
-    const { entries, vectors } = createPairedClusterScenario(3, filePath);
+    const { durables, vectors } = createPairedClusterScenario(3, filePath);
     const responses = [deferred<string>(), deferred<string>(), deferred<string>()];
     let dedupLlm: MockDedupLlm | null = null;
 
@@ -472,12 +472,12 @@ describe("ingestFile", () => {
       },
       {
         transcript: new MockTranscriptPort(buildTranscript()),
-        llm: new MockLlmPort([{ durables: entries }]),
+        llm: new MockLlmPort([{ durables }]),
         dedupLlm: (() => {
           dedupLlm = new MockDedupLlm(responses.map((response) => response.promise));
           return dedupLlm;
         })(),
-        embedding: new MockEmbeddingPort(entries, vectors),
+        embedding: new MockEmbeddingPort(durables, vectors),
         db: new MockDatabase(),
       },
       {
@@ -504,7 +504,7 @@ describe("ingestFile", () => {
 
   it("defaults single-file dedup arbitration concurrency to 10 when unset", async () => {
     const { filePath, fileHash } = await writeTranscriptFile("session-four-dedup-default-concurrency");
-    const { entries, vectors } = createPairedClusterScenario(11, filePath);
+    const { durables, vectors } = createPairedClusterScenario(11, filePath);
     const responses = Array.from({ length: 11 }, () => deferred<string>());
     let dedupLlm: MockDedupLlm | null = null;
 
@@ -515,12 +515,12 @@ describe("ingestFile", () => {
       },
       {
         transcript: new MockTranscriptPort(buildTranscript()),
-        llm: new MockLlmPort([{ durables: entries }]),
+        llm: new MockLlmPort([{ durables }]),
         dedupLlm: (() => {
           dedupLlm = new MockDedupLlm(responses.map((response) => response.promise));
           return dedupLlm;
         })(),
-        embedding: new MockEmbeddingPort(entries, vectors),
+        embedding: new MockEmbeddingPort(durables, vectors),
         db: new MockDatabase(),
       },
       {
@@ -718,7 +718,7 @@ describe("ingestFile", () => {
     );
 
     expect(llm.calls[0]?.userMessage).toContain('claim_key="Jim / Home City"');
-    expect(db.insertions[0]?.entry.claim_key).toBe("jim/home_city");
+    expect(db.insertions[0]?.durable.claim_key).toBe("jim/home_city");
   });
 
   it("lets preserved explicit claim keys win over regenerated inference during re-ingest", async () => {
@@ -782,7 +782,7 @@ describe("ingestFile", () => {
 
     expect(llm.calls[0]?.userMessage).toContain('claim_key="Jim / Home City"');
     expect(llm.calls[0]?.systemPrompt).toContain("Treat explicit tool-call claim keys as authoritative");
-    expect(db.insertions[0]?.entry.claim_key).toBe("jim/home_city");
+    expect(db.insertions[0]?.durable.claim_key).toBe("jim/home_city");
   });
 
   it("drops malformed preserved claim keys during re-ingest without rejecting the entry", async () => {
@@ -849,7 +849,7 @@ describe("ingestFile", () => {
       skipped: 0,
       rejected: 0,
     });
-    expect(db.insertions[0]?.entry.claim_key).toBeUndefined();
+    expect(db.insertions[0]?.durable.claim_key).toBeUndefined();
     expect(result.warnings.join("\n")).toMatch(/dropped claim_key/i);
   });
 
@@ -879,8 +879,8 @@ describe("ingestFile", () => {
 });
 
 class MockDatabase implements DatabasePort {
-  public readonly insertions: Array<{ entry: Durable; embedding: number[]; contentHash: string }> = [];
-  public readonly ingestLogInsertions: Array<{ filePath: string; fileHash: string; entryCount: number }> = [];
+  public readonly insertions: Array<{ durable: Durable; embedding: number[]; contentHash: string }> = [];
+  public readonly ingestLogInsertions: Array<{ filePath: string; fileHash: string; durableCount: number }> = [];
   public readonly existingHashes: Set<string>;
   public readonly existingNormHashes: Set<string>;
   public readonly callOrder: string[] = [];
@@ -909,7 +909,7 @@ class MockDatabase implements DatabasePort {
     if (this.failInsertMessage) {
       throw new Error(this.failInsertMessage);
     }
-    this.insertions.push({ entry, embedding, contentHash });
+    this.insertions.push({ durable: entry, embedding, contentHash });
     return entry.id;
   }
 
@@ -963,8 +963,8 @@ class MockDatabase implements DatabasePort {
     return this.ingestLogEntry;
   }
 
-  public async insertIngestLogEntry(filePath: string, fileHash: string, entryCount: number): Promise<void> {
-    this.ingestLogInsertions.push({ filePath, fileHash, entryCount });
+  public async insertIngestLogEntry(filePath: string, fileHash: string, durableCount: number): Promise<void> {
+    this.ingestLogInsertions.push({ filePath, fileHash, durableCount });
   }
 
   public async init(): Promise<void> {}
@@ -1059,13 +1059,13 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   return { promise, resolve };
 }
 
-function createPairedClusterScenario(clusterCount: number, sourceFile: string): { entries: StoreDurableInput[]; vectors: number[][] } {
-  const entries: StoreDurableInput[] = [];
+function createPairedClusterScenario(clusterCount: number, sourceFile: string): { durables: StoreDurableInput[]; vectors: number[][] } {
+  const durables: StoreDurableInput[] = [];
   const vectors: number[][] = [];
 
   for (let clusterIndex = 0; clusterIndex < clusterCount; clusterIndex += 1) {
     const vector = Array.from({ length: clusterCount }, (_, index) => (index === clusterIndex ? 1 : 0));
-    entries.push(
+    durables.push(
       createInput({
         subject: `cluster-${clusterIndex}-primary`,
         content: `cluster-${clusterIndex}-primary content`,
@@ -1080,7 +1080,7 @@ function createPairedClusterScenario(clusterCount: number, sourceFile: string): 
     vectors.push([...vector], [...vector]);
   }
 
-  return { entries, vectors };
+  return { durables, vectors };
 }
 
 class TranscriptAwareLlmPort implements LlmPort {
@@ -1160,15 +1160,15 @@ function createInput(overrides: Partial<StoreDurableInput> = {}): StoreDurableIn
 }
 
 function createExtractedFileResult(overrides: Partial<ExtractedFileResult> = {}): ExtractedFileResult {
-  const entries = overrides.entries ?? [];
+  const durables = overrides.durables ?? [];
 
   return {
     file: overrides.file ?? "/tmp/session.jsonl",
     skipped: overrides.skipped ?? false,
     messageCount: overrides.messageCount ?? 2,
-    entries,
-    chunkCount: overrides.chunkCount ?? (entries.length > 0 ? 1 : 0),
-    successfulChunks: overrides.successfulChunks ?? (entries.length > 0 ? 1 : 0),
+    durables,
+    chunkCount: overrides.chunkCount ?? (durables.length > 0 ? 1 : 0),
+    successfulChunks: overrides.successfulChunks ?? (durables.length > 0 ? 1 : 0),
     failedChunks: overrides.failedChunks ?? 0,
     chunkDetails: overrides.chunkDetails ?? [],
     warnings: overrides.warnings ?? [],
@@ -1177,7 +1177,7 @@ function createExtractedFileResult(overrides: Partial<ExtractedFileResult> = {})
     fileHash:
       overrides.fileHash ??
       createHash("sha256")
-        .update(entries.map((entry) => entry.content).join("\n"))
+        .update(durables.map((durable) => durable.content).join("\n"))
         .digest("hex"),
   };
 }

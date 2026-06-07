@@ -110,7 +110,7 @@ describe("agenr OpenClaw tools", () => {
     expect(schema.properties?.content?.description).toContain("not the activity log, canonical record, or transient progress snapshot");
   });
 
-  it("returns the full entry body from agenr_fetch", async () => {
+  it("returns the full durable body from agenr_fetch", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
     const services = createDatabaseBackedServices(database);
@@ -123,16 +123,16 @@ describe("agenr OpenClaw tools", () => {
       subject: "long recall body",
       content: longContent,
     });
-    const stored = await createMemoryRepository(database).findEntryBySubject("long recall body");
+    const stored = await createMemoryRepository(database).findDurableBySubject("long recall body");
     expect(stored).not.toBeNull();
 
     const result = await fetchTool.execute("tool-fetch", { id: stored?.id });
-    const storedEntry = await database.getDurable(stored?.id ?? "");
-    const expectedContent = storedEntry?.content ?? longContent.trim();
+    const storedDurable = await database.getDurable(stored?.id ?? "");
+    const expectedContent = storedDurable?.content ?? longContent.trim();
 
     expect(result.details).toMatchObject({
       status: "ok",
-      entryId: stored?.id,
+      durableId: stored?.id,
       content: expectedContent,
     });
     expect(expectTextContent(result.content[0])).toContain(expectedContent);
@@ -156,10 +156,10 @@ describe("agenr OpenClaw tools", () => {
       expiry: "permanent",
       tags: ["rollout", "policy"],
     });
-    const storedEntry = await createMemoryRepository(database).findEntryBySubject("feature flag policy");
+    const storedDurable = await createMemoryRepository(database).findDurableBySubject("feature flag policy");
 
     const updateResult = await updateTool.execute("tool-2", {
-      id: storedEntry?.id,
+      id: storedDurable?.id,
       importance: 9,
       expiry: "core",
     });
@@ -181,11 +181,11 @@ describe("agenr OpenClaw tools", () => {
       status: "updated",
       validTo: "2026-01-01T00:00:00.000Z",
     });
-    expect(storedEntry).not.toBeNull();
-    expect(await database.getDurable(storedEntry?.id ?? "")).toBeNull();
+    expect(storedDurable).not.toBeNull();
+    expect(await database.getDurable(storedDurable?.id ?? "")).toBeNull();
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        '[agenr] tool=agenr_store session=session-1 key=agent:main:webchat:test store 1 entry subject="feature flag policy" type=decision',
+        '[agenr] tool=agenr_store session=session-1 key=agent:main:webchat:test store 1 durable subject="feature flag policy" type=decision',
         expect.stringContaining("[agenr] tool=agenr_update session=session-1 key=agent:main:webchat:test target=id:"),
         expect.stringContaining('[agenr] tool=agenr_update session=session-1 key=agent:main:webchat:test target=subject:"feature flag policy"'),
       ]),
@@ -268,7 +268,7 @@ describe("agenr OpenClaw tools", () => {
         async ftsSearch() {
           return [
             {
-              entry: {
+              durable: {
                 id: entry.id,
                 subject: entry.subject,
                 content: entry.content,
@@ -283,7 +283,7 @@ describe("agenr OpenClaw tools", () => {
             },
           ];
         },
-        async hydrateEntries(ids) {
+        async hydrateDurables(ids) {
           return ids.includes(entry.id) ? [entry] : [];
         },
         async recordRecallEvents() {
@@ -307,7 +307,7 @@ describe("agenr OpenClaw tools", () => {
         detectedIntent: "factual",
         queried: ["durables"],
       },
-      projectedEntries: [
+      projectedDurables: [
         expect.objectContaining({
           id: entry.id,
           memoryState: "current",
@@ -322,7 +322,7 @@ describe("agenr OpenClaw tools", () => {
     expect(expectTextContent(result.content[0])).toContain("preview_truncated=");
     expect(expectTextContent(result.content[0])).not.toContain("Structured Details");
     const recallDetails = result.details as { entries?: Array<Record<string, unknown>> };
-    expect(recallDetails.entries).toEqual([
+    expect(recallDetails.durables).toEqual([
       expect.objectContaining({
         id: entry.id,
         previewTruncated: expect.any(Boolean),
@@ -330,7 +330,7 @@ describe("agenr OpenClaw tools", () => {
         contentChars: entry.content.length,
       }),
     ]);
-    expect((recallDetails.entries as Array<Record<string, unknown>>)[0]).not.toHaveProperty("content");
+    expect((recallDetails.durables as Array<Record<string, unknown>>)[0]).not.toHaveProperty("content");
     expect(recordedRecallEvents).toBe(1);
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
@@ -372,7 +372,7 @@ describe("agenr OpenClaw tools", () => {
         async vectorSearch() {
           return [
             {
-              entry: {
+              durable: {
                 id: distractorEntry.id,
                 subject: distractorEntry.subject,
                 content: distractorEntry.content,
@@ -386,7 +386,7 @@ describe("agenr OpenClaw tools", () => {
               vectorSim: 0.87,
             },
             {
-              entry: {
+              durable: {
                 id: locationEntry.id,
                 subject: locationEntry.subject,
                 content: locationEntry.content,
@@ -404,7 +404,7 @@ describe("agenr OpenClaw tools", () => {
         async ftsSearch() {
           return [
             {
-              entry: {
+              durable: {
                 id: distractorEntry.id,
                 subject: distractorEntry.subject,
                 content: distractorEntry.content,
@@ -419,7 +419,7 @@ describe("agenr OpenClaw tools", () => {
               tier: "any_tokens",
             },
             {
-              entry: {
+              durable: {
                 id: locationEntry.id,
                 subject: locationEntry.subject,
                 content: locationEntry.content,
@@ -435,7 +435,7 @@ describe("agenr OpenClaw tools", () => {
             },
           ];
         },
-        async hydrateEntries(ids) {
+        async hydrateDurables(ids) {
           return [locationEntry, distractorEntry].filter((entry) => ids.includes(entry.id));
         },
         async recordRecallEvents() {
@@ -460,7 +460,7 @@ describe("agenr OpenClaw tools", () => {
         detectedIntent: "entity_attribute",
         queried: ["durables"],
       },
-      entries: [expect.objectContaining({ subject: "Jim Martin dad location" })],
+      durables: [expect.objectContaining({ subject: "Jim Martin dad location" })],
     });
     expect(expectTextContent(result.content[0])).toContain("Jim Martin dad location");
     expect(expectTextContent(result.content[0])).not.toContain("Jim Martin work email");
@@ -506,7 +506,7 @@ describe("agenr OpenClaw tools", () => {
           sourceId: "episode-session-1",
         }),
       ],
-      entries: [],
+      durables: [],
     });
     expect(expectTextContent(result.content[0])).toContain("Episode Matches");
     expect(expectTextContent(result.content[0])).toContain("episodic recall");
@@ -557,7 +557,7 @@ describe("agenr OpenClaw tools", () => {
         resolvedFrom: "2026-03-29",
       },
       episodes: [expect.objectContaining({ sourceId: "episode-session-2" })],
-      entries: [expect.objectContaining({ subject: "agenr episode recall" })],
+      durables: [expect.objectContaining({ subject: "agenr episode recall" })],
     });
     expect(expectTextContent(result.content[0])).toContain("Resolved Time Window");
     expect(expectTextContent(result.content[0])).toContain("Episode Matches");
@@ -695,7 +695,7 @@ describe("agenr OpenClaw tools", () => {
           whyMatched: "Semantic match to the episode summary.",
         }),
       ],
-      entries: [],
+      durables: [],
       notices: [expect.stringContaining("Episodes cover consolidated prior sessions only")],
     });
     expect(expectTextContent(result.content[0])).toContain("Episode Matches");
@@ -779,7 +779,7 @@ describe("agenr OpenClaw tools", () => {
       content: "Jim lives in Austin, Texas.",
       claimKey: "jim/home_city",
     });
-    const original = await createMemoryRepository(database).findEntryBySubject("Jim home city");
+    const original = await createMemoryRepository(database).findDurableBySubject("Jim home city");
 
     const replacementResult = await storeTool.execute("tool-14", {
       type: "fact",
@@ -789,7 +789,7 @@ describe("agenr OpenClaw tools", () => {
       claimKey: "jim/home_city",
       validFrom: "2026-03-30T00:00:00.000Z",
     });
-    const replacementEntryId = (replacementResult.details as { entryId?: string }).entryId ?? "";
+    const replacementEntryId = (replacementResult.details as { durableId?: string }).durableId ?? "";
     const replacementEntry = await database.getDurable(replacementEntryId);
 
     expect(replacementResult.details).toMatchObject({
@@ -825,16 +825,16 @@ describe("agenr OpenClaw tools", () => {
       subject: "Jim timezone",
       content: "Jim's timezone is America/Chicago.",
     });
-    const storedEntry = await createMemoryRepository(database).findEntryBySubject("Jim timezone");
+    const storedDurable = await createMemoryRepository(database).findDurableBySubject("Jim timezone");
 
     const updateResult = await updateTool.execute("tool-17", {
-      id: storedEntry?.id,
+      id: storedDurable?.id,
       claimKey: " Jim / Timezone ",
       validFrom: "2027-03-01T00:00:00.000Z",
       validTo: "2027-03-31T00:00:00.000Z",
       project: "agenr",
     });
-    const updatedEntry = await database.getDurable(storedEntry?.id ?? "");
+    const updatedEntry = await database.getDurable(storedDurable?.id ?? "");
 
     expect(updateResult.details).toMatchObject({
       status: "updated",
@@ -877,10 +877,10 @@ describe("agenr OpenClaw tools", () => {
       subject: "Jim timezone",
       content: "Jim's timezone is America/Chicago.",
     });
-    const storedEntry = await createMemoryRepository(database).findEntryBySubject("Jim timezone");
+    const storedDurable = await createMemoryRepository(database).findDurableBySubject("Jim timezone");
 
     const updateResult = await updateTool.execute("tool-17-invalid-update", {
-      id: storedEntry?.id,
+      id: storedDurable?.id,
       claimKey: "invalid",
     });
 
@@ -904,10 +904,10 @@ describe("agenr OpenClaw tools", () => {
       content: "Jim's timezone is America/Chicago.",
       validTo: "2027-03-31T00:00:00.000Z",
     });
-    const storedEntry = await createMemoryRepository(database).findEntryBySubject("Jim timezone");
+    const storedDurable = await createMemoryRepository(database).findDurableBySubject("Jim timezone");
 
     const updateResult = await updateTool.execute("tool-17b", {
-      id: storedEntry?.id,
+      id: storedDurable?.id,
       validFrom: "2027-04-01T00:00:00.000Z",
     });
 
@@ -959,13 +959,13 @@ describe("agenr OpenClaw tools", () => {
       subject: "Jim timezone",
       content: "Jim's timezone is America/Chicago.",
     });
-    const storedEntry = await createMemoryRepository(database).findEntryBySubject("Jim timezone");
+    const storedDurable = await createMemoryRepository(database).findDurableBySubject("Jim timezone");
 
     expect(result.details).toMatchObject({
       status: "stored",
       subject: "Jim timezone",
     });
-    expect(storedEntry).toMatchObject({
+    expect(storedDurable).toMatchObject({
       claim_key: "jim/timezone",
     });
     expect(resolveApiKeyForProvider).toHaveBeenCalledWith({
@@ -992,7 +992,7 @@ function createDatabaseBackedServices(database: SqlDatabase): AgenrOpenClawServi
       async ftsSearch() {
         return [];
       },
-      async hydrateEntries() {
+      async hydrateDurables() {
         return [];
       },
       async recordRecallEvents() {
@@ -1027,7 +1027,7 @@ function createServices(
     },
     pluginConfig: {},
     agenrConfig: {},
-    entries: database,
+    durables: database,
     episodes: database,
     procedures: database,
     memory: createMemoryRepository(database),
@@ -1121,7 +1121,7 @@ function createVectorRecallPorts(entries: Durable[]): RecallPorts {
     },
     async vectorSearch() {
       return entries.map((entry, index) => ({
-        entry: {
+        durable: {
           id: entry.id,
           subject: entry.subject,
           content: entry.content,
@@ -1137,7 +1137,7 @@ function createVectorRecallPorts(entries: Durable[]): RecallPorts {
     async ftsSearch() {
       return [];
     },
-    async hydrateEntries(ids) {
+    async hydrateDurables(ids) {
       return entries.filter((entry) => ids.includes(entry.id));
     },
     async recordRecallEvents() {
@@ -1156,7 +1156,7 @@ function createExactRecallPorts(entries: Durable[]): RecallPorts {
     },
     async ftsSearch() {
       return entries.map((entry) => ({
-        entry: {
+        durable: {
           id: entry.id,
           subject: entry.subject,
           content: entry.content,
@@ -1170,7 +1170,7 @@ function createExactRecallPorts(entries: Durable[]): RecallPorts {
         tier: "exact" as const,
       }));
     },
-    async hydrateEntries(ids) {
+    async hydrateDurables(ids) {
       return entries.filter((entry) => ids.includes(entry.id));
     },
     async recordRecallEvents() {

@@ -55,7 +55,7 @@ const BLOCKED_SUBJECTS = new Set([
  * Parsed extraction response with accepted entries and validation warnings.
  */
 export interface ExtractionResponse {
-  entries: StoreDurableInput[];
+  durables: StoreDurableInput[];
   warnings: string[];
 }
 
@@ -77,27 +77,27 @@ export function parseExtractionResponse(raw: unknown): ExtractionResponse {
 
   if (!payload) {
     return {
-      entries: [],
+      durables: [],
       warnings: ["Extraction response was not a valid JSON object."],
     };
   }
 
   if (!Array.isArray(payload.durables)) {
     return {
-      entries: [],
+      durables: [],
       warnings: ['Extraction response must have a "durables" array.'],
     };
   }
 
-  const entries: StoreDurableInput[] = [];
+  const durables: StoreDurableInput[] = [];
   for (const [index, value] of payload.durables.entries()) {
     const entry = parseEntry(value, index, warnings);
     if (entry) {
-      entries.push(entry);
+      durables.push(entry);
     }
   }
 
-  return { entries, warnings };
+  return { durables, warnings };
 }
 
 /** Coerces a raw extraction payload into an object wrapper. */
@@ -167,11 +167,11 @@ function parseEntry(value: unknown, index: number, warnings: string[]): StoreDur
 
   if (type === "directive") {
     if (!directivePolarity) {
-      warnings.push(`Dropped entry ${index + 1}: directive entries require directive_polarity.`);
+      warnings.push(`Dropped entry ${index + 1}: directive durables require directive_polarity.`);
       return null;
     }
     if (!claimKey?.claimKey.startsWith(MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX)) {
-      warnings.push(`Dropped entry ${index + 1}: directive entries require claim_key prefix ${MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX}.`);
+      warnings.push(`Dropped entry ${index + 1}: directive durables require claim_key prefix ${MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX}.`);
       return null;
     }
   }
@@ -194,7 +194,7 @@ function parseEntry(value: unknown, index: number, warnings: string[]): StoreDur
   };
 }
 
-/** Maps raw type values into supported store entry types. */
+/** Maps raw type values into supported store durable types. */
 function coerceType(value: unknown): StoreDurableInput["type"] | null {
   if (typeof value !== "string") {
     return null;
@@ -237,7 +237,7 @@ function coerceExpiry(value: unknown, type: StoreDurableInput["type"], index: nu
   }
 
   if (normalized === "core" && type !== "directive") {
-    warnings.push(`Entry ${index + 1}: expiry "core" is reserved and was changed to "temporary".`);
+    warnings.push(`Durable ${index + 1}: expiry "core" is reserved and was changed to "temporary".`);
     return "temporary";
   }
 
@@ -251,7 +251,7 @@ function coerceDirectivePolarity(value: unknown, type: StoreDurableInput["type"]
   }
 
   if (typeof value !== "string") {
-    warnings.push(`Entry ${index + 1}: directive_polarity is required for directive entries.`);
+    warnings.push(`Durable ${index + 1}: directive_polarity is required for directive durables.`);
     return undefined;
   }
 
@@ -260,7 +260,7 @@ function coerceDirectivePolarity(value: unknown, type: StoreDurableInput["type"]
     return normalized;
   }
 
-  warnings.push(`Entry ${index + 1}: dropped invalid directive_polarity ${JSON.stringify(value)}.`);
+  warnings.push(`Durable ${index + 1}: dropped invalid directive_polarity ${JSON.stringify(value)}.`);
   return undefined;
 }
 
@@ -289,7 +289,7 @@ function coerceDirectiveTrigger(
     return `topic:${normalizeWhitespace(normalized.slice("topic:".length))}`;
   }
 
-  warnings.push(`Entry ${index + 1}: dropped invalid directive_trigger ${JSON.stringify(value)}.`);
+  warnings.push(`Durable ${index + 1}: dropped invalid directive_trigger ${JSON.stringify(value)}.`);
   return undefined;
 }
 
@@ -349,7 +349,7 @@ function coerceClaimKey(value: unknown, type: StoreDurableInput["type"], index: 
       };
     }
 
-    warnings.push(`Entry ${index + 1}: dropped directive claim_key ${JSON.stringify(value)} because it must use ${MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX}<name>.`);
+    warnings.push(`Durable ${index + 1}: dropped directive claim_key ${JSON.stringify(value)} because it must use ${MEMORY_DIRECTIVE_CLAIM_KEY_PREFIX}<name>.`);
     return undefined;
   }
 
@@ -361,7 +361,7 @@ function coerceClaimKey(value: unknown, type: StoreDurableInput["type"], index: 
     };
   }
 
-  warnings.push(`Entry ${index + 1}: dropped claim_key ${JSON.stringify(value)} because ${describeClaimKeyNormalizationFailure(normalized.reason)}.`);
+  warnings.push(`Durable ${index + 1}: dropped claim_key ${JSON.stringify(value)} because ${describeClaimKeyNormalizationFailure(normalized.reason)}.`);
   return undefined;
 }
 

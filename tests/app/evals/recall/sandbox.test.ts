@@ -107,7 +107,7 @@ describe("setupRecallEvalSandbox", () => {
 
     try {
       await sandbox.fixtureStore.insertDurable(
-        buildEntryFixture("overlay-fact-1", "Overlay fixture content."),
+        buildDurableFixture("overlay-fact-1", "Overlay fixture content."),
         deterministicVector("overlay-fact-1", 1024),
         contentHashOf("overlay-fact-1"),
       );
@@ -183,10 +183,10 @@ describe("setupRecallEvalSandbox", () => {
 });
 
 /** Seeds a single-entry source database that can be copied into a sandbox. */
-async function seedSnapshotDatabase(dbPath: string, entry: Durable): Promise<void> {
+async function seedSnapshotDatabase(dbPath: string, durable: Durable): Promise<void> {
   const database = await createDatabase(dbPath);
   try {
-    await database.insertDurable(entry, deterministicVector(entry.id, 1024), contentHashOf(entry.id));
+    await database.insertDurable(durable, deterministicVector(durable.id, 1024), contentHashOf(durable.id));
     // Collapse the WAL into the main database file so the snapshot copy
     // sees every seeded row. Without this, libSQL would leave recently
     // written rows in the `-wal` companion file and copyFile would
@@ -199,11 +199,11 @@ async function seedSnapshotDatabase(dbPath: string, entry: Durable): Promise<voi
 
 /** Builds an entry payload and returns it as one parameter for inline seeding. */
 function seedEntryFixture(id: string, content: string): Durable {
-  return buildEntryFixture(id, content);
+  return buildDurableFixture(id, content);
 }
 
 /** Builds a canonical Entry payload for deterministic test fixtures. */
-function buildEntryFixture(id: string, content: string): Durable {
+function buildDurableFixture(id: string, content: string): Durable {
   return {
     id,
     type: "fact",

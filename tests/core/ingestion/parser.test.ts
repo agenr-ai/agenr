@@ -20,7 +20,7 @@ describe("parseExtractionResponse", () => {
     });
 
     expect(result).toEqual({
-      entries: [
+      durables: [
         {
           type: "fact",
           subject: "agenr knowledge database",
@@ -54,7 +54,7 @@ describe("parseExtractionResponse", () => {
       ],
     });
 
-    expect(result.entries).toEqual([
+    expect(result.durables).toEqual([
       {
         type: "decision",
         subject: "project policy",
@@ -72,7 +72,7 @@ describe("parseExtractionResponse", () => {
 
   it("returns an empty array for an empty entries list", () => {
     expect(parseExtractionResponse({ durables: [] })).toEqual({
-      entries: [],
+      durables: [],
       warnings: [],
     });
   });
@@ -104,7 +104,7 @@ describe("parseExtractionResponse", () => {
       ],
     });
 
-    expect(result.entries.map((entry) => entry.type)).toEqual(["fact", "decision", "milestone"]);
+    expect(result.durables.map((entry) => entry.type)).toEqual(["fact", "decision", "milestone"]);
   });
 
   it("rejects removed task aliases", () => {
@@ -120,7 +120,7 @@ describe("parseExtractionResponse", () => {
       ],
     });
 
-    expect(result.entries).toEqual([]);
+    expect(result.durables).toEqual([]);
     expect(result.warnings[0]).toMatch(/invalid type/i);
   });
 
@@ -151,7 +151,7 @@ describe("parseExtractionResponse", () => {
       ],
     });
 
-    expect(result.entries.map((entry) => entry.importance)).toEqual([8, 6, 4]);
+    expect(result.durables.map((entry) => entry.importance)).toEqual([8, 6, 4]);
   });
 
   it("defaults unrecognized importance strings to 6 and preserves valid numeric values", () => {
@@ -174,7 +174,7 @@ describe("parseExtractionResponse", () => {
       ],
     });
 
-    expect(result.entries.map((entry) => entry.importance)).toEqual([6, 9]);
+    expect(result.durables.map((entry) => entry.importance)).toEqual([6, 9]);
   });
 
   it("coerces expiry aliases", () => {
@@ -197,7 +197,7 @@ describe("parseExtractionResponse", () => {
       ],
     });
 
-    expect(result.entries.map((entry) => entry.expiry)).toEqual(["permanent", "temporary"]);
+    expect(result.durables.map((entry) => entry.expiry)).toEqual(["permanent", "temporary"]);
   });
 
   it('rejects "core" expiry from extraction and falls back to temporary', () => {
@@ -213,8 +213,8 @@ describe("parseExtractionResponse", () => {
       ],
     });
 
-    expect(result.entries[0]?.expiry).toBe("temporary");
-    expect(result.warnings).toContain('Entry 1: expiry "core" is reserved and was changed to "temporary".');
+    expect(result.durables[0]?.expiry).toBe("temporary");
+    expect(result.warnings).toContain('Durable 1: expiry "core" is reserved and was changed to "temporary".');
   });
 
   it("accepts directive entries with core expiry and directive metadata", () => {
@@ -233,7 +233,7 @@ describe("parseExtractionResponse", () => {
       ],
     });
 
-    expect(result.entries).toMatchObject([
+    expect(result.durables).toMatchObject([
       {
         type: "directive",
         expiry: "core",
@@ -258,7 +258,7 @@ describe("parseExtractionResponse", () => {
       ],
     });
 
-    expect(result.entries).toEqual([]);
+    expect(result.durables).toEqual([]);
     expect(result.warnings[0]).toMatch(/subject "user" is blocked/i);
   });
 
@@ -275,7 +275,7 @@ describe("parseExtractionResponse", () => {
       ],
     });
 
-    expect(result.entries).toEqual([]);
+    expect(result.durables).toEqual([]);
     expect(result.warnings[0]).toMatch(/content is required/i);
   });
 
@@ -292,7 +292,7 @@ describe("parseExtractionResponse", () => {
       ],
     });
 
-    expect(result.entries).toEqual([]);
+    expect(result.durables).toEqual([]);
     expect(result.warnings[0]).toMatch(/at least 20 characters/i);
   });
 
@@ -310,7 +310,7 @@ describe("parseExtractionResponse", () => {
       ],
     });
 
-    expect(result.entries[0]?.tags).toEqual(["one", "two", "three", "four"]);
+    expect(result.durables[0]?.tags).toEqual(["one", "two", "three", "four"]);
   });
 
   it("passes valid entries through while warning on invalid entries in the same batch", () => {
@@ -333,7 +333,7 @@ describe("parseExtractionResponse", () => {
       ],
     });
 
-    expect(result.entries).toHaveLength(1);
+    expect(result.durables).toHaveLength(1);
     expect(result.warnings[0]).toMatch(/invalid type/i);
   });
 
@@ -351,7 +351,7 @@ describe("parseExtractionResponse", () => {
       ],
     });
 
-    expect(result.entries[0]?.claim_key).toBeUndefined();
+    expect(result.durables[0]?.claim_key).toBeUndefined();
     expect(result.warnings[0]).toMatch(/dropped claim_key/i);
   });
 });

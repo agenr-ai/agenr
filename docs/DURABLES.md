@@ -345,7 +345,7 @@ If the embedding provider returns a different number of vectors than pending ent
 
 ### 7. Persistence and supersession
 
-`persistEntries()` writes the surviving prepared entries in order.
+`persistDurables()` writes the surviving prepared entries in order.
 
 Persistence behavior:
 

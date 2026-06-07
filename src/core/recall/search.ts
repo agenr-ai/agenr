@@ -14,7 +14,7 @@ import {
   type NeighborhoodFamily,
   seededRerank,
   selectStrongSeeds,
-  sharesEntryLineage,
+  sharesDurableLineage,
 } from "./neighborhood.js";
 import { cosineSimilarity, gaussianRecency, importanceScore, recencyScore, scoreCandidate } from "./scoring.js";
 import { inferAroundDate, parseRelativeDate } from "./temporal.js";
@@ -70,8 +70,8 @@ const HISTORICAL_TOPIC_PREFIX_OF_CANDIDATE_MIN = 0.6;
 const CLAIM_KEY_TENTATIVE_CURRENT_PENALTY = 0.08;
 const CLAIM_KEY_REDUNDANT_TRUSTED_SLOT_PENALTY = 0.05;
 const CLAIM_KEY_REDUNDANT_TRUSTED_SLOT_MAX_PENALTY = 0.15;
-const QUERY_EMBEDDING_FAILURE_NOTICE = "Embeddings failed during recall, so Agenr fell back to lexical-only entry ranking.";
-const VECTOR_SEARCH_FAILURE_NOTICE = "Vector search failed during recall, so Agenr continued with lexical entry candidates only.";
+const QUERY_EMBEDDING_FAILURE_NOTICE = "Embeddings failed during recall, so Agenr fell back to lexical-only durable ranking.";
+const VECTOR_SEARCH_FAILURE_NOTICE = "Vector search failed during recall, so Agenr continued with lexical durable candidates only.";
 const ENTITY_ATTRIBUTE_IDENTITY_WRAPPERS = new Set(["identity", "profile", "bio", "biography", "summary"]);
 const WEAK_QUERY_GROUNDING_TOKENS = new Set([
   "earlier",
@@ -205,7 +205,7 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
     });
     const neighborhoodEnabled = options.rankingPolicy?.neighborhood !== "disabled";
     const expansionRanks = neighborhoodEnabled
-      ? await expandEntryNeighborhood(mergeOutcome.merged, queryEmbedding, ports, {
+      ? await expandDurableNeighborhood(mergeOutcome.merged, queryEmbedding, ports, {
           rankingProfile: query.rankingProfile,
           neighborhoodTrace: summary.neighborhood,
         })
@@ -216,7 +216,7 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
     // When the caller disables RRF, fall back to single-channel vector ranking
     // (with a lexical fallback when the vector channel is empty) so evals can
     // isolate fusion effects without stripping channels from the pipeline.
-    const relevanceByEntryId = resolveEntryRelevance({
+    const relevanceByDurableId = resolveDurableRelevance({
       vectorRanks: mergeOutcome.vectorRanks,
       ftsRanks: mergeOutcome.ftsRanks,
       expansionRanks,
@@ -229,7 +229,7 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
     const scoreStartedAt = Date.now();
     const historicallyBoosted = applyHistoricalLineageBoosts(
       Array.from(mergeOutcome.merged.values()).map((candidate) =>
-        scoreMergedCandidate(candidate, text, queryEmbedding, relevanceByEntryId.get(candidate.entry.id) ?? 0, {
+        scoreMergedCandidate(candidate, text, queryEmbedding, relevanceByDurableId.get(candidate.durable.id) ?? 0, {
           asOfDate,
           aroundDate,
           aroundRadius: query.aroundRadius,
@@ -245,7 +245,7 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
       summary.claimKey,
       slotPolicyConfig,
     );
-    const rerankedCandidates = neighborhoodEnabled ? applySeededEntryRerank(historicallyBoosted, summary.neighborhood) : historicallyBoosted;
+    const rerankedCandidates = neighborhoodEnabled ? applySeededDurableRerank(historicallyBoosted, summary.neighborhood) : historicallyBoosted;
     const shaped = applyClaimKeyResultShaping(rerankedCandidates, summary.claimKey, nowMs, slotPolicyConfig).sort((left, right) => right.score - left.score);
     // MMR diversifies the final shortlist after claim-key shaping so trust
     // penalties and redundancy shaping still have the last word on which
@@ -256,7 +256,7 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
     // it observes the post-MMR ordering, and before thresholding so the
     // rerank-adjusted composite score is what decides admission to the
     // final result set. The helper fails closed on adapter errors.
-    const scored = await applyEntryCrossEncoderRerank(diversified, text, ports.crossEncoder, options.rankingPolicy, summary.crossEncoder);
+    const scored = await applyDurableCrossEncoderRerank(diversified, text, ports.crossEncoder, options.rankingPolicy, summary.crossEncoder);
     summary.timings.scoreCandidatesMs = elapsedMs(scoreStartedAt);
 
     const thresholdStartedAt = Date.now();
@@ -279,18 +279,18 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
       return [];
     }
 
-    const hydratedEntries = await ports.hydrateEntries(ranked.map((result) => result.entry.id));
+    const hydratedDurables = await ports.hydrateDurables(ranked.map((result) => result.durable.id));
     const shapeStartedAt = Date.now();
-    const hydratedById = new Map(hydratedEntries.map((entry) => [entry.id, entry]));
+    const hydratedById = new Map(hydratedDurables.map((durable) => [durable.id, durable]));
     const results = ranked.flatMap((result) => {
-      const entry = hydratedById.get(result.entry.id);
-      if (!entry) {
+      const durable = hydratedById.get(result.durable.id);
+      if (!durable) {
         return [];
       }
 
       return [
         {
-          entry,
+          durable,
           score: result.score,
           scores: result.scores,
         },
@@ -307,7 +307,7 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
     if (results.length > 0) {
       await ports
         .recordRecallEvents({
-          entryIds: results.map((result) => result.entry.id),
+          durableIds: results.map((result) => result.durable.id),
           query: text,
           sessionKey: query.sessionKey,
         })
@@ -502,10 +502,10 @@ function scoreMergedCandidate(
     now: Date;
   },
 ): RankedCandidate {
-  const vector = candidate.vectorSim ?? cosineSimilarity(candidate.entry.embedding ?? [], queryEmbedding);
-  const lexical = computeLexicalScore(queryText, candidate.entry.subject, candidate.entry.content);
-  const recency = resolveRecencyScore(candidate.entry, params);
-  const importance = importanceScore(candidate.entry.importance);
+  const vector = candidate.vectorSim ?? cosineSimilarity(candidate.durable.embedding ?? [], queryEmbedding);
+  const lexical = computeLexicalScore(queryText, candidate.durable.subject, candidate.durable.content);
+  const recency = resolveRecencyScore(candidate.durable, params);
+  const importance = importanceScore(candidate.durable.importance);
   const scored = scoreCandidate({
     relevance: rrfScore,
     vectorSim: vector,
@@ -515,7 +515,7 @@ function scoreMergedCandidate(
   });
 
   return {
-    entry: candidate.entry,
+    durable: candidate.durable,
     score: scored.score,
     scores: {
       ...scored.scores,
@@ -531,7 +531,7 @@ function scoreMergedCandidate(
 }
 
 /**
- * Resolve the fused relevance score per entry id for the current policy.
+ * Resolve the fused relevance score per durable id for the current policy.
  *
  * When RRF is enabled (the default), the three ordered channels (vector,
  * lexical FTS, and optional neighborhood expansion) are fused into a single
@@ -546,9 +546,9 @@ function scoreMergedCandidate(
  * the rest of the pipeline wants to see whether or not RRF actually ran.
  *
  * @param params - Per-channel ordered rank lists, policy overrides, and the mutable RRF trace branch.
- * @returns Map from entry id to normalized 0-1 relevance score.
+ * @returns Map from durable id to normalized 0-1 relevance score.
  */
-function resolveEntryRelevance(params: {
+function resolveDurableRelevance(params: {
   vectorRanks: readonly string[];
   ftsRanks: readonly string[];
   expansionRanks: readonly string[];
@@ -671,7 +671,7 @@ function resolveRrfRankConstant(policy: RecallRankingPolicy | undefined, fusedPo
  * @param params - Ranking profile plus mutable neighborhood trace branch.
  * @returns Rank-ordered expansion IDs for RRF, or an empty list when disabled.
  */
-async function expandEntryNeighborhood(
+async function expandDurableNeighborhood(
   mergedCandidates: Map<string, RecallMergedCandidate>,
   queryEmbedding: number[],
   ports: RecallPorts,
@@ -705,26 +705,26 @@ async function expandEntryNeighborhood(
   // query so the expansion channel contributes a meaningful order to
   // RRF rather than an arbitrary adapter sort.
   const ranked = expanded
-    .filter((entry) => !mergedCandidates.has(entry.id))
-    .map((entry) => ({
-      entry,
-      vectorSim: cosineSimilarity(entry.embedding ?? [], queryEmbedding),
+    .filter((durable) => !mergedCandidates.has(durable.id))
+    .map((durable) => ({
+      durable,
+      vectorSim: cosineSimilarity(durable.embedding ?? [], queryEmbedding),
     }))
-    .sort((left, right) => right.vectorSim - left.vectorSim || left.entry.id.localeCompare(right.entry.id));
+    .sort((left, right) => right.vectorSim - left.vectorSim || left.durable.id.localeCompare(right.durable.id));
 
   for (const candidate of ranked) {
-    mergedCandidates.set(candidate.entry.id, {
-      entry: candidate.entry,
+    mergedCandidates.set(candidate.durable.id, {
+      durable: candidate.durable,
       vectorSim: candidate.vectorSim,
     });
   }
 
   trace.expansionCandidates = ranked.length;
-  return ranked.map((candidate) => candidate.entry.id);
+  return ranked.map((candidate) => candidate.durable.id);
 }
 
 /**
- * Apply a bounded seeded rerank over entry candidates using lineage matches.
+ * Apply a bounded seeded rerank over durable candidates using lineage matches.
  *
  * The rerank runs after historical lineage boosts so the historical profile
  * can still produce its strongest signals before lineage proximity is
@@ -735,13 +735,13 @@ async function expandEntryNeighborhood(
  * @param trace - Mutable neighborhood trace branch for the execution.
  * @returns Candidates with seeded lineage rerank boosts applied.
  */
-function applySeededEntryRerank(candidates: RankedCandidate[], trace: RecallNeighborhoodTrace): RankedCandidate[] {
+function applySeededDurableRerank(candidates: RankedCandidate[], trace: RecallNeighborhoodTrace): RankedCandidate[] {
   if (candidates.length === 0) {
     return candidates;
   }
 
   const seeds = selectStrongSeeds(
-    candidates.map((candidate) => ({ id: candidate.entry.id, score: candidate.score, entry: candidate.entry })),
+    candidates.map((candidate) => ({ id: candidate.durable.id, score: candidate.score, durable: candidate.durable })),
     {
       topN: DEFAULT_STRONG_SEED_TOP_N,
       scoreGapFloor: DEFAULT_STRONG_SEED_SCORE_GAP,
@@ -753,18 +753,18 @@ function applySeededEntryRerank(candidates: RankedCandidate[], trace: RecallNeig
 
   trace.strongSeedIds = seeds.map((seed) => seed.id);
   const payloads = candidates.map((candidate) => ({
-    id: candidate.entry.id,
+    id: candidate.durable.id,
     score: candidate.score,
-    entry: candidate.entry,
+    durable: candidate.durable,
   }));
-  const reranked = seededRerank(payloads, seeds, (candidate, seed) => sharesEntryLineage(candidate.entry, seed.entry), {
+  const reranked = seededRerank(payloads, seeds, (candidate, seed) => sharesDurableLineage(candidate.durable, seed.durable), {
     weight: DEFAULT_SEEDED_RERANK_WEIGHT,
   });
   trace.rerankBoostedIds = reranked.boostedIds;
 
   const scoreById = new Map(reranked.candidates.map((candidate) => [candidate.id, candidate.score]));
   return candidates.map((candidate) => {
-    const nextScore = scoreById.get(candidate.entry.id) ?? candidate.score;
+    const nextScore = scoreById.get(candidate.durable.id) ?? candidate.score;
     const delta = nextScore - candidate.score;
     if (delta <= 0) {
       return candidate;
@@ -897,10 +897,10 @@ function applyHistoricalLineageBoosts(
     return candidates;
   }
 
-  const entries = candidates.map((candidate) => candidate.entry);
-  const scoresById = new Map(candidates.map((candidate) => [candidate.entry.id, candidate.score]));
+  const entries = candidates.map((candidate) => candidate.durable);
+  const scoresById = new Map(candidates.map((candidate) => [candidate.durable.id, candidate.score]));
   return candidates.map((candidate) => {
-    const decision = resolveHistoricalLineageBonus(candidate.entry, entries, scoresById, candidate.score, params.aroundDate, params.nowMs, slotPolicyConfig);
+    const decision = resolveHistoricalLineageBonus(candidate.durable, entries, scoresById, candidate.score, params.aroundDate, params.nowMs, slotPolicyConfig);
     if (decision.tentativeLineageSuppressed) {
       claimKeyTrace.tentativeLineageSuppressed += 1;
     }
@@ -1186,9 +1186,9 @@ function applyMmrDiversification(
   const reorder = maximalMarginalRelevance({
     queryVector: queryEmbedding,
     candidates: candidates.map((candidate) => ({
-      id: candidate.entry.id,
+      id: candidate.durable.id,
       relevance: candidate.score,
-      ...(candidate.entry.embedding ? { embedding: candidate.entry.embedding } : {}),
+      ...(candidate.durable.embedding ? { embedding: candidate.durable.embedding } : {}),
     })),
     lambda: resolveMmrLambda(policy),
     minPoolSize: resolveMmrMinPoolSize(policy),
@@ -1203,7 +1203,7 @@ function applyMmrDiversification(
     return candidates;
   }
 
-  const candidatesById = new Map(candidates.map((candidate) => [candidate.entry.id, candidate]));
+  const candidatesById = new Map(candidates.map((candidate) => [candidate.durable.id, candidate]));
   return reorder.orderedIds.flatMap((id) => {
     const candidate = candidatesById.get(id);
     return candidate ? [candidate] : [];
@@ -1212,7 +1212,7 @@ function applyMmrDiversification(
 
 /**
  * Apply the cross-encoder rerank stage over the top-K shortlist of
- * entry candidates. The helper fails closed on adapter errors and
+ * durable candidates. The helper fails closed on adapter errors and
  * records trace-visible facts for diagnostics, so the rerank can never
  * drop recall below its pre-rerank baseline.
  *
@@ -1230,7 +1230,7 @@ function applyMmrDiversification(
  * @param trace - Mutable cross-encoder trace branch for the execution.
  * @returns Candidates in their post-rerank order.
  */
-async function applyEntryCrossEncoderRerank(
+async function applyDurableCrossEncoderRerank(
   candidates: RankedCandidate[],
   query: string,
   crossEncoder: RecallPorts["crossEncoder"],
@@ -1240,8 +1240,8 @@ async function applyEntryCrossEncoderRerank(
   const result = await applyCrossEncoderRerank({
     query,
     candidates: candidates.map((candidate) => ({
-      id: candidate.entry.id,
-      text: buildCrossEncoderPassageText(candidate.entry),
+      id: candidate.durable.id,
+      text: buildCrossEncoderPassageText(candidate.durable),
       score: candidate.score,
       candidate,
     })),
@@ -1360,7 +1360,7 @@ function applyClaimKeyResultShaping(
 
   const trustedActiveClaimKeys = new Set(
     candidates
-      .map((candidate) => candidate.entry)
+      .map((candidate) => candidate.durable)
       .filter(
         (entry) =>
           isPotentialCurrentPeer(entry, nowMs) &&
@@ -1373,8 +1373,8 @@ function applyClaimKeyResultShaping(
   const trustedSlotRankById = rankTrustedSlotSiblings(candidates, nowMs, slotPolicyConfig);
 
   return candidates.map((candidate) => {
-    const trustPenalty = shouldPenalizeTentativeCurrentSibling(candidate.entry, trustedActiveClaimKeys, nowMs) ? CLAIM_KEY_TENTATIVE_CURRENT_PENALTY : 0;
-    const redundancyPenalty = resolveTrustedSlotRedundancyPenalty(candidate.entry.id, trustedSlotRankById);
+    const trustPenalty = shouldPenalizeTentativeCurrentSibling(candidate.durable, trustedActiveClaimKeys, nowMs) ? CLAIM_KEY_TENTATIVE_CURRENT_PENALTY : 0;
+    const redundancyPenalty = resolveTrustedSlotRedundancyPenalty(candidate.durable.id, trustedSlotRankById);
     if (trustPenalty <= 0 && redundancyPenalty <= 0) {
       return candidate;
     }
@@ -1411,15 +1411,15 @@ function rankTrustedSlotSiblings(
   nowMs: number,
   slotPolicyConfig?: RecallExecutionOptions["slotPolicyConfig"],
 ): Map<string, number> {
-  const candidatesById = new Map(candidates.map((candidate) => [candidate.entry.id, candidate]));
+  const candidatesById = new Map(candidates.map((candidate) => [candidate.durable.id, candidate]));
   const trustedByClaimKey = new Map<string, RankedCandidate[]>();
 
   for (const candidate of candidates) {
-    const claimKey = candidate.entry.claim_key;
+    const claimKey = candidate.durable.claim_key;
     if (
       !claimKey ||
-      candidate.entry.claim_key_status !== "trusted" ||
-      !isPotentialCurrentPeer(candidate.entry, nowMs) ||
+      candidate.durable.claim_key_status !== "trusted" ||
+      !isPotentialCurrentPeer(candidate.durable, nowMs) ||
       resolveClaimSlotPolicy(claimKey, slotPolicyConfig).policy !== "exclusive"
     ) {
       continue;
@@ -1436,8 +1436,8 @@ function rankTrustedSlotSiblings(
       .slice()
       .sort(compareCandidatesForTrustedSlotRank)
       .forEach((candidate, index) => {
-        if (candidatesById.has(candidate.entry.id)) {
-          ranks.set(candidate.entry.id, index);
+        if (candidatesById.has(candidate.durable.id)) {
+          ranks.set(candidate.durable.id, index);
         }
       });
   }
@@ -1453,7 +1453,9 @@ function rankTrustedSlotSiblings(
  * @returns Negative when the left candidate should remain ahead.
  */
 function compareCandidatesForTrustedSlotRank(left: RankedCandidate, right: RankedCandidate): number {
-  return right.score - left.score || createdAtMs(right.entry.created_at) - createdAtMs(left.entry.created_at) || left.entry.id.localeCompare(right.entry.id);
+  return (
+    right.score - left.score || createdAtMs(right.durable.created_at) - createdAtMs(left.durable.created_at) || left.durable.id.localeCompare(right.durable.id)
+  );
 }
 
 /**
@@ -1473,12 +1475,12 @@ function shouldPenalizeTentativeCurrentSibling(entry: RecallCandidateDurable, tr
 /**
  * Resolve the redundancy penalty for one trusted active slot sibling.
  *
- * @param entryId - Candidate identifier.
+ * @param durableId - Candidate identifier.
  * @param trustedSlotRankById - Rank of each trusted active sibling within its slot.
  * @returns Penalty to subtract from the score.
  */
-function resolveTrustedSlotRedundancyPenalty(entryId: string, trustedSlotRankById: Map<string, number>): number {
-  const rank = trustedSlotRankById.get(entryId) ?? 0;
+function resolveTrustedSlotRedundancyPenalty(durableId: string, trustedSlotRankById: Map<string, number>): number {
+  const rank = trustedSlotRankById.get(durableId) ?? 0;
   if (rank <= 0) {
     return 0;
   }
@@ -1503,10 +1505,10 @@ function clampRecallScore(value: number): number {
  */
 function hasSufficientReturnEvidence(candidate: RankedCandidate, query: RecallInput): boolean {
   if (query.rankingProfile === "entity_attribute") {
-    return hasEntityAttributeEvidence(candidate.entry, query.queryShape);
+    return hasEntityAttributeEvidence(candidate.durable, query.queryShape);
   }
 
-  const groundedLexicalSupport = hasGroundedLexicalSupport(candidate.entry, query.text);
+  const groundedLexicalSupport = hasGroundedLexicalSupport(candidate.durable, query.text);
   if (candidate.scores.lexical > 0) {
     if (groundedLexicalSupport) {
       return true;
@@ -1647,10 +1649,10 @@ function normalizeEntityAttributeText(text: string): string {
 }
 
 /**
- * Merge vector and FTS candidate sets into a unique entry-id keyed map and
+ * Merge vector and FTS candidate sets into a unique durable-id keyed map and
  * preserve the per-channel rank lists needed by reciprocal rank fusion.
  *
- * Vector similarity is preserved when an entry appears in both retrieval
+ * Vector similarity is preserved when a durable appears in both retrieval
  * paths. The returned rank lists are ordered most-relevant first and mirror
  * the order produced by the retrieval adapters so RRF can treat channel
  * position as the rank signal for each candidate.
@@ -1665,25 +1667,25 @@ function mergeCandidates(vectorCandidates: VectorCandidate[], ftsCandidates: Fts
   const ftsRanks: string[] = [];
 
   for (const candidate of vectorCandidates) {
-    if (!merged.has(candidate.entry.id)) {
-      vectorRanks.push(candidate.entry.id);
+    if (!merged.has(candidate.durable.id)) {
+      vectorRanks.push(candidate.durable.id);
     }
-    merged.set(candidate.entry.id, {
-      entry: candidate.entry,
+    merged.set(candidate.durable.id, {
+      durable: candidate.durable,
       vectorSim: candidate.vectorSim,
     });
   }
 
   for (const candidate of ftsCandidates) {
-    ftsRanks.push(candidate.entry.id);
-    const existing = merged.get(candidate.entry.id);
+    ftsRanks.push(candidate.durable.id);
+    const existing = merged.get(candidate.durable.id);
     if (existing) {
-      existing.entry = existing.entry.embedding ? existing.entry : candidate.entry;
+      existing.durable = existing.durable.embedding ? existing.durable : candidate.durable;
       continue;
     }
 
-    merged.set(candidate.entry.id, {
-      entry: candidate.entry,
+    merged.set(candidate.durable.id, {
+      durable: candidate.durable,
     });
   }
 
@@ -1695,7 +1697,7 @@ function mergeCandidates(vectorCandidates: VectorCandidate[], ftsCandidates: Fts
 }
 
 /**
- * Build SQL-pushable entry filters from parsed recall query parameters.
+ * Build SQL-pushable durable filters from parsed recall query parameters.
  *
  * @param types - Optional type filter list.
  * @param tags - Optional tag filter list.
@@ -1760,10 +1762,10 @@ function applyBudget(results: RankedCandidate[], budget: number): RankedCandidat
   }
 
   const accepted: RankedCandidate[] = [results[0]!];
-  let consumed = estimateTokens(results[0]!.entry);
+  let consumed = estimateTokens(results[0]!.durable);
 
   for (const result of results.slice(1)) {
-    const estimate = estimateTokens(result.entry);
+    const estimate = estimateTokens(result.durable);
     if (consumed + estimate > budget) {
       continue;
     }
@@ -1799,7 +1801,7 @@ function sortAcceptedCandidates(candidates: RankedCandidate[], queryText: string
     .map((candidate, index) => ({
       candidate,
       index,
-      grounding: computeGroundingSupport(candidate.entry, groundingTokens),
+      grounding: computeGroundingSupport(candidate.durable, groundingTokens),
     }))
     .sort((left, right) => {
       const scoreGap = Math.abs(left.candidate.score - right.candidate.score);
@@ -2102,10 +2104,10 @@ function elapsedMs(startedAt: number): number {
 }
 
 /**
- * Ranked candidate shape before the final full-entry hydration step.
+ * Ranked candidate shape before the final full-durable hydration step.
  */
 interface RankedCandidate {
-  entry: RecallCandidateDurable;
+  durable: RecallCandidateDurable;
   score: number;
   scores: RecallOutput["scores"];
 }

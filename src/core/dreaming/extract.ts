@@ -33,7 +33,7 @@ export async function extractFromEpisodeSummary(
 ): Promise<ExtractionResult> {
   if (transcript.messages.length === 0) {
     return {
-      entries: [],
+      durables: [],
       chunks: 0,
       successfulChunks: 0,
       failedChunks: 0,
@@ -57,13 +57,13 @@ export async function extractFromEpisodeSummary(
       );
       const parsed = parseExtractionResponse(raw);
       if (observedAt) {
-        for (const entry of parsed.entries) {
+        for (const entry of parsed.durables) {
           entry.created_at = observedAt;
         }
       }
 
       return {
-        entries: parsed.entries,
+        durables: parsed.durables,
         chunks: 1,
         successfulChunks: 1,
         failedChunks: 0,
@@ -73,7 +73,7 @@ export async function extractFromEpisodeSummary(
     } catch {
       if (attempt === MAX_ATTEMPTS) {
         return {
-          entries: [],
+          durables: [],
           chunks: 1,
           successfulChunks: 0,
           failedChunks: 1,
@@ -87,7 +87,7 @@ export async function extractFromEpisodeSummary(
   }
 
   return {
-    entries: [],
+    durables: [],
     chunks: 1,
     successfulChunks: 0,
     failedChunks: 1,

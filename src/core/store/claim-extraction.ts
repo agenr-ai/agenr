@@ -92,7 +92,7 @@ interface ClaimExtractionHintState {
 
 /** Immutable request bundle for one ordered batch extraction attempt. */
 interface ClaimExtractionStageRequest {
-  entry: StoreDurableInput;
+  durable: StoreDurableInput;
   hintSnapshot: {
     hints: ClaimExtractionHints;
     supportClaimKeys: string[];
@@ -102,7 +102,7 @@ interface ClaimExtractionStageRequest {
 
 /** Completed decision paired back to the source entry. */
 interface ClaimExtractionStageDecision {
-  entry: StoreDurableInput;
+  durable: StoreDurableInput;
   decision: ClaimExtractionDecision;
 }
 
@@ -134,17 +134,17 @@ export interface ClaimExtractionConfig {
 }
 
 /**
- * Structured progress emitted while batch claim extraction evaluates eligible entries.
+ * Structured progress emitted while batch claim extraction evaluates eligible durables.
  */
 export interface ClaimExtractionProgressEvent {
   /** Current extraction phase. */
   phase: "primary" | "retry";
-  /** Number of entries completed in the current phase. */
-  completedEntries: number;
-  /** Total number of entries scheduled in the current phase. */
-  totalEntries: number;
-  /** Total number of primary-pass eligible entries in the batch. */
-  totalEligibleEntries: number;
+  /** Number of durables completed in the current phase. */
+  completedDurables: number;
+  /** Total number of durables scheduled in the current phase. */
+  totalDurables: number;
+  /** Total number of primary-pass eligible durables in the batch. */
+  totalEligibleDurables: number;
 }
 
 /**
@@ -234,7 +234,7 @@ export interface ClaimExtractionDecision {
 }
 
 /** Applies extracted lifecycle metadata directly onto a store input for callers that precompute claim extraction before store. */
-export function applyClaimExtractionResultToEntry(entry: StoreDurableInput, extracted: ClaimExtractionResult): void {
+export function applyClaimExtractionResultToDurable(entry: StoreDurableInput, extracted: ClaimExtractionResult): void {
   const lifecycle = buildExtractedClaimKeyLifecycle(extracted, buildInferredIngestClaimKeySupportContext(entry));
   if (!lifecycle) {
     return;
@@ -317,7 +317,7 @@ export async function previewClaimKeyExtraction(
 }
 
 /**
- * Extracts one normalized claim key for a durable entry when the slot is clear.
+ * Extracts one normalized claim key for a durable when the slot is clear.
  *
  * @param entry - Candidate entry content to classify.
  * @param llm - LLM port used for JSON classification.
@@ -563,7 +563,7 @@ export async function getEntityHints(db: DatabasePort): Promise<string[]> {
  * @param onDiagnostic - Optional sink for structured per-entry routing diagnostics.
  */
 export async function runBatchClaimExtraction(
-  results: Array<{ entries: StoreDurableInput[] }>,
+  results: Array<{ durables: StoreDurableInput[] }>,
   ports: {
     createLlm: () => LlmPort;
     db: DatabasePort;
@@ -584,8 +584,8 @@ export async function runBatchClaimExtraction(
   const diagnostics = new Map<StoreDurableInput, ClaimExtractionDiagnostic>();
   const retryEntries: StoreDurableInput[] = [];
   const stageSize = normalizeClaimExtractionConcurrency(concurrency);
-  const orderedEntries = results.flatMap((result) => result.entries);
-  const totalEligibleEntries = orderedEntries.filter((entry) => !entry.claim_key && config.eligibleTypes.includes(entry.type)).length;
+  const orderedEntries = results.flatMap((result) => result.durables);
+  const totalEligibleDurables = orderedEntries.filter((entry) => !entry.claim_key && config.eligibleTypes.includes(entry.type)).length;
   let completedPrimaryEntries = 0;
 
   // Commit accepted hints after each bounded stage so later stages and retries
@@ -615,7 +615,7 @@ export async function runBatchClaimExtraction(
       }
 
       stageRequests.push({
-        entry,
+        durable: entry,
         hintSnapshot: buildClaimExtractionHintSnapshot(hintState, entry),
       });
     }
@@ -626,28 +626,28 @@ export async function runBatchClaimExtraction(
       config,
       onWarning,
       completedPrimaryEntries,
-      totalEligibleEntries,
-      (completedEntries, totalEntries) => {
-        completedPrimaryEntries = completedEntries;
+      totalEligibleDurables,
+      (completedDurables, totalDurables) => {
+        completedPrimaryEntries = completedDurables;
         onProgress?.({
           phase: "primary",
-          completedEntries,
-          totalEntries,
-          totalEligibleEntries,
+          completedDurables,
+          totalDurables,
+          totalEligibleDurables,
         });
       },
     );
-    for (const { entry, decision } of stageDecisions) {
-      diagnostics.set(entry, decision.diagnostic);
+    for (const { durable, decision } of stageDecisions) {
+      diagnostics.set(durable, decision.diagnostic);
 
       if (decision.result?.claimKey) {
-        applyClaimExtractionResultToEntry(entry, decision.result);
+        applyClaimExtractionResultToDurable(durable, decision.result);
         recordClaimKeyHint(hintState, decision.result.claimKey);
-        extractedEntries.set(entry, decision.result);
+        extractedEntries.set(durable, decision.result);
         continue;
       }
 
-      retryEntries.push(entry);
+      retryEntries.push(durable);
     }
   }
 
@@ -658,7 +658,7 @@ export async function runBatchClaimExtraction(
 
     for (let stageStart = 0; stageStart < retryEligibleEntries.length; stageStart += stageSize) {
       const stageRequests = retryEligibleEntries.slice(stageStart, stageStart + stageSize).map((entry) => ({
-        entry,
+        durable: entry,
         hintSnapshot: buildClaimExtractionHintSnapshot(hintState, entry),
       }));
       const stageDecisions = await executeClaimExtractionStageRequests(
@@ -668,33 +668,33 @@ export async function runBatchClaimExtraction(
         onWarning,
         completedRetryEntries,
         totalRetryEntries,
-        (completedEntries, totalEntries) => {
-          completedRetryEntries = completedEntries;
+        (completedDurables, totalDurables) => {
+          completedRetryEntries = completedDurables;
           onProgress?.({
             phase: "retry",
-            completedEntries,
-            totalEntries,
-            totalEligibleEntries,
+            completedDurables,
+            totalDurables,
+            totalEligibleDurables,
           });
         },
       );
 
-      for (const { entry, decision } of stageDecisions) {
-        diagnostics.set(entry, decision.diagnostic);
+      for (const { durable, decision } of stageDecisions) {
+        diagnostics.set(durable, decision.diagnostic);
 
         if (!decision.result?.claimKey) {
           continue;
         }
 
-        applyClaimExtractionResultToEntry(entry, decision.result);
+        applyClaimExtractionResultToDurable(durable, decision.result);
         recordClaimKeyHint(hintState, decision.result.claimKey);
-        extractedEntries.set(entry, decision.result);
+        extractedEntries.set(durable, decision.result);
       }
     }
   }
 
   for (const result of results) {
-    for (const entry of result.entries) {
+    for (const entry of result.durables) {
       const diagnostic = diagnostics.get(entry);
       if (diagnostic) {
         onDiagnostic?.(entry, diagnostic);
@@ -713,7 +713,7 @@ export async function runBatchClaimExtraction(
  * @param config - Runtime extraction controls.
  * @param onWarning - Optional warning sink.
  * @param initialCompletedEntries - Completed count carried into this stage.
- * @param totalEntries - Total entries scheduled in the current phase.
+ * @param totalDurables - Total durables scheduled in the current phase.
  * @param onProgress - Progress sink for each completed stage request.
  * @returns Ordered extraction decisions aligned to the supplied requests.
  */
@@ -723,18 +723,18 @@ async function executeClaimExtractionStageRequests(
   config: ClaimExtractionConfig,
   onWarning: ((warning: string) => void) | undefined,
   initialCompletedEntries: number,
-  totalEntries: number,
-  onProgress: (completedEntries: number, totalEntries: number) => void,
+  totalDurables: number,
+  onProgress: (completedDurables: number, totalDurables: number) => void,
 ): Promise<ClaimExtractionStageDecision[]> {
-  let completedEntries = initialCompletedEntries;
+  let completedDurables = initialCompletedEntries;
 
   return Promise.all(
-    stageRequests.map(async ({ entry, hintSnapshot }) => {
-      const decision = await extractBatchClaimKeyDecision(entry, llm, config, hintSnapshot, onWarning);
-      completedEntries += 1;
-      onProgress(completedEntries, totalEntries);
+    stageRequests.map(async ({ durable, hintSnapshot }) => {
+      const decision = await extractBatchClaimKeyDecision(durable, llm, config, hintSnapshot, onWarning);
+      completedDurables += 1;
+      onProgress(completedDurables, totalDurables);
       return {
-        entry,
+        durable,
         decision,
       };
     }),
@@ -771,7 +771,7 @@ function buildClaimExtractionHintSnapshot(
   entityPrefixStats: ClaimKeyEntityPrefixStats[];
 } {
   return {
-    hints: buildEntryHints(hintState, entry),
+    hints: buildDurableHints(hintState, entry),
     supportClaimKeys: [...hintState.supportClaimKeys],
     entityPrefixStats: hintState.entityPrefixStats,
   };
@@ -1152,14 +1152,14 @@ function summarizeAugmentedEntityPrefixStats(entityPrefixStats: ClaimKeyEntityPr
     ...entityPrefixStats,
     {
       entityPrefix,
-      activeEntryCount: 1,
-      trustedEntryCount: 0,
-      tentativeEntryCount: 1,
-      unresolvedEntryCount: 0,
-      deterministicRepairEntryCount: 1,
-      manualEntryCount: 0,
-      modelEntryCount: 0,
-      jsonRetryEntryCount: 0,
+      activeDurableCount: 1,
+      trustedDurableCount: 0,
+      tentativeDurableCount: 1,
+      unresolvedDurableCount: 0,
+      deterministicRepairDurableCount: 1,
+      manualDurableCount: 0,
+      modelDurableCount: 0,
+      jsonRetryDurableCount: 0,
       dreamingFamilyReuseDurableCount: 0,
     },
   ];
@@ -1344,7 +1344,7 @@ function createHintState(input: {
  * @param entry - Current entry whose metadata may help entity resolution.
  * @returns Hint bundle passed into one extraction request.
  */
-function buildEntryHints(
+function buildDurableHints(
   state: ClaimExtractionHintState,
   entry: Pick<StoreDurableInput, "project" | "user_id" | "tags" | "source_context">,
 ): ClaimExtractionHints {

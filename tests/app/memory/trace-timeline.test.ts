@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { buildEntryTraceTimeline } from "../../../src/app/memory/trace-timeline.js";
+import { buildDurableTraceTimeline } from "../../../src/app/memory/trace-timeline.js";
 import type { Durable } from "../../../src/core/types.js";
 
-describe("buildEntryTraceTimeline", () => {
+describe("buildDurableTraceTimeline", () => {
   it("orders created, dream, profile, and recall events chronologically", () => {
     const entry = createEntry({
       created_at: "2026-06-06T02:00:00.000Z",
@@ -13,8 +13,8 @@ describe("buildEntryTraceTimeline", () => {
       valid_to: "2026-06-06T03:30:00.000Z",
     });
 
-    const timeline = buildEntryTraceTimeline({
-      entry,
+    const timeline = buildDurableTraceTimeline({
+      durable: entry,
       dreamActions: [
         {
           id: "action-1",

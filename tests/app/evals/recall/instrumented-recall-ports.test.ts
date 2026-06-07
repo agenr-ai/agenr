@@ -26,7 +26,7 @@ describe("createInstrumentedRecallPorts", () => {
     };
     const vectorResults = [
       {
-        entry: {
+        durable: {
           id: "entry-1",
           subject: "subject",
           content: "content",
@@ -41,7 +41,7 @@ describe("createInstrumentedRecallPorts", () => {
     ];
     const lexicalResults = [
       {
-        entry: {
+        durable: {
           id: "entry-1",
           subject: "subject",
           content: "content",
@@ -66,14 +66,14 @@ describe("createInstrumentedRecallPorts", () => {
       vectorSearch: vi.fn(async () => vectorResults),
       ftsSearch: vi.fn(async () => lexicalResults),
       expandNeighborhood: vi.fn(async () => []),
-      hydrateEntries: vi.fn(async () => [hydratedEntry]),
+      hydrateDurables: vi.fn(async () => [hydratedEntry]),
       recordRecallEvents: vi.fn(async () => undefined),
     };
     const observer = {
       recordQueryEmbedding: vi.fn(),
       recordVectorSearch: vi.fn(),
       recordLexicalSearch: vi.fn(),
-      recordHydrateEntries: vi.fn(),
+      recordHydrateDurables: vi.fn(),
       recordRecallTelemetry: vi.fn(),
     };
 
@@ -83,8 +83,8 @@ describe("createInstrumentedRecallPorts", () => {
     await expect(instrumented.vectorSearch({ embedding: [0.1, 0.2], limit: 8 })).resolves.toEqual(vectorResults);
     await expect(instrumented.ftsSearch({ text: "query", limit: 4 })).resolves.toEqual(lexicalResults);
     await expect(instrumented.expandNeighborhood?.(neighborhoodRequest)).resolves.toEqual([]);
-    await expect(instrumented.hydrateEntries(["entry-1"])).resolves.toEqual([hydratedEntry]);
-    await expect(instrumented.recordRecallEvents({ entryIds: ["entry-1"], query: "query" })).resolves.toBeUndefined();
+    await expect(instrumented.hydrateDurables(["entry-1"])).resolves.toEqual([hydratedEntry]);
+    await expect(instrumented.recordRecallEvents({ durableIds: ["entry-1"], query: "query" })).resolves.toBeUndefined();
 
     expect(basePorts.embed).toHaveBeenCalledWith("query");
     expect(basePorts.vectorSearch).toHaveBeenCalledWith({
@@ -96,9 +96,9 @@ describe("createInstrumentedRecallPorts", () => {
       limit: 4,
     });
     expect(basePorts.expandNeighborhood).toHaveBeenCalledWith(neighborhoodRequest);
-    expect(basePorts.hydrateEntries).toHaveBeenCalledWith(["entry-1"]);
+    expect(basePorts.hydrateDurables).toHaveBeenCalledWith(["entry-1"]);
     expect(basePorts.recordRecallEvents).toHaveBeenCalledWith({
-      entryIds: ["entry-1"],
+      durableIds: ["entry-1"],
       query: "query",
     });
 
@@ -116,13 +116,13 @@ describe("createInstrumentedRecallPorts", () => {
       count: 1,
       limit: 4,
     });
-    expect(observer.recordHydrateEntries).toHaveBeenCalledWith({
+    expect(observer.recordHydrateDurables).toHaveBeenCalledWith({
       durationMs: expect.any(Number),
       count: 1,
     });
     expect(observer.recordRecallTelemetry).toHaveBeenCalledWith({
       durationMs: expect.any(Number),
-      entryCount: 1,
+      durableCount: 1,
     });
   });
 });

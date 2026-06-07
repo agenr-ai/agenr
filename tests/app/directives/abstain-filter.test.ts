@@ -24,8 +24,8 @@ function buildDurable(overrides: Partial<Durable> & Pick<Durable, "id" | "subjec
   };
 }
 
-function buildItem(entry: Durable): { entry: Durable } {
-  return { entry };
+function buildItem(entry: Durable): { durable: Durable } {
+  return { durable: entry };
 }
 
 const directiveRow = buildDurable({
@@ -52,7 +52,7 @@ describe("applyAbstainDirectives", () => {
     const result = await applyAbstainDirectives([directiveItem, factItem], undefined);
 
     expect(result.kept).toEqual([factItem]);
-    expect(result.suppressed).toEqual([{ entryId: "dir-stan", reason: "directive_self" }]);
+    expect(result.suppressed).toEqual([{ durableId: "dir-stan", reason: "directive_self" }]);
   });
 
   it("suppresses candidates that violate an active directive", async () => {
@@ -63,7 +63,7 @@ describe("applyAbstainDirectives", () => {
     const result = await applyAbstainDirectives([stanItem, otherItem], lookup);
 
     expect(result.kept).toEqual([otherItem]);
-    expect(result.suppressed).toEqual([{ entryId: "fact-stan", reason: "directive_topic", directiveId: "dir-stan", blockedTerm: "stan" }]);
+    expect(result.suppressed).toEqual([{ durableId: "fact-stan", reason: "directive_topic", directiveId: "dir-stan", blockedTerm: "stan" }]);
     expect(lookup).toHaveBeenCalledOnce();
   });
 
@@ -74,7 +74,7 @@ describe("applyAbstainDirectives", () => {
     const result = await applyAbstainDirectives([directiveItem], lookup);
 
     expect(result.kept).toEqual([]);
-    expect(result.suppressed).toEqual([{ entryId: "dir-stan", reason: "directive_self" }]);
+    expect(result.suppressed).toEqual([{ durableId: "dir-stan", reason: "directive_self" }]);
     expect(lookup).not.toHaveBeenCalled();
   });
 
@@ -86,7 +86,7 @@ describe("applyAbstainDirectives", () => {
     const kept = await applyAbstainDirectivesForInjection([stanItem], lookup, diagnostics);
 
     expect(kept).toEqual([]);
-    expect(diagnostics.directiveAbstentions).toEqual([{ entryId: "fact-stan", reason: "directive_topic", directiveId: "dir-stan", blockedTerm: "stan" }]);
+    expect(diagnostics.directiveAbstentions).toEqual([{ durableId: "fact-stan", reason: "directive_topic", directiveId: "dir-stan", blockedTerm: "stan" }]);
     expect(diagnostics.notices[0]).toContain("dir-stan");
   });
 

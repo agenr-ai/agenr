@@ -34,7 +34,7 @@ export function buildMissingBackfillSupportAuditDetails(support?: MissingBackfil
     support_sibling_slot_resonance_local_shape_coverage: support.siblingSlotResonance.localShapeTokenCoverage,
     support_sibling_slot_resonance_family_generic_tokens: [...support.siblingSlotResonance.familyGenericTokens],
     support_sibling_slot_resonance_discriminative_candidate_tokens: [...support.siblingSlotResonance.discriminativeCandidateTokens],
-    support_sibling_slot_resonance_sibling_durable_ids: [...support.siblingSlotResonance.dominantSiblingEntryIds],
+    support_sibling_slot_resonance_sibling_durable_ids: [...support.siblingSlotResonance.dominantSiblingDurableIds],
     support_sibling_slot_resonance_sibling_claim_keys: [...support.siblingSlotResonance.dominantSiblingClaimKeys],
     ...(support.strongEntityAttributeLexicalAlignment
       ? {

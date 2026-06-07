@@ -49,14 +49,14 @@ export function buildSessionStartEvalErrorResponse(params: {
 
 /** Builds the product-facing session-start output payload. */
 function buildOutput(patch: SessionStartPatch): SessionStartEvalCaseOutput {
-  const sourceKindsByEntryId: SessionStartEvalCaseOutput["sourceKindsByEntryId"] = {};
+  const sourceKindsByDurableId: SessionStartEvalCaseOutput["sourceKindsByDurableId"] = {};
   for (const item of patch.durableMemory) {
-    sourceKindsByEntryId[item.entry.id] = item.sourceKind;
+    sourceKindsByDurableId[item.durable.id] = item.sourceKind;
   }
 
   return {
-    selectedEntryIds: patch.durableMemory.map((item) => item.entry.id),
-    sourceKindsByEntryId,
+    selectedDurableIds: patch.durableMemory.map((item) => item.durable.id),
+    sourceKindsByDurableId,
   };
 }
 

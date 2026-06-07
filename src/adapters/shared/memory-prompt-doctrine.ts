@@ -119,7 +119,7 @@ const UPDATE_TARGET_SELECTOR = "Provide exactly one target selector: id or subje
 const UPDATE_SUBSTANTIVE_REPLACEMENT = "Use agenr_store with supersedes for substantive content replacement.";
 
 const UPDATE_METADATA_DESCRIPTION =
-  "Update an existing memory entry in place. Supports metadata corrections: importance, expiry, claimKey, validFrom, validTo, and project.";
+  "Update an existing durable memory in place. Supports metadata corrections: importance, expiry, claimKey, validFrom, validTo, and project.";
 
 const FETCH_PREFER_ID = "Prefer id from agenr_recall when preview_truncated=true or when exact wording matters.";
 
@@ -256,7 +256,7 @@ export function buildOpenClawStorePromptLines(): string[] {
  */
 export function buildOpenClawStoreToolDescription(): string {
   return [
-    `Store a new durable memory entry in agenr. Apply the future-session test first: ${STORE_FUTURE_SESSION_QUESTION}`,
+    `Store a new durable memory in agenr. Apply the future-session test first: ${STORE_FUTURE_SESSION_QUESTION}`,
     ...buildStoreToolGuidelines(),
     STORE_CANONICAL_RECORD,
     formatDurableTypeGuide(DURABLE_TYPE_DEFINITIONS_TOOL, ". "),
@@ -273,7 +273,7 @@ export function buildOpenClawStoreToolDescription(): string {
  * @returns Tool description describing durable store boundaries for Skeln hosts.
  */
 export function buildSkelnStoreToolDescription(): string {
-  return "Store a new durable memory entry in agenr. Store only durable facts, decisions, preferences, lessons, milestones, and relationships that help a future Skeln session make a better decision.";
+  return "Store a new durable memory in agenr. Store only durable facts, decisions, preferences, lessons, milestones, and relationships that help a future Skeln session make a better decision.";
 }
 
 /**
