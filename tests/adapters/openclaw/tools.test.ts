@@ -195,6 +195,29 @@ describe("agenr OpenClaw tools", () => {
     expect(storeParamsMessage).not.toContain("Gate risky rollout work behind a feature flag until verification is complete.");
   });
 
+  it("logs non-fatal store warnings without marking the OpenClaw tool call as warned", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const services = createDatabaseBackedServices(database);
+    const storeTool = createAgenrStoreTool(createToolContext(), Promise.resolve(services), logger);
+
+    const result = await storeTool.execute("tool-store-warning", {
+      type: "fact",
+      subject: "warning log level",
+      content: "Successful stores with non-fatal warnings should not look failed in verbose OpenClaw output.",
+      claimKey: "invalid",
+    });
+
+    expect(result.details).toMatchObject({
+      status: "stored",
+      subject: "warning log level",
+    });
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([expect.stringContaining("[agenr] tool=agenr_store session=session-1 note:")]),
+    );
+  });
+
   it("exposes the new recall schema without legacy temporal params", async () => {
     const recallTool = createAgenrRecallTool(createToolContext(), Promise.resolve({} as AgenrOpenClawServices), createLogger());
     const schema = recallTool.parameters as {

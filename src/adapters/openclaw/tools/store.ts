@@ -32,7 +32,7 @@ export function createAgenrStoreTool(ctx: OpenClawPluginToolContext, servicesPro
           session: ctx,
           sourcePrefix: "openclaw-session",
           defaultSourceContext: "Stored via agenr_store from OpenClaw.",
-          onWarning: (warning) => logger.warn(`[agenr] tool=agenr_store session=${ctx.sessionId ?? "unknown"} warning: ${warning}`),
+          onWarning: (warning) => logger.info(`[agenr] tool=agenr_store session=${ctx.sessionId ?? "unknown"} note: ${warning}`),
         });
         triggerOpenClawImportanceLightDream(services, logger, outcome.details.status);
         return toOpenClawToolResult(outcome);
