@@ -245,7 +245,7 @@ export interface WorkingSnapshot {
  * intentionally excluded. Update this list and `cloneForkableSnapshotFields`
  * together when the fork contract changes.
  */
-export const FORKABLE_SNAPSHOT_FIELD_KEYS = [
+const FORKABLE_SNAPSHOT_FIELD_KEYS = [
   "currentPlan",
   "nextActions",
   "checkpoint",
@@ -255,3 +255,5 @@ export const FORKABLE_SNAPSHOT_FIELD_KEYS = [
   "decisions",
   "assumptions",
 ] as const satisfies readonly (keyof WorkingSnapshot)[];
+
+export { FORKABLE_SNAPSHOT_FIELD_KEYS };
