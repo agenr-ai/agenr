@@ -2,11 +2,7 @@ import { access, copyFile, mkdir, readdir, readFile, rm, writeFile } from "node:
 import path from "node:path";
 
 /** Root dist entrypoints that should not ship inside plugin packages. */
-const PLUGIN_DIST_ENTRY_EXCLUDES = new Set([
-  "cli.js",
-  "internal-eval-server.js",
-  "internal-recall-eval-server.js",
-]);
+const PLUGIN_DIST_ENTRY_EXCLUDES = new Set(["cli.js", "internal-eval-server.js", "internal-recall-eval-server.js"]);
 
 /**
  * Copies a root `dist/adapters/<adapter>` entry into a publishable plugin package.
@@ -68,9 +64,7 @@ export async function copyPluginDist({ root, pluginDist, adapterName, includeTyp
  * @returns {string[]}
  */
 function listSharedDistArtifacts(allRootDistFiles) {
-  return allRootDistFiles.filter(
-    (name) => name.endsWith(".js") && !name.startsWith("chunk-") && !PLUGIN_DIST_ENTRY_EXCLUDES.has(name),
-  );
+  return allRootDistFiles.filter((name) => name.endsWith(".js") && !name.startsWith("chunk-") && !PLUGIN_DIST_ENTRY_EXCLUDES.has(name));
 }
 
 /**

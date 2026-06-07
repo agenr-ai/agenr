@@ -2,9 +2,23 @@
 
 ## [Unreleased]
 
+## [2026.6.2] - 2026-06-06
+
+Calendar versioning, host session-memory parity, durable staleness, and package-boundary hardening release.
+
+### Added
+
+- **OpenClaw host session-memory parity.** OpenClaw now uses scoped session identity, compaction transcript handling, pre-compaction episode capture, host-neutral session-memory routing, and before-turn session artifacts that align with the Skeln memory-runtime model.
+- **Memory doctrine and tool guidance.** Shared prompt doctrine, claim-key guidance, project metadata update support, and fetch/update/store tool formatting now give agents clearer instructions and warnings at the tool boundary.
+- **Release-version validation and package syncing.** Calendar release-version parsing plus the package-version sync script keep root package metadata, plugin package metadata, and OpenClaw plugin manifests aligned.
+
 ### Changed
 
 - **Release versioning** now follows OpenClaw's `YYYY.M.PATCH` calendar scheme instead of semver. The third component is a monthly patch counter, not a calendar day.
+- **OpenClaw plugin packaging** now ships as a thinner adapter package and defers optional runtime modules while copying shared root build artifacts needed by dynamic imports into plugin packages.
+- **`agenr_update` patch handling** is more focused and docs now distinguish project metadata corrections from durable content corrections.
+- **Database ports** expose `closeDurableValidity` and `closeProcedureValidity` instead of `retireDurable` and `retireProcedure`.
+- **Docs and tests** updated for the staleness model across durables, episodes, procedures, dreaming, and the OpenClaw plugin.
 
 ### Breaking
 
@@ -17,10 +31,22 @@
 - **Dreaming prune actions renamed.** Run summaries and `dream_runs.durables_staled` replace `durables_retired`; audit actions use `stale` instead of `retire`.
 - **Neighborhood expansion flag renamed.** Recall adapters accept `includeHistorical` instead of `includeRetired`.
 
-### Changed
+### Fixed
 
-- **Database ports** expose `closeDurableValidity` and `closeProcedureValidity` instead of `retireDurable` and `retireProcedure`.
-- **Docs and tests** updated for the staleness model across durables, episodes, procedures, dreaming, and the OpenClaw plugin.
+- **Plugin dynamic imports** now resolve shared root dist artifacts from packaged OpenClaw and Skeln plugin builds.
+- **Validation cleanup** clears ESLint warnings so `pnpm check` runs green.
+
+### Validation
+
+Changes since last push to `origin/master`:
+
+- Replace OpenClaw continuity with host session-memory parity, scoped session identity, compaction handling, and shared session-start artifacts
+- Add centralized memory doctrine, stronger claim-key guidance, and project metadata update support
+- Switch releases to OpenClaw-style calendar versions and add package-version sync checks
+- Thin OpenClaw plugin packaging while preserving runtime dynamic-import resolution for plugin packages
+- Replace retirement semantics with valid-time staleness across durable, episode, procedure, dreaming, and recall paths
+- Add dreaming milestone work, compute-efficiency eval seams, directive topic triggers, and concurrency hardening already summarized in the `4.0.0` section below
+- Clear validation issues so `pnpm check` passes before release
 
 ## [4.0.0] - 2026-06-05
 
