@@ -258,7 +258,7 @@ async function handleSkelnSessionShutdown(
       // Keep shutdown cleanup best-effort even when checkpoint intake fails.
     }
 
-    await closeSkelnSessionWorkingSet(servicesPromise, context, scope, event);
+    await closeSkelnSessionWorkingSet(servicesPromise, scope, event);
     compactionPromptTracker.clear(scope.sessionId, scope.sessionKey);
     try {
       await lifecycleIntakeTracker.clear(scope.sessionId, scope.sessionKey);

@@ -6,6 +6,7 @@ import type { OpenClawPluginDebugSink } from "./debug-sink.js";
 import path from "node:path";
 import { buildClaimExtractionRuntime, composeHostPluginServices, EMBEDDING_MODEL } from "../../adapters/plugin-runtime/index.js";
 import { resolveAgenrFeatureFlags } from "../features/resolve.js";
+import { resolveRuntimePolicy } from "../features/runtime-policy.js";
 import { createHostMemoryServices } from "../host-memory/create-host-memory-services.js";
 import type { AgenrOpenClawServices } from "./types.js";
 
@@ -43,11 +44,19 @@ export async function createAgenrOpenClawServices(
         workingMemoryRepository: runtimeServices.workingMemoryRepository,
         sessionMemoryRepository: runtimeServices.sessionMemoryRepository,
         workingMemorySourceLabel: "openclaw",
+        goalWorkingSetsEnabled: false,
+      });
+      const runtimePolicy = resolveRuntimePolicy(featureFlags, {
+        workingMemoryRepository: runtimeServices.workingMemoryRepository,
+        sessionMemoryRepository: runtimeServices.sessionMemoryRepository,
+        memoryPolicy: config.memoryPolicy,
       });
 
       return {
         ...runtimeServices,
         ...hostMemory,
+        capabilities: runtimePolicy.capabilities,
+        runtimePolicy,
         openClaw: options.openClaw,
         config: resolvedConfig,
         pluginConfig: config,

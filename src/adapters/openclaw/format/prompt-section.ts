@@ -6,6 +6,7 @@ const MEMORY_TOOL_NAMES = {
   fetch: "agenr_fetch",
   store: "agenr_store",
   update: "agenr_update",
+  work: "agenr_work",
 } as const;
 
 const MEMORY_TOOL_NAME_SET = new Set<string>(Object.values(MEMORY_TOOL_NAMES));
@@ -55,6 +56,10 @@ export function buildAgenrMemoryPromptSection({
 
   if (availableTools.has(MEMORY_TOOL_NAMES.fetch)) {
     lines.push(MEMORY_DOCTRINE.recall.fetchWhenTruncated);
+  }
+
+  if (availableTools.has(MEMORY_TOOL_NAMES.work)) {
+    lines.push("Use agenr_work for transient task state, checkpoints, and next actions. Do not store that WIP in durable memory.");
   }
 
   if (hasOrchestrationTool) {

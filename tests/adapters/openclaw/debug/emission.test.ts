@@ -10,6 +10,7 @@ import { createMemoryRepository } from "../../../../src/adapters/db/memory-repos
 import { createSessionStartRepository } from "../../../../src/adapters/db/session-start-repository.js";
 import { createAgenrDebugSink } from "../../../../src/adapters/openclaw/debug/index.js";
 import { handleAgenrBeforePromptBuild } from "../../../../src/adapters/openclaw/hooks/before-prompt-build.js";
+import { resolveRuntimeCapabilities } from "../../../../src/app/features/capabilities.js";
 import { createSessionStartTracker } from "../../../../src/app/plugin-runtime/session-tracking.js";
 import { createAgenrRecallTool } from "../../../../src/adapters/openclaw/tools.js";
 import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../../src/adapters/openclaw/types.js";
@@ -213,6 +214,13 @@ function createTestServices(
     },
   };
 
+  const featureFlags = {
+    workingMemory: false,
+    sessionTreeLineage: false,
+    sessionTreeCompaction: false,
+    goalContinuation: false,
+  };
+
   return {
     openClaw,
     config: {
@@ -221,6 +229,11 @@ function createTestServices(
     },
     pluginConfig: {},
     agenrConfig: {},
+    capabilities: resolveRuntimeCapabilities(featureFlags),
+    runtimePolicy: {
+      featureFlags,
+      capabilities: resolveRuntimeCapabilities(featureFlags),
+    },
     durables: database,
     episodes: database,
     procedures: database,

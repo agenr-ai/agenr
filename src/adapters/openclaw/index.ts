@@ -13,6 +13,7 @@ import { buildAgenrMemoryFlushPlan } from "./memory/flush-plan.js";
 import { createAgenrMemoryRuntime } from "./memory/runtime.js";
 import { createAgenrOpenClawServices } from "./runtime.js";
 import { toOpenClawSessionScopeContext } from "./session/scope.js";
+import { ensureOpenClawSessionWorkingSet } from "./session/working-set-lifecycle.js";
 import { createSessionLifecycleIntakeTracker } from "../../app/plugin-runtime/session-lifecycle-intake.js";
 import { createSessionStartTracker } from "../../app/plugin-runtime/session-tracking.js";
 import { createCompactionPromptTracker } from "../shared/compaction-prompt-tracker.js";
@@ -60,12 +61,13 @@ export default definePluginEntry({
         lifecycleIntakeTracker,
       }),
     );
-    api.on("session_start", (event, ctx) => {
+    api.on("session_start", async (event, ctx) => {
       const scopeContext = toOpenClawSessionScopeContext({
         sessionId: event.sessionId,
         sessionKey: event.sessionKey,
         ...(ctx.agentId ? { agentId: ctx.agentId } : {}),
       });
+      await ensureOpenClawSessionWorkingSet(servicesPromise, scopeContext, api.logger);
       return lifecycleIntakeTracker.track(
         scopeContext.sessionId,
         scopeContext.sessionKey,

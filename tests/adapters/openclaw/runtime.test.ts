@@ -119,6 +119,8 @@ describe("createAgenrOpenClawServices", () => {
     expect(services.sessionStart.repository).toBeDefined();
     expect(services.routeSessionMemoryTrigger).toBeTypeOf("function");
     expect(services.workingMemory).toBeDefined();
+    expect(services.capabilities).toBeDefined();
+    expect(services.runtimePolicy).toBeDefined();
 
     await services.close();
   });

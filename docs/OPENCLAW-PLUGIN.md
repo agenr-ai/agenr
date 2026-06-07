@@ -12,8 +12,9 @@ This document describes the current codebase, not an aspirational design.
 The OpenClaw plugin is a translator around agenr's existing core and app workflows. It currently does all of the following:
 
 - registers agenr as an OpenClaw memory plugin
-- exposes four agent tools: `agenr_store`, `agenr_recall`, `agenr_fetch`, and `agenr_update`
+- exposes five agent tools: `agenr_store`, `agenr_recall`, `agenr_fetch`, `agenr_update`, and `agenr_work`
 - injects session-start context into the prompt from agenr core memory
+- injects transient `<agenr_work_context>` working memory through `before_prompt_build` when `features.workingMemory` is enabled
 - writes the just-finished session into agenr episodic memory at session end
 - exposes OpenClaw memory-runtime status and vector/embedding probes
 - reuses the OpenClaw transcript parser for episode ingestion
@@ -82,7 +83,7 @@ The plugin manifest declares:
 
 - `id: "agenr"`
 - `kind: "memory"`
-- tool contracts for `agenr_store`, `agenr_recall`, `agenr_fetch`, and `agenr_update`
+- tool contracts for `agenr_store`, `agenr_recall`, `agenr_fetch`, `agenr_update`, and `agenr_work`
 
 The runtime config is currently:
 
@@ -133,7 +134,7 @@ If OpenClaw provides `resolvePath`, the plugin resolves supplied path overrides 
 The plugin currently wires:
 
 - `registerMemoryCapability({ promptBuilder, flushPlanResolver, runtime })`
-- the four durable tools (`agenr_store`, `agenr_recall`, `agenr_fetch`, `agenr_update`)
+- the durable tools (`agenr_store`, `agenr_recall`, `agenr_fetch`, `agenr_update`) plus `agenr_work` (always registered; runtime mutations and injection honor `features.workingMemory`)
 - `before_prompt_build`
 - `session_start`
 - `before_compaction`
@@ -286,7 +287,7 @@ OpenClaw awaits the `session_end` handler before starting the next session, matc
 
 ## Tool behavior
 
-The plugin registers six tools from `src/adapters/openclaw/tools/`.
+The plugin registers five tools from `src/adapters/openclaw/tools/`.
 
 All tool calls log info-level summaries plus sanitized params. Raw user content is not logged wholesale.
 
@@ -377,6 +378,20 @@ When `claimKey` is updated, the tool writes the shared normalized manual claim-k
 When `validFrom` or `validTo` are updated, the tool applies the same strict range validation used by the core store path: both bounds must parse, and `validFrom` must be earlier than `validTo` when both are present.
 
 Use `agenr trace` for provenance, claim-family lineage, dreaming audit history, and recall-event inspection outside the live agent runtime.
+
+### `agenr_work`
+
+`agenr_work` is always registered as the model-facing working-memory tool. Runtime behavior is gated by `features.workingMemory` in agenr config: when disabled, working-set mutations and `<agenr_work_context>` injection are skipped.
+
+Current behavior mirrors the Skeln adapter's session working-set surface:
+
+- exposes typed WIP operations such as `merge_checkpoint`, `set_scratchpad`, file notes, command notes, decisions, assumptions, next actions, and candidate memories
+- uses `target: "session"` for the independent session working set; goal aliases are not registered on OpenClaw
+- blocks model-facing `close` and trusted host-only mutations; OpenClaw lifecycle hooks own session working-set close at `session_end`
+- ensures the session working set at `session_start` through the shared `ensureSessionWorkingSet` app path
+- injects rendered `<agenr_work_context>` through `before_prompt_build` on every eligible turn when projection rendering succeeds
+
+OpenClaw does not expose Skeln-style `transientMessages`, so working context is merged into `prependContext` alongside durable recall injection.
 
 ### Shared target-resolution rules
 

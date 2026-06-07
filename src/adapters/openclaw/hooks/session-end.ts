@@ -4,6 +4,7 @@ import { runOpenClawSessionEndEpisodeCapture } from "../episode/session-end-epis
 import { resolveOpenClawSessionEndPolicy } from "../session-end-policy.js";
 import { buildOpenClawSessionShutdownTriggerEvent, buildOpenClawSessionTreeTriggerEvent, shouldRouteOpenClawSessionTreeTrigger } from "./session-memory.js";
 import { routeOpenClawSessionMemoryTrigger } from "./session-memory-routing.js";
+import { closeOpenClawSessionWorkingSet } from "../session/working-set-lifecycle.js";
 import type { AgenrOpenClawHookContext, AgenrOpenClawServices, AgenrOpenClawSessionEndEvent } from "../types.js";
 
 /**
@@ -35,6 +36,8 @@ export async function handleAgenrSessionEnd(
       await routeOpenClawSessionMemoryTrigger(params.servicesPromise, scopeContext, (scope) => buildOpenClawSessionShutdownTriggerEvent(scope, event));
     }
   }
+
+  await closeOpenClawSessionWorkingSet(params.servicesPromise, scopeContext, event, params.logger);
 
   if (!policy.captureEpisode) {
     return;

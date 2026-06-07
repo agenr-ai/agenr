@@ -6,6 +6,7 @@ import type {
   MemorySearchResult as OpenClawMemorySearchResult,
 } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 
+import type { WorkingContextAuditPointer } from "../../app/working-memory/projection.js";
 import type { AgenrOpenClawServices } from "../../app/openclaw/types.js";
 
 export type {
@@ -62,6 +63,8 @@ export interface AgenrOpenClawBeforePromptBuildResult {
   prependContext?: string;
   prependSystemContext?: string;
   appendSystemContext?: string;
+  /** Compact audit pointer for injected working context when provenance is complete. */
+  workingContextAudit?: WorkingContextAuditPointer;
 }
 
 /**

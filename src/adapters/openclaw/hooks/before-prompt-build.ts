@@ -11,7 +11,9 @@ import { resolveOpenClawCompactionPromptContext } from "./compaction-handlers.js
 import { formatErrorMessage, formatSessionContext } from "../logging.js";
 import type { CompactionPromptTracker } from "../../shared/compaction-prompt-tracker.js";
 import { mergeInjectionContent } from "../../shared/injection/merge-injection-content.js";
+import { toOpenClawSessionScopeContext } from "../session/scope.js";
 import type { SessionLifecycleIntakeTracker } from "../../../app/plugin-runtime/session-lifecycle-intake.js";
+import { resolveOpenClawWorkingContextInjection, type OpenClawWorkingContextInjection } from "./working-context-injection.js";
 import type { SessionStartTracker } from "../../../app/plugin-runtime/session-tracking.js";
 import type {
   AgenrOpenClawBeforePromptBuildDeps,
@@ -61,11 +63,19 @@ export async function handleAgenrBeforePromptBuild(
   params.logger.debug?.(`[agenr] before_prompt_build: session tracker active count=${trackerState.activeCount}`);
   params.logger.info(`[agenr] session-start recall for ${sessionContext}`);
 
+  let workingInjection: OpenClawWorkingContextInjection = {};
   try {
     const services = await params.servicesPromise;
+    const scopeContext = toOpenClawSessionScopeContext(ctx);
+    workingInjection = await resolveOpenClawWorkingContextInjection(
+      services,
+      scopeContext,
+      `openclaw:session-start:${scopeContext.sessionKey ?? scopeContext.sessionId ?? "unknown"}`,
+      params.logger,
+    );
     if (services.pluginConfig.memoryPolicy?.sessionStart?.enabled === false) {
       params.logger.info(`[agenr] session-start recall disabled by memoryPolicy for ${sessionContext}`);
-      return await resolveNonFirstTurnResult(event, ctx, sessionContext, params);
+      return resolveNonFirstTurnResult(event, ctx, sessionContext, params, workingInjection);
     }
 
     const sessionStartPatch = await runSessionStart(
@@ -109,13 +119,16 @@ export async function handleAgenrBeforePromptBuild(
     params.logger.debug?.(
       `[agenr] before_prompt_build: session-start durables for ${sessionContext}: ${formatDurableRefs(sessionStartPatch.durableMemory.map((item) => item.durable))}`,
     );
-    params.logger.debug?.(`[agenr] before_prompt_build: session-start prependContext length for ${sessionContext}: ${prependContext.length} chars`);
-    if (prependContext.length === 0) {
+    params.logger.debug?.(
+      `[agenr] before_prompt_build: session-start prependContext length for ${sessionContext}: ${prependContext.length} chars` +
+        (workingInjection.prependContext ? ` working_context=${workingInjection.prependContext.length}` : ""),
+    );
+    const result = composePromptBuildResult({ prependContext }, workingInjection);
+    if (!result) {
       params.logger.info(`[agenr] session-start recall: nothing to inject for ${sessionContext}`);
-      return undefined;
     }
 
-    return { prependContext };
+    return result;
   } catch (error) {
     params.logger.warn(`[agenr] session-start recall failed for ${sessionContext}: ${formatErrorMessage(error)}`);
     try {
@@ -132,7 +145,7 @@ export async function handleAgenrBeforePromptBuild(
     } catch {
       // Ignore debug-sink emission failures to keep the runtime path resilient.
     }
-    return undefined;
+    return composePromptBuildResult(undefined, workingInjection);
   }
 }
 
@@ -152,8 +165,18 @@ async function resolveNonFirstTurnResult(
   params: AgenrOpenClawBeforePromptBuildDeps & {
     compactionPromptTracker?: CompactionPromptTracker;
   },
+  resolvedWorkingInjection?: OpenClawWorkingContextInjection,
 ): Promise<AgenrOpenClawBeforePromptBuildResult | undefined> {
   const services = await params.servicesPromise;
+  const scopeContext = toOpenClawSessionScopeContext(ctx);
+  const workingInjection =
+    resolvedWorkingInjection ??
+    (await resolveOpenClawWorkingContextInjection(
+      services,
+      scopeContext,
+      `openclaw:before-turn:${scopeContext.sessionKey ?? scopeContext.sessionId ?? "unknown"}`,
+      params.logger,
+    ));
   const compactionContext = params.compactionPromptTracker
     ? await resolveOpenClawCompactionPromptContext(ctx, services, params.compactionPromptTracker)
     : undefined;
@@ -162,13 +185,12 @@ async function resolveNonFirstTurnResult(
   }
 
   const beforeTurnResult = await resolveBeforeTurnResult(event, ctx, sessionContext, params);
-  if (beforeTurnResult?.prependContext || compactionContext) {
-    return {
+  return composePromptBuildResult(
+    {
       prependContext: mergeInjectionContent(compactionContext, beforeTurnResult?.prependContext),
-    };
-  }
-
-  return compactionContext ? { prependContext: compactionContext } : undefined;
+    },
+    workingInjection,
+  );
 }
 
 /**
@@ -290,6 +312,24 @@ async function resolveBeforeTurnResult(
     }
     return undefined;
   }
+}
+
+/**
+ * Merges durable recall and working-context injections into one prompt-build result.
+ */
+function composePromptBuildResult(
+  recall: { prependContext?: string } | undefined,
+  workingInjection: { prependContext?: string; workingContextAudit?: AgenrOpenClawBeforePromptBuildResult["workingContextAudit"] },
+): AgenrOpenClawBeforePromptBuildResult | undefined {
+  const prependContext = mergeInjectionContent(recall?.prependContext, workingInjection.prependContext);
+  if (!prependContext) {
+    return undefined;
+  }
+
+  return {
+    prependContext,
+    ...(workingInjection.workingContextAudit ? { workingContextAudit: workingInjection.workingContextAudit } : {}),
+  };
 }
 
 /**

@@ -1,7 +1,8 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ExtensionContext } from "../skeln-types.js";
 
-import { shouldInjectWorkingContext, toWorkingContextAuditPointer, type WorkingContextAuditPointer } from "../../../app/working-memory/projection.js";
+import type { WorkingContextAuditPointer } from "../../../app/working-memory/projection.js";
+import { resolveWorkingContextProjection } from "../../shared/injection/working-context-projection.js";
 
 import { runBeforeTurn } from "../../../app/before-turn/index.js";
 import { runSessionStart } from "../../../app/session-start/index.js";
@@ -23,7 +24,7 @@ import {
   traceWorkingContextInjected,
   type MemoryTraceEvent,
 } from "../memory-trace.js";
-import { resolveBeforeTurnPolicy, resolveSessionStartPolicy, resolveWorkingContextGate } from "../../shared/injection/policy.js";
+import { resolveBeforeTurnPolicy, resolveSessionStartPolicy } from "../../shared/injection/policy.js";
 import { extractRecentTurnsFromMessages, normalizePromptText } from "../../shared/injection/message-text.js";
 import { resolveSkelnCompactionPromptContext } from "./compaction-handlers.js";
 
@@ -264,37 +265,25 @@ async function resolveWorkingContextInjection(
   scope: AgenrSkelnSessionScope,
   sourceRef: string,
 ): Promise<WorkingContextResolution> {
-  const gate = resolveWorkingContextGate(services.capabilities.workingMemory);
-  if (!gate.ok) {
-    return { trace: traceMemorySkipped("working_context", gate.reason) };
-  }
+  const outcome = await resolveWorkingContextProjection({
+    workingMemory: services.workingMemory,
+    workingMemoryCapability: services.capabilities.workingMemory,
+    scope: toWorkingScopeFromSkelnSession(scope),
+    sourceRef,
+    sessionLabel: `session=${scope.sessionId} key=${scope.sessionKey}`,
+  });
 
-  return loadWorkingContextProjection(services, scope, sourceRef);
-}
-
-/** Loads and formats one working-context projection after policy gates pass. */
-async function loadWorkingContextProjection(services: AgenrSkelnServices, scope: AgenrSkelnSessionScope, sourceRef: string): Promise<WorkingContextResolution> {
-  try {
-    const projection = await services.workingMemory.renderProjectionBundle({
-      sourceRef,
-      scope: toWorkingScopeFromSkelnSession(scope),
-    });
-    if (!shouldInjectWorkingContext(projection)) {
-      const reason = projection.renderMode !== "full" ? "working projection stub" : "empty working projection";
-      return { trace: traceMemorySkipped("working_context", reason) };
-    }
-
-    const workingContextAudit = toWorkingContextAuditPointer(projection);
-
-    return {
-      transientMessages: [buildAgenrSkelnInjectionMessage(projection.content)],
-      ...(workingContextAudit ? { workingContextAudit } : {}),
-      trace: traceWorkingContextInjected(workingContextAudit, projection.content),
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(`[agenr] working-context projection failed for session=${scope.sessionId} key=${scope.sessionKey}: ${message}`);
-    return { trace: traceMemoryFailed("working_context", message) };
+  switch (outcome.kind) {
+    case "skipped":
+      return { trace: traceMemorySkipped("working_context", outcome.reason) };
+    case "failed":
+      return { trace: traceMemoryFailed("working_context", outcome.message) };
+    case "injected":
+      return {
+        transientMessages: [buildAgenrSkelnInjectionMessage(outcome.content)],
+        ...(outcome.workingContextAudit ? { workingContextAudit: outcome.workingContextAudit } : {}),
+        trace: traceWorkingContextInjected(outcome.workingContextAudit, outcome.content),
+      };
   }
 }
 

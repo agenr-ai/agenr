@@ -1,31 +1,24 @@
 import { randomUUID } from "node:crypto";
-import os from "node:os";
-import path from "node:path";
 
-import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
-import { resolveStateDir as resolveOpenClawStateDir } from "openclaw/plugin-sdk/state-paths";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const openClawLlmClientMocks = vi.hoisted(() => ({
+const openClawBeforePromptBuildLlmMocks = vi.hoisted(() => ({
   createOpenClawLlmClient: vi.fn(),
 }));
 
 vi.mock("../../../src/adapters/openclaw/llm/openclaw-llm-client.js", () => ({
-  createOpenClawLlmClient: openClawLlmClientMocks.createOpenClawLlmClient,
+  createOpenClawLlmClient: openClawBeforePromptBuildLlmMocks.createOpenClawLlmClient,
 }));
 
+import { createOpenClawBeforePromptBuildDatabasePath, createOpenClawBeforePromptBuildServices } from "../../helpers/openclaw-before-prompt-build-services.js";
+
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
-import { createDreamPort } from "../../../src/adapters/db/dreaming-port.js";
-import { createMemoryRepository } from "../../../src/adapters/db/memory-repository.js";
-import { createSessionStartRepository } from "../../../src/adapters/db/session-start-repository.js";
-import { createStubAgenrHostMemorySurface } from "../../helpers/host-memory-stubs.js";
 import { handleAgenrBeforePromptBuild } from "../../../src/adapters/openclaw/hooks/before-prompt-build.js";
 import { createSessionStartTracker } from "../../../src/app/plugin-runtime/session-tracking.js";
-import { createNoopAgenrDebugSink } from "../../../src/adapters/openclaw/debug/index.js";
-import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../src/adapters/openclaw/types.js";
+import type { AgenrOpenClawServices } from "../../../src/adapters/openclaw/types.js";
 import { computeProcedureRevisionHash, computeProcedureSourceHash } from "../../../src/core/procedures/hashing.js";
 import { composeProcedureRecallText } from "../../../src/core/procedures/recall-text.js";
-import type { EmbeddingPort, LlmPort, RecallPorts } from "../../../src/core/ports.js";
+import type { RecallPorts } from "../../../src/core/ports.js";
 import type { RecallCandidateDurable } from "../../../src/core/recall/types.js";
 import type { Durable, Procedure } from "../../../src/core/types.js";
 import { closeTestDatabases, removeTestPath } from "../../helpers/temp-paths.js";
@@ -50,7 +43,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.clearAllTimers();
   vi.useRealTimers();
-  openClawLlmClientMocks.createOpenClawLlmClient.mockReset();
+  openClawBeforePromptBuildLlmMocks.createOpenClawLlmClient.mockReset();
 
   await closeTestDatabases(openDatabases);
 
@@ -893,166 +886,8 @@ describe("handleAgenrBeforePromptBuild", () => {
   });
 });
 
-function createServices(
-  database: SqlDatabase,
-  options: {
-    available?: boolean;
-    recall?: RecallPorts;
-    pluginConfig?: AgenrOpenClawServices["pluginConfig"];
-    episodeSummaryRunImplementation?: LlmPort["complete"];
-    debugSink?: AgenrOpenClawServices["debugSink"];
-  } = {},
-): AgenrOpenClawServices {
-  const available = options.available ?? false;
-  const embedding: EmbeddingPort = {
-    async embed(): Promise<number[][]> {
-      throw new Error("Embeddings unavailable in this test.");
-    },
-  };
-  const recall =
-    options.recall ??
-    ({
-      async embed(): Promise<number[]> {
-        throw new Error("Recall should not run when embeddings are unavailable.");
-      },
-      async vectorSearch() {
-        return [];
-      },
-      async ftsSearch() {
-        return [];
-      },
-      async hydrateDurables() {
-        return [];
-      },
-      async recordRecallEvents() {
-        return;
-      },
-    } satisfies RecallPorts);
-  const openClaw = createOpenClawHost({
-    episodeSummaryRunImplementation:
-      options.episodeSummaryRunImplementation ??
-      (async () => {
-        return JSON.stringify({
-          summary:
-            "The session focused on agenr episodic-memory work and agreed to write predecessor episodes in the background so prompt build stays fast. The discussion stayed grounded in OpenClaw integration details for temporal recall. The work was substantive and project-scoped.",
-          tags: ["agenr", "openclaw", "episodic-memory"],
-          activityLevel: "substantial",
-          project: "agenr",
-        });
-      }),
-  });
-  openClawLlmClientMocks.createOpenClawLlmClient.mockImplementation(async (host: AgenrOpenClawHost, _modelRef?: string, label?: string): Promise<LlmPort> => {
-    const testHost = host as TestOpenClawHost;
-    if (label === "episode model override") {
-      return createLlmPort(testHost.__testLlm.episodeSummaryRunImplementation);
-    }
-
-    throw new Error(`Unexpected OpenClaw LLM client label: ${label ?? "missing"}`);
-  });
-
-  return {
-    openClaw,
-    config: {
-      dbPath: "test.db",
-      configPath: "test-config.json",
-    },
-    pluginConfig: options.pluginConfig ?? {},
-    agenrConfig: {},
-    durables: database,
-    episodes: database,
-    procedures: database,
-    memory: createMemoryRepository(database),
-    dreaming: createDreamPort(database),
-    sessionStart: {
-      repository: createSessionStartRepository(database),
-      recall,
-    },
-    beforeTurn: {
-      recall,
-      procedures: database,
-      ...(available
-        ? {
-            embedQuery: async (text: string) => {
-              const vectors = await embedding.embed([text]);
-              return vectors[0] ?? [];
-            },
-          }
-        : {}),
-    },
-    embedding,
-    recall,
-    embeddingStatus: {
-      available,
-      provider: available ? "openai" : "unconfigured",
-      requestedProvider: "openai",
-      model: "text-embedding-3-small",
-      ...(available ? {} : { error: "Embedding API key is required." }),
-    },
-    debugSink: options.debugSink ?? createNoopAgenrDebugSink(),
-    ...createStubAgenrHostMemorySurface(),
-    async close() {
-      await database.close();
-    },
-  };
-}
-
-type TestOpenClawHost = AgenrOpenClawHost & {
-  __testLlm: {
-    episodeSummaryRunImplementation: LlmPort["complete"];
-  };
-};
-
-function createOpenClawHost(options: { episodeSummaryRunImplementation: LlmPort["complete"] }): TestOpenClawHost {
-  const workspaceDir = path.join(os.tmpdir(), "agenr-openclaw-test-workspace");
-  const agentDir = path.join(os.tmpdir(), "agenr-openclaw-test-agent");
-  const config = {
-    defaultAgent: "main",
-    agents: {
-      list: [
-        {
-          id: "main",
-          workspace: workspaceDir,
-          agentDir,
-          model: "openai/gpt-5.4-mini",
-        },
-      ],
-    },
-  } as unknown as OpenClawConfig;
-
-  return {
-    config,
-    runtime: {
-      agent: {
-        resolveAgentDir: () => agentDir,
-        resolveAgentWorkspaceDir: () => workspaceDir,
-        runEmbeddedPiAgent: vi.fn(async () => {
-          throw new Error("Embedded agent runner should not be used in before-prompt-build tests.");
-        }),
-      },
-      modelAuth: {
-        resolveApiKeyForProvider: async () => ({
-          apiKey: "openclaw-test-key",
-          source: "profile:default",
-          mode: "api-key",
-        }),
-      },
-      state: {
-        resolveStateDir: (env?: NodeJS.ProcessEnv) => resolveOpenClawStateDir(env),
-      },
-    },
-    __testLlm: {
-      episodeSummaryRunImplementation: options.episodeSummaryRunImplementation,
-    },
-  };
-}
-
-function createLlmPort(complete: LlmPort["complete"]): LlmPort {
-  return {
-    complete,
-    completeJson: async <T>(systemPrompt: string, userMessage: string): Promise<T> => {
-      return JSON.parse(await complete(systemPrompt, userMessage)) as T;
-    },
-  };
+function createServices(database: SqlDatabase, options: Parameters<typeof createOpenClawBeforePromptBuildServices>[2] = {}): AgenrOpenClawServices {
+  return createOpenClawBeforePromptBuildServices(database, openClawBeforePromptBuildLlmMocks, options);
 }
 
 function createObservedRecallPorts(
@@ -1109,7 +944,7 @@ function hasSqlText(value: unknown): value is { sql: string } {
 }
 
 async function createTestDatabase(): Promise<SqlDatabase> {
-  const databasePath = path.join(os.tmpdir(), `agenr-openclaw-${randomUUID()}.sqlite`);
+  const databasePath = createOpenClawBeforePromptBuildDatabasePath();
   tempPaths.push(databasePath);
 
   const database = await createDatabase(databasePath);

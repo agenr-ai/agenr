@@ -11,8 +11,10 @@ const routingMocks = vi.hoisted(() => ({
 vi.mock("../../../../src/adapters/openclaw/episode/session-end-episode-write.js", () => captureMocks);
 vi.mock("../../../../src/adapters/openclaw/hooks/session-memory-routing.js", () => routingMocks);
 
+import { resolveRuntimeCapabilities } from "../../../../src/app/features/capabilities.js";
 import { handleAgenrSessionEnd } from "../../../../src/adapters/openclaw/hooks/session-end.js";
 import type { AgenrOpenClawServices } from "../../../../src/adapters/openclaw/types.js";
+import { createStubAgenrHostMemorySurface } from "../../../helpers/host-memory-stubs.js";
 
 describe("handleAgenrSessionEnd", () => {
   beforeEach(() => {
@@ -105,6 +107,13 @@ function createLogger() {
 }
 
 function buildServicesPromise(): Promise<AgenrOpenClawServices> {
+  const featureFlags = {
+    workingMemory: false,
+    sessionTreeLineage: false,
+    sessionTreeCompaction: false,
+    goalContinuation: false,
+  };
+
   return Promise.resolve({
     pluginConfig: {
       memoryPolicy: { episodes: { enabled: true } },
@@ -112,6 +121,8 @@ function buildServicesPromise(): Promise<AgenrOpenClawServices> {
     dreaming: {},
     agenrConfig: null,
     config: { dbPath: "/tmp/knowledge.db" },
+    capabilities: resolveRuntimeCapabilities(featureFlags),
+    ...createStubAgenrHostMemorySurface(),
     close: vi.fn(async () => undefined),
   } as unknown as AgenrOpenClawServices);
 }
