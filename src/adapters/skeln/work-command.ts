@@ -1,7 +1,13 @@
 import type { ExtensionContext } from "./skeln-types.js";
 
 import type { AgenrWorkMutationActor, TrustedHostMutationSource } from "../../app/working-memory/constants.js";
-import type { AgenrWorkCloseMode, AgenrWorkParams, AgenrWorkUpdateOperation, WorkingExternalGoalMutationKind } from "../../app/working-memory/mutations.js";
+import type {
+  AgenrWorkCloseMode,
+  AgenrWorkParams,
+  AgenrWorkTarget,
+  AgenrWorkUpdateOperation,
+  WorkingExternalGoalMutationKind,
+} from "../../app/working-memory/mutations.js";
 import type { WorkingScope } from "../../app/working-memory/scope.js";
 import type { WorkingBudgetState, WorkingCheckpoint, WorkingUsageDelta } from "../../app/working-memory/snapshot.js";
 import type { WorkingContinuationPolicy } from "../../app/working-memory/constants.js";
@@ -26,6 +32,8 @@ export interface AgenrSkelnWorkCommandMutationMetadata {
 export interface AgenrSkelnWorkGetCommandParams {
   /** Read the current working set. */
   action: "get";
+  /** Working-set target to read. */
+  target?: AgenrWorkTarget;
   /** Explicit working-set id when known. */
   workingSetId?: string;
   /** Raw scope facts supplied by Skeln. */
@@ -40,6 +48,8 @@ export interface AgenrSkelnWorkGetCommandParams {
 export interface AgenrSkelnWorkListCommandParams {
   /** List working sets. */
   action: "list";
+  /** Working-set target used to resolve the list scope. */
+  target?: AgenrWorkTarget;
   /** Raw scope facts supplied by Skeln. */
   scope?: Partial<WorkingScope>;
   /** Maximum working sets to return. */
@@ -50,6 +60,8 @@ export interface AgenrSkelnWorkListCommandParams {
 export interface AgenrSkelnWorkCreateCommandParams extends AgenrSkelnWorkCommandMutationMetadata {
   /** Create one scoped working set. */
   action: "create";
+  /** Working-set target to create. */
+  target?: AgenrWorkTarget;
   /** Raw scope facts supplied by Skeln. */
   scope?: Partial<WorkingScope>;
   /** Initial objective operation. */
@@ -66,6 +78,8 @@ export interface AgenrSkelnWorkCreateCommandParams extends AgenrSkelnWorkCommand
 export interface AgenrSkelnWorkUpdateCommandParams extends AgenrSkelnWorkCommandMutationMetadata {
   /** Update an existing working set. */
   action: "update";
+  /** Working-set target to update. */
+  target?: AgenrWorkTarget;
   /** Explicit working-set id when known. */
   workingSetId?: string;
   /** Raw scope facts supplied by Skeln. */
@@ -82,6 +96,8 @@ export interface AgenrSkelnWorkUpdateCommandParams extends AgenrSkelnWorkCommand
 export interface AgenrSkelnWorkCloseCommandParams extends AgenrSkelnWorkCommandMutationMetadata {
   /** Close or abandon an existing working set. */
   action: "close";
+  /** Working-set target to close. */
+  target?: AgenrWorkTarget;
   /** Explicit working-set id when known. */
   workingSetId?: string;
   /** Raw scope facts supplied by Skeln. */
@@ -100,6 +116,8 @@ export interface AgenrSkelnWorkCloseCommandParams extends AgenrSkelnWorkCommandM
 export interface AgenrSkelnWorkPrepareExternalGoalMutationCommandParams extends AgenrSkelnWorkCommandMutationMetadata {
   /** Account progress before a host mutates goal state externally. */
   action: "prepare_external_goal_mutation";
+  /** Working-set target to prepare. */
+  target?: AgenrWorkTarget;
   /** External mutation that is about to run. */
   mutationKind: WorkingExternalGoalMutationKind;
   /** Explicit working-set id when known. */
@@ -171,6 +189,7 @@ export async function executeAgenrSkelnWorkCommand(
     params.action === "prepare_external_goal_mutation"
       ? await services.workingMemory.prepareExternalGoalMutation({
           ...params,
+          target: params.target ?? "goal",
           scope: workingScope,
         })
       : await services.workingMemory.run({
@@ -196,6 +215,7 @@ export function toAgenrWorkParams(params: AgenrSkelnWorkCommandParams): AgenrWor
     case "get":
       return {
         action: "get",
+        ...(params.target !== undefined ? { target: params.target } : {}),
         ...(params.workingSetId !== undefined ? { workingSetId: params.workingSetId } : {}),
         ...(params.includeEvents !== undefined ? { includeEvents: params.includeEvents } : {}),
         ...(params.eventLimit !== undefined ? { eventLimit: params.eventLimit } : {}),
@@ -203,11 +223,13 @@ export function toAgenrWorkParams(params: AgenrSkelnWorkCommandParams): AgenrWor
     case "list":
       return {
         action: "list",
+        ...(params.target !== undefined ? { target: params.target } : {}),
         ...(params.listLimit !== undefined ? { listLimit: params.listLimit } : {}),
       };
     case "create":
       return {
         action: "create",
+        target: params.target ?? "goal",
         operation: params.operation,
         updateReason: params.updateReason,
         source: params.source,
@@ -218,6 +240,7 @@ export function toAgenrWorkParams(params: AgenrSkelnWorkCommandParams): AgenrWor
     case "update":
       return {
         action: "update",
+        target: params.target ?? "goal",
         operation: params.operation,
         updateReason: params.updateReason,
         source: params.source,
@@ -228,6 +251,7 @@ export function toAgenrWorkParams(params: AgenrSkelnWorkCommandParams): AgenrWor
     case "close":
       return {
         action: "close",
+        target: params.target ?? "goal",
         closeReason: params.closeReason,
         source: params.source,
         ...(params.expectedRevision !== undefined ? { expectedRevision: params.expectedRevision } : {}),

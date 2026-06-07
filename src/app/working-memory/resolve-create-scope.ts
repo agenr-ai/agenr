@@ -1,5 +1,5 @@
-import { lookupCurrentWorkingSets } from "./find-current-set.js";
-import type { AgenrWorkParams } from "./mutations.js";
+import { lookupCurrentWorkingSetsForTarget } from "./find-current-set.js";
+import type { AgenrWorkParams, ExplicitWorkingSetTarget } from "./mutations.js";
 import type { WorkingMemoryRepository } from "./repository.js";
 import { createFailure, type WorkingMemoryFailure } from "./results.js";
 import type { ResolvedWorkingScope } from "./scope.js";
@@ -23,7 +23,7 @@ export type CreateScopeResult = CreateScopeResolution | WorkingMemoryFailure;
  * @returns Resolved scope ready for create, or a stable failure.
  */
 export async function resolveCreateScope(
-  params: Pick<AgenrWorkParams, "workingSetId" | "scope">,
+  params: Pick<AgenrWorkParams, "workingSetId" | "scope"> & { target: ExplicitWorkingSetTarget },
   repository: WorkingMemoryRepository,
 ): Promise<CreateScopeResult> {
   const workingSetId = params.workingSetId?.trim();
@@ -39,7 +39,7 @@ export async function resolveCreateScope(
     return createFailure("not_found", `Working set ${workingSetId} was not found.`, { workingSetId });
   }
 
-  const lookup = await lookupCurrentWorkingSets(params.scope, repository);
+  const lookup = await lookupCurrentWorkingSetsForTarget(params.scope, repository, params.target);
   if (!lookup.ok) {
     return lookup;
   }

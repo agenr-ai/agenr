@@ -9,6 +9,7 @@ const MODEL_VISIBLE_OPERATION_TYPES = [
   "set_objective",
   "replace_plan",
   "merge_checkpoint",
+  "set_scratchpad",
   "add_file_note",
   "add_command_note",
   "record_decision",

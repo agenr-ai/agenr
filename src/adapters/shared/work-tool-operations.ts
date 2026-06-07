@@ -20,6 +20,12 @@ const WORK_TOOL_PARAMETERS = {
       enum: [...MODEL_VISIBLE_WORK_ACTIONS],
       description: "Working-memory action to run. Close is reserved for /goal clear and host lifecycle paths.",
     },
+    target: {
+      type: "string",
+      enum: ["auto", "session", "goal"],
+      description:
+        "Working-set target. Use auto by default for get, list, and update. Create requires session or goal. Use session for session scratchpad or ordinary WIP, and goal when working with an explicit active goal.",
+    },
     workingSetId: {
       type: "string",
       description: "Explicit working-set id when known.",
@@ -86,8 +92,14 @@ const WORK_TOOL_PARAMETERS = {
 export function parseWorkToolParams(rawParams: unknown, defaultScope: Partial<WorkingScope>, reader: MemoryToolParamReader): AgenrWorkParams {
   const params = asRecord(rawParams);
   const action = parseAction(reader.readString(params, "action", { required: true }));
+  const target = parseTarget(reader.readString(params, "target"));
+  if (action === "create" && target.target !== "session" && target.target !== "goal") {
+    throw new Error('agenr_work create requires target "session" or "goal".');
+  }
+
   return {
     action,
+    ...target,
     ...optionalStringParam(params, "workingSetId", reader),
     scope: mergeWorkingScope(defaultScope, parseScope(params.scope, reader)),
     ...(params.operation !== undefined ? { operation: parseOperation(params.operation, reader) } : {}),
@@ -99,6 +111,19 @@ export function parseWorkToolParams(rawParams: unknown, defaultScope: Partial<Wo
     actor: "model",
     source: "tool",
   };
+}
+
+/** Parses the optional target enum. */
+function parseTarget(value: string | undefined): Pick<AgenrWorkParams, "target"> {
+  if (value === undefined) {
+    return {};
+  }
+
+  if (value === "auto" || value === "session" || value === "goal") {
+    return { target: value };
+  }
+
+  throw new Error(`Unsupported agenr_work target "${value}".`);
 }
 
 /** Merges model-supplied scope over host scope. */

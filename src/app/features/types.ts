@@ -50,8 +50,7 @@ export function createAllEnabledFeatureFlagConfig(): AgenrFeatureFlagConfig {
 }
 
 /**
- * Working-memory rollout flags for the ledger, agenr_work, and /goal surfaces.
- * Automatic per-turn injection is controlled separately by memoryPolicy.workingContext.
+ * Working-memory rollout flags for the ledger, agenr_work, context injection, and /goal surfaces.
  */
 export type WorkingMemoryFeatureFlags = Pick<AgenrFeatureFlags, "workingMemory">;
 

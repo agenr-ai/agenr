@@ -73,7 +73,7 @@ Important current behavior:
 
 ### 2. Skeln shutdown write
 
-When the Skeln adapter receives `session_shutdown`, it first routes the lifecycle event through session-memory intake. If an active working set exists, agenr records a `merge_checkpoint` update and leaves the set open. Shutdown never closes a working set implicitly.
+When the Skeln adapter receives `session_shutdown`, it first routes the lifecycle event through session-memory intake. If a session working set exists, agenr records a `merge_checkpoint` update and then closes that session set without requesting a goal-close episode. Explicit goal working sets are not closed by shutdown.
 
 After the checkpoint attempt, the adapter may write a Skeln episode through the same shared `app/episode-ingest` workflow used by OpenClaw and CLI ingest. Automatic Skeln episode writes (shutdown and pre-compaction) are gated by `memoryPolicy.episodes.enabled` (default on), use Skeln JSONL parsing, and write `source: "skeln"`.
 

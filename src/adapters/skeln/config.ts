@@ -3,6 +3,37 @@ import type { ExtensionAPI } from "./skeln-types.js";
 import type { PluginInjectionMemoryPolicyConfig } from "../../app/plugin-runtime/types.js";
 import { normalizePluginInjectionMemoryPolicyConfig } from "../shared/plugin-memory-policy-config.js";
 
+/**
+ * Result of reading the Skeln `goals` extension setting.
+ * Defaults to true when absent.
+ */
+export type SkelnGoalsSettingResult = { ok: true; value: boolean } | { ok: false; error: string };
+
+/**
+ * Reads the `goals` extension setting (boolean, defaults to true).
+ * When true (default): enable full goal system, goal tools, /goal commands, goal working sets.
+ * When false: disable goals and goal tools, but keep independent `agenr_work` session working set.
+ */
+export function readSkelnGoalsSetting(skeln: Pick<ExtensionAPI, "getSetting">): SkelnGoalsSettingResult {
+  const value = skeln.getSetting("goals");
+  if (value === undefined) {
+    return { ok: true, value: true };
+  }
+  if (typeof value === "boolean") {
+    return { ok: true, value };
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "1" || normalized === "yes") {
+      return { ok: true, value: true };
+    }
+    if (normalized === "false" || normalized === "0" || normalized === "no") {
+      return { ok: true, value: false };
+    }
+  }
+  return { ok: false, error: "goals must be boolean or boolean-like string (true/false)" };
+}
+
 /** Result of parsing the Skeln `memoryPolicy` extension setting. */
 export type SkelnMemoryPolicySettingResult = { ok: true; value: PluginInjectionMemoryPolicyConfig | undefined } | { ok: false; error: string };
 
@@ -70,11 +101,9 @@ export function mergeSkelnMemoryPolicy(
   const slotPolicies = mergeSlotPolicies(fromSettings.slotPolicies, fromOptions.slotPolicies);
   const sessionStart = fromSettings.sessionStart || fromOptions.sessionStart ? { ...fromSettings.sessionStart, ...fromOptions.sessionStart } : undefined;
   const beforeTurn = fromSettings.beforeTurn || fromOptions.beforeTurn ? { ...fromSettings.beforeTurn, ...fromOptions.beforeTurn } : undefined;
-  const workingContext =
-    fromSettings.workingContext || fromOptions.workingContext ? { ...fromSettings.workingContext, ...fromOptions.workingContext } : undefined;
   const episodes = fromSettings.episodes || fromOptions.episodes ? { ...fromSettings.episodes, ...fromOptions.episodes } : undefined;
 
-  if (!slotPolicies && !sessionStart && !beforeTurn && !workingContext && !episodes) {
+  if (!slotPolicies && !sessionStart && !beforeTurn && !episodes) {
     return undefined;
   }
 
@@ -82,7 +111,6 @@ export function mergeSkelnMemoryPolicy(
     ...(slotPolicies ? { slotPolicies } : {}),
     ...(sessionStart ? { sessionStart } : {}),
     ...(beforeTurn ? { beforeTurn } : {}),
-    ...(workingContext ? { workingContext } : {}),
     ...(episodes ? { episodes } : {}),
   };
 }

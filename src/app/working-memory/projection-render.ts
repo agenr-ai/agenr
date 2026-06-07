@@ -1,4 +1,5 @@
 import type { WorkingContextProjection } from "./projection.js";
+import { WORKING_CONTEXT_SESSION_SECTION_LABEL } from "./projection-section-labels.js";
 import type { WorkingSetRecord } from "./records.js";
 import type { WorkingCandidate, WorkingNextAction } from "./snapshot.js";
 
@@ -12,7 +13,7 @@ function byteLength(content: string): number {
 /**
  * Reasons a working-context projection can be reduced to a stub.
  */
-export type WorkingContextStubReason = "feature_disabled" | "missing_active_set" | "ambiguous_scope" | "misconfigured";
+export type WorkingContextStubReason = "feature_disabled" | "missing_active_set" | "ambiguous_scope" | "misconfigured" | "selection_failed";
 
 /**
  * Inputs used to build a conservative working-context stub projection.
@@ -54,6 +55,25 @@ export function createWorkingContextStubProjection(input: WorkingContextStubProj
   };
 }
 
+/** One working-set section rendered into a projection. */
+interface WorkingContextProjectionSection {
+  /** Optional section heading for multi-set projections. */
+  label?: string;
+  /** Working set rendered into the section body. */
+  workingSet: WorkingSetRecord;
+}
+
+/** Warning rendered into a projection when a companion section cannot load. */
+interface WorkingContextProjectionWarningSection {
+  /** Section heading for the warning. */
+  label: string;
+  /** Warning text rendered into the section body. */
+  warning: string;
+}
+
+/** Projection entry rendered as either a working set or a warning section. */
+type WorkingContextProjectionEntry = WorkingContextProjectionSection | WorkingContextProjectionWarningSection;
+
 /**
  * Builds a full non-persistent projection from one active working set.
  *
@@ -62,12 +82,84 @@ export function createWorkingContextStubProjection(input: WorkingContextStubProj
  * @returns Rendered transient working-context projection.
  */
 export function createWorkingContextFullProjection(workingSet: WorkingSetRecord, sourceRef: string): WorkingContextProjection {
-  const snapshot = workingSet.snapshot;
+  return createWorkingContextProjectionFromSections([{ workingSet }], sourceRef);
+}
+
+/**
+ * Builds a full non-persistent projection from multiple active working sets.
+ *
+ * @param sections - Labeled working sets selected for injection.
+ * @param sourceRef - Stable provenance pointer for this render decision.
+ * @returns Rendered transient working-context projection.
+ */
+export function createWorkingContextMultiProjection(
+  sections: Array<{ label: string; workingSet: WorkingSetRecord } | { label: string; warning: string }>,
+  sourceRef: string,
+): WorkingContextProjection {
+  return createWorkingContextProjectionFromSections(sections, sourceRef);
+}
+
+/**
+ * Builds a full non-persistent projection from one or more working-set sections.
+ *
+ * @param sections - Working sets to render, with optional section headings.
+ * @param sourceRef - Stable provenance pointer for this render decision.
+ * @returns Rendered transient working-context projection.
+ */
+function createWorkingContextProjectionFromSections(sections: WorkingContextProjectionEntry[], sourceRef: string): WorkingContextProjection {
+  const auditProvenance = resolveAuditProvenance(sections);
   const lines = [
     "<agenr_work_context>",
     "This is transient working memory for the current task, not durable truth.",
     "It may be stale or hypothetical. Prefer current filesystem, git, tests, tool output, and the user's latest message for current-state claims.",
+    ...sections.flatMap(renderProjectionEntry),
     "",
+    ...renderWorkingContextRules(),
+    "</agenr_work_context>",
+  ];
+  const content = lines.join("\n");
+
+  return {
+    kind: "working_set",
+    renderMode: "full",
+    content,
+    ...auditProvenance,
+    sourceRef,
+    byteLength: byteLength(content),
+  };
+}
+
+/** Resolves audit provenance from bundle sections, preferring the session working set. */
+function resolveAuditProvenance(sections: WorkingContextProjectionEntry[]): Pick<WorkingContextProjection, "workingSetId" | "revision"> {
+  const sessionSection = sections.find(
+    (section): section is WorkingContextProjectionSection & { label: string } =>
+      "workingSet" in section && section.label === WORKING_CONTEXT_SESSION_SECTION_LABEL,
+  );
+  const fallbackSection = sections.find((section): section is WorkingContextProjectionSection => "workingSet" in section);
+  const auditSection = sessionSection ?? fallbackSection;
+  if (!auditSection) {
+    return {};
+  }
+
+  return {
+    workingSetId: auditSection.workingSet.id,
+    revision: auditSection.workingSet.revision,
+  };
+}
+
+/** Renders one working-context projection entry. */
+function renderProjectionEntry(section: WorkingContextProjectionEntry): string[] {
+  return [
+    "",
+    ...(section.label ? [`## ${escapeText(section.label)}`] : []),
+    ...("workingSet" in section ? renderWorkingSetSection(section.workingSet) : [`Warning: ${escapeText(section.warning)}`]),
+  ];
+}
+
+/** Renders one working-set section. */
+function renderWorkingSetSection(workingSet: WorkingSetRecord): string[] {
+  const snapshot = workingSet.snapshot;
+  return [
     `Scope: ${escapeText(workingSet.scopeKind)} ${escapeText(workingSet.scopeKey)}`,
     `Working set: ${escapeText(workingSet.id)}`,
     `Revision: ${workingSet.revision}`,
@@ -76,6 +168,7 @@ export function createWorkingContextFullProjection(workingSet: WorkingSetRecord,
     ...optionalLine("Summary", snapshot.summary),
     ...renderStringList("Current plan", snapshot.currentPlan),
     ...renderCheckpoint(snapshot.checkpoint?.summary),
+    ...optionalMultiline("Scratchpad", snapshot.scratchpad),
     ...renderNextActions(snapshot.nextActions),
     ...renderLabeledNotes(
       "Touched files",
@@ -117,26 +210,7 @@ export function createWorkingContextFullProjection(workingSet: WorkingSetRecord,
     ...renderStringList("Blockers", snapshot.blockers),
     ...renderStringList("Open questions", snapshot.openQuestions),
     ...renderCandidates(snapshot.candidates),
-    "",
-    "Rules:",
-    "- Update this working set when material task state changes.",
-    "- Leave a checkpoint before pausing, handing off, compacting, forking, or waiting.",
-    "- Do not close this working set; only the user clears goals with /goal clear.",
-    "- Do not store transient WIP with agenr_store.",
-    "- Promote only durable facts, decisions, preferences, or reusable procedures explicitly.",
-    "</agenr_work_context>",
   ];
-  const content = lines.join("\n");
-
-  return {
-    kind: "working_set",
-    renderMode: "full",
-    content,
-    workingSetId: workingSet.id,
-    revision: workingSet.revision,
-    sourceRef,
-    byteLength: byteLength(content),
-  };
 }
 
 /** Escapes model-visible values inside the XML-like projection block. */
@@ -148,6 +222,12 @@ function escapeText(value: string): string {
 function optionalLine(label: string, value: string | undefined): string[] {
   const normalized = value?.trim();
   return normalized ? [`${label}: ${escapeText(normalized)}`] : [];
+}
+
+/** Renders an optional multiline field. */
+function optionalMultiline(label: string, value: string | undefined): string[] {
+  const normalized = value?.trim();
+  return normalized ? ["", `${label}:`, escapeText(normalized)] : [];
 }
 
 /** Renders an optional string list section. */
@@ -211,5 +291,17 @@ function renderCandidates(candidates: WorkingCandidate[] | undefined): string[] 
 
       return `- ${candidate.kind}: ${escapeText(candidate.subject)}`;
     }),
+  ];
+}
+
+/** Renders shared model-facing working-context rules. */
+function renderWorkingContextRules(): string[] {
+  return [
+    "Rules:",
+    "- Update the relevant working set when material task state changes.",
+    "- Leave a checkpoint before pausing, handing off, compacting, forking, or waiting.",
+    "- Do not close working sets with agenr_work.",
+    "- Do not store transient WIP with agenr_store.",
+    "- Promote only durable facts, decisions, preferences, or reusable procedures explicitly.",
   ];
 }

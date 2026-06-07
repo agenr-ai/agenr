@@ -165,6 +165,65 @@ describe("goal alias tools", () => {
       },
     });
   });
+
+  it("forks current session working state when creating a goal", async () => {
+    const { database, dbPath, service } = await createService();
+
+    try {
+      const scope = { conversationKey: "goal-fork", sessionId: "goal-fork", cwd: "/tmp/project" };
+      const ensured = await service.ensureSessionWorkingSet({
+        scope,
+        actor: "runtime",
+        source: "lifecycle_hook",
+      });
+      if (!ensured.ok) {
+        throw new Error("Expected session working set.");
+      }
+
+      const sessionUpdated = await service.run({
+        action: "update",
+        target: "session",
+        scope,
+        expectedRevision: ensured.workingSet.revision,
+        operation: {
+          type: "set_scratchpad",
+          scratchpad: "Session-level scratchpad before the goal exists.",
+        },
+        updateReason: "Recorded session scratchpad.",
+        actor: "model",
+        source: "tool",
+      });
+      if (!sessionUpdated.ok || sessionUpdated.action !== "update") {
+        throw new Error("Expected session update.");
+      }
+
+      const created = await runGoalAliasTool("create_goal", { objective: "Turn the session note into goal work." }, scope, READER, service);
+      expect(created.failed).toBe(false);
+
+      await expect(service.run({ action: "get", target: "goal", scope })).resolves.toMatchObject({
+        ok: true,
+        action: "get",
+        workingSet: {
+          scopeKind: "conversation",
+          snapshot: {
+            objective: "Turn the session note into goal work.",
+            scratchpad: "Session-level scratchpad before the goal exists.",
+          },
+        },
+      });
+      await expect(service.run({ action: "get", target: "session", scope })).resolves.toMatchObject({
+        ok: true,
+        action: "get",
+        workingSet: {
+          id: sessionUpdated.workingSet.id,
+          status: "active",
+        },
+      });
+    } finally {
+      await closeTestDatabase(database);
+      await removeTestPath(dbPath);
+    }
+  });
 });
 
 function readGoalResponse(text: string): GoalToolResponse {

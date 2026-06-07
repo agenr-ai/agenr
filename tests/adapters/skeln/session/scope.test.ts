@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveWorkingScope } from "../../../../src/app/working-memory/scope-resolver.js";
+import { resolveGoalWorkingScope } from "../../../../src/app/working-memory/scope-resolver.js";
 import {
   buildSkelnHostContext,
   mergeSkelnHostContext,
@@ -152,8 +152,8 @@ describe("Skeln goal scope stability", () => {
 
     expect(firstScope.sessionKey).not.toEqual(secondScope.sessionKey);
 
-    const firstResolved = resolveWorkingScope(toWorkingScopeFromSkelnSession(firstScope));
-    const secondResolved = resolveWorkingScope(toWorkingScopeFromSkelnSession(secondScope));
+    const firstResolved = resolveGoalWorkingScope(toWorkingScopeFromSkelnSession(firstScope));
+    const secondResolved = resolveGoalWorkingScope(toWorkingScopeFromSkelnSession(secondScope));
 
     expect(firstResolved.ok).toBe(true);
     expect(secondResolved.ok).toBe(true);

@@ -3,6 +3,7 @@ import { routeSessionMemoryTrigger } from "../session-memory/trigger-router.js";
 import type { SessionMemoryRepository } from "../session-memory/repository.js";
 import type { SessionMemoryTriggerResult } from "../session-memory/results.js";
 import type { SessionMemoryTriggerEvent } from "../session-memory/types.js";
+import type { WorkingMemoryFailure } from "../working-memory/results.js";
 import type { WorkingMemoryService } from "../working-memory/service.js";
 import type { WorkingMemoryRepository } from "../working-memory/repository.js";
 import type { AgenrFeatureFlags } from "../features/types.js";
@@ -33,6 +34,10 @@ export interface CreateHostMemoryServicesOptions {
   sessionMemoryRepository?: SessionMemoryRepository;
   /** Adapter source label stored on new working sets. */
   workingMemorySourceLabel?: string;
+  /** Whether goal working sets and goal-targeted mutations are enabled. */
+  goalWorkingSetsEnabled?: boolean;
+  /** Optional callback for non-absence session fork-read failures. */
+  onForkSnapshotReadIssue?: (failure: WorkingMemoryFailure) => void;
   /** Optional host-owned continuation callback. */
   goalContinuationHostPort?: GoalContinuationHostPort;
 }
@@ -52,6 +57,8 @@ export async function createHostMemoryServices(
     ? (await import("../working-memory/service.js")).createWorkingMemoryService(featureFlags, {
         repository: options.workingMemoryRepository,
         sourceLabel: options.workingMemorySourceLabel,
+        goalWorkingSetsEnabled: options.goalWorkingSetsEnabled,
+        onForkSnapshotReadIssue: options.onForkSnapshotReadIssue,
       })
     : createDisabledWorkingMemoryService();
 

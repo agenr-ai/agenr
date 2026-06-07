@@ -116,7 +116,7 @@ The Skeln manifest in `packages/skeln-plugin/package.json` declares extension id
 - `dbPath` - optional DB path override
 - `configPath` - optional agenr config path override
 - `project` - optional project label for recall and store scope
-- `wip` - optional boolean override for automatic working-context injection
+- `goals` - optional boolean override for the goal system; defaults to `true`. When `false`, Skeln disables goal alias tools, `/goal` commands, and goal-targeted working-memory mutations while keeping the independent session working set and transient working-context injection fully functional via `agenr_work`
 - `memoryPolicy` - optional JSON string with the same nested shape as the OpenClaw agenr plugin `memoryPolicy` block
 
 Skeln extension settings are flat `boolean | string` values, so nested `memoryPolicy` is stored as JSON text rather than a nested object.
@@ -128,7 +128,7 @@ Example Skeln config fragment after `skeln extension add @agenr/skeln-plugin`:
   "extensions": {
     "settings": {
       "agenr": {
-        "memoryPolicy": "{\"sessionStart\":{\"enabled\":false,\"coreMemory\":false,\"relevantDurableMemory\":false},\"beforeTurn\":{\"enabled\":false,\"procedureSuggestion\":false},\"workingContext\":{\"enabled\":true}}"
+        "memoryPolicy": "{\"sessionStart\":{\"enabled\":false,\"coreMemory\":false,\"relevantDurableMemory\":false},\"beforeTurn\":{\"enabled\":false,\"procedureSuggestion\":false}}"
       }
     }
   }
@@ -163,7 +163,6 @@ Supported `memoryPolicy` keys match the shared plugin contract:
 - `memoryPolicy.beforeTurn.highConfidenceRecallThreshold` - optional score floor required before before-turn recall can expand beyond the normal durable-item cap
 - `memoryPolicy.beforeTurn.procedureThreshold` - optional score floor for proactive procedure suggestion
 - `memoryPolicy.episodes.enabled` - optional toggle for automatic Skeln episode writes (shutdown and pre-compaction); defaults to on
-- `memoryPolicy.workingContext.enabled` - optional toggle for automatic transient `<agenr_work_context>` injection; defaults to true when `features.workingMemory` is enabled
 - `memoryPolicy.slotPolicies.attributeHeads` - optional attribute-head overrides for read-time claim-slot policy classes
 
 Unknown keys inside the parsed JSON object are rejected.
@@ -207,7 +206,7 @@ Current lifecycle behavior:
 - `session_compact` routes a compaction checkpoint artifact from Skeln host compaction facts
 - `before_agent_start` runs session-start recall on the first turn for a tracked session identity, then before-turn recall on later turns; later turns can also inject the latest compaction checkpoint once per artifact
 - `tool_result` maps structured agenr failed tool details (`details.status === "failed"`) to Skeln `{ isError: true }` because Skeln's `AgentToolResult` type does not carry an inline error flag
-- `session_shutdown` routes session-memory intake, clears compaction prompt tracker state and remembered scope for the ending session (before episode scheduling), snapshots transcript target facts synchronously, then dispatches optional bounded shutdown episode capture from that snapshot
+- `session_shutdown` routes session-memory intake, checkpoints and closes the session working set, clears compaction prompt tracker state and remembered scope for the ending session (before episode scheduling), snapshots transcript target facts synchronously, then dispatches optional bounded shutdown episode capture from that snapshot
 - when Skeln supplies `deferWork`, the host waits for episode capture before invalidating the ending session's extension context; quit shutdown also closes the shared database handle after capture
 - quit shutdown without host deferral awaits episode capture (when enabled) and `services.close()` in the lifecycle handler
 
@@ -372,7 +371,7 @@ Phase 0 defines four agenr config feature flags. `features.sessionTreeCompaction
 
 Persisted config only records overrides: most flags are written when explicitly enabled, while `sessionTreeCompaction: false` is written when compaction intake should be disabled.
 
-`features.workingMemory` enables the v11 ledger, `agenr_work`, trusted Skeln work commands, and `/goal` aliases. `features.sessionTreeLineage` enables v12 lineage intake for lifecycle events such as resume, fork, clone, and subagent spawn. `features.sessionTreeCompaction` enables v12 checkpoint artifact intake. Automatic per-turn working-context injection is controlled separately through `memoryPolicy.workingContext.enabled` and defaults to on when working memory is enabled.
+`features.workingMemory` enables the v11 ledger, `agenr_work`, trusted Skeln work commands, transient working-context injection, and `/goal` aliases. `features.sessionTreeLineage` enables v12 lineage intake for lifecycle events such as resume, fork, clone, and subagent spawn. `features.sessionTreeCompaction` enables v12 checkpoint artifact intake.
 
 ## Tool behavior
 
@@ -439,12 +438,18 @@ There is no `agenr_retire` tool on any host. Taking a memory offline now happens
 
 ### `agenr_work` and Goal Aliases
 
-`agenr_work` is the model-facing working-memory tool. It exposes typed WIP operations such as `merge_checkpoint`, file notes, command notes, decisions, assumptions, next actions, and candidate memories. Host-only operations are intentionally not in the model schema.
+`agenr_work` is the model-facing working-memory tool. It exposes typed WIP operations such as `merge_checkpoint`, `set_scratchpad`, file notes, command notes, decisions, assumptions, next actions, and candidate memories. Host-only operations are intentionally not in the model schema.
+
+Working memory has two active target layers:
+
+- `target: "session"` addresses the independent session working set created for ordinary multi-turn work.
+- `target: "goal"` addresses an explicit goal working set.
+- `target: "auto"` chooses the goal set when one exists, then falls back to the session set. `workingSetId` wins over `target`, but `goals:false` still rejects goal-scoped records selected by id.
 
 The plugin also registers Codex-compatible `get_goal`, `create_goal`, and `update_goal` aliases:
 
 - `get_goal` returns structured goal JSON with status, revision, checkpoint, continuation policy, budget counters, and remaining token budget.
-- `create_goal` creates one active working set for the resolved scope and may initialize a token budget when the model was explicitly instructed to do so.
+- `create_goal` creates one active goal working set for the resolved scope, forks current session working state into that goal, and may initialize a token budget when the model was explicitly instructed to do so.
 - `update_goal` only allows `complete` or `blocked`; pause, resume, budget, usage, and close state remain trusted host controls.
 
 Trusted Skeln UI and lifecycle code can call `executeWorkCommand(...)` on the controller returned by `registerAgenrSkelnMemory(...)`. That path can set `continuationPolicy: "on_idle"`, configure budgets, account token/time/turn usage, record heartbeat, lease, resume, and stale metadata, and call `prepare_external_goal_mutation` before external `/goal` mutations. These trusted operations update Agenr state but do not schedule continuation turns; Skeln owns the runtime loop.

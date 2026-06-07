@@ -1,9 +1,9 @@
 import { applyOperation } from "../apply-operation.js";
 import { commitAppliedWorkingSetChange, isAppliedWorkingSetCommitFailure } from "./commit-applied-change.js";
 import { isMutableWorkingSetStatus, isTrustedHostMutationSource } from "../constants.js";
+import type { WorkingMemoryHandlerContext } from "../handler-context.js";
 import type { AgenrWorkUpdateOperation, PrepareExternalGoalMutationParams } from "../mutations.js";
 import type { WorkingEventRecord, WorkingSetRecord } from "../records.js";
-import type { WorkingMemoryRepository } from "../repository.js";
 import { createFailure, writeFailureToResult, type WorkingMemoryResult } from "../results.js";
 import { selectWorkingSet } from "../select-working-set.js";
 
@@ -18,14 +18,13 @@ interface PrepareOperation {
 /** Handles progress accounting before trusted external goal mutations. */
 export async function handlePrepareExternalGoalMutation(
   params: PrepareExternalGoalMutationParams,
-  repository: WorkingMemoryRepository,
-  timestamp: string,
+  ctx: WorkingMemoryHandlerContext,
 ): Promise<WorkingMemoryResult> {
   if (!isTrustedHostMutationSource(params.source)) {
     return createFailure("invalid_request", "prepare_external_goal_mutation is reserved for trusted host runtime paths.");
   }
 
-  const selection = await selectWorkingSet(params, repository);
+  const selection = await selectWorkingSet({ ...params, target: params.target ?? "goal" }, ctx.repository, { policy: ctx.policy });
   if (!selection.ok) {
     if (selection.code === "missing_active_set") {
       return {
@@ -69,7 +68,7 @@ export async function handlePrepareExternalGoalMutation(
       return applied;
     }
 
-    const writeResult = await commitAppliedWorkingSetChange(repository, {
+    const writeResult = await commitAppliedWorkingSetChange(ctx.repository, {
       workingSetId: workingSet.id,
       expectedRevision: workingSet.revision,
       operation,
@@ -77,7 +76,7 @@ export async function handlePrepareExternalGoalMutation(
       applied,
       actor: params.actor,
       source: params.source,
-      now: timestamp,
+      now: ctx.timestamp,
     });
     if (isAppliedWorkingSetCommitFailure(writeResult)) {
       return writeFailureToResult(workingSet.id, writeResult);

@@ -35,6 +35,11 @@ export interface RegisterAgenrSkelnMemoryOptions {
   /** Optional Skeln host feature-flag overrides merged over agenr config features. */
   featureFlags?: AgenrFeatureFlagConfig;
   /**
+   * When false, disables goal working sets, goal alias tools, and goal-targeted mutations
+   * while keeping the independent session working set enabled.
+   */
+  goals?: boolean;
+  /**
    * Optional host callback that supplies Skeln-native scope facts. When absent,
    * the adapter derives cwd and sessionKey from the active extension context.
    */

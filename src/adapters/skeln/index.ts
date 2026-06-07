@@ -6,6 +6,7 @@ import { createSessionLifecycleIntakeTracker } from "../../app/plugin-runtime/se
 import { createSessionStartTracker } from "../../app/plugin-runtime/session-tracking.js";
 import { createCompactionPromptTracker } from "../shared/compaction-prompt-tracker.js";
 import { mergeSkelnMemoryPolicy, readSkelnMemoryPolicySetting } from "./config.js";
+import { readSkelnGoalsSetting } from "./config.js";
 import { handleAgenrSkelnBeforeAgentStart } from "./hooks/before-agent-start.js";
 import { handleSkelnSessionBeforeCompact } from "./hooks/compaction-handlers.js";
 import { routeSkelnSessionMemoryTrigger } from "./hooks/session-memory-routing.js";
@@ -30,6 +31,7 @@ import { createAgenrSkelnServices } from "./runtime.js";
 import type { AgenrSkelnConfig } from "./runtime.js";
 import { buildSkelnHostContext, mergeSkelnHostContext, toSkelnSessionScope } from "./session/scope.js";
 import { createSkelnSessionScopeTracker, type SkelnSessionScopeTracker } from "./session/state.js";
+import { closeSkelnSessionWorkingSet, ensureSkelnSessionWorkingSet } from "./session/working-set-lifecycle.js";
 import { registerAgenrSkelnTools } from "./tools/index.js";
 import type { AgenrSkelnSessionScope, RegisterAgenrSkelnMemoryOptions } from "./types.js";
 import { executeAgenrSkelnWorkCommand, type AgenrSkelnMemoryController } from "./work-command.js";
@@ -90,11 +92,16 @@ export function registerAgenrSkelnMemory(skeln: ExtensionAPI, options: RegisterA
   if (!memoryPolicySetting.ok) {
     console.warn(`[agenr] invalid memoryPolicy setting: ${memoryPolicySetting.error}`);
   }
+  const goalsSetting = readSkelnGoalsSetting(skeln);
+  if (!goalsSetting.ok) {
+    console.warn(`[agenr] invalid goals setting: ${goalsSetting.error}`);
+  }
 
   const config: AgenrSkelnConfig = {
     dbPath: options.dbPath ?? readStringSetting(skeln, "dbPath"),
     configPath: options.configPath ?? readStringSetting(skeln, "configPath"),
     memoryPolicy: mergeSkelnMemoryPolicy(memoryPolicySetting.ok ? memoryPolicySetting.value : undefined, options.memoryPolicy),
+    goals: options.goals ?? (goalsSetting.ok ? goalsSetting.value : true),
     ...(options.featureFlags ? { featureFlags: options.featureFlags } : {}),
   };
   const servicesPromise = createAgenrSkelnServices(config);
@@ -110,7 +117,7 @@ export function registerAgenrSkelnMemory(skeln: ExtensionAPI, options: RegisterA
     console.error(`[agenr] startup failed: ${formatErrorMessage(error)}`);
   });
 
-  registerAgenrSkelnTools(skeln, servicesPromise, resolveScope);
+  registerAgenrSkelnTools(skeln, servicesPromise, resolveScope, config.goals ?? true);
   registerAgenrSkelnFailureBoundary(lifecycle);
   registerAgenrSkelnInjectionHooks(
     lifecycle,
@@ -148,6 +155,7 @@ function registerAgenrSkelnInjectionHooks(
     try {
       const scope = await resolveScope(context);
       rememberSkelnSessionStart(scopeTracker, scope);
+      await ensureSkelnSessionWorkingSet(servicesPromise, scope);
 
       await lifecycleIntakeTracker.track(
         scope.sessionId,
@@ -238,21 +246,42 @@ async function handleSkelnSessionShutdown(
   compactionPromptTracker: ReturnType<typeof createCompactionPromptTracker>,
   lifecycleIntakeTracker: ReturnType<typeof createSessionLifecycleIntakeTracker>,
 ): Promise<void> {
-  try {
-    const scope = await resolveScope(context);
-    await lifecycleIntakeTracker.track(
-      scope.sessionId,
-      scope.sessionKey,
-      routeSkelnSessionMemoryTrigger(servicesPromise, resolveScope, context, (scope) => buildSkelnSessionShutdownTriggerEvent(scope, event)),
-    );
+  const scope = await resolveShutdownScope(resolveScope, context);
+  if (scope) {
+    try {
+      await lifecycleIntakeTracker.track(
+        scope.sessionId,
+        scope.sessionKey,
+        routeSkelnSessionMemoryTrigger(servicesPromise, resolveScope, context, (scope) => buildSkelnSessionShutdownTriggerEvent(scope, event)),
+      );
+    } catch {
+      // Keep shutdown cleanup best-effort even when checkpoint intake fails.
+    }
+
+    await closeSkelnSessionWorkingSet(servicesPromise, context, scope, event);
     compactionPromptTracker.clear(scope.sessionId, scope.sessionKey);
-    await lifecycleIntakeTracker.clear(scope.sessionId, scope.sessionKey);
-  } catch {
-    // Ignore scope resolution failures during shutdown cleanup.
+    try {
+      await lifecycleIntakeTracker.clear(scope.sessionId, scope.sessionKey);
+    } catch {
+      // Ignore tracker cleanup failures during host shutdown.
+    }
   }
+
   // Shutdown episode work uses a synchronous transcript snapshot, not the scope tracker.
   clearTrackedSkelnScope(scopeTracker, context);
   await scheduleSkelnSessionShutdownEpisodeWrite({ event, context, servicesPromise });
+}
+
+/** Resolves shutdown scope without blocking transcript snapshot cleanup on failure. */
+async function resolveShutdownScope(
+  resolveScope: (context: ExtensionContext) => Promise<AgenrSkelnSessionScope>,
+  context: ExtensionContext,
+): Promise<AgenrSkelnSessionScope | undefined> {
+  try {
+    return await resolveScope(context);
+  } catch {
+    return undefined;
+  }
 }
 
 /** Registers bounded subagent finding capture for active working sets. */

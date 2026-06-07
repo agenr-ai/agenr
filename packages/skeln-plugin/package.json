@@ -34,14 +34,14 @@
         "type": "string",
         "description": "Optional project label for agenr recall and store scope. Defaults to the basename of the git repository root when available."
       },
-      "wip": {
+      "goals": {
         "type": "boolean",
-        "description": "When true, inject transient working-set context before each turn. Overrides memoryPolicy.workingContext.enabled."
+        "description": "When true (default), enable full goal system, goal tools, /goal commands, goal working sets. When false, disable goals and goal tools, but keep the lightweight independent session working set fully functional via agenr_work."
       },
       "memoryPolicy": {
         "type": "string",
         "description": "JSON object of memory-policy overrides for slot policies, session-start injection, and before-turn recall. Same shape as the OpenClaw agenr plugin memoryPolicy block.",
-        "default": "{\"sessionStart\":{\"enabled\":false,\"coreMemory\":false,\"relevantDurableMemory\":false},\"beforeTurn\":{\"enabled\":false,\"procedureSuggestion\":false},\"workingContext\":{\"enabled\":true}}"
+        "default": "{\"sessionStart\":{\"enabled\":false,\"coreMemory\":false,\"relevantDurableMemory\":false},\"beforeTurn\":{\"enabled\":false,\"procedureSuggestion\":false}}"
       }
     }
   },

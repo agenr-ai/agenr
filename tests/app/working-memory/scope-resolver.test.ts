@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveWorkingScope } from "../../../src/app/working-memory/scope-resolver.js";
+import { resolveGoalWorkingScope } from "../../../src/app/working-memory/scope-resolver.js";
 
-describe("resolveWorkingScope", () => {
+describe("resolveGoalWorkingScope", () => {
   it("prefers task scope when taskId is present", () => {
-    expect(resolveWorkingScope({ taskId: "TASK-1", conversationKey: "thread-1" })).toEqual({
+    expect(resolveGoalWorkingScope({ taskId: "TASK-1", conversationKey: "thread-1" })).toEqual({
       ok: true,
       scope: expect.objectContaining({
         scopeKind: "task",
@@ -15,7 +15,7 @@ describe("resolveWorkingScope", () => {
   });
 
   it("resolves conversation scope from conversationKey", () => {
-    expect(resolveWorkingScope({ conversationKey: "thread-1" })).toEqual({
+    expect(resolveGoalWorkingScope({ conversationKey: "thread-1" })).toEqual({
       ok: true,
       scope: expect.objectContaining({
         scopeKind: "conversation",
@@ -26,7 +26,7 @@ describe("resolveWorkingScope", () => {
 
   it("resolves git branch scope when gitRoot and gitBranch are present", () => {
     expect(
-      resolveWorkingScope({
+      resolveGoalWorkingScope({
         project: "agenr",
         gitRoot: "/repo",
         gitBranch: "main",
@@ -42,7 +42,7 @@ describe("resolveWorkingScope", () => {
 
   it("resolves git cwd scope when gitRoot and cwd are present without higher-priority facts", () => {
     expect(
-      resolveWorkingScope({
+      resolveGoalWorkingScope({
         project: "agenr",
         gitRoot: "/repo",
         cwd: "/repo/src",
@@ -57,7 +57,7 @@ describe("resolveWorkingScope", () => {
   });
 
   it("fails when no resolvable scope facts are present", () => {
-    expect(resolveWorkingScope({ cwd: "/tmp/project" })).toEqual({
+    expect(resolveGoalWorkingScope({ cwd: "/tmp/project" })).toEqual({
       ok: false,
       code: "missing_scope",
       message: "Working memory needs a task, conversation, or git scope.",

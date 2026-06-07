@@ -1,7 +1,8 @@
 import { buildWorkingCloseSnapshot, resolveCloseTerminalStatus } from "../close-service.js";
 import { CLOSE_EVENT_HISTORY_LIMIT } from "../limits.js";
+import type { WorkingMemoryHandlerContext } from "../handler-context.js";
 import type { AgenrWorkParams } from "../mutations.js";
-import { isWorkingSetWriteFailure, type WorkingMemoryRepository, type WorkingSetWriteResult } from "../repository.js";
+import { isWorkingSetWriteFailure, type WorkingSetWriteResult } from "../repository.js";
 import { createFailure, writeFailureToResult, type WorkingMemoryResult } from "../results.js";
 import { selectWorkingSet } from "../select-working-set.js";
 import { isCloseManagedStatus, isTrustedHostMutationSource } from "../constants.js";
@@ -9,7 +10,7 @@ import type { WorkingCandidate } from "../snapshot.js";
 import { normalizeRequiredString, resolveExpectedRevision } from "../validation.js";
 
 /** Handles deterministic close. */
-export async function handleClose(params: AgenrWorkParams, repository: WorkingMemoryRepository, timestamp: string): Promise<WorkingMemoryResult> {
+export async function handleClose(params: AgenrWorkParams, ctx: WorkingMemoryHandlerContext): Promise<WorkingMemoryResult> {
   if (!isTrustedHostMutationSource(params.source)) {
     return createFailure(
       "close_not_allowed",
@@ -22,7 +23,7 @@ export async function handleClose(params: AgenrWorkParams, repository: WorkingMe
     return closeReason;
   }
 
-  const selection = await selectWorkingSet(params, repository);
+  const selection = await selectWorkingSet(params, ctx.repository, { policy: ctx.policy });
   if (!selection.ok) {
     return selection;
   }
@@ -39,7 +40,7 @@ export async function handleClose(params: AgenrWorkParams, repository: WorkingMe
     });
   }
 
-  const events = await repository.listWorkingEvents(selection.workingSet.id, CLOSE_EVENT_HISTORY_LIMIT);
+  const events = await ctx.repository.listWorkingEvents(selection.workingSet.id, CLOSE_EVENT_HISTORY_LIMIT);
   const terminalStatus = resolveCloseTerminalStatus(params.closeMode);
   const closePayload = buildWorkingCloseSnapshot({
     workingSetId: selection.workingSet.id,
@@ -48,9 +49,9 @@ export async function handleClose(params: AgenrWorkParams, repository: WorkingMe
     closeReason: closeReason.value,
     createEpisode: params.createEpisode,
     eventSequences: events.map((event) => event.sequence),
-    now: timestamp,
+    now: ctx.timestamp,
   });
-  const writeResult = await repository.updateWorkingSet({
+  const writeResult = await ctx.repository.updateWorkingSet({
     workingSetId: selection.workingSet.id,
     expectedRevision: expectedRevision.value,
     eventType: terminalStatus,
@@ -64,11 +65,11 @@ export async function handleClose(params: AgenrWorkParams, repository: WorkingMe
     snapshot: closePayload.snapshot,
     title: selection.workingSet.title,
     objective: selection.workingSet.snapshot.objective,
-    closedAt: timestamp,
+    closedAt: ctx.timestamp,
     closeReason: closeReason.value,
     actor: params.actor,
     source: params.source,
-    now: timestamp,
+    now: ctx.timestamp,
   });
 
   return toCloseResult(selection.workingSet.id, writeResult, closePayload.candidates);

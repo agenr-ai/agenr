@@ -168,10 +168,6 @@ describe("agenr OpenClaw plugin config", () => {
           },
           extra: true,
         },
-        workingContext: {
-          enabled: "yes",
-          extra: true,
-        },
         surprise: true,
       },
     });
@@ -191,8 +187,6 @@ describe("agenr OpenClaw plugin config", () => {
         "memoryPolicy.slotPolicies.attributeHeads.bad key! must use a canonical attribute-head label",
         'memoryPolicy.slotPolicies.attributeHeads.support must be "exclusive" or "multivalued"',
         "unknown config field: memoryPolicy.slotPolicies.extra",
-        "memoryPolicy.workingContext.enabled must be a boolean when provided",
-        "unknown config field: memoryPolicy.workingContext.extra",
         "unknown config field: memoryPolicy.surprise",
       ]),
     );

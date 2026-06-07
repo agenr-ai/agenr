@@ -240,8 +240,11 @@ function compactionAcceptedResult(): SessionMemoryTriggerAcceptedResult {
 function createWorkingMemory(overrides: Partial<WorkingMemoryService> = {}): WorkingMemoryService {
   return {
     run: vi.fn(),
+    ensureSessionWorkingSet: vi.fn(),
+    readSessionSnapshotForFork: vi.fn(),
     prepareExternalGoalMutation: vi.fn(),
     renderProjection: vi.fn(),
+    renderProjectionBundle: vi.fn(),
     ...overrides,
   };
 }

@@ -75,6 +75,17 @@ const MODEL_VISIBLE_OPERATIONS: Record<ModelVisibleOperationType, ModelVisibleOp
       checkpoint: parseCheckpoint(record.checkpoint, reader),
     }),
   },
+  set_scratchpad: {
+    buildSchema: () =>
+      operationVariant(["type", "scratchpad"], {
+        type: constString("set_scratchpad"),
+        scratchpad: { type: "string", description: "Freeform transient notes for the selected working set." },
+      }),
+    parse: (record, reader) => ({
+      type: "set_scratchpad",
+      scratchpad: requiredString(record, "scratchpad", reader),
+    }),
+  },
   add_file_note: {
     buildSchema: () =>
       operationVariant(["type", "file"], {

@@ -59,6 +59,9 @@ export function applyOperation(
         snapshot.blockers = operation.checkpoint.blockers;
       }
       break;
+    case "set_scratchpad":
+      snapshot.scratchpad = operation.scratchpad;
+      break;
     case "add_file_note":
       snapshot.files = [...(snapshot.files ?? []), operation.file];
       break;

@@ -4,6 +4,7 @@ import { WORKING_MEMORY_DISABLED_MESSAGE } from "./ready.js";
 import type { AgenrWorkParams, PrepareExternalGoalMutationParams } from "./mutations.js";
 import type { WorkingContextProjection } from "./projection.js";
 import type { WorkingMemoryResult } from "./results.js";
+import type { EnsureSessionWorkingSetResult } from "./ensure-session.js";
 import type { WorkingMemoryService } from "./service.js";
 
 /**
@@ -24,11 +25,23 @@ export function createDisabledWorkingMemoryService(): WorkingMemoryService {
     async prepareExternalGoalMutation(_params: PrepareExternalGoalMutationParams): Promise<WorkingMemoryResult> {
       return failure();
     },
+    async ensureSessionWorkingSet(_params): Promise<EnsureSessionWorkingSetResult> {
+      return createFailure("feature_disabled", WORKING_MEMORY_DISABLED_MESSAGE);
+    },
+    async readSessionSnapshotForFork(_scope): Promise<undefined> {
+      return undefined;
+    },
     async renderProjection(input: string | { sourceRef: string }): Promise<WorkingContextProjection> {
       const sourceRef = typeof input === "string" ? input : input.sourceRef;
       return createWorkingContextStubProjection({
         reason: "feature_disabled",
         sourceRef,
+      });
+    },
+    async renderProjectionBundle(input): Promise<WorkingContextProjection> {
+      return createWorkingContextStubProjection({
+        reason: "feature_disabled",
+        sourceRef: input.sourceRef,
       });
     },
   };

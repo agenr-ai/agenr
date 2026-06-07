@@ -338,8 +338,11 @@ describe("routeSessionMemoryTrigger", () => {
         code: "misconfigured",
         message: "Working memory is enabled, but no working-memory repository was wired into the runtime.",
       }),
+      ensureSessionWorkingSet: vi.fn(),
+      readSessionSnapshotForFork: vi.fn(),
       prepareExternalGoalMutation: vi.fn(),
       renderProjection: vi.fn(),
+      renderProjectionBundle: vi.fn(),
     };
 
     await expect(
@@ -423,8 +426,11 @@ describe("routeSessionMemoryTrigger", () => {
           revision: 4,
         },
       }),
+      ensureSessionWorkingSet: vi.fn(),
+      readSessionSnapshotForFork: vi.fn(),
       prepareExternalGoalMutation: vi.fn(),
       renderProjection: vi.fn(),
+      renderProjectionBundle: vi.fn(),
     };
 
     await expect(
@@ -458,6 +464,7 @@ describe("routeSessionMemoryTrigger", () => {
 
     expect(workingMemory.run).toHaveBeenCalledWith({
       action: "update",
+      target: "session",
       scope: {
         sessionId: "session-1",
         conversationKey: "session-1",

@@ -50,6 +50,7 @@ describe("parseWorkToolParams", () => {
       parseWorkToolParams(
         {
           action: "list",
+          target: "session",
           listLimit: 10,
           actor: "user",
           source: "goal_command",
@@ -59,6 +60,7 @@ describe("parseWorkToolParams", () => {
       ),
     ).toEqual({
       action: "list",
+      target: "session",
       scope: {
         sessionId: "skeln:session:1",
         cwd: "/tmp/project",
@@ -69,11 +71,56 @@ describe("parseWorkToolParams", () => {
     });
   });
 
+  it("parses a target-specific scratchpad update", () => {
+    expect(
+      parseWorkToolParams(
+        {
+          action: "update",
+          target: "session",
+          expectedRevision: 2,
+          updateReason: "Recorded scratchpad.",
+          operation: {
+            type: "set_scratchpad",
+            scratchpad: "Temporary session note.",
+          },
+        },
+        { sessionId: "skeln:session:1" },
+        READER,
+      ),
+    ).toMatchObject({
+      action: "update",
+      target: "session",
+      expectedRevision: 2,
+      operation: {
+        type: "set_scratchpad",
+        scratchpad: "Temporary session note.",
+      },
+    });
+  });
+
+  it("requires an explicit target for create", () => {
+    expect(() =>
+      parseWorkToolParams(
+        {
+          action: "create",
+          updateReason: "User set a goal.",
+          operation: {
+            type: "set_objective",
+            objective: "Ship working memory.",
+          },
+        },
+        { sessionId: "skeln:session:1" },
+        READER,
+      ),
+    ).toThrow('agenr_work create requires target "session" or "goal".');
+  });
+
   it("parses a typed set_objective operation for create", () => {
     expect(
       parseWorkToolParams(
         {
           action: "create",
+          target: "goal",
           updateReason: "User set a goal.",
           operation: {
             type: "set_objective",
@@ -194,6 +241,7 @@ describe("WORK_TOOL_PARAMETERS", () => {
     const variants = operation.oneOf.map((variant) => variant.properties.type.const);
 
     expect(variants).toContain("merge_checkpoint");
+    expect(variants).toContain("set_scratchpad");
     expect(variants).not.toContain("set_status");
     expect(operation.oneOf.find((variant) => variant.properties.type.const === "merge_checkpoint")?.required).toEqual(["type", "checkpoint"]);
     expect(operation.oneOf.find((variant) => variant.properties.type.const === "merge_checkpoint")?.properties.checkpoint?.required).toEqual([

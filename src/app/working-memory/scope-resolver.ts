@@ -1,3 +1,4 @@
+import type { ExplicitWorkingSetTarget } from "./mutations.js";
 import type { ResolvedWorkingScope, WorkingScope } from "./scope.js";
 
 /** Failure returned when raw host facts cannot produce a canonical scope. */
@@ -22,13 +23,29 @@ export interface WorkingScopeResolutionSuccess {
 export type WorkingScopeResolutionResult = WorkingScopeResolutionSuccess | WorkingScopeResolutionFailure;
 
 /**
- * Resolves raw host facts into the canonical working-memory scope.
+ * Resolves raw host facts into the canonical scope for one working-set layer.
  *
- * @param input - Raw scope facts supplied by a host adapter or tool call.
+ * @param scope - Raw scope facts supplied by the host.
+ * @param target - Explicit session or goal target to resolve.
  * @returns Resolved scope or a stable missing-scope failure.
  */
-export function resolveWorkingScope(input: Partial<WorkingScope> | undefined): WorkingScopeResolutionResult {
+export function resolveScopeForLayer(scope: Partial<WorkingScope> | undefined, target: ExplicitWorkingSetTarget): WorkingScopeResolutionResult {
+  return target === "session" ? resolveSessionWorkingScope(scope) : resolveGoalWorkingScope(scope);
+}
+
+/**
+ * Resolves raw host facts into the canonical goal working-memory scope.
+ *
+ * @param input - Raw scope facts supplied by a host adapter or tool call.
+ * @returns Resolved goal scope or a stable missing-scope failure.
+ */
+export function resolveGoalWorkingScope(input: Partial<WorkingScope> | undefined): WorkingScopeResolutionResult {
   const scope = normalizeWorkingScope(input);
+  return buildGoalScope(scope);
+}
+
+/** Internal builder that produces a resolved goal scope or failure. */
+function buildGoalScope(scope: Partial<WorkingScope>): WorkingScopeResolutionResult {
   if (scope.taskId) {
     return {
       ok: true,
@@ -77,6 +94,37 @@ export function resolveWorkingScope(input: Partial<WorkingScope> | undefined): W
     ok: false,
     code: "missing_scope",
     message: "Working memory needs a task, conversation, or git scope.",
+  };
+}
+
+/**
+ * Resolves raw host facts into the canonical session working-memory scope.
+ *
+ * @param input - Raw scope facts supplied by a host adapter or tool call.
+ * @returns Resolved session scope or a stable missing-scope failure.
+ */
+export function resolveSessionWorkingScope(input: Partial<WorkingScope> | undefined): WorkingScopeResolutionResult {
+  const scope = normalizeWorkingScope(input);
+  return buildSessionScope(scope);
+}
+
+/** Internal builder that produces a resolved session scope or failure. */
+function buildSessionScope(scope: Partial<WorkingScope>): WorkingScopeResolutionResult {
+  if (!scope.sessionId) {
+    return {
+      ok: false,
+      code: "missing_scope",
+      message: "Session working memory needs a session id.",
+    };
+  }
+
+  return {
+    ok: true,
+    scope: {
+      ...scope,
+      scopeKind: "session",
+      scopeKey: buildScopeKey("session", [scope.sessionId, scope.cwd ? "cwd" : undefined, scope.cwd]),
+    },
   };
 }
 

@@ -55,14 +55,6 @@ export interface PluginBeforeTurnMemoryPolicyConfig {
 }
 
 /**
- * Working-context overrides for transient per-turn WIP injection.
- */
-export interface PluginWorkingContextMemoryPolicyConfig {
-  /** Enables or disables automatic working-context injection. Defaults to true when working memory is enabled. */
-  enabled?: boolean;
-}
-
-/**
  * Episode-write overrides for automatic OpenClaw episode capture.
  */
 export interface PluginEpisodeMemoryPolicyConfig {
@@ -78,8 +70,6 @@ export interface PluginInjectionMemoryPolicyConfig extends PluginMemoryPolicyCon
   sessionStart?: PluginSessionStartMemoryPolicyConfig;
   /** Before-turn overrides for proactive prompt-time memory injection behavior. */
   beforeTurn?: PluginBeforeTurnMemoryPolicyConfig;
-  /** Working-context overrides for transient per-turn WIP injection. */
-  workingContext?: PluginWorkingContextMemoryPolicyConfig;
   /** Episode-write overrides for automatic OpenClaw/Skeln episode capture. */
   episodes?: PluginEpisodeMemoryPolicyConfig;
 }

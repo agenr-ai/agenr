@@ -4,13 +4,24 @@ import { handleGet } from "./handlers/get.js";
 import { handleList } from "./handlers/list.js";
 import { handlePrepareExternalGoalMutation } from "./handlers/prepare-external-mutation.js";
 import { handleUpdate } from "./handlers/update.js";
-import { createWorkingContextFullProjection, createWorkingContextStubProjection } from "./projection-render.js";
+import { ensureSessionWorkingSet, type EnsureSessionWorkingSetResult } from "./ensure-session.js";
+import { findUniqueCurrentWorkingSetForTarget } from "./find-current-set.js";
+import { createHostWorkingSetPolicy, goalWorkingSetsDisabledFailure, goalsEnabled, requiresExplicitGoalTarget } from "./host-working-set-policy.js";
+import type { WorkingMemoryHandlerContext } from "./handler-context.js";
+import { renderWithProjectionReadiness } from "./projection-readiness.js";
+import {
+  renderWorkingContextBundle,
+  renderWorkingContextSingleProjection,
+  type WorkingProjectionBundleRequest,
+  type WorkingProjectionSingleRequest,
+} from "./projection-bundle.js";
 import type { AgenrWorkParams, PrepareExternalGoalMutationParams } from "./mutations.js";
 import type { WorkingContextProjection } from "./projection.js";
 import type { WorkingMemoryRepository } from "./repository.js";
-import type { WorkingMemoryResult } from "./results.js";
-import { selectWorkingSet } from "./select-working-set.js";
+import type { WorkingMemoryFailure, WorkingMemoryResult } from "./results.js";
 import type { WorkingScope } from "./scope.js";
+import { cloneForkableSnapshotFields } from "./session-fork-snapshot.js";
+import type { WorkingSnapshot } from "./snapshot.js";
 import type { WorkingMemoryFeatureFlags } from "../features/types.js";
 import { workingMemoryNotReadyFailure, WORKING_MEMORY_MISCONFIGURED_MESSAGE } from "./ready.js";
 
@@ -26,15 +37,12 @@ export type {
   WorkingMemoryUpdateSuccess,
 } from "./results.js";
 
+export type { EnsureSessionWorkingSetResult } from "./ensure-session.js";
+
 /** Input accepted by projection rendering. */
-export interface WorkingProjectionRequest {
-  /** Stable source reference for the render decision. */
-  sourceRef: string;
-  /** Explicit working set id when known. */
-  workingSetId?: string;
-  /** Raw scope facts used to find an active set. */
-  scope?: Partial<WorkingScope>;
-}
+export type WorkingProjectionRequest = WorkingProjectionSingleRequest;
+
+export type { WorkingProjectionBundleRequest } from "./projection-bundle.js";
 
 /** Dependencies used by the working-memory service. */
 export interface WorkingMemoryServiceDeps {
@@ -44,6 +52,10 @@ export interface WorkingMemoryServiceDeps {
   now?: () => Date;
   /** Adapter or runtime source label stored on new rows. */
   sourceLabel?: string;
+  /** Whether goal working sets and goal-targeted mutations are enabled. */
+  goalWorkingSetsEnabled?: boolean;
+  /** Optional callback for non-absence fork-read failures. */
+  onForkSnapshotReadIssue?: (failure: WorkingMemoryFailure) => void;
 }
 
 /** Working-memory service surface. */
@@ -55,6 +67,22 @@ export interface WorkingMemoryService {
    * @returns Working-memory action result.
    */
   run(params: AgenrWorkParams): Promise<WorkingMemoryResult>;
+
+  /**
+   * Ensures the session working set exists for the supplied host scope.
+   *
+   * @param params - Scope and provenance facts for session creation.
+   * @returns Existing or newly created session working set.
+   */
+  ensureSessionWorkingSet(params: Pick<AgenrWorkParams, "scope" | "actor" | "source">): Promise<EnsureSessionWorkingSetResult>;
+
+  /**
+   * Reads forkable session snapshot fields without creating or mutating working sets.
+   *
+   * @param scope - Raw host scope facts.
+   * @returns Session snapshot fields safe to seed a new goal, or undefined when no session set exists.
+   */
+  readSessionSnapshotForFork(scope?: Partial<WorkingScope>): Promise<WorkingSnapshot | undefined>;
 
   /**
    * Accounts progress before a trusted host mutates goal state externally.
@@ -71,6 +99,14 @@ export interface WorkingMemoryService {
    * @returns A full projection when an active set resolves, otherwise a conservative stub.
    */
   renderProjection(input: string | WorkingProjectionRequest): Promise<WorkingContextProjection>;
+
+  /**
+   * Builds a transient projection containing session and optional goal sections.
+   *
+   * @param input - Scope and source reference for injection.
+   * @returns Combined working-context projection.
+   */
+  renderProjectionBundle(input: WorkingProjectionBundleRequest): Promise<WorkingContextProjection>;
 }
 
 /**
@@ -83,8 +119,15 @@ export interface WorkingMemoryService {
 export function createWorkingMemoryService(featureFlags: WorkingMemoryFeatureFlags, deps: WorkingMemoryServiceDeps = {}): WorkingMemoryService {
   const featureEnabled = featureFlags.workingMemory;
   const repository = deps.repository;
+  const policy = createHostWorkingSetPolicy(deps.goalWorkingSetsEnabled ?? true);
   const now = () => (deps.now ? deps.now().toISOString() : new Date().toISOString());
   const readiness = () => workingMemoryNotReadyFailure({ featureEnabled, repository });
+  const handlerContext = (): WorkingMemoryHandlerContext => ({
+    repository: repository!,
+    timestamp: now(),
+    sourceLabel: deps.sourceLabel,
+    policy,
+  });
 
   return {
     async run(params) {
@@ -93,17 +136,22 @@ export function createWorkingMemoryService(featureFlags: WorkingMemoryFeatureFla
         return notReady;
       }
 
+      if (!goalsEnabled(policy) && requiresExplicitGoalTarget(params.target)) {
+        return goalWorkingSetsDisabledFailure();
+      }
+
+      const ctx = handlerContext();
       switch (params.action) {
         case "get":
-          return handleGet(params, repository!, now());
+          return handleGet(params, ctx);
         case "list":
-          return handleList(params, repository!);
+          return handleList(params, ctx);
         case "create":
-          return handleCreate(params, repository!, now(), deps.sourceLabel);
+          return handleCreate(params, ctx);
         case "update":
-          return handleUpdate(params, repository!, now());
+          return handleUpdate(params, ctx);
         case "close":
-          return handleClose(params, repository!, now());
+          return handleClose(params, ctx);
       }
     },
     async prepareExternalGoalMutation(params) {
@@ -112,33 +160,55 @@ export function createWorkingMemoryService(featureFlags: WorkingMemoryFeatureFla
         return notReady;
       }
 
-      return handlePrepareExternalGoalMutation(params, repository!, now());
+      if (!goalsEnabled(policy)) {
+        return goalWorkingSetsDisabledFailure();
+      }
+
+      return handlePrepareExternalGoalMutation(params, handlerContext());
+    },
+    async ensureSessionWorkingSet(params) {
+      const notReady = readiness();
+      if (notReady) {
+        return notReady;
+      }
+
+      return ensureSessionWorkingSet(
+        {
+          scope: params.scope,
+          actor: params.actor,
+          source: params.source,
+          sourceLabel: deps.sourceLabel,
+          timestamp: now(),
+        },
+        repository!,
+      );
+    },
+    async readSessionSnapshotForFork(scope) {
+      const notReady = readiness();
+      if (notReady) {
+        return undefined;
+      }
+
+      const lookup = await findUniqueCurrentWorkingSetForTarget(scope, repository!, "session");
+      if (!lookup.ok) {
+        if (lookup.code !== "missing_active_set") {
+          deps.onForkSnapshotReadIssue?.(lookup);
+        }
+        return undefined;
+      }
+
+      return cloneForkableSnapshotFields(lookup.workingSet.snapshot);
     },
     async renderProjection(input) {
       const request = typeof input === "string" ? { sourceRef: input } : input;
-      if (!featureEnabled) {
-        return createWorkingContextStubProjection({
-          reason: "feature_disabled",
-          sourceRef: request.sourceRef,
-        });
-      }
-
-      if (!repository) {
-        return createWorkingContextStubProjection({
-          reason: "misconfigured",
-          sourceRef: request.sourceRef,
-        });
-      }
-
-      const selection = await selectWorkingSet({ workingSetId: request.workingSetId, scope: request.scope }, repository);
-      if (!selection.ok) {
-        return createWorkingContextStubProjection({
-          reason: selection.code === "ambiguous_scope" ? "ambiguous_scope" : "missing_active_set",
-          sourceRef: request.sourceRef,
-        });
-      }
-
-      return createWorkingContextFullProjection(selection.workingSet, request.sourceRef);
+      return renderWithProjectionReadiness(featureEnabled, repository, request.sourceRef, (readyRepository) =>
+        renderWorkingContextSingleProjection(readyRepository, policy, request),
+      );
+    },
+    async renderProjectionBundle(input) {
+      return renderWithProjectionReadiness(featureEnabled, repository, input.sourceRef, (readyRepository) =>
+        renderWorkingContextBundle(readyRepository, policy, input),
+      );
     },
   };
 }

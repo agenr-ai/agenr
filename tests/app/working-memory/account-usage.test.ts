@@ -15,6 +15,7 @@ describe("account_usage control plane", () => {
     try {
       const created = await service.run({
         action: "create",
+        target: "goal",
         scope: TRUSTED_SCOPE,
         operation: {
           type: "set_objective",
@@ -113,6 +114,7 @@ describe("account_usage control plane", () => {
     try {
       const created = await service.run({
         action: "create",
+        target: "goal",
         scope: TRUSTED_SCOPE,
         operation: {
           type: "set_objective",
@@ -191,6 +193,7 @@ describe("account_usage control plane", () => {
     try {
       const created = await service.run({
         action: "create",
+        target: "goal",
         scope: TRUSTED_SCOPE,
         operation: {
           type: "set_objective",
@@ -318,6 +321,7 @@ describe("account_usage control plane", () => {
     try {
       const created = await service.run({
         action: "create",
+        target: "goal",
         scope: TRUSTED_SCOPE,
         operation: {
           type: "set_objective",
@@ -394,6 +398,7 @@ describe("account_usage control plane", () => {
     try {
       const created = await service.run({
         action: "create",
+        target: "goal",
         scope: TRUSTED_SCOPE,
         operation: {
           type: "set_objective",

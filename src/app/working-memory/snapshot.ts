@@ -212,6 +212,8 @@ export interface WorkingSnapshot {
   completedSteps?: string[];
   /** Latest checkpoint for handoff or lifecycle transitions. */
   checkpoint?: WorkingCheckpoint;
+  /** Freeform transient scratchpad for session or goal-local notes. */
+  scratchpad?: string;
   /** File observations relevant to the active task. */
   files?: WorkingFileNote[];
   /** Command observations relevant to the active task. */
@@ -235,3 +237,21 @@ export interface WorkingSnapshot {
   /** ISO timestamp or short reason for the last material change. */
   lastMaterialChange?: string;
 }
+
+/**
+ * Snapshot fields copied from a session working set when seeding a new goal.
+ *
+ * Goal-only fields such as `objective`, `goalGeneration`, and `summary` are
+ * intentionally excluded. Update this list and `cloneForkableSnapshotFields`
+ * together when the fork contract changes.
+ */
+export const FORKABLE_SNAPSHOT_FIELD_KEYS = [
+  "currentPlan",
+  "nextActions",
+  "checkpoint",
+  "scratchpad",
+  "files",
+  "commands",
+  "decisions",
+  "assumptions",
+] as const satisfies readonly (keyof WorkingSnapshot)[];

@@ -24,6 +24,11 @@ const CLOSE_MANAGED_WORKING_SET_STATUSES = ["closed", "abandoned"] as const;
 const WORKING_SCOPE_KINDS = ["task", "conversation", "git_branch", "git_cwd", "session", "session_id"] as const;
 
 /**
+ * Scope kinds that belong to the goal working-set layer.
+ */
+const GOAL_WORKING_SCOPE_KINDS = ["task", "conversation", "git_branch", "git_cwd", "session_id"] as const;
+
+/**
  * Supported working-memory tool actions.
  */
 const AGENR_WORK_ACTIONS = ["get", "list", "create", "update", "close"] as const;
@@ -92,6 +97,11 @@ export type CurrentWorkingSetStatus = (typeof CURRENT_WORKING_SET_STATUSES)[numb
  * Union of canonical working-scope kinds.
  */
 export type WorkingScopeKind = (typeof WORKING_SCOPE_KINDS)[number];
+
+/** Returns true when a scope kind belongs to the goal working-set layer. */
+export function isGoalScopeKind(scopeKind: WorkingScopeKind): boolean {
+  return GOAL_WORKING_SCOPE_KINDS.includes(scopeKind as (typeof GOAL_WORKING_SCOPE_KINDS)[number]);
+}
 
 /**
  * Union of supported working-memory tool actions.

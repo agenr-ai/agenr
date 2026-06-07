@@ -1,8 +1,9 @@
 import type { WorkingSetRecord } from "./records.js";
 import type { WorkingMemoryRepository } from "./repository.js";
 import { createFailure, type WorkingMemoryFailure } from "./results.js";
-import { resolveWorkingScope } from "./scope-resolver.js";
+import { resolveScopeForLayer } from "./scope-resolver.js";
 import type { ResolvedWorkingScope, WorkingScope } from "./scope.js";
+import type { ExplicitWorkingSetTarget } from "./mutations.js";
 
 /** Successful scope lookup with current working-set matches. */
 export interface CurrentWorkingSetLookup {
@@ -18,17 +19,19 @@ export interface CurrentWorkingSetLookup {
 export type CurrentWorkingSetLookupResult = CurrentWorkingSetLookup | WorkingMemoryFailure;
 
 /**
- * Resolves scope and loads current working sets for that scope.
+ * Resolves a target-specific scope and loads current working sets for it.
  *
  * @param scope - Raw scope facts supplied by the host.
  * @param repository - Working-memory persistence port.
+ * @param target - Target scope kind to resolve.
  * @returns Resolved scope and matching sets, or a stable failure.
  */
-export async function lookupCurrentWorkingSets(
+export async function lookupCurrentWorkingSetsForTarget(
   scope: Partial<WorkingScope> | undefined,
   repository: WorkingMemoryRepository,
+  target: ExplicitWorkingSetTarget,
 ): Promise<CurrentWorkingSetLookupResult> {
-  const scopeResolution = resolveWorkingScope(scope);
+  const scopeResolution = resolveScopeForLayer(scope, target);
   if (!scopeResolution.ok) {
     return createFailure("missing_scope", scopeResolution.message);
   }
@@ -62,17 +65,19 @@ export interface UniqueCurrentWorkingSet {
 export type UniqueCurrentWorkingSetResult = UniqueCurrentWorkingSet | WorkingMemoryFailure;
 
 /**
- * Finds the unique current working set for one scope.
+ * Finds the unique current working set for one target-specific scope.
  *
  * @param scope - Raw scope facts supplied by the host.
  * @param repository - Working-memory persistence port.
+ * @param target - Target scope kind to resolve.
  * @returns Selected set or a stable failure.
  */
-export async function findUniqueCurrentWorkingSet(
+export async function findUniqueCurrentWorkingSetForTarget(
   scope: Partial<WorkingScope> | undefined,
   repository: WorkingMemoryRepository,
+  target: ExplicitWorkingSetTarget,
 ): Promise<UniqueCurrentWorkingSetResult> {
-  const lookup = await lookupCurrentWorkingSets(scope, repository);
+  const lookup = await lookupCurrentWorkingSetsForTarget(scope, repository, target);
   if (!lookup.ok) {
     return lookup;
   }

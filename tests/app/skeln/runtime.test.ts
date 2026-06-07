@@ -93,6 +93,45 @@ describe("createAgenrSkelnServices", () => {
     await services.close();
   });
 
+  it("disables goal working sets when skeln goals is false", async () => {
+    const root = await createTempRoot("agenr-skeln-runtime-");
+    const dbPath = path.join(root, "knowledge.db");
+    await writeJson(path.join(root, "config.json"), {
+      credentials: {
+        openaiApiKey: "config-key",
+      },
+      features: {
+        workingMemory: true,
+      },
+    });
+
+    const services = await createAgenrSkelnServices({ dbPath, goals: false });
+
+    expect(services.skelnConfig.goals).toBe(false);
+    await expect(
+      services.workingMemory.run({
+        action: "create",
+        target: "goal",
+        scope: {
+          conversationKey: "session-1",
+          sessionId: "session-1",
+          cwd: "/tmp/project",
+        },
+        operation: {
+          type: "set_objective",
+          objective: "Should not create.",
+        },
+        updateReason: "Attempted goal create while disabled.",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      code: "invalid_request",
+      message: "Goal working sets are disabled for this host.",
+    });
+
+    await services.close();
+  });
+
   it("resolves feature flags from agenr config at the composition boundary", async () => {
     const root = await createTempRoot("agenr-skeln-runtime-");
     const dbPath = path.join(root, "knowledge.db");

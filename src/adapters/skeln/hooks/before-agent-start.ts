@@ -264,7 +264,7 @@ async function resolveWorkingContextInjection(
   scope: AgenrSkelnSessionScope,
   sourceRef: string,
 ): Promise<WorkingContextResolution> {
-  const gate = resolveWorkingContextGate(services.capabilities.workingMemory, services.skelnConfig.memoryPolicy);
+  const gate = resolveWorkingContextGate(services.capabilities.workingMemory);
   if (!gate.ok) {
     return { trace: traceMemorySkipped("working_context", gate.reason) };
   }
@@ -275,7 +275,7 @@ async function resolveWorkingContextInjection(
 /** Loads and formats one working-context projection after policy gates pass. */
 async function loadWorkingContextProjection(services: AgenrSkelnServices, scope: AgenrSkelnSessionScope, sourceRef: string): Promise<WorkingContextResolution> {
   try {
-    const projection = await services.workingMemory.renderProjection({
+    const projection = await services.workingMemory.renderProjectionBundle({
       sourceRef,
       scope: toWorkingScopeFromSkelnSession(scope),
     });

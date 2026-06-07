@@ -27,6 +27,7 @@ describe("toAgenrWorkParams", () => {
       }),
     ).toEqual({
       action: "update",
+      target: "goal",
       source: "goal_command",
       updateReason: "Host update.",
       operation: {

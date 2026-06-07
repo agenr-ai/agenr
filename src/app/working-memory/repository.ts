@@ -1,4 +1,4 @@
-import type { AgenrWorkMutationActor, AgenrWorkMutationSource, WorkingSetStatus } from "./constants.js";
+import type { AgenrWorkMutationActor, AgenrWorkMutationSource, WorkingScopeKind, WorkingSetStatus } from "./constants.js";
 import type { WorkingEventType } from "./events.js";
 import type { ResolvedWorkingScope, WorkingScope } from "./scope.js";
 import type { WorkingSnapshot } from "./snapshot.js";
@@ -8,6 +8,8 @@ import type { WorkingEventRecord, WorkingSetRecord } from "./records.js";
 export interface WorkingSetListFilter {
   /** Optional raw scope facts used to narrow the list to one resolved scope. */
   scope?: ResolvedWorkingScope;
+  /** Optional scope kinds to include. */
+  scopeKinds?: WorkingScopeKind[];
   /** Optional explicit statuses to include. */
   statuses?: WorkingSetStatus[];
   /** Maximum number of rows to return. */

@@ -21,7 +21,7 @@ const CREATE_GOAL_TOOL_PARAMETERS = {
     objective: {
       type: "string",
       description:
-        "Required. The concrete objective to start pursuing. This starts a new active goal only when no goal is currently defined; if a goal already exists, this tool fails.",
+        "Required. The concrete objective to start pursuing. This starts a new active goal only when no goal is currently defined; if a goal already exists, this tool fails. Create a goal only when explicitly requested by the user or system/developer instructions; do not infer goals from ordinary tasks.",
     },
     token_budget: {
       type: "integer",
@@ -41,7 +41,7 @@ const UPDATE_GOAL_TOOL_PARAMETERS = {
       type: "string",
       enum: ["complete", "blocked"],
       description:
-        "Required. Set to complete only when the objective is achieved and no required work remains. Set to blocked only after the same blocking condition has recurred for at least three consecutive goal turns and the agent is at an impasse.",
+        "Required. Set to complete only when the objective is achieved and no required work remains. Set to blocked only when the goal cannot currently proceed until something external changes. Do not mark a goal complete merely because its budget is nearly exhausted or because you are stopping work. When marking a budgeted goal achieved with status complete, report the final token usage from the tool result to the user.",
     },
   },
   required: ["status"],
@@ -86,7 +86,7 @@ export async function runGoalAliasTool(
 
 /** Runs get_goal. */
 async function runGetGoalTool(defaultScope: Partial<WorkingScope>, workingMemory: WorkingMemoryService): Promise<WorkToolOutcome> {
-  const result = await workingMemory.run({ action: "get", scope: defaultScope });
+  const result = await workingMemory.run({ action: "get", target: "goal", scope: defaultScope });
   if (!result.ok && result.code === "missing_active_set") {
     return goalSuccess(null, false);
   }
@@ -110,11 +110,13 @@ async function runCreateGoalTool(
 
   const result = await workingMemory.run({
     action: "create",
+    target: "goal",
     scope: defaultScope,
     operation: {
       type: "set_objective",
       objective,
     },
+    initialSnapshot: await workingMemory.readSessionSnapshotForFork(defaultScope),
     ...(tokenBudget !== undefined ? { initialBudget: { tokenBudget } } : {}),
     updateReason: "Model created goal via create_goal.",
     actor: "model",
@@ -143,6 +145,7 @@ async function runUpdateGoalTool(
 
   const update = await workingMemory.run({
     action: "update",
+    target: "goal",
     scope: defaultScope,
     operation: {
       type: "set_status",

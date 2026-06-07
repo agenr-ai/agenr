@@ -86,6 +86,7 @@ async function mergeWorkingCheckpoint(request: WorkingCheckpointRefreshRequest, 
 
   const result = await workingMemory.run({
     action: "update",
+    target: "session",
     scope,
     operation: {
       type: "merge_checkpoint",

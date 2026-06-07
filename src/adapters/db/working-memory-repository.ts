@@ -96,6 +96,11 @@ async function listWorkingSets(executor: SqlExecutor, filter: WorkingSetListFilt
     args.push(filter.scope.scopeKey);
   }
 
+  if (filter.scopeKinds && filter.scopeKinds.length > 0) {
+    conditions.push(`scope_kind IN (${filter.scopeKinds.map(() => "?").join(", ")})`);
+    args.push(...filter.scopeKinds);
+  }
+
   if (filter.statuses && filter.statuses.length > 0) {
     conditions.push(`status IN (${filter.statuses.map(() => "?").join(", ")})`);
     args.push(...filter.statuses);

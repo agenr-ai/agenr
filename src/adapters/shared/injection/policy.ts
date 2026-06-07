@@ -57,16 +57,6 @@ export function resolveBeforeTurnPolicy(memoryPolicy?: PluginInjectionMemoryPoli
   };
 }
 
-/**
- * Returns whether working-context policy allows automatic injection for one turn.
- *
- * @param memoryPolicy - Optional host memory-policy overrides.
- * @returns True when `memoryPolicy.workingContext.enabled` is not explicitly false.
- */
-export function isWorkingContextPolicyEnabled(memoryPolicy?: PluginInjectionMemoryPolicyConfig): boolean {
-  return memoryPolicy?.workingContext?.enabled !== false;
-}
-
 /** Result when working-context resolution is blocked by feature flags or policy. */
 export type WorkingContextGateBlocked = {
   ok: false;
@@ -85,22 +75,15 @@ export type WorkingContextGateResult = WorkingContextGateAllowed | WorkingContex
  * Resolves whether a host should resolve and inject working context for one turn.
  *
  * @param workingMemory - Resolved working-memory capability or legacy feature flags.
- * @param memoryPolicy - Optional host memory-policy overrides.
  * @returns Allowed when working memory is enabled and policy permits injection, otherwise a skip reason.
  */
-export function resolveWorkingContextGate(
-  workingMemory: RuntimeCapabilityState | WorkingMemoryFeatureFlags,
-  memoryPolicy?: PluginInjectionMemoryPolicyConfig,
-): WorkingContextGateResult {
+export function resolveWorkingContextGate(workingMemory: RuntimeCapabilityState | WorkingMemoryFeatureFlags): WorkingContextGateResult {
   const capability = resolveWorkingMemoryCapability(workingMemory);
   if (capability === "disabled") {
     return { ok: false, reason: "features.workingMemory=false" };
   }
   if (capability === "misconfigured") {
     return { ok: false, reason: "features.workingMemory enabled without repository" };
-  }
-  if (!isWorkingContextPolicyEnabled(memoryPolicy)) {
-    return { ok: false, reason: "memoryPolicy.workingContext.enabled=false" };
   }
   return { ok: true };
 }

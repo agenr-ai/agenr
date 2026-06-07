@@ -16,6 +16,8 @@ import { createHostMemoryServices, type AgenrHostMemorySurface } from "../host-m
 export interface AgenrSkelnConfig extends PluginPathConfig {
   /** Narrow runtime memory-policy overrides for claim-aware read surfaces. */
   memoryPolicy?: PluginInjectionMemoryPolicyConfig;
+  /** goals: true (default) enables full goal system /goal tools; false disables goals but keeps independent agenr_work session working set. */
+  goals?: boolean;
   /** Optional Skeln host feature-flag overrides merged over agenr config features. */
   featureFlags?: AgenrFeatureFlagConfig;
 }
@@ -56,6 +58,10 @@ export async function createAgenrSkelnServices(config: AgenrSkelnConfig = {}): P
         workingMemoryRepository: runtimeServices.workingMemoryRepository,
         sessionMemoryRepository: runtimeServices.sessionMemoryRepository,
         workingMemorySourceLabel: "skeln",
+        goalWorkingSetsEnabled: hostConfig.goals ?? true,
+        onForkSnapshotReadIssue: (failure) => {
+          console.warn(`[agenr] session fork snapshot read issue (${failure.code}): ${failure.message}`);
+        },
         goalContinuationHostPort,
       });
       const runtimePolicy = resolveRuntimePolicy(featureFlags, {

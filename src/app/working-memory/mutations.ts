@@ -17,7 +17,14 @@ import type {
   WorkingNextAction,
   WorkingBudgetState,
   WorkingUsageDelta,
+  WorkingSnapshot,
 } from "./snapshot.js";
+
+/** Working-set target selected by model, trusted host, or default resolution. */
+export type AgenrWorkTarget = "auto" | "session" | "goal";
+
+/** Explicit session or goal target without auto resolution. */
+export type ExplicitWorkingSetTarget = Extract<AgenrWorkTarget, "session" | "goal">;
 
 /**
  * Typed mutation operations accepted by the normal working-memory tool path.
@@ -26,6 +33,7 @@ export type AgenrWorkUpdateOperation =
   | { type: "set_objective"; objective: string; title?: string }
   | { type: "replace_plan"; currentPlan: string[]; nextActions?: WorkingNextAction[] }
   | { type: "merge_checkpoint"; checkpoint: WorkingCheckpoint }
+  | { type: "set_scratchpad"; scratchpad: string }
   | { type: "add_file_note"; file: WorkingFileNote }
   | { type: "add_command_note"; command: WorkingCommandNote }
   | { type: "record_decision"; decision: WorkingDecisionNote }
@@ -65,6 +73,8 @@ export type AgenrWorkCloseMode = "close" | "abandon";
 export interface AgenrWorkParams {
   /** Action to execute. */
   action: AgenrWorkAction;
+  /** Working-set target when multiple active set kinds can exist. */
+  target?: AgenrWorkTarget;
   /** Explicit working-set id when known. */
   workingSetId?: string;
   /** Raw scope facts supplied by the host. */
@@ -95,6 +105,8 @@ export interface AgenrWorkParams {
   initialBudget?: WorkingBudgetState;
   /** Initial continuation policy supplied by a trusted host command. */
   continuationPolicy?: WorkingContinuationPolicy;
+  /** Internal initial snapshot fields copied from another working set. */
+  initialSnapshot?: WorkingSnapshot;
 }
 
 /**
@@ -103,6 +115,8 @@ export interface AgenrWorkParams {
 export interface PrepareExternalGoalMutationParams {
   /** External mutation that is about to run. */
   mutationKind: WorkingExternalGoalMutationKind;
+  /** Working-set target when multiple active set kinds can exist. */
+  target?: AgenrWorkTarget;
   /** Explicit working-set id when known. */
   workingSetId?: string;
   /** Raw scope facts supplied by the host. */

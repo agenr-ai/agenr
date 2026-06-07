@@ -330,9 +330,6 @@ describe("handleAgenrSkelnBeforeAgentStart", () => {
           beforeTurn: {
             enabled: false,
           },
-          workingContext: {
-            enabled: true,
-          },
         },
       },
       workingProjection: "<agenr_work_context>\nObjective: Keep active task state.\n</agenr_work_context>",
@@ -371,7 +368,7 @@ describe("handleAgenrSkelnBeforeAgentStart", () => {
       },
     );
 
-    expect(services.workingMemory.renderProjection).toHaveBeenCalledTimes(2);
+    expect(services.workingMemory.renderProjectionBundle).toHaveBeenCalledTimes(2);
     expect(first?.workingContextAudit).toMatchObject({
       source: "agenr_work",
       workingSetId: "ws-test",
@@ -468,7 +465,7 @@ describe("handleAgenrSkelnBeforeAgentStart", () => {
     expect(result?.message).toBeUndefined();
   });
 
-  it("skips working-context injection when disabled by memory policy", async () => {
+  it("skips working-context injection when working memory is disabled", async () => {
     const services = createServices({
       sessionStart: createSessionStartDeps([]),
       skelnConfig: {
@@ -476,12 +473,8 @@ describe("handleAgenrSkelnBeforeAgentStart", () => {
           beforeTurn: {
             enabled: false,
           },
-          workingContext: {
-            enabled: false,
-          },
         },
       },
-      workingProjection: "<agenr_work_context>\nObjective: Keep active task state.\n</agenr_work_context>",
     });
     const sessionStartTracker = createSessionStartTracker();
     sessionStartTracker.consume(scope.sessionId, scope.sessionKey);
@@ -504,7 +497,7 @@ describe("handleAgenrSkelnBeforeAgentStart", () => {
 
     expect(result?.systemPrompt).toContain("## Memory Recall");
     expect(result?.memoryTrace).toEqual(
-      expect.arrayContaining([expect.objectContaining({ kind: "working_context", action: "skipped", reason: "memoryPolicy.workingContext.enabled=false" })]),
+      expect.arrayContaining([expect.objectContaining({ kind: "working_context", action: "skipped", reason: "features.workingMemory=false" })]),
     );
     expect(result?.transientMessages).toBeUndefined();
   });
@@ -576,32 +569,37 @@ function createServices(input: {
     }),
     workingMemory: {
       run: vi.fn(),
+      readSessionSnapshotForFork: vi.fn(async () => undefined),
+      prepareExternalGoalMutation: vi.fn(),
+      ensureSessionWorkingSet: vi.fn(async () => ({
+        ok: true,
+        action: "get",
+        workingSet: {
+          id: "ws-test",
+          scopeKey: "session:test",
+          scopeKind: "session",
+          status: "active",
+          snapshot: {},
+          revision: 1,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          lastActiveAt: "2026-01-01T00:00:00.000Z",
+        },
+        projection: {
+          kind: "working_set",
+          renderMode: "full",
+          content: input.workingProjection ?? "<agenr_work_context></agenr_work_context>",
+          workingSetId: "ws-test",
+          revision: 1,
+          sourceRef: "test:ensure",
+          byteLength: 37,
+        },
+      })),
       renderProjection: vi.fn(async (request: string | { sourceRef: string }) => {
-        const sourceRef = typeof request === "string" ? request : request.sourceRef;
-        if (input.workingStubProjection) {
-          return {
-            kind: "working_set" as const,
-            renderMode: "stub" as const,
-            content: input.workingStubProjection,
-            sourceRef,
-            byteLength: Buffer.byteLength(input.workingStubProjection, "utf8"),
-          };
-        }
-
-        const content = input.workingProjection ?? "";
-        return {
-          kind: "working_set" as const,
-          renderMode: input.workingProjection ? ("full" as const) : ("stub" as const),
-          content,
-          ...(input.workingProjection
-            ? {
-                workingSetId: "ws-test",
-                revision: 1,
-              }
-            : {}),
-          sourceRef,
-          byteLength: Buffer.byteLength(content, "utf8"),
-        };
+        return renderTestWorkingProjection(request, input);
+      }),
+      renderProjectionBundle: vi.fn(async (request: { sourceRef: string }) => {
+        return renderTestWorkingProjection(request, input);
       }),
     },
     skelnConfig: input.skelnConfig ?? {},
@@ -609,6 +607,34 @@ function createServices(input: {
       features: featureFlags,
     },
   } as unknown as AgenrSkelnServices;
+}
+
+function renderTestWorkingProjection(request: string | { sourceRef: string }, input: { workingProjection?: string; workingStubProjection?: string }) {
+  const sourceRef = typeof request === "string" ? request : request.sourceRef;
+  if (input.workingStubProjection) {
+    return {
+      kind: "working_set" as const,
+      renderMode: "stub" as const,
+      content: input.workingStubProjection,
+      sourceRef,
+      byteLength: Buffer.byteLength(input.workingStubProjection, "utf8"),
+    };
+  }
+
+  const content = input.workingProjection ?? "";
+  return {
+    kind: "working_set" as const,
+    renderMode: input.workingProjection ? ("full" as const) : ("stub" as const),
+    content,
+    ...(input.workingProjection
+      ? {
+          workingSetId: "ws-test",
+          revision: 1,
+        }
+      : {}),
+    sourceRef,
+    byteLength: Buffer.byteLength(content, "utf8"),
+  };
 }
 
 function createSessionStartDeps(coreEntries: Durable[]): SessionStartDeps {
