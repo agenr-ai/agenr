@@ -363,7 +363,7 @@ describe("routeSessionMemoryTrigger", () => {
           sessionTreeLineage: false,
           sessionTreeCompaction: true,
         },
-        { repository, workingMemory },
+        { repository, workingMemoryEnabled: true, workingMemory },
       ),
     ).resolves.toMatchObject({
       accepted: true,
@@ -399,7 +399,7 @@ describe("routeSessionMemoryTrigger", () => {
           sessionTreeLineage: false,
           sessionTreeCompaction: true,
         },
-        { repository },
+        { repository, workingMemoryEnabled: true },
       ),
     ).resolves.toMatchObject({
       accepted: true,
@@ -443,7 +443,7 @@ describe("routeSessionMemoryTrigger", () => {
           sessionTreeLineage: true,
           sessionTreeCompaction: false,
         },
-        { repository: createRepository(), workingMemory },
+        { repository: createRepository(), workingMemoryEnabled: true, workingMemory },
       ),
     ).resolves.toMatchObject({
       accepted: true,

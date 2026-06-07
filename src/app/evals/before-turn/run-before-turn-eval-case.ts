@@ -4,7 +4,7 @@ import { parseEvalNow } from "../eval-clock.js";
 import { provisionEvalSandbox } from "../provision-sandbox.js";
 import { runBeforeTurn } from "../../before-turn/index.js";
 import type { CrossEncoderPort } from "../../../core/ports.js";
-import { attachCrossEncoderPort } from "../recall/attach-cross-encoder.js";
+import { attachCrossEncoderPort } from "../../../adapters/plugin-runtime/attach-cross-encoder.js";
 import { setupRecallEvalSandbox } from "../recall/sandbox.js";
 import { applyTelemetryWriteGate } from "../recall/telemetry-write-gate.js";
 import type { BeforeTurnEvalCaseRequest, BeforeTurnEvalCaseResponse, BeforeTurnEvalCaseTimings } from "./contracts.js";

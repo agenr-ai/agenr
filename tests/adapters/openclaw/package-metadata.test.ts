@@ -35,7 +35,7 @@ describe("published OpenClaw plugin package metadata", () => {
   it("keeps the root package publish surface focused on install-time artifacts", async () => {
     const packageJson = await readJsonFile<PackageJson>(rootPackageJsonPath);
 
-    expect(packageJson.files).toEqual(["dist", "README.md", "LICENSE", "CHANGELOG.md"]);
+    expect(packageJson.files).toEqual(["dist", "!dist/adapters/openclaw", "README.md", "LICENSE", "CHANGELOG.md"]);
   });
 
   it("publishes the plugin from the dedicated package entry", async () => {

@@ -1,11 +1,15 @@
 import { createHash } from "node:crypto";
 
-import { attachWorkingCheckpointRefresh } from "../working-memory/lifecycle-checkpoint.js";
 import type { SessionMemoryFeatureFlags } from "../features/types.js";
 import type { WorkingMemoryService } from "../working-memory/service.js";
 import { normalizeOptionalString } from "./normalize.js";
 import type { RecordTriggerIntakeInput, SessionMemoryRepository, UpsertSessionLineageEdgeInput } from "./repository.js";
-import type { SessionMemoryTriggerAction, SessionMemoryTriggerRejectedResult, SessionMemoryTriggerResult } from "./results.js";
+import type {
+  SessionMemoryTriggerAcceptedResult,
+  SessionMemoryTriggerAction,
+  SessionMemoryTriggerRejectedResult,
+  SessionMemoryTriggerResult,
+} from "./results.js";
 import {
   SESSION_LINEAGE_REASONS,
   type NormalizedSessionArtifactInput,
@@ -29,6 +33,8 @@ export type {
 export interface SessionMemoryTriggerRouterDeps {
   /** Repository used once session-memory feature flags are enabled. */
   repository?: SessionMemoryRepository;
+  /** Whether working-memory checkpoint refresh is enabled for lifecycle intake. */
+  workingMemoryEnabled?: boolean;
   /** Working-memory service used to refresh checkpoints after compaction intake. */
   workingMemory?: WorkingMemoryService;
 }
@@ -90,7 +96,7 @@ export async function routeSessionMemoryTrigger(
   }
 
   if (artifactInput.kind === "none" && lineageInput.kind === "none") {
-    return attachWorkingCheckpointRefresh(
+    return maybeAttachWorkingCheckpointRefresh(
       event,
       {
         accepted: true,
@@ -99,7 +105,7 @@ export async function routeSessionMemoryTrigger(
           ? `Session-memory trigger ${event.type} was accepted for checkpoint-relevant lifecycle handling.`
           : `Session-memory trigger ${event.type} did not include lineage or artifact facts.`,
       },
-      deps.workingMemory,
+      deps,
     );
   }
 
@@ -112,7 +118,7 @@ export async function routeSessionMemoryTrigger(
   const lineageEdge = intake.lineageEdge;
   const action = resolveTriggerAction(artifact, lineageEdge);
 
-  return attachWorkingCheckpointRefresh(
+  return maybeAttachWorkingCheckpointRefresh(
     event,
     {
       accepted: true,
@@ -121,8 +127,29 @@ export async function routeSessionMemoryTrigger(
       ...(lineageEdge ? { lineageEdge } : {}),
       ...(artifact ? { artifact } : {}),
     },
-    deps.workingMemory,
+    deps,
   );
+}
+
+/**
+ * Enriches accepted intake results with working-checkpoint refresh diagnostics when enabled.
+ *
+ * @param event - Session lifecycle event already accepted by session-memory intake.
+ * @param result - Accepted intake result to enrich when checkpoint refresh applies.
+ * @param deps - Router dependencies including working-memory wiring.
+ * @returns The accepted result, optionally enriched with refresh diagnostics.
+ */
+async function maybeAttachWorkingCheckpointRefresh(
+  event: SessionMemoryTriggerEvent,
+  result: SessionMemoryTriggerAcceptedResult,
+  deps: SessionMemoryTriggerRouterDeps,
+): Promise<SessionMemoryTriggerAcceptedResult> {
+  if (!deps.workingMemoryEnabled) {
+    return result;
+  }
+
+  const { attachWorkingCheckpointRefresh } = await import("../working-memory/lifecycle-checkpoint.js");
+  return attachWorkingCheckpointRefresh(event, result, deps.workingMemory);
 }
 
 /** Resolves a lineage edge payload from one lifecycle event. */

@@ -6,7 +6,7 @@ import { createDatabase } from "../../adapters/db/client.js";
 import { createRecallAdapter } from "../../adapters/db/recall-adapter.js";
 import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
 import { resolveModel } from "../../adapters/llm.js";
-import { attachCrossEncoderPort } from "../../app/evals/recall/attach-cross-encoder.js";
+import { attachCrossEncoderPort } from "../../adapters/plugin-runtime/attach-cross-encoder.js";
 import { projectClaimCentricRecallEntry } from "../../app/recall/index.js";
 import { normalizeOptionalString, normalizeStringList, parseCsvList, parsePositiveInteger, parsePositiveNumber, parseUnitInterval } from "../shared/parse.js";
 import { readConfig } from "../../config.js";

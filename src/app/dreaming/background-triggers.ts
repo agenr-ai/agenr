@@ -1,10 +1,9 @@
 import { DEFAULT_DREAMING_IMPORTANCE_THRESHOLD, DEFAULT_DREAMING_MIN_INTERVAL_MINUTES, type AgenrConfig } from "../../config.js";
+import type { DreamScanSummary } from "../../core/dreaming/types.js";
 import type { EmbeddingPort } from "../../core/ports.js";
 import type { DreamRunRecord } from "./ports.js";
 import type { CostMeteredLlm, DreamPort } from "./ports.js";
 import type { DreamRunResult } from "./service.js";
-import { runDreamWithHeldLock } from "./service.js";
-import { runDreamScan } from "./scan.js";
 import { isEpisodeWriteInProgress, tryAcquireDreamingRunLock, withHeldDreamingRunLock } from "./concurrency.js";
 
 const MINUTE_MS = 60 * 1000;
@@ -79,6 +78,7 @@ export async function maybeRunLightDream(
   }
 
   return withHeldDreamingRunLock(lock, async (lease) => {
+    const [{ runDreamScan }, { runDreamWithHeldLock }] = await Promise.all([import("./scan.js"), import("./service.js")]);
     const lastRun = await deps.port.getLastRun();
     if (isWithinMinInterval(lastRun, now(), config.minIntervalMinutes)) {
       return { status: "skipped", reason: "interval_guard" };
@@ -156,6 +156,6 @@ function isWithinMinInterval(lastRun: DreamRunRecord | null, now: Date, minInter
 }
 
 /** Returns whether a scan found evidence worth reconciling in a light dream. */
-function hasEvidence(scan: Awaited<ReturnType<typeof runDreamScan>>): boolean {
+function hasEvidence(scan: DreamScanSummary): boolean {
   return scan.episodesSinceLastRun > 0 || scan.ingestFilesSinceLastRun > 0 || scan.durablesCreatedSinceLastRun > 0;
 }

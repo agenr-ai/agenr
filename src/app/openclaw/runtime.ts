@@ -1,7 +1,7 @@
 import { createOpenClawLlmClient } from "../../adapters/openclaw/llm/openclaw-llm-client.js";
 import type { AgenrOpenClawHost, AgenrOpenClawPluginConfig } from "./contract.js";
 import { resolveDebugConfig, type ResolvedAgenrOpenClawDebugConfig } from "../../adapters/openclaw/config.js";
-import { createAgenrDebugSink, createNoopAgenrDebugSink } from "../../adapters/openclaw/debug/index.js";
+import { createNoopAgenrDebugSink } from "../../adapters/openclaw/debug/sink.js";
 import type { OpenClawPluginDebugSink } from "./debug-sink.js";
 import path from "node:path";
 import { buildClaimExtractionRuntime, composeHostPluginServices, EMBEDDING_MODEL } from "../../adapters/plugin-runtime/index.js";
@@ -26,7 +26,7 @@ export async function createAgenrOpenClawServices(
     resolvePath?: (input: string) => string;
   },
 ): Promise<AgenrOpenClawServices> {
-  const debugSink = createDebugSink(options.openClaw, config);
+  const debugSink = await createDebugSink(options.openClaw, config);
 
   return composeHostPluginServices({
     config,
@@ -37,9 +37,9 @@ export async function createAgenrOpenClawServices(
         createOpenClawLlmClient(options.openClaw, hostConfig.claimExtractionModel, "claim extraction model override"),
       ),
     onBeforeClose: () => debugSink.close(),
-    extend: ({ resolvedConfig, agenrConfig, runtimeServices }) => {
+    extend: async ({ resolvedConfig, agenrConfig, runtimeServices }) => {
       const featureFlags = resolveAgenrFeatureFlags(agenrConfig.features);
-      const hostMemory = createHostMemoryServices(featureFlags, {
+      const hostMemory = await createHostMemoryServices(featureFlags, {
         workingMemoryRepository: runtimeServices.workingMemoryRepository,
         sessionMemoryRepository: runtimeServices.sessionMemoryRepository,
         workingMemorySourceLabel: "openclaw",
@@ -68,13 +68,18 @@ export async function createAgenrOpenClawServices(
  * @param pluginConfig - Plugin config supplied by OpenClaw.
  * @returns Debug sink ready to accept structured events.
  */
-function createDebugSink(openClaw: AgenrOpenClawHost, pluginConfig: AgenrOpenClawPluginConfig): OpenClawPluginDebugSink {
+async function createDebugSink(openClaw: AgenrOpenClawHost, pluginConfig: AgenrOpenClawPluginConfig): Promise<OpenClawPluginDebugSink> {
   const resolved = resolveDebugConfig(pluginConfig.debug);
   if (!resolved.enabled) {
     return createNoopAgenrDebugSink();
   }
 
   const withLogPath = ensureDebugLogPath(resolved, openClaw);
+  if (!withLogPath.enabled) {
+    return createNoopAgenrDebugSink();
+  }
+
+  const { createAgenrDebugSink } = await import("../../adapters/openclaw/debug/sink.js");
   return createAgenrDebugSink(withLogPath);
 }
 

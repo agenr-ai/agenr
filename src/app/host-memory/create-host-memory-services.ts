@@ -3,9 +3,10 @@ import { routeSessionMemoryTrigger } from "../session-memory/trigger-router.js";
 import type { SessionMemoryRepository } from "../session-memory/repository.js";
 import type { SessionMemoryTriggerResult } from "../session-memory/results.js";
 import type { SessionMemoryTriggerEvent } from "../session-memory/types.js";
-import { createWorkingMemoryService, type WorkingMemoryService } from "../working-memory/service.js";
+import type { WorkingMemoryService } from "../working-memory/service.js";
 import type { WorkingMemoryRepository } from "../working-memory/repository.js";
 import type { AgenrFeatureFlags } from "../features/types.js";
+import { createDisabledWorkingMemoryService } from "../working-memory/disabled-service.js";
 
 /**
  * Host-facing memory surface exposed on plugin runtime services.
@@ -43,11 +44,16 @@ export interface CreateHostMemoryServicesOptions {
  * @param options - Optional repositories and source labels.
  * @returns Services wired to resolved feature flags.
  */
-export function createHostMemoryServices(featureFlags: AgenrFeatureFlags, options: CreateHostMemoryServicesOptions = {}): AgenrHostMemorySurface {
-  const workingMemory = createWorkingMemoryService(featureFlags, {
-    repository: options.workingMemoryRepository,
-    sourceLabel: options.workingMemorySourceLabel,
-  });
+export async function createHostMemoryServices(
+  featureFlags: AgenrFeatureFlags,
+  options: CreateHostMemoryServicesOptions = {},
+): Promise<AgenrHostMemorySurface> {
+  const workingMemory = featureFlags.workingMemory
+    ? (await import("../working-memory/service.js")).createWorkingMemoryService(featureFlags, {
+        repository: options.workingMemoryRepository,
+        sourceLabel: options.workingMemorySourceLabel,
+      })
+    : createDisabledWorkingMemoryService();
 
   return {
     workingMemory,
@@ -55,7 +61,8 @@ export function createHostMemoryServices(featureFlags: AgenrFeatureFlags, option
     routeSessionMemoryTrigger: (event) =>
       routeSessionMemoryTrigger(event, featureFlags, {
         repository: options.sessionMemoryRepository,
-        workingMemory,
+        workingMemoryEnabled: featureFlags.workingMemory,
+        workingMemory: featureFlags.workingMemory ? workingMemory : undefined,
       }),
   };
 }

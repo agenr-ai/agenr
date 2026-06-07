@@ -17,8 +17,9 @@ describe("plugin package build scripts", () => {
   it("builds Skeln plugin dist artifacts when the repository path contains spaces", async () => {
     const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "agenr plugin build "));
     tempDirs.push(fixtureRoot);
-    await seedRootDist(fixtureRoot);
+    await seedRootDist(fixtureRoot, "skeln");
     await copyBuildScript("skeln-plugin", fixtureRoot);
+    await copyCopyScript(fixtureRoot);
 
     await execFileAsync(process.execPath, [path.join(fixtureRoot, "packages", "skeln-plugin", "build.mjs")]);
 
@@ -28,6 +29,21 @@ describe("plugin package build scripts", () => {
     expect(skelnEntry).toContain('"./chunk-alpha.js"');
     expect(skelnTypes).toContain('"./ports-test.d.ts"');
     await expect(readFile(path.join(fixtureRoot, "packages", "skeln-plugin", "dist", "ports-test.d.ts"), "utf8")).resolves.toContain("RootType");
+    await expect(readFile(path.join(fixtureRoot, "packages", "skeln-plugin", "dist", "cli.d.ts"), "utf8")).rejects.toThrow();
+  });
+
+  it("builds OpenClaw plugin dist artifacts when the repository path contains spaces", async () => {
+    const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "agenr plugin build "));
+    tempDirs.push(fixtureRoot);
+    await seedRootDist(fixtureRoot, "openclaw");
+    await copyBuildScript("openclaw-plugin", fixtureRoot);
+    await copyCopyScript(fixtureRoot);
+
+    await execFileAsync(process.execPath, [path.join(fixtureRoot, "packages", "openclaw-plugin", "build.mjs")]);
+
+    const openClawEntry = await readFile(path.join(fixtureRoot, "packages", "openclaw-plugin", "dist", "index.js"), "utf8");
+    expect(openClawEntry).toContain('"./chunk-alpha.js"');
+    expect(openClawEntry).toContain('export default "openclaw"');
   });
 });
 
@@ -49,10 +65,16 @@ describe("plugin package manifests", () => {
     });
   });
 
-  it("does not publish the OpenClaw plugin entry from the root tsup build", async () => {
+  it("builds the OpenClaw adapter in root dist for plugin packaging", async () => {
     const rootTsupConfig = await readFile(path.join(process.cwd(), "tsup.config.ts"), "utf8");
 
-    expect(rootTsupConfig).not.toContain('"adapters/openclaw/index"');
+    expect(rootTsupConfig).toContain('"adapters/openclaw/index"');
+  });
+
+  it("excludes the OpenClaw adapter from the root package publish allowlist", async () => {
+    const rootPackage = await readPackageJson(path.join(process.cwd(), "package.json"));
+
+    expect(rootPackage.files).toEqual(["dist", "!dist/adapters/openclaw", "README.md", "LICENSE", "CHANGELOG.md"]);
   });
 
   it("does not require a sibling Skeln checkout for source installs", async () => {
@@ -65,12 +87,13 @@ describe("plugin package manifests", () => {
   });
 });
 
-async function seedRootDist(root: string): Promise<void> {
-  await mkdir(path.join(root, "dist", "adapters", "skeln"), { recursive: true });
+async function seedRootDist(root: string, adapterName: string): Promise<void> {
+  await mkdir(path.join(root, "dist", "adapters", adapterName), { recursive: true });
   await writeFile(path.join(root, "dist", "chunk-alpha.js"), "export const alpha = 1;\n", "utf8");
   await writeFile(path.join(root, "dist", "ports-test.d.ts"), "export interface RootType {}\n", "utf8");
-  await writeFile(path.join(root, "dist", "adapters", "skeln", "index.js"), 'import "../../chunk-alpha.js";\nexport default "skeln";\n', "utf8");
-  await writeFile(path.join(root, "dist", "adapters", "skeln", "index.d.ts"), 'export type { RootType } from "../../ports-test.d.ts";\n', "utf8");
+  await writeFile(path.join(root, "dist", "cli.d.ts"), "export {};\n", "utf8");
+  await writeFile(path.join(root, "dist", "adapters", adapterName, "index.js"), `import "../../chunk-alpha.js";\nexport default "${adapterName}";\n`, "utf8");
+  await writeFile(path.join(root, "dist", "adapters", adapterName, "index.d.ts"), 'export type { RootType } from "../../ports-test.d.ts";\n', "utf8");
 }
 
 async function copyBuildScript(packageName: string, root: string): Promise<void> {
@@ -79,12 +102,19 @@ async function copyBuildScript(packageName: string, root: string): Promise<void>
   await copyFile(path.join(process.cwd(), "packages", packageName, "build.mjs"), path.join(packageDir, "build.mjs"));
 }
 
+async function copyCopyScript(root: string): Promise<void> {
+  await mkdir(path.join(root, "scripts"), { recursive: true });
+  await copyFile(path.join(process.cwd(), "scripts", "copy-plugin-dist.mjs"), path.join(root, "scripts", "copy-plugin-dist.mjs"));
+}
+
 async function readPackageJson(packagePath: string): Promise<{
+  files?: string[];
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
 }> {
   return JSON.parse(await readFile(packagePath, "utf8")) as {
+    files?: string[];
     dependencies?: Record<string, string>;
     devDependencies?: Record<string, string>;
     peerDependencies?: Record<string, string>;

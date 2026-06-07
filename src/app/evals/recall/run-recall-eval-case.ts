@@ -5,7 +5,7 @@ import { provisionEvalSandbox } from "../provision-sandbox.js";
 import type { CrossEncoderPort, RecallPorts } from "../../../core/ports.js";
 import { recall } from "../../../core/recall/index.js";
 import { runUnifiedRecall } from "../../recall/index.js";
-import { attachCrossEncoderPort } from "./attach-cross-encoder.js";
+import { attachCrossEncoderPort } from "../../../adapters/plugin-runtime/attach-cross-encoder.js";
 import { createRecallEvalDiagnosticsCollector } from "./collect-diagnostics.js";
 import type { RecallEvalCaseRequest, RecallEvalCaseResponse } from "./contracts.js";
 import { createInstrumentedRecallPorts } from "./instrumented-recall-ports.js";

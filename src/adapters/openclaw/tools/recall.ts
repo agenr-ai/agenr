@@ -16,7 +16,6 @@ import {
   sanitizeRecallToolParams,
 } from "../../shared/memory-tools.js";
 import { buildOpenClawRecallToolDescription } from "../../shared/memory-prompt-doctrine.js";
-import { buildLiveRecallDebugArtifact } from "../debug/index.js";
 import type { AgenrOpenClawServices } from "../types.js";
 import { OPENCLAW_PARAM_READER, logToolCall, logToolFailure, toolFailureResult } from "./shared.js";
 
@@ -58,7 +57,7 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
         logger.info(
           `[agenr] tool=agenr_recall session=${ctx.sessionId ?? "unknown"} key=${ctx.sessionKey ?? "unknown"} result: ${formatUnifiedRecallLogSummary(result)}`,
         );
-        emitRecallDebugArtifacts(services, ctx, params.query, result);
+        await emitRecallDebugArtifacts(services, ctx, params.query, result);
 
         return textResult(formatUnifiedRecallResults(result), buildRecallToolDetails(result));
       } catch (error) {
@@ -73,16 +72,17 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
 /**
  * Emits bounded debug artifacts for a successful OpenClaw recall tool call.
  */
-function emitRecallDebugArtifacts(
+async function emitRecallDebugArtifacts(
   services: AgenrOpenClawServices,
   ctx: OpenClawPluginToolContext,
   query: string,
   result: Awaited<ReturnType<typeof runRecallMemoryTool>>,
-): void {
+): Promise<void> {
   if (!services.debugSink.enabled) {
     return;
   }
 
+  const { buildLiveRecallDebugArtifact } = await import("../debug/build-recall-artifact.js");
   const sessionIdPayload = ctx.sessionId ? { sessionId: ctx.sessionId } : {};
   const sessionKeyPayload = ctx.sessionKey ? { sessionKey: ctx.sessionKey } : {};
   void services.debugSink.emit({

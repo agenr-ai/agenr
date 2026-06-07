@@ -27,7 +27,12 @@ export interface ComposeHostPluginServicesInput<TConfig extends PluginPathConfig
   /** Optional hook invoked before the database closes. */
   onBeforeClose?: () => Promise<void>;
   /** Host-specific service envelope builder. */
-  extend: (ctx: { config: TConfig; resolvedConfig: ResolvedPluginPaths; agenrConfig: AgenrConfig; runtimeServices: PluginMemoryRuntimeServices }) => TResult;
+  extend: (ctx: {
+    config: TConfig;
+    resolvedConfig: ResolvedPluginPaths;
+    agenrConfig: AgenrConfig;
+    runtimeServices: PluginMemoryRuntimeServices;
+  }) => TResult | Promise<TResult>;
 }
 
 /**
@@ -49,7 +54,7 @@ export async function composeHostPluginServices<TConfig extends PluginPathConfig
     onBeforeClose: input.onBeforeClose,
   });
 
-  return input.extend({
+  return await input.extend({
     config: input.config,
     resolvedConfig,
     agenrConfig,

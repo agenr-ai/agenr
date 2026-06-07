@@ -8,6 +8,7 @@
   },
   "files": [
     "dist",
+    "!dist/adapters/openclaw",
     "README.md",
     "LICENSE",
     "CHANGELOG.md"

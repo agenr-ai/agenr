@@ -13,7 +13,7 @@ import { createEmbeddingClient, EMBEDDING_MODEL, resolveEmbeddingApiKey, resolve
 import { resolveModel } from "../llm.js";
 import type { CreatePluginMemoryRuntimeInput, PluginMemoryRuntimeFactoryPort } from "../../app/plugin-runtime/ports.js";
 import type { PluginEmbeddingStatus, PluginMemoryRuntimeServices } from "../../app/plugin-runtime/types.js";
-import { attachCrossEncoderPort } from "../../app/evals/recall/attach-cross-encoder.js";
+import { attachCrossEncoderPort } from "./attach-cross-encoder.js";
 import { createEmbedQuery } from "./embed-query.js";
 
 export { EMBEDDING_MODEL, pluginMemoryRuntimeFactory };

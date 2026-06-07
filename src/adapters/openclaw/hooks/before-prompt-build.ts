@@ -4,7 +4,6 @@ import { runBeforeTurn } from "../../../app/before-turn/index.js";
 import { runSessionStart } from "../../../app/session-start/index.js";
 import type { BeforeTurnPatch } from "../../../app/before-turn/index.js";
 import { resolveStoreNudgeConfig } from "../config.js";
-import { buildLiveBeforeTurnDebugArtifact } from "../debug/index.js";
 import { formatAgenrBeforeTurnRecall } from "../format/before-turn-format.js";
 import { extractRecentTurnsFromMessages, normalizePromptText } from "../../shared/injection/message-text.js";
 import { resolveBeforeTurnPolicy, resolveSessionStartPolicy } from "../../shared/injection/policy.js";
@@ -243,6 +242,7 @@ async function resolveBeforeTurnResult(
     );
     const prependContext = formatAgenrBeforeTurnRecall(beforeTurnPatch);
     if (services.debugSink.enabled) {
+      const { buildLiveBeforeTurnDebugArtifact } = await import("../debug/build-before-turn-artifact.js");
       void services.debugSink.emit({
         type: "before_turn_decision",
         ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),

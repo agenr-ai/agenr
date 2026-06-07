@@ -46,13 +46,13 @@ export async function createAgenrSkelnServices(config: AgenrSkelnConfig = {}): P
     config,
     readSlotPolicies: (hostConfig) => hostConfig.memoryPolicy?.slotPolicies,
     resolveClaimExtraction: ({ agenrConfig }) => createClaimExtractionFromAgenrConfig(agenrConfig),
-    extend: ({ config: hostConfig, resolvedConfig, agenrConfig, runtimeServices }) => {
+    extend: async ({ config: hostConfig, resolvedConfig, agenrConfig, runtimeServices }) => {
       const featureFlags = resolveAgenrFeatureFlags({
         ...agenrConfig.features,
         ...hostConfig.featureFlags,
       });
       const goalContinuationHostPort = undefined;
-      const hostMemory = createHostMemoryServices(featureFlags, {
+      const hostMemory = await createHostMemoryServices(featureFlags, {
         workingMemoryRepository: runtimeServices.workingMemoryRepository,
         sessionMemoryRepository: runtimeServices.sessionMemoryRepository,
         workingMemorySourceLabel: "skeln",
