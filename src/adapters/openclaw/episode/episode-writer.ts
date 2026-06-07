@@ -1,7 +1,6 @@
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
 import { resolveAgentEffectiveModelPrimary, resolveDefaultAgentId } from "openclaw/plugin-sdk/agent-runtime";
-import type { EpisodeActivityThreshold } from "../../../app/episode-ingest/activity-threshold.js";
 import { createSingleTranscriptDiscoveryPort } from "../../../app/episode-ingest/index.js";
 import { HOST_SHUTDOWN_EPISODE_ACTIVITY_THRESHOLD } from "../../shared/shutdown-episode-threshold.js";
 import { createDeadlineAwareEpisodeSummaryLlm } from "../../shared/deadline-aware-episode-summary-llm.js";
@@ -49,7 +48,7 @@ export async function writeOpenClawSessionEndEpisode(params: {
     sourceSessionId: params.target.sessionId,
     fileField: "file",
     shortCountField: "materialTurns",
-    activityThreshold: HOST_SHUTDOWN_EPISODE_ACTIVITY_THRESHOLD,
+    activityGate: "host-shutdown",
     embeddingSkipLogContext: `[agenr] session-end episode embedding skipped for ${formatSessionContext(params.ctx.sessionId, params.ctx.sessionKey)} file=${params.target.sessionFile}`,
   });
 }
@@ -80,9 +79,13 @@ export async function writeOpenClawPreCompactionEpisode(params: {
     sourceSessionId: `${params.sessionId}:pre-compaction:${params.messageCount}`,
     fileField: "file",
     shortCountField: "materialTurns",
+    activityGate: "none",
     embeddingSkipLogContext: `[agenr] pre-compaction episode embedding skipped for ${formatSessionContext(params.ctx.sessionId, params.ctx.sessionKey)} file=${params.sessionFile}`,
   });
 }
+
+/** Activity gate applied before writing an OpenClaw session episode. */
+type OpenClawSessionEpisodeActivityGate = "host-shutdown" | "none";
 
 /**
  * Runs one bounded OpenClaw episode write for a resolved session target.
@@ -100,7 +103,7 @@ async function writeOpenClawSessionEpisode(params: {
   fileField: "file";
   shortCountField: "materialTurns";
   embeddingSkipLogContext: string;
-  activityThreshold?: EpisodeActivityThreshold;
+  activityGate: OpenClawSessionEpisodeActivityGate;
 }): Promise<void> {
   const sessionContext = formatSessionContext(params.ctx.sessionId, params.ctx.sessionKey);
   const writeStartedAtMs = Date.now();
@@ -166,7 +169,7 @@ async function writeOpenClawSessionEpisode(params: {
     ingestOptions: {
       genVersion: OPENCLAW_EPISODE_GENERATOR_VERSION,
       skipActiveSessionCheck: true,
-      ...(params.activityThreshold ? { activityThreshold: params.activityThreshold } : {}),
+      ...(params.activityGate === "host-shutdown" ? { activityThreshold: HOST_SHUTDOWN_EPISODE_ACTIVITY_THRESHOLD } : {}),
       candidateOverrides: {
         sessionId: params.sourceSessionId,
         agentId: trimOptionalString(params.ctx.agentId) ?? null,

@@ -1,7 +1,7 @@
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
 import { runOpenClawSessionEndEpisodeCapture } from "../episode/session-end-episode-write.js";
-import { isOpenClawSessionEndCompaction } from "../session-end-policy.js";
+import { resolveOpenClawSessionEndPolicy } from "../session-end-policy.js";
 import { buildOpenClawSessionShutdownTriggerEvent, buildOpenClawSessionTreeTriggerEvent, shouldRouteOpenClawSessionTreeTrigger } from "./session-memory.js";
 import { routeOpenClawSessionMemoryTrigger } from "./session-memory-routing.js";
 import type { MidSessionTracker } from "../session/state.js";
@@ -30,12 +30,18 @@ export async function handleAgenrSessionEnd(
     ...(event.sessionKey ? { sessionKey: event.sessionKey } : {}),
   };
 
-  if (!isOpenClawSessionEndCompaction(event.reason)) {
+  const policy = resolveOpenClawSessionEndPolicy(event.reason);
+
+  if (policy.routeMemoryIntake) {
     if (shouldRouteOpenClawSessionTreeTrigger(event.reason)) {
       await routeOpenClawSessionMemoryTrigger(params.servicesPromise, scopeContext, (scope) => buildOpenClawSessionTreeTriggerEvent(scope, event));
     } else {
       await routeOpenClawSessionMemoryTrigger(params.servicesPromise, scopeContext, (scope) => buildOpenClawSessionShutdownTriggerEvent(scope, event));
     }
+  }
+
+  if (!policy.captureEpisode) {
+    return;
   }
 
   const ctx: AgenrOpenClawHookContext = {

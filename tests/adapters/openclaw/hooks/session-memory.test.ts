@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { logSessionMemoryTriggerResult } from "../../../../src/adapters/shared/session-memory-routing.js";
-import { isOpenClawSessionEndCompaction } from "../../../../src/adapters/openclaw/session-end-policy.js";
 import {
   buildOpenClawSessionBeforeCompactTriggerEvent,
   buildOpenClawSessionBeforeTreeTriggerEvent,
@@ -129,8 +128,6 @@ describe("checkpoint-relevant lifecycle triggers", () => {
   it("routes reset session_end reasons through session_tree", () => {
     expect(shouldRouteOpenClawSessionTreeTrigger("reset")).toBe(true);
     expect(shouldRouteOpenClawSessionTreeTrigger("compaction")).toBe(false);
-    expect(isOpenClawSessionEndCompaction("compaction")).toBe(true);
-    expect(isOpenClawSessionEndCompaction("idle")).toBe(false);
     expect(
       buildOpenClawSessionTreeTriggerEvent(scope, {
         reason: "reset",

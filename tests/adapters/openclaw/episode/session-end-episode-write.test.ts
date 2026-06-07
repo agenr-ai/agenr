@@ -15,7 +15,6 @@ import {
   resolveOpenClawSessionEndEpisodeTarget,
   runOpenClawSessionEndEpisodeCapture,
 } from "../../../../src/adapters/openclaw/episode/session-end-episode-write.js";
-import { isOpenClawSessionEndCompaction } from "../../../../src/adapters/openclaw/session-end-policy.js";
 import type { AgenrOpenClawServices } from "../../../../src/adapters/openclaw/types.js";
 
 describe("runOpenClawSessionEndEpisodeCapture", () => {
@@ -39,35 +38,6 @@ describe("runOpenClawSessionEndEpisodeCapture", () => {
         messageCount: 8,
       }),
     ).toBeUndefined();
-  });
-
-  it("treats compaction session-end reasons as already captured", () => {
-    expect(isOpenClawSessionEndCompaction("compaction")).toBe(true);
-    expect(isOpenClawSessionEndCompaction("idle")).toBe(false);
-    expect(isOpenClawSessionEndCompaction("reset")).toBe(false);
-    expect(isOpenClawSessionEndCompaction(undefined)).toBe(false);
-  });
-
-  it("skips session-end episode capture when reason is compaction", async () => {
-    const logger = createLogger();
-
-    await runOpenClawSessionEndEpisodeCapture({
-      event: {
-        sessionId: "session-1",
-        messageCount: 8,
-        reason: "compaction",
-        sessionFile: "/tmp/session-1.jsonl",
-      },
-      ctx: { sessionId: "session-1" },
-      servicesPromise: buildServicesPromise(),
-      logger,
-    });
-
-    expect(episodeWriterMocks.writeOpenClawSessionEndEpisode).not.toHaveBeenCalled();
-    expect(guardedCaptureMocks.runGuardedPostSessionEpisodeCapture).not.toHaveBeenCalled();
-    expect(logger.debug).not.toHaveBeenCalled();
-    expect(logger.info).not.toHaveBeenCalled();
-    expect(logger.warn).not.toHaveBeenCalled();
   });
 
   it("skips episode capture when memory policy disables episodes", async () => {

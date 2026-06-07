@@ -5,7 +5,6 @@ import { isPluginEpisodeWriteEnabled } from "../../shared/episode-write-policy.j
 import { runGuardedPostSessionEpisodeCapture } from "../../shared/guarded-post-session-episode-capture.js";
 import { formatSessionContext } from "../logging.js";
 import { resolveOpenClawCurrentSessionTarget } from "../session/current-session-resolver.js";
-import { isOpenClawSessionEndCompaction } from "../session-end-policy.js";
 import type { AgenrOpenClawHookContext, AgenrOpenClawServices, AgenrOpenClawSessionEndEvent } from "../types.js";
 import { type OpenClawEpisodeTarget, writeOpenClawSessionEndEpisode } from "./episode-writer.js";
 
@@ -43,10 +42,6 @@ export function resolveOpenClawSessionEndEpisodeTarget(event: AgenrOpenClawSessi
  * @returns Promise the host should await before replacing the active session.
  */
 export async function runOpenClawSessionEndEpisodeCapture(params: OpenClawSessionEndEpisodeWriteParams): Promise<void> {
-  if (isOpenClawSessionEndCompaction(params.event.reason)) {
-    return;
-  }
-
   const sessionContext = formatSessionContext(params.event.sessionId, params.event.sessionKey);
   const syncTarget = resolveOpenClawSessionEndEpisodeTarget(params.event);
 
