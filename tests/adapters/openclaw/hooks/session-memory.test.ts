@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { logSessionMemoryTriggerResult } from "../../../../src/adapters/shared/session-memory-routing.js";
-import { isOpenClawSessionEndCompaction } from "../../../../src/adapters/openclaw/episode/session-end-policy.js";
+import { isOpenClawSessionEndCompaction } from "../../../../src/adapters/openclaw/session-end-policy.js";
 import {
   buildOpenClawSessionBeforeCompactTriggerEvent,
   buildOpenClawSessionBeforeTreeTriggerEvent,

@@ -1,4 +1,4 @@
-import type { AgenrOpenClawSessionEndEvent } from "../types.js";
+import type { AgenrOpenClawSessionEndEvent } from "./types.js";
 
 /**
  * Returns whether OpenClaw session_end should skip session-memory intake and

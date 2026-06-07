@@ -1,9 +1,8 @@
 import type { ExtensionContext } from "../skeln-types.js";
 
-import { withEpisodeWriteGuard } from "../../../app/dreaming/concurrency.js";
 import { formatErrorMessage } from "../../shared/errors.js";
 import { isPluginEpisodeWriteEnabled } from "../../shared/episode-write-policy.js";
-import { runPostSessionLightDream } from "../../shared/post-session-light-dream.js";
+import { runGuardedPostSessionEpisodeCapture } from "../../shared/guarded-post-session-episode-capture.js";
 import type { SkelnSessionShutdownEvent } from "../hooks/session-memory.js";
 import type { createAgenrSkelnServices } from "../runtime.js";
 import { resolveSkelnSessionEpisodeTarget, type SkelnSessionEpisodeTarget } from "./bounded-session-episode.js";
@@ -91,15 +90,9 @@ async function writeScopedSkelnShutdownEpisode(
     return;
   }
 
-  await withEpisodeWriteGuard({ port: services.dreaming, dbPath: services.config.dbPath }, async () => writeSkelnShutdownEpisode({ target, services, logger }));
-  await runPostSessionLightDream({
-    deps: {
-      port: services.dreaming,
-      dbPath: services.config.dbPath,
-      config: services.agenrConfig,
-      embedding: services.embedding,
-      ...(services.claimExtraction ? { createClaimExtractionLlm: () => services.claimExtraction!.llm } : {}),
-    },
+  await runGuardedPostSessionEpisodeCapture({
+    services,
+    writeEpisode: () => writeSkelnShutdownEpisode({ target, services, logger }),
     logger: logger ?? console,
     scope: "skeln shutdown",
   });

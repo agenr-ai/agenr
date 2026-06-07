@@ -1,9 +1,9 @@
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
-import { isOpenClawSessionEndCompaction } from "../episode/session-end-policy.js";
+import { runOpenClawSessionEndEpisodeCapture } from "../episode/session-end-episode-write.js";
+import { isOpenClawSessionEndCompaction } from "../session-end-policy.js";
 import { buildOpenClawSessionShutdownTriggerEvent, buildOpenClawSessionTreeTriggerEvent, shouldRouteOpenClawSessionTreeTrigger } from "./session-memory.js";
 import { routeOpenClawSessionMemoryTrigger } from "./session-memory-routing.js";
-import { scheduleOpenClawSessionEndEpisodeWrite } from "../episode/session-end-episode-write.js";
 import type { MidSessionTracker } from "../session/state.js";
 import type { AgenrOpenClawHookContext, AgenrOpenClawServices, AgenrOpenClawSessionEndEvent } from "../types.js";
 
@@ -13,7 +13,7 @@ import type { AgenrOpenClawHookContext, AgenrOpenClawServices, AgenrOpenClawSess
  *
  * @param event - Session-end payload from OpenClaw.
  * @param params - Logger, shared services promise, and mid-session tracker.
- * @returns Promise that resolves after the best-effort episode attempt finishes.
+ * @returns Promise that resolves after bounded session-end episode capture finishes.
  */
 export async function handleAgenrSessionEnd(
   event: AgenrOpenClawSessionEndEvent,
@@ -43,7 +43,7 @@ export async function handleAgenrSessionEnd(
     ...(event.sessionKey ? { sessionKey: event.sessionKey } : {}),
   };
 
-  await scheduleOpenClawSessionEndEpisodeWrite({
+  await runOpenClawSessionEndEpisodeCapture({
     event,
     ctx,
     servicesPromise: params.servicesPromise,

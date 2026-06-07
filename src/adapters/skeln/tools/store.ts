@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "../skeln-types.js";
 
 import { maybeRunLightDream } from "../../../app/dreaming/background-triggers.js";
+import { buildLightDreamTriggerDeps } from "../../shared/light-dream-trigger-deps.js";
 import { formatErrorMessage } from "../../shared/errors.js";
 import { buildSkelnStoreToolDescription, buildStoreToolGuidelines } from "../../shared/memory-prompt-doctrine.js";
 import { STORE_TOOL_PARAMETERS, parseStoreToolParams, runStoreMemoryTool } from "../../shared/memory-tools.js";
@@ -47,16 +48,7 @@ function triggerSkelnImportanceLightDream(services: AgenrSkelnServices, status: 
     return;
   }
 
-  void maybeRunLightDream(
-    { trigger: "importance" },
-    {
-      port: services.dreaming,
-      dbPath: services.config.dbPath,
-      config: services.agenrConfig,
-      embedding: services.embedding,
-      ...(services.claimExtraction ? { createClaimExtractionLlm: () => services.claimExtraction!.llm } : {}),
-    },
-  )
+  void maybeRunLightDream({ trigger: "importance" }, buildLightDreamTriggerDeps(services))
     .then((result) => {
       if (result.status === "ran") {
         console.info(`[agenr] skeln importance light dream completed run=${result.result.runId}`);

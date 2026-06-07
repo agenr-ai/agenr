@@ -2,6 +2,7 @@ import type { AnyAgentTool } from "openclaw/plugin-sdk/agent-runtime";
 import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sdk/core";
 
 import { maybeRunLightDream } from "../../../app/dreaming/background-triggers.js";
+import { buildLightDreamTriggerDeps } from "../../shared/light-dream-trigger-deps.js";
 import { buildOpenClawStoreToolDescription } from "../../shared/memory-prompt-doctrine.js";
 import { STORE_TOOL_PARAMETERS, parseStoreToolParams, runStoreMemoryTool, sanitizeStoreToolParams } from "../../shared/memory-tools.js";
 import type { AgenrOpenClawServices } from "../types.js";
@@ -50,16 +51,7 @@ function triggerOpenClawImportanceLightDream(services: AgenrOpenClawServices, lo
     return;
   }
 
-  void maybeRunLightDream(
-    { trigger: "importance" },
-    {
-      port: services.dreaming,
-      dbPath: services.config.dbPath,
-      config: services.agenrConfig,
-      embedding: services.embedding,
-      ...(services.claimExtraction ? { createClaimExtractionLlm: () => services.claimExtraction!.llm } : {}),
-    },
-  )
+  void maybeRunLightDream({ trigger: "importance" }, buildLightDreamTriggerDeps(services))
     .then((result) => {
       if (result.status === "ran") {
         logger.info(`[agenr] importance light dream completed run=${result.result.runId}`);

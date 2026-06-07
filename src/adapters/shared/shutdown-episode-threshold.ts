@@ -16,6 +16,9 @@ export { HOST_SHUTDOWN_EPISODE_ACTIVITY_THRESHOLD };
 /**
  * Resolves phase 4 activity thresholds for host shutdown and session-end episode writes.
  *
+ * Mirrors ingest eligibility enforced through `activityThreshold` in episode ingest options.
+ * Exported for tests that assert the shared threshold contract without running ingest.
+ *
  * @param transcript - Parsed host session transcript.
  * @returns Eligibility decision and threshold facts.
  */

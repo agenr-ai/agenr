@@ -316,7 +316,7 @@ Current behavior:
 
 ## Session-end episode ingest
 
-`session_end` clears mid-session tracker state and awaits bounded episode capture for the just-finished session through `scheduleOpenClawSessionEndEpisodeWrite(...)`.
+`session_end` clears mid-session tracker state and awaits bounded episode capture for the just-finished session through `runOpenClawSessionEndEpisodeCapture(...)`.
 
 Current behavior:
 
