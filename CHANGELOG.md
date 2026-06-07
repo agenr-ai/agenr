@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+## [2026.6.3] - 2026-06-06
+
+Session-end episode alignment and review hardening release.
+
+### Added
+
+- **OpenClaw session-end policy coverage.** Hook-level regression tests now cover session-end policy selection, guarded post-session episode capture, and light-dream trigger behavior.
+
+### Changed
+
+- **Session-end episode capture** now aligns OpenClaw with Skeln's bounded shutdown episode policy, shared activity threshold handling, and post-session light-dream trigger flow.
+- **Host light-dream trigger plumbing** now shares dependency wiring and guarded post-session episode capture helpers across OpenClaw and Skeln adapters.
+
+### Fixed
+
+- **OpenClaw `agenr_store` logging** now emits background light-dream trigger misses at info level after a successful store instead of warning level.
+- **Session-end capture review issues** tightened OpenClaw policy ownership, activity-threshold handling, and documentation for host shutdown episode behavior.
+
+### Validation
+
+Changes since last push to `origin/master`:
+
+- Change OpenClaw `agenr_store` background light-dream trigger misses from warning-level logging to info-level logging
+- Align OpenClaw session-end episode writes with Skeln's bounded shutdown episode policy and documentation
+- Extract shared post-session light-dream trigger dependencies, guarded episode capture, and shutdown activity thresholds
+- Centralize OpenClaw session-end policy selection and add hook-level review regression coverage
+- Keep `pnpm check` green before release
+
 ## [2026.6.2] - 2026-06-06
 
 Calendar versioning, host session-memory parity, durable staleness, and package-boundary hardening release.
