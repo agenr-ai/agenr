@@ -1,9 +1,9 @@
 import type { ExtensionContext } from "../skeln-types.js";
 
-import { maybeRunLightDream } from "../../../app/dreaming/background-triggers.js";
 import { withEpisodeWriteGuard } from "../../../app/dreaming/concurrency.js";
 import { formatErrorMessage } from "../../shared/errors.js";
 import { isPluginEpisodeWriteEnabled } from "../../shared/episode-write-policy.js";
+import { runPostSessionLightDream } from "../../shared/post-session-light-dream.js";
 import type { SkelnSessionShutdownEvent } from "../hooks/session-memory.js";
 import type { createAgenrSkelnServices } from "../runtime.js";
 import { resolveSkelnSessionEpisodeTarget, type SkelnSessionEpisodeTarget } from "./bounded-session-episode.js";
@@ -92,32 +92,15 @@ async function writeScopedSkelnShutdownEpisode(
   }
 
   await withEpisodeWriteGuard({ port: services.dreaming, dbPath: services.config.dbPath }, async () => writeSkelnShutdownEpisode({ target, services, logger }));
-  await runSkelnPostSessionLightDream(services, logger);
-}
-
-/** Runs the Skeln post-session light dream trigger when configured. */
-async function runSkelnPostSessionLightDream(
-  services: Awaited<ReturnType<typeof createAgenrSkelnServices>>,
-  logger?: Pick<Console, "info" | "warn">,
-): Promise<void> {
-  const log = logger ?? console;
-  try {
-    const result = await maybeRunLightDream(
-      { trigger: "post_session" },
-      {
-        port: services.dreaming,
-        dbPath: services.config.dbPath,
-        config: services.agenrConfig,
-        embedding: services.embedding,
-        ...(services.claimExtraction ? { createClaimExtractionLlm: () => services.claimExtraction!.llm } : {}),
-      },
-    );
-    if (result.status === "ran") {
-      log.info(`[agenr] skeln shutdown light dream completed run=${result.result.runId}`);
-    } else if (result.reason === "run_in_progress" || result.reason === "episode_write_in_progress") {
-      log.info(`[agenr] skeln shutdown light dream skipped reason=${result.reason}`);
-    }
-  } catch (error) {
-    log.warn(`[agenr] skeln shutdown light dream failed: ${formatErrorMessage(error)}`);
-  }
+  await runPostSessionLightDream({
+    deps: {
+      port: services.dreaming,
+      dbPath: services.config.dbPath,
+      config: services.agenrConfig,
+      embedding: services.embedding,
+      ...(services.claimExtraction ? { createClaimExtractionLlm: () => services.claimExtraction!.llm } : {}),
+    },
+    logger: logger ?? console,
+    scope: "skeln shutdown",
+  });
 }

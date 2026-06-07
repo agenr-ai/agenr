@@ -213,9 +213,7 @@ describe("agenr OpenClaw tools", () => {
       subject: "warning log level",
     });
     expect(logger.warn).not.toHaveBeenCalled();
-    expect(getMessages(logger.info)).toEqual(
-      expect.arrayContaining([expect.stringContaining("[agenr] tool=agenr_store session=session-1 note:")]),
-    );
+    expect(getMessages(logger.info)).toEqual(expect.arrayContaining([expect.stringContaining("[agenr] tool=agenr_store session=session-1 note:")]));
   });
 
   it("exposes the new recall schema without legacy temporal params", async () => {

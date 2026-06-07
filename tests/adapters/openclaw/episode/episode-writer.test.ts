@@ -18,13 +18,13 @@ import { createDatabase, type SqlDatabase } from "../../../../src/adapters/db/cl
 import { createDreamPort } from "../../../../src/adapters/db/dreaming-port.js";
 import { createMemoryRepository } from "../../../../src/adapters/db/memory-repository.js";
 import { createSessionStartRepository } from "../../../../src/adapters/db/session-start-repository.js";
-import { writeOpenClawCurrentSessionEpisode, resolveOpenClawSessionEndEpisodeEligibility } from "../../../../src/adapters/openclaw/episode/episode-writer.js";
+import { writeOpenClawSessionEndEpisode } from "../../../../src/adapters/openclaw/episode/episode-writer.js";
 import { createNoopAgenrDebugSink } from "../../../../src/adapters/openclaw/debug/index.js";
 import { createStubAgenrHostMemorySurface } from "../../../helpers/host-memory-stubs.js";
 import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../../src/adapters/openclaw/types.js";
 import type { EmbeddingPort, LlmPort, RecallPorts } from "../../../../src/core/ports.js";
 
-describe("writeOpenClawCurrentSessionEpisode", () => {
+describe("writeOpenClawSessionEndEpisode", () => {
   const databases: SqlDatabase[] = [];
   const tempPaths: string[] = [];
 
@@ -55,13 +55,13 @@ describe("writeOpenClawCurrentSessionEpisode", () => {
       }),
     });
 
-    await writeOpenClawCurrentSessionEpisode({
+    await writeOpenClawSessionEndEpisode({
       ctx: {
         agentId: "main",
         sessionId: "current-session-end",
         sessionKey: "agent:main:tui-current",
       },
-      current: {
+      target: {
         sessionId: "current-session-end",
         sessionFile,
       },
@@ -91,12 +91,12 @@ describe("writeOpenClawCurrentSessionEpisode", () => {
       }),
     });
 
-    await writeOpenClawCurrentSessionEpisode({
+    await writeOpenClawSessionEndEpisode({
       ctx: {
         agentId: "main",
         sessionId: "short-session-end",
       },
-      current: {
+      target: {
         sessionId: "short-session-end",
         sessionFile,
       },
@@ -107,21 +107,8 @@ describe("writeOpenClawCurrentSessionEpisode", () => {
     expect(await database.getEpisodeBySourceId("openclaw", "short-session-end")).toBeNull();
     expect(episodeRunner).not.toHaveBeenCalled();
     expect(getMessages(logger.info)).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("[agenr] session-end episode write skipped for session=short-session-end"),
-      ]),
+      expect.arrayContaining([expect.stringContaining("[agenr] session-end episode write skipped for session=short-session-end")]),
     );
-  });
-});
-
-describe("resolveOpenClawSessionEndEpisodeEligibility", () => {
-  it("matches the shared phase 4 shutdown thresholds", () => {
-    expect(resolveOpenClawSessionEndEpisodeEligibility(buildTranscript({ messageCount: 4 }))).toEqual({
-      eligible: false,
-      reason: "below_activity_threshold",
-      materialTurns: 4,
-      durationMs: 3 * 60 * 1000,
-    });
   });
 });
 
@@ -318,28 +305,6 @@ async function writeShortSession(tempPaths: string[], sessionId: string): Promis
       },
     },
   ]);
-}
-
-function buildTranscript(options: { messageCount: number; startedAt?: string; endedAt?: string }) {
-  const startedAt = options.startedAt ?? "2026-05-30T10:00:00.000Z";
-  const endedAt = options.endedAt ?? "2026-05-30T10:03:00.000Z";
-  const messages = Array.from({ length: options.messageCount }, (_, index) => ({
-    index,
-    role: index % 2 === 0 ? ("user" as const) : ("assistant" as const),
-    text: `message ${index}`,
-    timestamp: index === options.messageCount - 1 ? endedAt : startedAt,
-  }));
-
-  return {
-    messages,
-    metadata: {
-      startedAt,
-      endedAt,
-      messageCount: messages.length,
-      transcriptHash: "hash",
-    },
-    warnings: [],
-  };
 }
 
 async function writeStandardSession(tempPaths: string[], sessionId: string): Promise<string> {

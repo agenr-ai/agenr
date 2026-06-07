@@ -183,27 +183,6 @@ export function shouldRouteOpenClawSessionTreeTrigger(reason: AgenrOpenClawSessi
   return reason !== undefined && TREE_SESSION_END_REASONS.has(reason);
 }
 
-/**
- * Returns whether session_end should skip session-memory intake because compaction
- * hooks already recorded the checkpoint.
- *
- * @param reason - OpenClaw session-end reason when present.
- * @returns True when intake should be skipped.
- */
-export function shouldSkipOpenClawSessionEndMemoryTrigger(reason: AgenrOpenClawSessionEndEvent["reason"]): boolean {
-  return reason === "compaction";
-}
-
-/**
- * Returns whether session_end should skip automatic episode capture because
- * compaction hooks already wrote a pre-compaction episode.
- *
- * @param reason - OpenClaw session-end reason when present.
- * @returns True when session-end episode capture should be skipped.
- */
-export function shouldSkipOpenClawSessionEndEpisodeWrite(reason: AgenrOpenClawSessionEndEvent["reason"]): boolean {
-  return reason === "compaction";
-}
 /** Builds one compaction checkpoint artifact from OpenClaw compaction facts. */
 function buildOpenClawCompactionCheckpointArtifact(
   sessionKey: string,

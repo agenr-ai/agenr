@@ -1,11 +1,7 @@
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
-import {
-  buildOpenClawSessionShutdownTriggerEvent,
-  buildOpenClawSessionTreeTriggerEvent,
-  shouldRouteOpenClawSessionTreeTrigger,
-  shouldSkipOpenClawSessionEndMemoryTrigger,
-} from "./session-memory.js";
+import { isOpenClawSessionEndCompaction } from "../episode/session-end-policy.js";
+import { buildOpenClawSessionShutdownTriggerEvent, buildOpenClawSessionTreeTriggerEvent, shouldRouteOpenClawSessionTreeTrigger } from "./session-memory.js";
 import { routeOpenClawSessionMemoryTrigger } from "./session-memory-routing.js";
 import { scheduleOpenClawSessionEndEpisodeWrite } from "../episode/session-end-episode-write.js";
 import type { MidSessionTracker } from "../session/state.js";
@@ -34,7 +30,7 @@ export async function handleAgenrSessionEnd(
     ...(event.sessionKey ? { sessionKey: event.sessionKey } : {}),
   };
 
-  if (!shouldSkipOpenClawSessionEndMemoryTrigger(event.reason)) {
+  if (!isOpenClawSessionEndCompaction(event.reason)) {
     if (shouldRouteOpenClawSessionTreeTrigger(event.reason)) {
       await routeOpenClawSessionMemoryTrigger(params.servicesPromise, scopeContext, (scope) => buildOpenClawSessionTreeTriggerEvent(scope, event));
     } else {

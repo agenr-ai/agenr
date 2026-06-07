@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveSkelnShutdownEpisodeEligibility } from "../../../../src/adapters/skeln/episode/episode-writer.js";
-import type { ParsedTranscript } from "../../../../src/core/types.js";
+import { resolveHostShutdownEpisodeEligibility } from "../../../src/adapters/shared/shutdown-episode-threshold.js";
+import type { ParsedTranscript } from "../../../src/core/types.js";
 
-describe("resolveSkelnShutdownEpisodeEligibility", () => {
+describe("resolveHostShutdownEpisodeEligibility", () => {
   it("accepts sessions with at least eight material turns", () => {
-    expect(resolveSkelnShutdownEpisodeEligibility(buildTranscript({ messageCount: 8 }))).toMatchObject({
+    expect(resolveHostShutdownEpisodeEligibility(buildTranscript({ messageCount: 8 }))).toMatchObject({
       eligible: true,
       materialTurns: 8,
     });
@@ -13,7 +13,7 @@ describe("resolveSkelnShutdownEpisodeEligibility", () => {
 
   it("accepts sessions that lasted at least twenty minutes", () => {
     expect(
-      resolveSkelnShutdownEpisodeEligibility(
+      resolveHostShutdownEpisodeEligibility(
         buildTranscript({
           messageCount: 2,
           startedAt: "2026-05-30T10:00:00.000Z",
@@ -27,7 +27,7 @@ describe("resolveSkelnShutdownEpisodeEligibility", () => {
   });
 
   it("skips short sessions below the phase 4 thresholds", () => {
-    expect(resolveSkelnShutdownEpisodeEligibility(buildTranscript({ messageCount: 4 }))).toEqual({
+    expect(resolveHostShutdownEpisodeEligibility(buildTranscript({ messageCount: 4 }))).toEqual({
       eligible: false,
       reason: "below_activity_threshold",
       materialTurns: 4,

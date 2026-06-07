@@ -1,14 +1,14 @@
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
-import { maybeRunLightDream } from "../../../app/dreaming/background-triggers.js";
 import { withEpisodeWriteGuard } from "../../../app/dreaming/concurrency.js";
 import { formatErrorMessage } from "../../shared/errors.js";
 import { isPluginEpisodeWriteEnabled } from "../../shared/episode-write-policy.js";
+import { runPostSessionLightDream } from "../../shared/post-session-light-dream.js";
 import { formatSessionContext } from "../logging.js";
 import { resolveOpenClawCurrentSessionTarget } from "../session/current-session-resolver.js";
 import type { AgenrOpenClawHookContext, AgenrOpenClawServices, AgenrOpenClawSessionEndEvent } from "../types.js";
+import { isOpenClawSessionEndCompaction } from "./session-end-policy.js";
 import { type OpenClawEpisodeTarget, writeOpenClawSessionEndEpisode } from "./episode-writer.js";
-import { shouldSkipOpenClawSessionEndEpisodeWrite } from "../hooks/session-memory.js";
 
 /** Parameters for bounded session-end episode capture on one OpenClaw session. */
 export interface OpenClawSessionEndEpisodeWriteParams {
@@ -70,7 +70,18 @@ export async function buildOpenClawSessionEndEpisodeWork(params: OpenClawSession
         logger: params.logger,
       }),
     );
-    await runOpenClawPostSessionLightDream(services, params.logger, sessionContext);
+    await runPostSessionLightDream({
+      deps: {
+        port: services.dreaming,
+        dbPath: services.config.dbPath,
+        config: services.agenrConfig,
+        embedding: services.embedding,
+        ...(services.claimExtraction ? { createClaimExtractionLlm: () => services.claimExtraction!.llm } : {}),
+      },
+      logger: params.logger,
+      scope: "session-end",
+      sessionContext,
+    });
   } catch (error) {
     params.logger.warn(`[agenr] session-end episode write failed for ${sessionContext}: ${formatErrorMessage(error)}`);
   }
@@ -86,34 +97,9 @@ export async function buildOpenClawSessionEndEpisodeWork(params: OpenClawSession
  * @returns Promise the host should await before replacing the active session.
  */
 export function scheduleOpenClawSessionEndEpisodeWrite(params: OpenClawSessionEndEpisodeWriteParams): Promise<void> {
-  if (shouldSkipOpenClawSessionEndEpisodeWrite(params.event.reason)) {
+  if (isOpenClawSessionEndCompaction(params.event.reason)) {
     return Promise.resolve();
   }
 
   return buildOpenClawSessionEndEpisodeWork(params);
-}
-
-/** Runs the OpenClaw post-session light dream trigger when configured. */
-async function runOpenClawPostSessionLightDream(services: AgenrOpenClawServices, logger: PluginLogger, sessionContext: string): Promise<void> {
-  try {
-    const result = await maybeRunLightDream(
-      { trigger: "post_session" },
-      {
-        port: services.dreaming,
-        dbPath: services.config.dbPath,
-        config: services.agenrConfig,
-        embedding: services.embedding,
-        ...(services.claimExtraction ? { createClaimExtractionLlm: () => services.claimExtraction!.llm } : {}),
-      },
-    );
-    if (result.status === "ran") {
-      logger.info(`[agenr] session-end light dream completed for ${sessionContext} run=${result.result.runId}`);
-    } else if (result.reason === "run_in_progress" || result.reason === "episode_write_in_progress") {
-      logger.info(`[agenr] session-end light dream skipped for ${sessionContext} reason=${result.reason}`);
-    } else {
-      logger.debug?.(`[agenr] session-end light dream skipped for ${sessionContext} reason=${result.reason}`);
-    }
-  } catch (error) {
-    logger.warn(`[agenr] session-end light dream failed for ${sessionContext}: ${formatErrorMessage(error)}`);
-  }
 }

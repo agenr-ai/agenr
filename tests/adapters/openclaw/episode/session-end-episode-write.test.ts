@@ -1,6 +1,23 @@
 import { describe, expect, it, vi } from "vitest";
 
+const episodeWriterMocks = vi.hoisted(() => ({
+  writeOpenClawSessionEndEpisode: vi.fn(async () => undefined),
+}));
+
+const concurrencyMocks = vi.hoisted(() => ({
+  withEpisodeWriteGuard: vi.fn(async (_params: unknown, work: () => Promise<void>) => work()),
+}));
+
+const lightDreamMocks = vi.hoisted(() => ({
+  runPostSessionLightDream: vi.fn(async () => undefined),
+}));
+
+vi.mock("../../../../src/adapters/openclaw/episode/episode-writer.js", () => episodeWriterMocks);
+vi.mock("../../../../src/app/dreaming/concurrency.js", () => concurrencyMocks);
+vi.mock("../../../../src/adapters/shared/post-session-light-dream.js", () => lightDreamMocks);
+
 import {
+  buildOpenClawSessionEndEpisodeWork,
   resolveOpenClawSessionEndEpisodeTarget,
   scheduleOpenClawSessionEndEpisodeWrite,
 } from "../../../../src/adapters/openclaw/episode/session-end-episode-write.js";
@@ -20,6 +37,15 @@ describe("scheduleOpenClawSessionEndEpisodeWrite", () => {
     });
   });
 
+  it("returns undefined when synchronous session-end facts are incomplete", () => {
+    expect(
+      resolveOpenClawSessionEndEpisodeTarget({
+        sessionId: "session-1",
+        messageCount: 8,
+      }),
+    ).toBeUndefined();
+  });
+
   it("skips session-end episode capture when reason is compaction", async () => {
     const logger = createLogger();
 
@@ -35,6 +61,7 @@ describe("scheduleOpenClawSessionEndEpisodeWrite", () => {
       logger,
     });
 
+    expect(episodeWriterMocks.writeOpenClawSessionEndEpisode).not.toHaveBeenCalled();
     expect(logger.debug).not.toHaveBeenCalled();
     expect(logger.info).not.toHaveBeenCalled();
     expect(logger.warn).not.toHaveBeenCalled();
@@ -55,6 +82,38 @@ describe("scheduleOpenClawSessionEndEpisodeWrite", () => {
     });
 
     expect(logger.debug).toHaveBeenCalledWith("[agenr] session-end episode write skipped for session=session-1 reason=memory_policy_disabled");
+    expect(episodeWriterMocks.writeOpenClawSessionEndEpisode).not.toHaveBeenCalled();
+  });
+
+  it("writes through the sync session-end target when episodes are enabled", async () => {
+    const logger = createLogger();
+
+    await buildOpenClawSessionEndEpisodeWork({
+      event: {
+        sessionId: "session-1",
+        messageCount: 8,
+        sessionFile: "/tmp/session-1.jsonl",
+      },
+      ctx: { sessionId: "session-1", sessionKey: "agent:main:tui" },
+      servicesPromise: buildServicesPromise({ episodesEnabled: true }),
+      logger,
+    });
+
+    expect(concurrencyMocks.withEpisodeWriteGuard).toHaveBeenCalledTimes(1);
+    expect(episodeWriterMocks.writeOpenClawSessionEndEpisode).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: {
+          sessionId: "session-1",
+          sessionFile: "/tmp/session-1.jsonl",
+        },
+      }),
+    );
+    expect(lightDreamMocks.runPostSessionLightDream).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: "session-end",
+        sessionContext: "session=session-1",
+      }),
+    );
   });
 });
 
@@ -80,6 +139,7 @@ function buildServicesPromise(options: { episodesEnabled?: boolean } = {}): Prom
       },
     },
     dreaming: {},
+    agenrConfig: null,
     config: { dbPath: "/tmp/knowledge.db" },
     close: vi.fn(async () => undefined),
   } as unknown as AgenrOpenClawServices);
