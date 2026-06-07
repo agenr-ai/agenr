@@ -29,7 +29,9 @@ describe("plugin package build scripts", () => {
     expect(skelnEntry).toContain('"./chunk-alpha.js"');
     expect(skelnTypes).toContain('"./ports-test.d.ts"');
     await expect(readFile(path.join(fixtureRoot, "packages", "skeln-plugin", "dist", "ports-test.d.ts"), "utf8")).resolves.toContain("RootType");
+    await expect(readFile(path.join(fixtureRoot, "packages", "skeln-plugin", "dist", "service-test.js"), "utf8")).resolves.toContain("service = 1");
     await expect(readFile(path.join(fixtureRoot, "packages", "skeln-plugin", "dist", "cli.d.ts"), "utf8")).rejects.toThrow();
+    await expect(readFile(path.join(fixtureRoot, "packages", "skeln-plugin", "dist", "cli.js"), "utf8")).rejects.toThrow();
   });
 
   it("builds OpenClaw plugin dist artifacts when the repository path contains spaces", async () => {
@@ -43,7 +45,9 @@ describe("plugin package build scripts", () => {
 
     const openClawEntry = await readFile(path.join(fixtureRoot, "packages", "openclaw-plugin", "dist", "index.js"), "utf8");
     expect(openClawEntry).toContain('"./chunk-alpha.js"');
+    expect(openClawEntry).toContain('import("./debug-artifact-test.js")');
     expect(openClawEntry).toContain('export default "openclaw"');
+    await expect(readFile(path.join(fixtureRoot, "packages", "openclaw-plugin", "dist", "debug-artifact-test.js"), "utf8")).resolves.toContain("debug = 1");
   });
 });
 
@@ -90,9 +94,17 @@ describe("plugin package manifests", () => {
 async function seedRootDist(root: string, adapterName: string): Promise<void> {
   await mkdir(path.join(root, "dist", "adapters", adapterName), { recursive: true });
   await writeFile(path.join(root, "dist", "chunk-alpha.js"), "export const alpha = 1;\n", "utf8");
+  await writeFile(path.join(root, "dist", "chunk-beta.js"), 'export const beta = () => import("./service-test.js");\n', "utf8");
+  await writeFile(path.join(root, "dist", "service-test.js"), "export const service = 1;\n", "utf8");
+  await writeFile(path.join(root, "dist", "debug-artifact-test.js"), "export const debug = 1;\n", "utf8");
+  await writeFile(path.join(root, "dist", "cli.js"), "export {};\n", "utf8");
   await writeFile(path.join(root, "dist", "ports-test.d.ts"), "export interface RootType {}\n", "utf8");
   await writeFile(path.join(root, "dist", "cli.d.ts"), "export {};\n", "utf8");
-  await writeFile(path.join(root, "dist", "adapters", adapterName, "index.js"), `import "../../chunk-alpha.js";\nexport default "${adapterName}";\n`, "utf8");
+  const adapterEntry =
+    adapterName === "openclaw"
+      ? `import "../../chunk-alpha.js";\nconst debug = () => import("../../debug-artifact-test.js");\nexport default "${adapterName}";\n`
+      : `import "../../chunk-alpha.js";\nimport "../../chunk-beta.js";\nexport default "${adapterName}";\n`;
+  await writeFile(path.join(root, "dist", "adapters", adapterName, "index.js"), adapterEntry, "utf8");
   await writeFile(path.join(root, "dist", "adapters", adapterName, "index.d.ts"), 'export type { RootType } from "../../ports-test.d.ts";\n', "utf8");
 }
 
