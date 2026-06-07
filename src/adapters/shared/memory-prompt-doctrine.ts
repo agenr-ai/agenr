@@ -45,11 +45,11 @@ const STORE_DO_NOT_PROGRESS_OR_CANONICAL =
 
 const STORE_TAKEAWAY_NOT_ACTIVITY = "Store the durable takeaway, standing rule, preference, risk, lesson, or relationship instead of raw activity.";
 
-const STORE_CLAIM_KEY_SLOT_USAGE = "Use claimKey for slot-like facts that may be superseded later, such as versions, strategies, owners, or limits.";
+const STORE_CLAIM_KEY_SLOT_USAGE = "Use claimKey only for slot-like facts that may later be superseded (versions, strategies, owners, limits, etc.). Skip claimKey for ordinary facts, decisions, preferences, and lessons.";
 
-const CLAIM_KEY_PROMPT_LINE = `When storing slot-like facts, pass claimKey as ${CLAIM_KEY_SLOT_GUIDANCE}`;
+const CLAIM_KEY_PROMPT_LINE = `Only use claimKey for slot-like facts. When you do, pass it as ${CLAIM_KEY_SLOT_GUIDANCE}`;
 
-const CLAIM_KEY_STORE_GUIDELINE = `Format claimKey for slot-like durables as ${CLAIM_KEY_SLOT_GUIDANCE}`;
+const CLAIM_KEY_STORE_GUIDELINE = `Format claimKey (only for slot-like durables) as ${CLAIM_KEY_SLOT_GUIDANCE}`;
 
 const DURABLE_TYPE_DEFINITIONS_PROMPT: readonly DurableTypeDefinition[] = [
   { name: "fact", definition: "durable truth about a person, system, place, or how something works" },
@@ -100,7 +100,7 @@ const STORE_LIFETIMES =
   "Use memory lifetimes deliberately: core is injected at every session start and should be rare, permanent is durable recall-on-demand memory, and temporary is short-horizon. Importance is 1 to 10; 7 is normal durable memory and 9 to 10 is rare and critical.";
 
 const STORE_SUPERSEDES_TOOL =
-  "When replacing an existing fact, pass `supersedes` with the old entry's ID. When storing a slot-like fact (for example, a library version or a rollout strategy), pass `claimKey` to enable future supersession detection.";
+  "When replacing an existing fact, pass `supersedes` with the old entry's ID. Only when storing a slot-like fact (e.g. library version or rollout strategy) pass `claimKey` to enable future supersession detection.";
 
 const STORE_ASK_BEFORE_STORING = "Do not ask before storing - but do ask whether future-you actually needs it.";
 
