@@ -1,8 +1,8 @@
 import type { OpenClawPluginConfigSchema } from "openclaw/plugin-sdk/plugin-entry";
 
 import { normalizePluginInjectionMemoryPolicyConfig } from "../shared/plugin-memory-policy-config.js";
-import { normalizeOptionalBoolean, normalizeOptionalPositiveInteger } from "../shared/plugin-config-validators.js";
-import type { AgenrOpenClawDebugConfig, AgenrOpenClawDebugEventLevel, AgenrOpenClawPluginConfig, StoreNudgeConfig } from "./types.js";
+import { normalizeOptionalBoolean } from "../shared/plugin-config-validators.js";
+import type { AgenrOpenClawDebugConfig, AgenrOpenClawDebugEventLevel, AgenrOpenClawPluginConfig } from "./types.js";
 import pluginManifest from "./openclaw.plugin.json" with { type: "json" };
 
 /**
@@ -14,8 +14,6 @@ type ManifestWithConfig = {
 };
 
 const manifest = pluginManifest as ManifestWithConfig;
-const DEFAULT_STORE_NUDGE_THRESHOLD = 8;
-const DEFAULT_STORE_NUDGE_MAX_PER_SESSION = 5;
 const DEFAULT_DEBUG_EVENT_LEVEL: AgenrOpenClawDebugEventLevel = "basic";
 const DEFAULT_DEBUG_PER_SESSION_FILES = false;
 const DEFAULT_DEBUG_MAX_TOP_CANDIDATES = 10;
@@ -65,11 +63,6 @@ export function normalizeAgenrOpenClawPluginConfig(value: unknown): { ok: true; 
     errors.push("claimExtractionModel must use provider/model format when provided");
   }
 
-  const storeNudgeResult = normalizeStoreNudgeConfig(value.storeNudge);
-  if (!storeNudgeResult.ok) {
-    errors.push(...storeNudgeResult.errors);
-  }
-
   const memoryPolicyResult = normalizePluginInjectionMemoryPolicyConfig(value.memoryPolicy);
   if (!memoryPolicyResult.ok) {
     errors.push(...memoryPolicyResult.errors);
@@ -80,7 +73,7 @@ export function normalizeAgenrOpenClawPluginConfig(value: unknown): { ok: true; 
     errors.push(...debugResult.errors);
   }
 
-  const allowedKeys = new Set(["dbPath", "configPath", "episodeModel", "claimExtractionModel", "storeNudge", "memoryPolicy", "debug"]);
+  const allowedKeys = new Set(["dbPath", "configPath", "episodeModel", "claimExtractionModel", "memoryPolicy", "debug"]);
   for (const key of Object.keys(value)) {
     if (!allowedKeys.has(key)) {
       errors.push(`unknown config field: ${key}`);
@@ -98,7 +91,6 @@ export function normalizeAgenrOpenClawPluginConfig(value: unknown): { ok: true; 
       ...(configPath ? { configPath } : {}),
       ...(episodeModel ? { episodeModel } : {}),
       ...(claimExtractionModel ? { claimExtractionModel } : {}),
-      ...(storeNudgeResult.ok && storeNudgeResult.value ? { storeNudge: storeNudgeResult.value } : {}),
       ...(memoryPolicyResult.ok && memoryPolicyResult.value ? { memoryPolicy: memoryPolicyResult.value } : {}),
       ...(debugResult.ok && debugResult.value ? { debug: debugResult.value } : {}),
     },
@@ -268,64 +260,4 @@ function normalizeOptionalTopCandidateCap(value: unknown, errors: string[]): num
   }
 
   return value;
-}
-
-/**
- * Resolves store-nudge settings with defaults for omitted fields.
- *
- * @param value - Optional normalized store-nudge overrides from plugin config.
- * @returns Fully resolved store-nudge settings.
- */
-export function resolveStoreNudgeConfig(value: Partial<StoreNudgeConfig> | undefined): StoreNudgeConfig {
-  return {
-    enabled: value?.enabled ?? true,
-    threshold: value?.threshold ?? DEFAULT_STORE_NUDGE_THRESHOLD,
-    maxPerSession: value?.maxPerSession ?? DEFAULT_STORE_NUDGE_MAX_PER_SESSION,
-  };
-}
-
-/**
- * Validates and normalizes the nested `storeNudge` plugin config block.
- *
- * Partial values are accepted so callers can override only one field while the
- * runtime still applies defaults for omitted settings.
- *
- * @param value - Raw nested config value.
- * @returns Normalized nested config or stable validation errors.
- */
-function normalizeStoreNudgeConfig(value: unknown): { ok: true; value: Partial<StoreNudgeConfig> | undefined } | { ok: false; errors: string[] } {
-  if (value === undefined) {
-    return { ok: true, value: undefined };
-  }
-
-  if (!isRecord(value)) {
-    return { ok: false, errors: ["storeNudge must be an object when provided"] };
-  }
-
-  const errors: string[] = [];
-  const enabled = normalizeOptionalBoolean(value.enabled, "storeNudge.enabled", errors);
-  const threshold = normalizeOptionalPositiveInteger(value.threshold, "storeNudge.threshold", errors);
-  const maxPerSession = normalizeOptionalPositiveInteger(value.maxPerSession, "storeNudge.maxPerSession", errors);
-
-  const allowedKeys = new Set(["enabled", "threshold", "maxPerSession"]);
-  for (const key of Object.keys(value)) {
-    if (!allowedKeys.has(key)) {
-      errors.push(`unknown config field: storeNudge.${key}`);
-    }
-  }
-
-  if (errors.length > 0) {
-    return { ok: false, errors };
-  }
-
-  const normalizedValue: Partial<StoreNudgeConfig> = {
-    ...(enabled !== undefined ? { enabled } : {}),
-    ...(threshold !== undefined ? { threshold } : {}),
-    ...(maxPerSession !== undefined ? { maxPerSession } : {}),
-  };
-
-  return {
-    ok: true,
-    value: Object.keys(normalizedValue).length > 0 ? resolveStoreNudgeConfig(normalizedValue) : undefined,
-  };
 }

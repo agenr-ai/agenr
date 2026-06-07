@@ -30,7 +30,6 @@ Current Skeln omissions:
 - no predecessor continuity summaries
 - no background predecessor episode ingest
 - no OpenClaw transcript parsing or episode writer
-- no mid-session `[MEMORY CHECK]` store nudges
 - no OpenClaw memory-runtime bridge or debug JSONL sink
 
 Shared behavior:

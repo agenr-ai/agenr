@@ -11,12 +11,6 @@ const MEMORY_HEADINGS = [
   "### Suggested Procedure",
 ] as const;
 
-/** Options for recent-turn text sanitization. */
-export interface SanitizeRecentTurnTextOptions {
-  /** When true, strips `[MEMORY CHECK]` fragments from recent-turn text. */
-  stripMemoryCheck?: boolean;
-}
-
 /** Options for current-turn prompt normalization. */
 export interface NormalizePromptTextOptions {
   /** When true, strips known inline metadata sentinels from prompt text. */
@@ -74,13 +68,9 @@ export function extractAgentMessageText(content: unknown): string {
  * Extracts a compact recent-turn window from host branch messages.
  *
  * @param messages - Agent messages from the active session branch.
- * @param options - Host-specific sanitization options.
  * @returns Ordered recent turns suitable for the before-turn app service.
  */
-export function extractRecentTurnsFromMessages(
-  messages: Array<{ role?: unknown; content?: unknown }>,
-  options: SanitizeRecentTurnTextOptions = {},
-): BeforeTurnRecentTurn[] {
+export function extractRecentTurnsFromMessages(messages: Array<{ role?: unknown; content?: unknown }>): BeforeTurnRecentTurn[] {
   const turns: BeforeTurnRecentTurn[] = [];
   for (const message of messages) {
     const role = message.role === "user" || message.role === "assistant" ? message.role : undefined;
@@ -88,7 +78,7 @@ export function extractRecentTurnsFromMessages(
       continue;
     }
 
-    const text = sanitizeRecentTurnText(extractAgentMessageText(message.content), role, options);
+    const text = sanitizeRecentTurnText(extractAgentMessageText(message.content), role);
     if (!text) {
       continue;
     }
@@ -127,27 +117,18 @@ export function normalizePromptText(prompt: string, options: NormalizePromptText
  *
  * @param text - Raw message text.
  * @param role - Message role used for wrapper unrolling.
- * @param options - Host-specific sanitization options.
  * @returns Sanitized recent-turn text.
  */
-export function sanitizeRecentTurnText(text: string, role: "user" | "assistant", options: SanitizeRecentTurnTextOptions = {}): string {
+export function sanitizeRecentTurnText(text: string, role: "user" | "assistant"): string {
   if (!text.trim()) {
     return "";
   }
 
-  const wrapperDetected =
-    containsAgenrMemoryContext(text) ||
-    text.includes("## Agenr Session Recall") ||
-    text.includes("## Agenr Before-Turn Recall") ||
-    (options.stripMemoryCheck === true && text.includes("[MEMORY CHECK]"));
+  const wrapperDetected = containsAgenrMemoryContext(text) || text.includes("## Agenr Session Recall") || text.includes("## Agenr Before-Turn Recall");
 
   let cleaned = stripAgenrMemoryContext(text);
   for (const heading of MEMORY_HEADINGS) {
     cleaned = cleaned.split(heading).join(" ");
-  }
-
-  if (options.stripMemoryCheck === true) {
-    cleaned = cleaned.replace(/\[MEMORY CHECK\][^\n]*/gu, " ");
   }
 
   cleaned = collapseWhitespace(cleaned);

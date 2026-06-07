@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Removed
+
+- **OpenClaw store nudge system.** Removed mid-session `[MEMORY CHECK]` injection, `storeNudge` plugin config, `MidSessionTracker`, and the `after_tool_call` hook that only existed to feed nudge timing.
+
 ### Changed
 
 - **Durable terminology cleanup.** Finished the entry-to-durable rename across store, ingest progress events, eval normalization, adapter helpers, and related types (`StoreDurableDetail`, `TaggedDurable`, `DurableProjectScopeFields`). Removed the before-turn eval `entry` alias on patch items.

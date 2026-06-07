@@ -14,7 +14,6 @@ The OpenClaw plugin is a translator around agenr's existing core and app workflo
 - registers agenr as an OpenClaw memory plugin
 - exposes four agent tools: `agenr_store`, `agenr_recall`, `agenr_fetch`, and `agenr_update`
 - injects session-start context into the prompt from agenr core memory
-- tracks mid-session memory activity and can inject `[MEMORY CHECK]` nudges after long gaps without memory actions
 - writes the just-finished session into agenr episodic memory at session end
 - exposes OpenClaw memory-runtime status and vector/embedding probes
 - reuses the OpenClaw transcript parser for episode ingestion
@@ -24,7 +23,7 @@ The adapter is intentionally not a second memory brain. Durable memory, recall r
 ## Code map
 
 - `src/adapters/openclaw/index.ts` - plugin entry, hook registration, tool registration, memory-runtime wiring, and shutdown cleanup.
-- `src/adapters/openclaw/openclaw.plugin.json` and `src/adapters/openclaw/config.ts` - manifest-backed config schema, validation, UI hints, and store-nudge defaults.
+- `src/adapters/openclaw/openclaw.plugin.json` and `src/adapters/openclaw/config.ts` - manifest-backed config schema, validation, and UI hints.
 - `packages/openclaw-plugin/package.json`, `packages/openclaw-plugin/openclaw.plugin.json`, and `packages/openclaw-plugin/src/index.ts` - publishable plugin package metadata and entrypoint.
 - `src/app/plugin-runtime/` - shared host plugin memory composition: path resolution, DB open, embeddings, recall, session-start and before-turn deps, and close lifecycle reused by OpenClaw and Skeln.
 - `src/app/openclaw/contract.ts` and `src/app/openclaw/types.ts` - canonical OpenClaw plugin config and composed service types.
@@ -38,13 +37,10 @@ The adapter is intentionally not a second memory brain. Durable memory, recall r
 - `src/adapters/openclaw/format/prompt-section.ts` - static system-prompt doctrine for memory recall and storage.
 - `src/adapters/openclaw/format/recall-format.ts` - session-start recall rendering.
 - `src/adapters/openclaw/format/before-turn-format.ts` - before-turn recall rendering.
-- `src/adapters/openclaw/format/nudge-format.ts` - mid-session `[MEMORY CHECK]` prompt generation.
 - `src/adapters/openclaw/debug/` - adapter-owned JSONL debug sink (opt-in), event types, and live artifact builders shared with the eval seams.
-- `src/adapters/openclaw/hooks/before-prompt-build.ts` - session-start recall, before-turn recall, and mid-session store nudge logic.
+- `src/adapters/openclaw/hooks/before-prompt-build.ts` - session-start recall and before-turn recall.
 - `src/adapters/openclaw/hooks/session-end.ts` - session-end cleanup and best-effort current-session episode write.
-- `src/adapters/openclaw/hooks/after-tool-call.ts` - mid-session tracker updates after `agenr_store` and `agenr_update` (including `validTo` closes).
 - `src/app/plugin-runtime/session-tracking.ts` - in-process session-start dedup shared by host plugins.
-- `src/adapters/openclaw/session/state.ts` - per-session mid-session store-nudge state.
 - `src/adapters/openclaw/session/current-session-resolver.ts`, `src/adapters/openclaw/session/session-id.ts`, `src/adapters/openclaw/session/session-registry.ts`, `src/adapters/openclaw/session/transcript-files.ts`, `src/adapters/openclaw/session/sessions-store-reader.ts`, and `src/adapters/openclaw/session/tui-lane.ts` - OpenClaw session identity helpers.
 - `src/adapters/openclaw/episode/episode-writer.ts` - best-effort session-end episode ingest backed by the shared `app/episode-ingest` workflow.
 - `src/adapters/openclaw/llm/openclaw-llm-client.ts` - lightweight OpenClaw-authenticated LLM client used for episode summaries and optional claim extraction.
@@ -94,7 +90,6 @@ The runtime config is currently:
 - `configPath` - optional agenr config path override
 - `episodeModel` - optional `provider/model` override for session-end episode summaries
 - `claimExtractionModel` - optional `provider/model` override for claim-key extraction during store calls
-- `storeNudge` - optional nested config with `enabled`, `threshold`, and `maxPerSession`
 - `memoryPolicy.beforeTurn.enabled` - optional toggle for the proactive before-turn patch path
 - `memoryPolicy.beforeTurn.procedureSuggestion` - optional toggle for the before-turn procedure section
 - `memoryPolicy.beforeTurn.maxDurables` - optional normal durable-item cap for before-turn recall
@@ -115,12 +110,6 @@ Current `debug` defaults when unset:
 - `perSessionFiles = false`
 - `maxTopCandidates = 10` (bounded to 25)
 
-Current `storeNudge` defaults:
-
-- `enabled = true`
-- `threshold = 8`
-- `maxPerSession = 5`
-
 Path resolution still follows the shared agenr config rules:
 
 1. plugin `configPath`, if set
@@ -139,7 +128,7 @@ If OpenClaw provides `resolvePath`, the plugin resolves supplied path overrides 
 
 ## Registration lifecycle
 
-`src/adapters/openclaw/index.ts` registers one shared process-lifetime services promise plus one session-start tracker and one mid-session tracker.
+`src/adapters/openclaw/index.ts` registers one shared process-lifetime services promise plus one session-start tracker.
 
 The plugin currently wires:
 
@@ -150,7 +139,6 @@ The plugin currently wires:
 - `before_compaction`
 - `after_compaction`
 - `before_reset`
-- `after_tool_call`
 - `session_end`
 - `gateway_stop`
 
@@ -158,14 +146,13 @@ Current lifecycle behavior:
 
 - `session_start` routes lineage intake through `routeSessionMemoryTrigger`, using `resumedFrom` as the predecessor source ref when present
 - `before_prompt_build` performs session-start patch selection once per tracked session identity
-- repeated `before_prompt_build` calls for the same session can inject a before-turn patch or store nudges instead of session-start memory
+- repeated `before_prompt_build` calls for the same session can inject a before-turn patch instead of session-start memory
 - `before_compaction`, `after_compaction`, and `before_reset` route Skeln-parity session-memory triggers for compaction and branch-reset checkpoints
 - `before_compaction` also best-effort writes a pre-compaction episode from the full transcript snapshot when `memoryPolicy.episodes.enabled` is on
 - `after_compaction` enriches the checkpoint artifact with the real compaction summary read from the OpenClaw transcript JSONL
 - repeated non-first-turn `before_prompt_build` calls can inject the latest compaction checkpoint into `prependContext` once per artifact
 - `session_end` with reason `compaction` skips duplicate session-memory routing because compaction hooks already ran
-- `after_tool_call` updates mid-session tracker state after memory tool use
-- `session_end` routes shutdown or tree-abandonment session-memory triggers, clears mid-session state, and best-effort writes the just-finished session episode
+- `session_end` routes shutdown or tree-abandonment session-memory triggers and best-effort writes the just-finished session episode
 - `gateway_stop` awaits `services.close()` and ignores startup failures during shutdown
 
 ## Shared runtime services
@@ -278,45 +265,9 @@ Ownership split stays the same as session start:
 - OpenClaw owns turn extraction, prompt injection, and trigger gating
 - Agenr app code owns bounded ranking, abstention, claim-aware shaping, and procedure applicability decisions
 
-### 3. Mid-session store nudges
-
-When a non-first `before_prompt_build` call does not inject a before-turn patch, the plugin may still inject a `[MEMORY CHECK]` nudge.
-
-Current nudge rules:
-
-- no nudges for non-user triggers `heartbeat`, `cron`, or `memory`
-- no nudges when `storeNudge.enabled` is false
-- turns are counted per tracked session identity
-- a nudge is eligible only after the configured gap since both the last successful store and the last memory action
-- nudges stop after `maxPerSession`
-
-Current nudge copy changes depending on:
-
-- whether anything has been stored this session
-- whether this is the first nudge
-- whether this is the final allowed nudge
-- the recent stored subjects, capped for display
-
-The nudge is a prompt reminder only. It does not write memory on its own.
-
-### 4. Mid-session tracker updates
-
-`after_tool_call` updates the same per-session tracker after these tools:
-
-- `agenr_store`
-- `agenr_update`
-
-Current behavior:
-
-- successful `agenr_store` resets the successful-store and memory-action timers
-- skipped `agenr_store` resets only memory-action timers
-- `agenr_update` resets memory-action timers, including updates that close `validTo`
-- explicit claim-bearing store attempts also update explicit-memory-action timing
-- a bounded recent subject list is maintained for nudge copy
-
 ## Session-end episode ingest
 
-`session_end` clears mid-session tracker state and awaits bounded episode capture for the just-finished session through `runOpenClawSessionEndEpisodeCapture(...)`.
+`session_end` awaits bounded episode capture for the just-finished session through `runOpenClawSessionEndEpisodeCapture(...)`.
 
 Current behavior:
 
@@ -491,10 +442,8 @@ The current adapter tests cover:
 - runtime wiring and embedding resolution
 - static prompt-section generation
 - tool behavior
-- after-tool-call tracking
-- session-start recall and mid-session nudge behavior
+- session-start recall and before-turn behavior
 - session-end episode writer behavior
-- session-state tracking
 - session-registry and transcript-file helpers
 - transcript parsing
 - OpenClaw-authenticated LLM client behavior

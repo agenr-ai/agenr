@@ -4,16 +4,13 @@ import { describe, expect, it, vi } from "vitest";
 const registerAgenrOpenClawToolsMock = vi.hoisted(() => vi.fn());
 const coerceAgenrOpenClawPluginConfigMock = vi.hoisted(() => vi.fn());
 const createAgenrOpenClawPluginConfigSchemaMock = vi.hoisted(() => vi.fn(() => ({ parse: vi.fn() })));
-const resolveStoreNudgeConfigMock = vi.hoisted(() => vi.fn());
 const buildAgenrMemoryPromptSectionMock = vi.hoisted(() => vi.fn());
-const handleAgenrAfterToolCallMock = vi.hoisted(() => vi.fn());
 const handleAgenrBeforePromptBuildMock = vi.hoisted(() => vi.fn());
 const handleAgenrSessionEndMock = vi.hoisted(() => vi.fn());
 const routeOpenClawSessionMemoryTriggerMock = vi.hoisted(() => vi.fn(async () => undefined));
 const buildAgenrMemoryFlushPlanMock = vi.hoisted(() => vi.fn());
 const createAgenrMemoryRuntimeMock = vi.hoisted(() => vi.fn());
 const createAgenrOpenClawServicesMock = vi.hoisted(() => vi.fn());
-const createMidSessionTrackerMock = vi.hoisted(() => vi.fn());
 const createSessionStartTrackerMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../../../src/adapters/openclaw/tools.js", () => ({
@@ -23,15 +20,10 @@ vi.mock("../../../src/adapters/openclaw/tools.js", () => ({
 vi.mock("../../../src/adapters/openclaw/config.js", () => ({
   coerceAgenrOpenClawPluginConfig: coerceAgenrOpenClawPluginConfigMock,
   createAgenrOpenClawPluginConfigSchema: createAgenrOpenClawPluginConfigSchemaMock,
-  resolveStoreNudgeConfig: resolveStoreNudgeConfigMock,
 }));
 
 vi.mock("../../../src/adapters/openclaw/format/prompt-section.js", () => ({
   buildAgenrMemoryPromptSection: buildAgenrMemoryPromptSectionMock,
-}));
-
-vi.mock("../../../src/adapters/openclaw/hooks/after-tool-call.js", () => ({
-  handleAgenrAfterToolCall: handleAgenrAfterToolCallMock,
 }));
 
 vi.mock("../../../src/adapters/openclaw/hooks/before-prompt-build.js", () => ({
@@ -73,10 +65,6 @@ vi.mock("../../../src/app/plugin-runtime/session-tracking.js", async (importOrig
   };
 });
 
-vi.mock("../../../src/adapters/openclaw/session/state.js", () => ({
-  createMidSessionTracker: createMidSessionTrackerMock,
-}));
-
 import agenrOpenClawPlugin from "../../../src/adapters/openclaw/index.js";
 
 describe("agenr OpenClaw plugin entry", () => {
@@ -87,19 +75,8 @@ describe("agenr OpenClaw plugin entry", () => {
     const sessionStartTracker = {
       consume: vi.fn(() => ({ isFirst: true, activeCount: 1 })),
     };
-    const midSessionTracker = {
-      clear: vi.fn(),
-    };
     const pluginConfig = {
       dbPath: "/tmp/agenr/knowledge.db",
-      storeNudge: {
-        enabled: true,
-      },
-    };
-    const storeNudgeConfig = {
-      enabled: true,
-      threshold: 8,
-      maxPerSession: 5,
     };
     const memoryRuntime = {
       getMemorySearchManager: vi.fn(),
@@ -109,9 +86,7 @@ describe("agenr OpenClaw plugin entry", () => {
     const logger = createLogger();
 
     coerceAgenrOpenClawPluginConfigMock.mockReturnValue(pluginConfig);
-    resolveStoreNudgeConfigMock.mockReturnValue(storeNudgeConfig);
     createSessionStartTrackerMock.mockReturnValue(sessionStartTracker);
-    createMidSessionTrackerMock.mockReturnValue(midSessionTracker);
     createAgenrOpenClawServicesMock.mockResolvedValue(fakeServices);
     createAgenrMemoryRuntimeMock.mockReturnValue(memoryRuntime);
     buildAgenrMemoryFlushPlanMock.mockReturnValue(null);
@@ -156,6 +131,7 @@ describe("agenr OpenClaw plugin entry", () => {
     expect(hookHandlers.has("before_compaction")).toBe(true);
     expect(hookHandlers.has("after_compaction")).toBe(true);
     expect(hookHandlers.has("before_reset")).toBe(true);
+    expect(hookHandlers.has("after_tool_call")).toBe(false);
 
     await expect(
       hookHandlers.get("before_prompt_build")?.(
@@ -182,7 +158,6 @@ describe("agenr OpenClaw plugin entry", () => {
         logger,
         servicesPromise: expect.any(Promise),
         tracker: sessionStartTracker,
-        midSessionTracker,
         compactionPromptTracker: expect.objectContaining({
           shouldInject: expect.any(Function),
           markInjected: expect.any(Function),
@@ -193,32 +168,6 @@ describe("agenr OpenClaw plugin entry", () => {
           wait: expect.any(Function),
           clear: expect.any(Function),
         }),
-        storeNudgeConfig,
-      },
-    );
-
-    hookHandlers.get("after_tool_call")?.(
-      {
-        toolName: "agenr_store",
-        params: {},
-      },
-      {
-        sessionId: "session-2",
-        sessionKey: "agent:main:webchat:next",
-      },
-    );
-    expect(handleAgenrAfterToolCallMock).toHaveBeenCalledWith(
-      {
-        toolName: "agenr_store",
-        params: {},
-      },
-      {
-        sessionId: "session-2",
-        sessionKey: "agent:main:webchat:next",
-      },
-      {
-        logger,
-        midSessionTracker,
       },
     );
 
@@ -239,7 +188,6 @@ describe("agenr OpenClaw plugin entry", () => {
       {
         logger,
         servicesPromise: expect.any(Promise),
-        midSessionTracker,
       },
     );
 
@@ -252,16 +200,8 @@ describe("agenr OpenClaw plugin entry", () => {
     const logger = createLogger();
 
     coerceAgenrOpenClawPluginConfigMock.mockReturnValue({});
-    resolveStoreNudgeConfigMock.mockReturnValue({
-      enabled: true,
-      threshold: 8,
-      maxPerSession: 5,
-    });
     createSessionStartTrackerMock.mockReturnValue({
       consume: vi.fn(() => ({ isFirst: true, activeCount: 1 })),
-    });
-    createMidSessionTrackerMock.mockReturnValue({
-      clear: vi.fn(),
     });
     createAgenrOpenClawServicesMock.mockRejectedValue(startupError);
     createAgenrMemoryRuntimeMock.mockReturnValue({

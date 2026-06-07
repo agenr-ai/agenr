@@ -3,11 +3,9 @@ import { randomUUID } from "node:crypto";
 import { runBeforeTurn } from "../../../app/before-turn/index.js";
 import { runSessionStart } from "../../../app/session-start/index.js";
 import type { BeforeTurnPatch } from "../../../app/before-turn/index.js";
-import { resolveStoreNudgeConfig } from "../config.js";
 import { formatAgenrBeforeTurnRecall } from "../format/before-turn-format.js";
 import { extractRecentTurnsFromMessages, normalizePromptText } from "../../shared/injection/message-text.js";
 import { resolveBeforeTurnPolicy, resolveSessionStartPolicy } from "../../shared/injection/policy.js";
-import { buildStoreNudgeMessage } from "../format/nudge-format.js";
 import { formatAgenrSessionStartRecall } from "../format/recall-format.js";
 import { resolveOpenClawCompactionPromptContext } from "./compaction-handlers.js";
 import { formatErrorMessage, formatSessionContext } from "../logging.js";
@@ -15,17 +13,14 @@ import type { CompactionPromptTracker } from "../../shared/compaction-prompt-tra
 import { mergeInjectionContent } from "../../shared/injection/merge-injection-content.js";
 import type { SessionLifecycleIntakeTracker } from "../../../app/plugin-runtime/session-lifecycle-intake.js";
 import type { SessionStartTracker } from "../../../app/plugin-runtime/session-tracking.js";
-import { createMidSessionTracker, type MidSessionTracker } from "../session/state.js";
 import type {
   AgenrOpenClawBeforePromptBuildDeps,
   AgenrOpenClawBeforePromptBuildEvent,
   AgenrOpenClawBeforePromptBuildResult,
   AgenrOpenClawHookContext,
-  StoreNudgeConfig,
 } from "../types.js";
 
 const NON_USER_TRIGGER_SET = new Set(["heartbeat", "cron", "memory"]);
-const DEFAULT_STORE_NUDGE_CONFIG = resolveStoreNudgeConfig(undefined);
 const INLINE_METADATA_SENTINELS = [
   "Sender (untrusted metadata):",
   "Conversation info (untrusted metadata):",
@@ -48,8 +43,6 @@ export async function handleAgenrBeforePromptBuild(
   ctx: AgenrOpenClawHookContext,
   params: AgenrOpenClawBeforePromptBuildDeps & {
     tracker: SessionStartTracker;
-    midSessionTracker?: MidSessionTracker;
-    storeNudgeConfig?: StoreNudgeConfig;
     compactionPromptTracker?: CompactionPromptTracker;
     lifecycleIntakeTracker?: SessionLifecycleIntakeTracker;
   },
@@ -144,22 +137,19 @@ export async function handleAgenrBeforePromptBuild(
 }
 
 /**
- * Resolves one non-first prompt-build turn by trying before-turn recall first,
- * then falling back to the mid-session store nudge path when appropriate.
+ * Resolves one non-first prompt-build turn by trying before-turn recall first.
  *
  * @param event - Current prompt-build payload from OpenClaw.
  * @param ctx - Hook context with session identity and trigger facts.
  * @param sessionContext - Stable formatted session label for logs.
  * @param params - Shared logger, config, services, and tracker state.
- * @returns Prompt mutation payload when a patch or nudge should be injected.
+ * @returns Prompt mutation payload when a patch should be injected.
  */
 async function resolveNonFirstTurnResult(
   event: AgenrOpenClawBeforePromptBuildEvent,
   ctx: AgenrOpenClawHookContext,
   sessionContext: string,
   params: AgenrOpenClawBeforePromptBuildDeps & {
-    midSessionTracker?: MidSessionTracker;
-    storeNudgeConfig?: StoreNudgeConfig;
     compactionPromptTracker?: CompactionPromptTracker;
   },
 ): Promise<AgenrOpenClawBeforePromptBuildResult | undefined> {
@@ -175,13 +165,6 @@ async function resolveNonFirstTurnResult(
   if (beforeTurnResult?.prependContext || compactionContext) {
     return {
       prependContext: mergeInjectionContent(compactionContext, beforeTurnResult?.prependContext),
-    };
-  }
-
-  const storeNudgeResult = await resolveStoreNudgeResult(event, ctx, sessionContext, params);
-  if (storeNudgeResult?.prependContext || compactionContext) {
-    return {
-      prependContext: mergeInjectionContent(compactionContext, storeNudgeResult?.prependContext),
     };
   }
 
@@ -233,7 +216,6 @@ async function resolveBeforeTurnResult(
         currentTurnText,
         recentTurns: extractRecentTurnsFromMessages(
           event.messages.filter((message): message is { role?: unknown; content?: unknown } => Boolean(message) && typeof message === "object"),
-          { stripMemoryCheck: true },
         ),
         trigger: ctx.trigger,
         policy: resolveBeforeTurnPolicy(services.pluginConfig.memoryPolicy),
@@ -308,68 +290,6 @@ async function resolveBeforeTurnResult(
     }
     return undefined;
   }
-}
-
-/**
- * Resolves whether one non-first turn should receive a mid-session store nudge.
- *
- * @param _event - Current prompt-build payload from OpenClaw.
- * @param ctx - Hook context with session identity and trigger facts.
- * @param sessionContext - Stable formatted session label for logs.
- * @param params - Shared logger, config, and tracker state.
- * @returns Prompt mutation payload when a nudge should be injected.
- */
-function resolveStoreNudgeResult(
-  _event: AgenrOpenClawBeforePromptBuildEvent,
-  ctx: AgenrOpenClawHookContext,
-  sessionContext: string,
-  params: {
-    logger: AgenrOpenClawBeforePromptBuildDeps["logger"];
-    midSessionTracker?: MidSessionTracker;
-    storeNudgeConfig?: StoreNudgeConfig;
-  },
-): AgenrOpenClawBeforePromptBuildResult | undefined {
-  const normalizedTrigger = ctx.trigger?.trim().toLowerCase();
-  if (normalizedTrigger && NON_USER_TRIGGER_SET.has(normalizedTrigger)) {
-    params.logger.debug?.(`[agenr] before_prompt_build: store nudge skipped for ${sessionContext} reason=non_user_trigger trigger=${normalizedTrigger}`);
-    return undefined;
-  }
-
-  const storeNudgeConfig = params.storeNudgeConfig ?? DEFAULT_STORE_NUDGE_CONFIG;
-  if (!storeNudgeConfig.enabled) {
-    params.logger.debug?.(`[agenr] before_prompt_build: store nudge skipped for ${sessionContext} reason=disabled`);
-    return undefined;
-  }
-
-  const midSessionTracker = params.midSessionTracker ?? createMidSessionTracker();
-  const state = midSessionTracker.recordTurn(ctx.sessionId, ctx.sessionKey);
-  if (!state) {
-    params.logger.debug?.(`[agenr] before_prompt_build: store nudge skipped for ${sessionContext} reason=no_session_identity`);
-    return undefined;
-  }
-
-  const gapSinceSuccessfulStore = state.turnCount - state.lastSuccessfulStoreTurn;
-  const gapSinceMemoryAction = state.turnCount - state.lastMemoryActionTurn;
-  params.logger.debug?.(
-    `[agenr] before_prompt_build: store nudge check for ${sessionContext} gapSinceSuccessfulStore=${gapSinceSuccessfulStore} gapSinceMemoryAction=${gapSinceMemoryAction} nudgeCount=${state.nudgeCount} maxPerSession=${storeNudgeConfig.maxPerSession}`,
-  );
-
-  if (gapSinceSuccessfulStore < storeNudgeConfig.threshold || gapSinceMemoryAction < storeNudgeConfig.threshold) {
-    params.logger.debug?.(`[agenr] before_prompt_build: store nudge skipped for ${sessionContext} reason=cooldown`);
-    return undefined;
-  }
-
-  if (state.nudgeCount >= storeNudgeConfig.maxPerSession) {
-    params.logger.debug?.(`[agenr] before_prompt_build: store nudge skipped for ${sessionContext} reason=max_reached`);
-    return undefined;
-  }
-
-  state.nudgeCount += 1;
-  state.lastSuccessfulStoreTurn = state.turnCount;
-
-  const prependContext = buildStoreNudgeMessage(state, storeNudgeConfig.maxPerSession);
-  params.logger.info(`[agenr] store nudge injected for ${sessionContext} ordinal=${state.nudgeCount} turn=${state.turnCount} gap=${gapSinceSuccessfulStore}`);
-  return { prependContext };
 }
 
 /**

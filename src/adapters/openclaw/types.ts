@@ -16,8 +16,6 @@ export type {
   AgenrOpenClawPluginConfig,
   AgenrOpenClawResolvedProviderAuth,
   AgenrOpenClawRuntime,
-  MidSessionState,
-  StoreNudgeConfig,
 } from "../../app/openclaw/contract.js";
 export type { AgenrOpenClawServices } from "../../app/openclaw/types.js";
 
@@ -41,19 +39,6 @@ export interface AgenrOpenClawSessionEndEvent {
   sessionFile?: string;
   nextSessionId?: string;
   nextSessionKey?: string;
-}
-
-/**
- * Minimal after-tool-call payload used for synchronous memory-action tracking.
- */
-export interface AgenrOpenClawAfterToolCallEvent {
-  toolName: string;
-  params: Record<string, unknown>;
-  runId?: string;
-  toolCallId?: string;
-  result?: unknown;
-  error?: string;
-  durationMs?: number;
 }
 
 /**

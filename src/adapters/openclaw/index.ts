@@ -1,9 +1,8 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 
 import { registerAgenrOpenClawTools } from "./tools.js";
-import { coerceAgenrOpenClawPluginConfig, createAgenrOpenClawPluginConfigSchema, resolveStoreNudgeConfig } from "./config.js";
+import { coerceAgenrOpenClawPluginConfig, createAgenrOpenClawPluginConfigSchema } from "./config.js";
 import { buildAgenrMemoryPromptSection } from "./format/prompt-section.js";
-import { handleAgenrAfterToolCall } from "./hooks/after-tool-call.js";
 import { handleAgenrBeforePromptBuild } from "./hooks/before-prompt-build.js";
 import { handleOpenClawAfterCompaction, handleOpenClawBeforeCompaction } from "./hooks/compaction-handlers.js";
 import { handleAgenrSessionEnd } from "./hooks/session-end.js";
@@ -17,7 +16,6 @@ import { toOpenClawSessionScopeContext } from "./session/scope.js";
 import { createSessionLifecycleIntakeTracker } from "../../app/plugin-runtime/session-lifecycle-intake.js";
 import { createSessionStartTracker } from "../../app/plugin-runtime/session-tracking.js";
 import { createCompactionPromptTracker } from "../shared/compaction-prompt-tracker.js";
-import { createMidSessionTracker } from "./session/state.js";
 
 export default definePluginEntry({
   id: "agenr",
@@ -27,11 +25,9 @@ export default definePluginEntry({
   configSchema: createAgenrOpenClawPluginConfigSchema(),
   register(api) {
     const sessionStartTracker = createSessionStartTracker();
-    const midSessionTracker = createMidSessionTracker();
     const compactionPromptTracker = createCompactionPromptTracker();
     const lifecycleIntakeTracker = createSessionLifecycleIntakeTracker();
     const pluginConfig = coerceAgenrOpenClawPluginConfig(api.pluginConfig);
-    const storeNudgeConfig = resolveStoreNudgeConfig(pluginConfig.storeNudge);
     const servicesPromise = createAgenrOpenClawServices(pluginConfig, {
       openClaw: {
         config: api.config,
@@ -60,8 +56,6 @@ export default definePluginEntry({
         logger: api.logger,
         servicesPromise,
         tracker: sessionStartTracker,
-        midSessionTracker,
-        storeNudgeConfig,
         compactionPromptTracker,
         lifecycleIntakeTracker,
       }),
@@ -108,19 +102,12 @@ export default definePluginEntry({
         routeOpenClawSessionMemoryTrigger(servicesPromise, scopeContext, (scope) => buildOpenClawSessionBeforeTreeTriggerEvent(scope, event)),
       );
     });
-    api.on("after_tool_call", (event, ctx) => {
-      handleAgenrAfterToolCall(event, ctx, {
-        logger: api.logger,
-        midSessionTracker,
-      });
-    });
     api.on("session_end", async (event) => {
       compactionPromptTracker.clear(event.sessionId, event.sessionKey);
       await lifecycleIntakeTracker.clear(event.sessionId, event.sessionKey);
       return handleAgenrSessionEnd(event, {
         logger: api.logger,
         servicesPromise,
-        midSessionTracker,
       });
     });
 

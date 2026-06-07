@@ -12,7 +12,6 @@ vi.mock("../../../../src/adapters/openclaw/episode/session-end-episode-write.js"
 vi.mock("../../../../src/adapters/openclaw/hooks/session-memory-routing.js", () => routingMocks);
 
 import { handleAgenrSessionEnd } from "../../../../src/adapters/openclaw/hooks/session-end.js";
-import { createMidSessionTracker } from "../../../../src/adapters/openclaw/session/state.js";
 import type { AgenrOpenClawServices } from "../../../../src/adapters/openclaw/types.js";
 
 describe("handleAgenrSessionEnd", () => {
@@ -22,9 +21,6 @@ describe("handleAgenrSessionEnd", () => {
   });
 
   it("skips memory intake and episode capture when reason is compaction", async () => {
-    const midSessionTracker = createMidSessionTracker();
-    midSessionTracker.getOrCreate("session-1", "agent:main:tui");
-
     await handleAgenrSessionEnd(
       {
         sessionId: "session-1",
@@ -36,11 +32,9 @@ describe("handleAgenrSessionEnd", () => {
       {
         logger: createLogger(),
         servicesPromise: buildServicesPromise(),
-        midSessionTracker,
       },
     );
 
-    expect(midSessionTracker.activeCount()).toBe(0);
     expect(routingMocks.routeOpenClawSessionMemoryTrigger).not.toHaveBeenCalled();
     expect(captureMocks.runOpenClawSessionEndEpisodeCapture).not.toHaveBeenCalled();
   });
@@ -57,7 +51,6 @@ describe("handleAgenrSessionEnd", () => {
       {
         logger: createLogger(),
         servicesPromise: buildServicesPromise(),
-        midSessionTracker: createMidSessionTracker(),
       },
     );
 
@@ -88,7 +81,6 @@ describe("handleAgenrSessionEnd", () => {
       {
         logger: createLogger(),
         servicesPromise: buildServicesPromise(),
-        midSessionTracker: createMidSessionTracker(),
       },
     );
 

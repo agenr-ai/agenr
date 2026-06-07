@@ -466,7 +466,7 @@ Current plugin registration includes:
 - memory prompt-section injection
 - memory flush-plan registration
 - memory runtime registration
-- hooks for `before_prompt_build`, `session_start`, `after_tool_call`, `session_end`, and `gateway_stop`
+- hooks for `before_prompt_build`, `session_start`, `session_end`, and `gateway_stop`
 - tools `agenr_store`, `agenr_recall`, `agenr_fetch`, and `agenr_update`
 
 Implemented behaviors include:
@@ -478,7 +478,6 @@ Implemented behaviors include:
 - continuity summary reads and on-demand generation
 - recent-session transcript rendering
 - background predecessor episode writing
-- mid-session memory-action tracking and store nudges
 - transcript normalization shared by durable ingest and episode ingest
 
 The transcript parser in `src/adapters/openclaw/transcript/parser.ts` is a major seam. It removes host noise, normalizes metadata, summarizes or drops noisy tool results, and produces the cleaned message stream that downstream ingest and episode workflows consume.
@@ -508,7 +507,7 @@ Implemented behaviors include:
 - transient working-context injection when `features.workingMemory` is enabled
 - trusted Skeln work commands and goal aliases for working-memory lifecycle control
 
-Skeln deliberately omits OpenClaw-only surfaces such as predecessor continuity summaries, background predecessor episode ingest, and mid-session store nudges. See [`docs/SKELN-PLUGIN.md`](./SKELN-PLUGIN.md) for the full adapter map.
+Skeln deliberately omits OpenClaw-only surfaces such as predecessor continuity summaries and background predecessor episode ingest. See [`docs/SKELN-PLUGIN.md`](./SKELN-PLUGIN.md) for the full adapter map.
 
 ### 7.8 Dreaming
 

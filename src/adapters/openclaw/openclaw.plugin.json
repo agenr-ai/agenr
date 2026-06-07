@@ -24,10 +24,6 @@
       "label": "Claim extraction model",
       "help": "Model used for claim-key extraction when storing entries. Uses OpenClaw's configured auth. Format: provider/model (for example, openai/gpt-5.4-nano). Defaults to the agent's primary model."
     },
-    "storeNudge": {
-      "label": "Store nudge",
-      "help": "Optional mid-session reminder settings for prompting durable memory storage after several turns of memory silence."
-    },
     "memoryPolicy": {
       "label": "Memory policy",
       "help": "Optional runtime overrides for claim-aware read behavior, session-start memory injection, and proactive before-turn surfacing."
@@ -58,27 +54,6 @@
         "type": "string",
         "minLength": 1,
         "description": "Model override for claim-key extraction at store time (e.g. 'openai/gpt-5.4-mini'). Uses OpenClaw auth and falls back to the agent's primary model."
-      },
-      "storeNudge": {
-        "type": "object",
-        "additionalProperties": false,
-        "description": "Optional mid-session reminder settings for prompting durable memory storage after several turns without memory activity.",
-        "properties": {
-          "enabled": {
-            "type": "boolean",
-            "description": "Enable or disable mid-session store nudges. Defaults to true."
-          },
-          "threshold": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "Turns without durable memory activity before prompting the agent to review recent conversation. Defaults to 8."
-          },
-          "maxPerSession": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "Maximum nudges injected during one session lifetime. Defaults to 5."
-          }
-        }
       },
       "debug": {
         "type": "object",
