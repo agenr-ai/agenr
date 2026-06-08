@@ -63,6 +63,21 @@ export function formatDateTime(iso: string | null | undefined): string {
 }
 
 /**
+ * Formats an ISO timestamp as local date-time with compact relative context.
+ *
+ * @param iso - ISO timestamp string, or null.
+ * @returns Localized date-time plus relative age when available.
+ */
+export function formatDateTimeWithRelative(iso: string | null | undefined): string {
+  const dateTime = formatDateTime(iso);
+  const relative = formatRelative(iso);
+  if (dateTime === "-" || relative === "-") {
+    return dateTime;
+  }
+  return `${dateTime} (${relative})`;
+}
+
+/**
  * Formats a number with grouped thousands.
  *
  * @param value - Numeric value.

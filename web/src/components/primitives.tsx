@@ -185,6 +185,8 @@ export function KeyValue({ rows }: { rows: KeyValueRow[] }): React.ReactElement 
 interface ChipProps {
   children: ReactNode;
   mono?: boolean;
+  title?: string;
+  className?: string;
 }
 
 /**
@@ -193,8 +195,13 @@ interface ChipProps {
  * @param props - Chip content and a monospace flag.
  * @returns The rendered chip.
  */
-export function Chip({ children, mono }: ChipProps): React.ReactElement {
-  return <span className={`chip${mono ? " chip--mono" : ""}`}>{children}</span>;
+export function Chip({ children, mono, title, className }: ChipProps): React.ReactElement {
+  const classes = ["chip", mono ? "chip--mono" : "", className ?? ""].filter(Boolean).join(" ");
+  return (
+    <span className={classes} title={title}>
+      {children}
+    </span>
+  );
 }
 
 /** One tab definition. */
