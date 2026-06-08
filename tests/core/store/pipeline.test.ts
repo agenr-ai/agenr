@@ -6,7 +6,7 @@ import { composeEmbeddingText } from "../../../src/adapters/embeddings.js";
 import { annotateExplicitClaimKeyEntry } from "../../../src/core/ingestion/claim-key-preservation.js";
 import type { DatabasePort, EmbeddingPort, LlmPort } from "../../../src/core/ports.js";
 import { computeContentHash, computeNormContentHash } from "../../../src/core/store/hashing.js";
-import { storeDurables } from "../../../src/core/store/pipeline.js";
+import { storeDurables, storeDurablesDetailed } from "../../../src/core/store/pipeline.js";
 import type { Durable, StoreDurableInput } from "../../../src/core/types.js";
 
 describe("storeDurables", () => {
@@ -20,6 +20,21 @@ describe("storeDurables", () => {
     expect(db.insertions).toHaveLength(1);
     expect(db.claimKeyLookupCalls).toEqual([]);
     expect(db.supersedeCalls).toEqual([]);
+  });
+
+  it("records the persisted durable id in detailed store results", async () => {
+    const db = new MockDatabase();
+    const embedding = new MockEmbeddingPort();
+
+    const result = await storeDurablesDetailed([createInput()], db, embedding);
+
+    expect(result.details).toEqual([
+      {
+        inputIndex: 0,
+        outcome: "stored",
+        durableId: db.insertions[0]?.durable.id,
+      },
+    ]);
   });
 
   it("skips entries whose content hash already exists", async () => {

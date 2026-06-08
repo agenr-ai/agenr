@@ -109,6 +109,10 @@ export interface DreamProposalBacklogQuery {
   issueKind?: string;
   eligibleOnly?: boolean;
   durableId?: string;
+  /** Inclusive minimum proposal confidence. */
+  minConfidence?: number;
+  /** Only proposals created at or after this ISO timestamp. */
+  createdSince?: string;
   limit?: number;
   offset?: number;
 }

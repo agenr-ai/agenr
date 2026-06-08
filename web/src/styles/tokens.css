@@ -1,0 +1,120 @@
+/*
+ * Agenr operator console design tokens.
+ *
+ * A single source of truth for the dark "control room" visual language. Every
+ * component reads from these variables so theming and contrast stay coherent.
+ */
+
+:root {
+  /* Base surfaces, layered from deepest to most raised. */
+  --bg-base: #0a0c12;
+  --bg-sunken: #070910;
+  --surface: #10141d;
+  --surface-raised: #161b27;
+  --surface-overlay: #1b2230;
+  --surface-hover: #1e2533;
+
+  /* Hairlines and structural borders. */
+  --border-subtle: #1d2433;
+  --border: #283042;
+  --border-strong: #36415a;
+  --border-focus: #4cc2ff;
+
+  /* Text ramp. */
+  --text-primary: #e8ecf5;
+  --text-secondary: #9aa6be;
+  --text-muted: #6a7488;
+  --text-faint: #4b5468;
+  --text-inverse: #06080d;
+
+  /* Brand accent (teal) used for primary actions and "live/healthy" cues. */
+  --accent: #2dd4bf;
+  --accent-bright: #5eead4;
+  --accent-dim: #1c8577;
+  --accent-soft: rgba(45, 212, 191, 0.12);
+  --accent-glow: rgba(45, 212, 191, 0.32);
+
+  /* Dreaming subsystem accent (violet) to distinguish maintenance flows. */
+  --dream: #a78bfa;
+  --dream-bright: #c4b5fd;
+  --dream-soft: rgba(167, 139, 250, 0.13);
+  --dream-glow: rgba(167, 139, 250, 0.3);
+
+  /* Semantic status colors. */
+  --success: #34d399;
+  --success-soft: rgba(52, 211, 153, 0.13);
+  --warning: #fbbf24;
+  --warning-soft: rgba(251, 191, 36, 0.13);
+  --danger: #f87171;
+  --danger-soft: rgba(248, 113, 113, 0.13);
+  --info: #60a5fa;
+  --info-soft: rgba(96, 165, 250, 0.13);
+  --neutral: #64748b;
+  --neutral-soft: rgba(100, 116, 139, 0.14);
+
+  /* Sequential data-viz palette for charts and category coding. */
+  --viz-1: #2dd4bf;
+  --viz-2: #60a5fa;
+  --viz-3: #a78bfa;
+  --viz-4: #fbbf24;
+  --viz-5: #f472b6;
+  --viz-6: #34d399;
+
+  /* Typography. */
+  --font-sans:
+    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
+
+  --text-2xs: 0.6875rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.875rem;
+  --text-md: 0.9375rem;
+  --text-lg: 1.0625rem;
+  --text-xl: 1.3125rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.25rem;
+
+  --weight-normal: 440;
+  --weight-medium: 520;
+  --weight-semibold: 600;
+  --weight-bold: 680;
+
+  /* Spacing scale (4px base). */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+
+  /* Radii. */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 9px;
+  --radius-lg: 13px;
+  --radius-xl: 18px;
+  --radius-pill: 999px;
+
+  /* Elevation. */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 6px 20px -6px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 18px 48px -12px rgba(0, 0, 0, 0.66);
+  --shadow-glow: 0 0 0 1px var(--accent-glow), 0 0 22px -4px var(--accent-glow);
+
+  /* Motion. */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --dur-slow: 320ms;
+
+  /* Layout. */
+  --sidebar-width: 248px;
+  --topbar-height: 60px;
+  --content-max: 1320px;
+}

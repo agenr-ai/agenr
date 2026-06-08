@@ -267,6 +267,8 @@ export async function listDreamProposalBacklog(
     issueKind?: string;
     eligibleOnly?: boolean;
     durableId?: string;
+    minConfidence?: number;
+    createdSince?: string;
     limit?: number;
     offset?: number;
   } = {},
@@ -287,6 +289,15 @@ export async function listDreamProposalBacklog(
   if (query.durableId) {
     clauses.push("EXISTS (SELECT 1 FROM json_each(p.durable_ids) AS je WHERE je.value = ?)");
     args.push(query.durableId.trim());
+  }
+  if (typeof query.minConfidence === "number" && Number.isFinite(query.minConfidence)) {
+    clauses.push("p.confidence >= ?");
+    args.push(query.minConfidence);
+  }
+  const createdSince = query.createdSince?.trim();
+  if (createdSince && createdSince.length > 0) {
+    clauses.push("datetime(p.created_at) >= datetime(?)");
+    args.push(createdSince);
   }
 
   const limit = Number.isFinite(query.limit) && (query.limit ?? 0) > 0 ? Math.floor(query.limit!) : 25;

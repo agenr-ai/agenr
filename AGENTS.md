@@ -124,7 +124,10 @@ agenr dream review <proposalId>
 agenr scenarios list
 agenr scenarios run
 agenr db reset
+agenr web
 ```
+
+`agenr web` launches the local-only operator console: a loopback HTTP server that serves the built React SPA plus a `/api/web/*` management API. It is the browser-based surface for corpus health, dreaming operations, proposal review, memory browsing, and procedure editing. See [`docs/WEB-CONSOLE.md`](./docs/WEB-CONSOLE.md).
 
 OpenClaw exposes these runtime tools:
 

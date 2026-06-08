@@ -68,6 +68,8 @@ export interface StoreDurableDetail {
   inputIndex: number;
   outcome: StoreDurableOutcome;
   reason?: StoreDurableReason;
+  /** Persisted durable id when `outcome` is `stored`. */
+  durableId?: string;
 }
 
 /**
@@ -167,7 +169,7 @@ export async function storeDurablesDetailed(
   const extractedClaimKeys = await maybeExtractClaimKeys(pendingEntries, options);
   applyExtractedClaimKeyMetadata(pendingEntries, extractedClaimKeys);
   const embeddings = await resolvePendingEmbeddings(inputs, pendingEntries, embedding, options.precomputedEmbeddings);
-  await persistDurables(db, pendingEntries, embeddings, extractedClaimKeys, options.claimExtraction?.config, options.onWarning);
+  const storedIds = await persistDurables(db, pendingEntries, embeddings, extractedClaimKeys, options.claimExtraction?.config, options.onWarning);
   return {
     stored: pendingEntries.length,
     skipped: plan.skipped,
@@ -177,6 +179,7 @@ export async function storeDurablesDetailed(
       ...pendingEntries.map((entry) => ({
         inputIndex: entry.inputIndex,
         outcome: "stored" as const,
+        durableId: storedIds.get(entry.inputIndex),
       })),
     ]),
   };
@@ -227,9 +230,9 @@ async function persistDurables(
   extractedClaimKeys: Map<number, ClaimExtractionResult>,
   claimExtractionConfig: ClaimExtractionConfig | undefined,
   onWarning?: (warning: string) => void,
-): Promise<number> {
-  const writeBatch = async (targetDb: DatabasePort): Promise<number> => {
-    let stored = 0;
+): Promise<Map<number, string>> {
+  const writeBatch = async (targetDb: DatabasePort): Promise<Map<number, string>> => {
+    const storedIds = new Map<number, string>();
     const autoSupersessionPlans = await planAutoSupersession(targetDb, preparedEntries, extractedClaimKeys, claimExtractionConfig);
     const emittedWarnings = new Set<string>();
 
@@ -237,6 +240,7 @@ async function persistDurables(
       const embedding = embeddings[index] ?? [];
       const entry = buildDurable(preparedEntry, embedding);
       const durableId = await targetDb.insertDurable(entry, embedding, preparedEntry.contentHash);
+      storedIds.set(preparedEntry.inputIndex, durableId);
       const supersededEntryId = preparedEntry.input.supersedes;
       if (supersededEntryId) {
         const superseded = await targetDb.supersedeDurable(supersededEntryId, durableId, "update");
@@ -259,11 +263,9 @@ async function persistDurables(
         emittedWarnings.add(autoSupersessionPlan.warning);
         onWarning?.(autoSupersessionPlan.warning);
       }
-
-      stored += 1;
     }
 
-    return stored;
+    return storedIds;
   };
 
   if (hasTransactionSupport(db) && preparedEntries.some((entry) => entry.input.supersedes !== undefined || entry.input.claim_key !== undefined)) {

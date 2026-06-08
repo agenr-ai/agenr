@@ -10,6 +10,7 @@ import { registerScenariosCommand } from "./commands/scenarios.js";
 import { registerSetupCommand } from "./commands/setup.js";
 import { registerDreamingCommand } from "./commands/dreaming.js";
 import { registerTraceCommand } from "./commands/trace.js";
+import { registerWebCommand } from "./commands/web.js";
 
 /**
  * Creates the root CLI program and applies global agenr metadata.
@@ -33,6 +34,7 @@ export function createProgram(): Command {
   registerInitCommand(program);
   registerDreamingCommand(program);
   registerTraceCommand(program);
+  registerWebCommand(program);
 
   // Commands will be registered here as modules are built:
   // registerStoreCommand(program);
