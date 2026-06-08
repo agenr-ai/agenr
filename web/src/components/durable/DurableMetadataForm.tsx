@@ -63,15 +63,15 @@ export function DurableMetadataForm({
   };
 
   return (
-    <div className="stack" style={{ gap: "var(--space-4)" }}>
+    <div className="metadata-form">
       <span className="section-title">Edit metadata</span>
-      <div className="row" style={{ gap: "var(--space-3)" }}>
-        <div className="grow">
+      <div className="metadata-form__grid">
+        <div className="metadata-form__field">
           <Field label="Importance" hint="0.0 - 1.0">
             <Input type="number" min="0" max="1" step="0.05" value={importance} onChange={(event) => setImportance(event.target.value)} />
           </Field>
         </div>
-        <div className="grow">
+        <div className="metadata-form__field">
           <Field label="Expiry">
             <Select value={expiry} onChange={(event) => setExpiry(event.target.value)}>
               {EXPIRY_LEVELS.map((level) => (
@@ -82,23 +82,23 @@ export function DurableMetadataForm({
             </Select>
           </Field>
         </div>
-      </div>
-      <Field label="Claim key" hint="Changing this writes a trusted manual lifecycle bundle.">
-        <Input value={claimKey} onChange={(event) => setClaimKey(event.target.value)} placeholder="entity/attribute" />
-      </Field>
-      <div className="row" style={{ gap: "var(--space-3)" }}>
-        <div className="grow">
+        <div className="metadata-form__field metadata-form__field--wide">
+          <Field label="Claim key" hint="Changing this writes a trusted manual lifecycle bundle.">
+            <Input value={claimKey} onChange={(event) => setClaimKey(event.target.value)} placeholder="entity/attribute" />
+          </Field>
+        </div>
+        <div className="metadata-form__field">
           <Field label="Project">
             <Input value={project} onChange={(event) => setProject(event.target.value)} />
           </Field>
         </div>
-        <div className="grow">
+        <div className="metadata-form__field">
           <Field label="Valid to" hint="Sets the historical cutoff">
             <Input type="date" value={validTo} onChange={(event) => setValidTo(event.target.value)} />
           </Field>
         </div>
       </div>
-      <div className="row" style={{ gap: "var(--space-2)", justifyContent: "flex-end" }}>
+      <div className="metadata-form__actions">
         <Button variant="ghost" onClick={onCancel}>
           Cancel
         </Button>
