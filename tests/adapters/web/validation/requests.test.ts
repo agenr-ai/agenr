@@ -171,6 +171,14 @@ describe("parseProposalBacklogQuery", () => {
       state: "open",
     });
   });
+
+  it("accepts an optional proposal issue-kind filter", () => {
+    expect(parseProposalBacklogQuery(new URLSearchParams("issueKind=claim_key_alias_convergence"))).toEqual({
+      state: "open",
+      eligibleOnly: true,
+      issueKind: "claim_key_alias_convergence",
+    });
+  });
 });
 
 describe("parseDreamStartBody", () => {

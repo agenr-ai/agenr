@@ -6,7 +6,12 @@ import {
   SHADOW_RESONANCE_MIN_GROUNDED_RATIO,
 } from "../constants.js";
 import type { ReconcilePassContext } from "../pass-context.js";
-import type { EntityFamilyConvergenceDecisionStats, MissingBackfillDecisionStats, SiblingSlotResonanceShadowStats } from "../types.js";
+import type {
+  ClaimKeyAliasConvergenceDecisionStats,
+  EntityFamilyConvergenceDecisionStats,
+  MissingBackfillDecisionStats,
+  SiblingSlotResonanceShadowStats,
+} from "../types.js";
 import { describeShadowBucket } from "./utils.js";
 
 /** Builds a completion observation for entity-family convergence decisions. */
@@ -19,6 +24,19 @@ export function buildEntityFamilyConvergenceObservation(stats: EntityFamilyConve
     `Entity-family convergence auto-applied ${stats.appliedDurables} durable rewrite${stats.appliedDurables === 1 ? "" : "s"} ` +
     `across ${stats.appliedClusters} family cluster${stats.appliedClusters === 1 ? "" : "s"} and staged ${stats.proposedClusters} ` +
     `unresolved family proposal${stats.proposedClusters === 1 ? "" : "s"}.`
+  );
+}
+
+/** Builds a completion observation for same-entity claim-key alias convergence decisions. */
+export function buildClaimKeyAliasConvergenceObservation(stats: ClaimKeyAliasConvergenceDecisionStats): string | null {
+  if (stats.appliedClusters === 0 && stats.proposedClusters === 0) {
+    return null;
+  }
+
+  return (
+    `Claim-key alias convergence auto-applied ${stats.appliedDurables} durable rewrite${stats.appliedDurables === 1 ? "" : "s"} ` +
+    `across ${stats.appliedClusters} alias cluster${stats.appliedClusters === 1 ? "" : "s"} and staged ${stats.proposedClusters} ` +
+    `alias proposal${stats.proposedClusters === 1 ? "" : "s"}.`
   );
 }
 
@@ -126,10 +144,10 @@ export function buildReconcilePassObservations(
     executionStyle: ReconcilePassSummary["executionStyle"];
   },
 ): string[] {
-  const { counts, missingDecisionStats, siblingSlotResonanceShadowStats, entityFamilyDecisionStats } = ctx.telemetry;
+  const { counts, missingDecisionStats, siblingSlotResonanceShadowStats, entityFamilyDecisionStats, aliasConvergenceDecisionStats } = ctx.telemetry;
   const observations = [
     `Reconcile reviewed ${input.before.totalDurables} durable${input.before.totalDurables === 1 ? "" : "s"} in ${input.executionStyle} mode.`,
-    `Identified ${counts.identifiedNormalizations} normalizations, ${counts.identifiedBackfills} backfills, ${counts.identifiedMetadataRewrites} metadata-backed suspect-key rewrites, and ${counts.identifiedEntityFamilyConvergences} entity-family convergence rewrites.`,
+    `Identified ${counts.identifiedNormalizations} normalizations, ${counts.identifiedBackfills} backfills, ${counts.identifiedMetadataRewrites} metadata-backed suspect-key rewrites, ${counts.identifiedEntityFamilyConvergences} entity-family convergence rewrites, and ${counts.identifiedAliasConvergences} claim-key alias convergence rewrites.`,
     `Emitted ${counts.proposalsEmitted} unresolved proposal${counts.proposalsEmitted === 1 ? "" : "s"}.`,
   ];
 
@@ -179,6 +197,11 @@ export function buildReconcilePassObservations(
   const entityFamilyObservation = buildEntityFamilyConvergenceObservation(entityFamilyDecisionStats);
   if (entityFamilyObservation) {
     observations.push(entityFamilyObservation);
+  }
+
+  const aliasConvergenceObservation = buildClaimKeyAliasConvergenceObservation(aliasConvergenceDecisionStats);
+  if (aliasConvergenceObservation) {
+    observations.push(aliasConvergenceObservation);
   }
 
   return observations;

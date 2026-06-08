@@ -50,6 +50,8 @@ export interface ReconcileRepairCounts {
   appliedMetadataRewrites: number;
   identifiedEntityFamilyConvergences: number;
   appliedEntityFamilyConvergences: number;
+  identifiedAliasConvergences: number;
+  appliedAliasConvergences: number;
   proposalsEmitted: number;
   skippedNoClaim: number;
   skippedLowConfidence: number;

@@ -4,6 +4,7 @@ import type { DreamRunProposal } from "../../../../core/dreaming/types.js";
 import type { ProposalClaimKeyLifecycleMetadata } from "../../../../core/claim-key-lifecycle.js";
 import type {
   AppliedClaimKeyActionInput,
+  ClaimKeyAliasConvergenceAudit,
   EntityFamilyConvergenceAudit,
   MissingBackfillShadowAudit,
   MissingBackfillSupportEvaluation,
@@ -71,6 +72,7 @@ export function buildAppliedClaimKeyActionDetails(input: AppliedClaimKeyActionIn
     ...buildMissingBackfillShadowAuditDetails(input.shadow),
     ...buildClaimKeyCompactionAuditDetails(input.compactness),
     ...buildEntityFamilyAuditDetails(input.entityFamilyAudit),
+    ...buildClaimKeyAliasAuditDetails(input.aliasConvergenceAudit),
   };
 }
 
@@ -99,6 +101,7 @@ export function buildProposalClaimKeyActionDetails(proposal: DreamRunProposal, a
         }
       : {}),
     ...buildEntityFamilyAuditDetails(audit?.entityFamilyAudit),
+    ...buildClaimKeyAliasAuditDetails(audit?.aliasConvergenceAudit),
   };
 }
 
@@ -139,6 +142,31 @@ export function buildEntityFamilyAuditDetails(entityFamilyAudit?: EntityFamilyCo
           supportingDurableIds: [...support.supportingDurableIds],
           sharedAttributes: [...support.sharedAttributes],
           evidence: support.evidence.map((evidence) => ({ ...evidence })),
+        })),
+      }
+    : {};
+}
+
+/** Builds audit fields for same-entity claim-key alias convergence decisions. */
+export function buildClaimKeyAliasAuditDetails(aliasAudit?: ClaimKeyAliasConvergenceAudit): Record<string, unknown> {
+  return aliasAudit
+    ? {
+        alias_entity_prefix: aliasAudit.entityPrefix,
+        alias_current_claim_keys: [...aliasAudit.currentClaimKeys],
+        alias_proposed_claim_key: aliasAudit.proposedClaimKey,
+        alias_deterministic_confidence: aliasAudit.deterministicConfidence,
+        alias_deterministic_auto_apply_eligible: aliasAudit.deterministicAutoApplyEligible,
+        alias_unresolved_reason: aliasAudit.unresolvedReason,
+        alias_llm_same_slot: aliasAudit.llmAdjudication?.sameSlot,
+        alias_llm_canonical_claim_key: aliasAudit.llmAdjudication?.canonicalClaimKey,
+        alias_llm_confidence: aliasAudit.llmAdjudication?.confidence,
+        alias_llm_rationale: aliasAudit.llmAdjudication?.rationale,
+        alias_evidence: aliasAudit.evidence.map((evidence) => ({ ...evidence })),
+        alias_key_profiles: aliasAudit.keyProfiles.map((profile) => ({
+          ...profile,
+          durableIds: [...profile.durableIds],
+          typeSet: [...profile.typeSet],
+          projectSet: [...profile.projectSet],
         })),
       }
     : {};

@@ -1,4 +1,6 @@
 import type { ClaimKeySupportEvaluation } from "../../../../core/claim-key-support.js";
+import type { ClaimKeyAliasEvidence } from "../../../../core/claim-key-alias.js";
+import type { ClaimKeyAliasAdjudication } from "../../../../core/dreaming/claim-key-alias-adjudication.js";
 import type { ClaimKeyEntityFamilyEvidence } from "../../../../core/claim-key-entity-family.js";
 import type { ReconcileCircuitBreakerKind, ReconcileShadowBucket } from "../../../../core/dreaming/types.js";
 import type { ClaimExtractionPreviewOutcome, ClaimExtractionResult } from "../../../../core/store/claim-extraction.js";
@@ -118,6 +120,13 @@ export interface EntityFamilyConvergenceDecisionStats {
   proposedClusters: number;
 }
 
+/** Counters for same-entity claim-key alias convergence decisions in one reconcile pass. */
+export interface ClaimKeyAliasConvergenceDecisionStats {
+  appliedClusters: number;
+  appliedDurables: number;
+  proposedClusters: number;
+}
+
 /** Audit metadata for one entity-family convergence decision. */
 export interface EntityFamilyConvergenceAudit {
   competingEntityPrefixes: string[];
@@ -133,5 +142,25 @@ export interface EntityFamilyConvergenceAudit {
     autoSafe: boolean;
     preferredCanonicalEntityPrefix: string | null;
     evidence: ClaimKeyEntityFamilyEvidence[];
+  }>;
+}
+
+/** Audit metadata for one same-entity claim-key alias convergence decision. */
+export interface ClaimKeyAliasConvergenceAudit {
+  entityPrefix: string;
+  currentClaimKeys: string[];
+  proposedClaimKey: string | null;
+  deterministicConfidence: number;
+  deterministicAutoApplyEligible: boolean;
+  unresolvedReason: string | null;
+  llmAdjudication: ClaimKeyAliasAdjudication | null;
+  evidence: ClaimKeyAliasEvidence[];
+  keyProfiles: Array<{
+    claimKey: string;
+    attribute: string;
+    durableIds: string[];
+    typeSet: string[];
+    projectSet: string[];
+    trustedOrManualCount: number;
   }>;
 }

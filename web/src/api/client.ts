@@ -151,13 +151,14 @@ export const api = {
   runProposals: (runId: string) => request<{ proposals: DreamProposal[] }>("GET", `/api/web/dream/runs/${encodeURIComponent(runId)}/proposals`),
 
   /** Lists the proposal backlog with filters. */
-  proposals: (params: { limit?: number; minConfidence?: number; createdSince?: string; includeIneligible?: boolean }) =>
+  proposals: (params: { limit?: number; minConfidence?: number; createdSince?: string; includeIneligible?: boolean; issueKind?: string }) =>
     request<{ backlog: ProposalBacklogItem[] }>(
       "GET",
       `/api/web/proposals${query({
         limit: params.limit,
         minConfidence: params.minConfidence,
         createdSince: params.createdSince,
+        issueKind: params.issueKind,
         includeIneligible: params.includeIneligible ? "true" : undefined,
       })}`,
     ),

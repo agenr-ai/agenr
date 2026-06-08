@@ -17,7 +17,14 @@ export type DreamRunProgressPhase =
 /**
  * Deterministic reconcile stages that can emit bounded progress updates.
  */
-export type ReconcileProgressStage = "health" | "invalid_noncanonical" | "missing" | "suspect_canonical" | "entity_family_convergence" | "mixed_key_groups";
+export type ReconcileProgressStage =
+  | "health"
+  | "invalid_noncanonical"
+  | "missing"
+  | "suspect_canonical"
+  | "entity_family_convergence"
+  | "claim_key_alias_convergence"
+  | "mixed_key_groups";
 
 /**
  * One startup or orchestration phase update emitted during a dreaming run.

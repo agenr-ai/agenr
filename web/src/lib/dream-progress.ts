@@ -1,5 +1,5 @@
 import type { DreamJobEvent } from "../api/types";
-import { titleCase } from "./format";
+import { formatIssueKind, titleCase } from "./format";
 
 type DreamProgress = NonNullable<DreamJobEvent["progress"]>;
 type DreamPhaseProgress = Extract<DreamProgress, { kind: "phase" }>;
@@ -137,7 +137,7 @@ function describeProposalResolutionEvent(progress: ProposalResolutionProgress): 
     `${progress.noChangeCount.toLocaleString()} unchanged`,
   ];
   if (progress.issueKind) {
-    parts.push(`current issue ${titleCase(progress.issueKind)}`);
+    parts.push(`current issue ${formatIssueKind(progress.issueKind)}`);
   }
   if (progress.outcome) {
     parts.push(`last outcome ${titleCase(progress.outcome)}`);
@@ -167,6 +167,8 @@ function formatReconcileStage(stage: string): string {
       return "Suspect canonical keys";
     case "entity_family_convergence":
       return "Entity-family convergence";
+    case "claim_key_alias_convergence":
+      return "Claim-key alias convergence";
     case "mixed_key_groups":
       return "Mixed key groups";
     default:
@@ -217,7 +219,8 @@ function summarizeRepairCounts(counts: ReconcileProgress["counts"]): {
       counts.appliedNormalizations +
       counts.appliedBackfills +
       counts.appliedMetadataRewrites +
-      counts.appliedEntityFamilyConvergences,
+      counts.appliedEntityFamilyConvergences +
+      counts.appliedAliasConvergences,
     proposed: counts.proposalsEmitted + counts.flaggedAmbiguousProposals,
     skipped: counts.skippedNoClaim + counts.skippedLowConfidence + counts.skippedCollision,
   };

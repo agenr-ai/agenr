@@ -92,6 +92,7 @@ export async function maybeApplyClaimKeyUpdate(
       shadow: input.shadow,
       compactness: input.compactness,
       entityFamilyAudit: input.entityFamilyAudit,
+      aliasConvergenceAudit: input.aliasConvergenceAudit,
     }),
     createdAt: ctx.options.now().toISOString(),
   });

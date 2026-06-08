@@ -7,7 +7,18 @@ import { ErrorCard, RequireInstance, Skeleton } from "../components/states";
 import { useToast } from "../components/Toast";
 import { useAsync } from "../hooks/useAsync";
 import { useInstances } from "../state/InstanceContext";
-import { formatPercent, formatRelative, titleCase, truncate } from "../lib/format";
+import { formatIssueKind, formatPercent, formatRelative, titleCase, truncate } from "../lib/format";
+
+const PROPOSAL_ISSUE_FILTERS = [
+  { value: "", label: "All issue kinds" },
+  { value: "claim_key_alias_convergence", label: "Claim-Key Alias Convergence" },
+  { value: "entity_family_convergence", label: "Entity Family Convergence" },
+  { value: "mixed_claim_key_group", label: "Mixed Claim-Key Group" },
+  { value: "missing_claim_key", label: "Missing Claim Key" },
+  { value: "suspect_canonical_claim_key", label: "Suspect Canonical Claim Key" },
+  { value: "noncanonical_claim_key", label: "Noncanonical Claim Key" },
+  { value: "malformed_claim_key", label: "Malformed Claim Key" },
+];
 
 /**
  * Proposal Review page: triage and adjudicate claim-key proposals.
@@ -26,13 +37,20 @@ export function ProposalsPage(): React.ReactElement {
 function ProposalsInner(): React.ReactElement {
   const { selected } = useInstances();
   const [eligibleOnly, setEligibleOnly] = useState(true);
+  const [issueKind, setIssueKind] = useState("");
   const [minConfidence, setMinConfidence] = useState(0);
   const [reloadToken, setReloadToken] = useState(0);
   const [activeId, setActiveId] = useState<string | null>(null);
 
   const state = useAsync(
-    () => api.proposals({ includeIneligible: !eligibleOnly, minConfidence: minConfidence > 0 ? minConfidence : undefined, limit: 200 }),
-    [selected?.record.id, eligibleOnly, minConfidence, reloadToken],
+    () =>
+      api.proposals({
+        includeIneligible: !eligibleOnly,
+        issueKind: issueKind || undefined,
+        minConfidence: minConfidence > 0 ? minConfidence : undefined,
+        limit: 200,
+      }),
+    [selected?.record.id, eligibleOnly, issueKind, minConfidence, reloadToken],
   );
 
   const reload = (): void => setReloadToken((value) => value + 1);
@@ -57,6 +75,16 @@ function ProposalsInner(): React.ReactElement {
           <button className={!eligibleOnly ? "is-active" : ""} onClick={() => setEligibleOnly(false)}>
             All open
           </button>
+        </div>
+        <div className="row" style={{ gap: "var(--space-2)" }}>
+          <span className="label">Issue kind</span>
+          <select className="select" value={issueKind} onChange={(event) => setIssueKind(event.target.value)}>
+            {PROPOSAL_ISSUE_FILTERS.map((option) => (
+              <option key={option.value || "all"} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </div>
         <div className="row" style={{ gap: "var(--space-2)" }}>
           <span className="label">Min confidence</span>
@@ -98,7 +126,7 @@ function ProposalRow({ item, onOpen }: { item: ProposalBacklogItem; onOpen: () =
           <div className="grow stack" style={{ gap: "var(--space-3)", minWidth: 0 }}>
             <div className="row wrap" style={{ gap: "var(--space-2)" }}>
               <Badge status={proposal.eligibleForApply ? "success" : "neutral"}>{proposal.eligibleForApply ? "eligible" : "ineligible"}</Badge>
-              <Badge status="info">{titleCase(proposal.issueKind)}</Badge>
+              <Badge status="info">{formatIssueKind(proposal.issueKind)}</Badge>
               <Badge status="dream">{titleCase(proposal.scope)}</Badge>
               <span className="muted" style={{ fontSize: "var(--text-xs)" }}>
                 {proposal.durableIds.length} durable{proposal.durableIds.length === 1 ? "" : "s"} · {formatRelative(proposal.createdAt)}
@@ -207,7 +235,7 @@ function ProposalDrawer({ proposalId, onClose, onReviewed }: { proposalId: strin
         <div className="stack" style={{ gap: "var(--space-5)" }}>
           <div className="row wrap" style={{ gap: "var(--space-2)" }}>
             <Badge status={proposal.eligibleForApply ? "success" : "neutral"}>{proposal.eligibleForApply ? "eligible" : "ineligible"}</Badge>
-            <Badge status="info">{titleCase(proposal.issueKind)}</Badge>
+            <Badge status="info">{formatIssueKind(proposal.issueKind)}</Badge>
             <Badge status="dream">{titleCase(proposal.scope)}</Badge>
             <Badge status="accent">{formatPercent(proposal.confidence)} confidence</Badge>
           </div>
@@ -221,6 +249,18 @@ function ProposalDrawer({ proposalId, onClose, onReviewed }: { proposalId: strin
                   <li>Keep the current keys when the memories are separate slots.</li>
                   <li>Use one canonical key when the memories belong to the same slot.</li>
                   <li>Retire selected memories when they are duplicate or wrong.</li>
+                </ul>
+              </>
+            ) : isAliasConvergenceProposal(proposal) ? (
+              <>
+                <p>
+                  Decide whether these current claim keys describe one durable slot. Apply writes the proposed key after creating a backup. Reject keeps
+                  the keys as they are and records why this alias should not be used.
+                </p>
+                <ul className="review-checklist">
+                  <li>The affected durables should describe the same stable slot, not adjacent topics.</li>
+                  <li>The proposed key should be the best canonical slot for the whole cluster.</li>
+                  <li>Ineligible clusters need manual review because they are ambiguous, conflicting, or not LLM-confirmed.</li>
                 </ul>
               </>
             ) : (
@@ -239,7 +279,9 @@ function ProposalDrawer({ proposalId, onClose, onReviewed }: { proposalId: strin
           </div>
 
           <div className="stack" style={{ gap: "var(--space-2)" }}>
-            <span className="section-title">{manualMixedResolution ? "Flagged keys" : "Proposed change"}</span>
+            <span className="section-title">
+              {manualMixedResolution ? "Flagged keys" : isAliasConvergenceProposal(proposal) ? "Alias cluster" : "Proposed change"}
+            </span>
             <ClaimDiff current={proposal.currentClaimKeys} proposed={proposal.proposedClaimKeys} />
           </div>
 
@@ -283,7 +325,7 @@ function ProposalDrawer({ proposalId, onClose, onReviewed }: { proposalId: strin
                 </Button>
               </div>
               {!proposal.eligibleForApply ? (
-                <span className="hint" style={{ textAlign: "right" }}>This proposal is not eligible to apply and can only be rejected.</span>
+                <span className="hint" style={{ textAlign: "right" }}>{formatIneligibleProposalHint(proposal)}</span>
               ) : null}
             </div>
           ) : (
@@ -464,6 +506,17 @@ function ResolutionOption({
 
 function isManualMixedClaimProposal(proposal: ProposalDetail["proposal"]): boolean {
   return proposal.issueKind === "mixed_claim_key_group" && !proposal.eligibleForApply && proposal.proposedClaimKeys.length === 0;
+}
+
+function isAliasConvergenceProposal(proposal: ProposalDetail["proposal"]): boolean {
+  return proposal.issueKind === "claim_key_alias_convergence";
+}
+
+function formatIneligibleProposalHint(proposal: ProposalDetail["proposal"]): string {
+  if (isAliasConvergenceProposal(proposal)) {
+    return "Apply is blocked because this alias cluster is ambiguous, conflicting, or not LLM-confirmed.";
+  }
+  return "This proposal is not eligible to apply and can only be rejected.";
 }
 
 function uniqueStrings(values: string[]): string[] {

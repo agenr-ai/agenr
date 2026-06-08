@@ -10,8 +10,17 @@ import { useToast } from "../components/Toast";
 import { useAsync } from "../hooks/useAsync";
 import { useDreamStream } from "../hooks/useDreamStream";
 import { useInstances } from "../state/InstanceContext";
+import {
+  buildAliasReviewSummary,
+  formatAliasAutoApplyBlocker,
+  formatClaimKeyList,
+  renderAliasReviewSummaryLines,
+  summarizeAliasEvidence,
+  summarizeAliasProfiles,
+  type AliasReviewSummaryView,
+} from "../lib/alias-audit";
 import { describeEvent } from "../lib/dream-progress";
-import { formatCost, formatDateTime, formatDateTimeWithRelative, formatPercent, formatRelative, titleCase } from "../lib/format";
+import { formatCost, formatDateTime, formatDateTimeWithRelative, formatIssueKind, formatPercent, formatRelative, titleCase } from "../lib/format";
 import { jobStatusVariant, runStatusVariant } from "../lib/status";
 
 /** Available dreaming tiers with descriptions. */
@@ -34,6 +43,18 @@ const DETAIL_KEY_LABELS: Record<string, string> = {
   predecessor_id: "Previous durable",
   successor_id: "Replacement durable",
   valid_to: "Valid until",
+  alias_entity_prefix: "Alias entity",
+  alias_current_claim_keys: "Current keys",
+  alias_proposed_claim_key: "Proposed key",
+  alias_deterministic_confidence: "Deterministic confidence",
+  alias_deterministic_auto_apply_eligible: "Deterministic auto-apply",
+  alias_unresolved_reason: "Blocker",
+  alias_llm_same_slot: "LLM same slot",
+  alias_llm_canonical_claim_key: "LLM canonical key",
+  alias_llm_confidence: "LLM confidence",
+  alias_llm_rationale: "LLM rationale",
+  alias_evidence: "Alias evidence",
+  alias_key_profiles: "Alias profiles",
 };
 
 /**
@@ -362,7 +383,7 @@ function RunDetailDrawer({ run, onClose }: { run: DreamRunRecord; onClose: () =>
                     <Badge status={proposal.reviewStatus === "applied" ? "success" : proposal.reviewStatus === "rejected" ? "neutral" : "warning"}>
                       {titleCase(proposal.reviewStatus)}
                     </Badge>
-                    <span className="muted" style={{ fontSize: "var(--text-xs)" }}>{titleCase(proposal.issueKind)}</span>
+                    <span className="muted" style={{ fontSize: "var(--text-xs)" }}>{formatIssueKind(proposal.issueKind)}</span>
                   </div>
                   <p className="secondary" style={{ fontSize: "var(--text-sm)", marginTop: "var(--space-2)" }}>
                     {proposal.rationale}
@@ -388,31 +409,45 @@ function FlagReviewActionSummary({ action, onOpenProposals }: { action: DreamRun
   const eligibleForApply = details.eligible_for_apply === true;
   const blocker = typeof details.auto_apply_blocker === "string" ? details.auto_apply_blocker : null;
   const durableById = new Map(action.durables.map((durable) => [durable.id, durable]));
+  const aliasSummary = buildAliasReviewSummary(details);
 
   return (
     <div className="review-summary">
       <div className="review-summary__plain">
-        <strong>Dreaming found a suggested claim-key change.</strong>
+        <strong>
+          {aliasSummary ? "Dreaming found a possible claim-key alias cluster." : "Dreaming found a suggested claim-key change."}
+        </strong>
         <span>
-          Review means deciding whether the affected memory belongs under the proposed key. Apply writes that key after a backup; reject leaves the
-          memory unchanged and records the reason.
+          {aliasSummary
+            ? "Review means deciding whether the current keys represent the same durable slot. Apply writes the proposed key after a backup; reject leaves the keys unchanged and records the reason."
+            : "Review means deciding whether the affected memory belongs under the proposed key. Apply writes that key after a backup; reject leaves the memory unchanged and records the reason."}
         </span>
       </div>
 
       <div className="review-summary__grid">
-        <ReviewSummaryRow label="Current key" value={formatClaimKeyList(currentClaimKeys, "(no current key)")} />
+        <ReviewSummaryRow label={aliasSummary ? "Current keys" : "Current key"} value={formatClaimKeyList(currentClaimKeys, "(no current key)")} />
         <ReviewSummaryRow label="Proposed key" value={formatClaimKeyList(proposedClaimKeys, "(no proposed key)")} emphasized />
         {confidence !== null ? <ReviewSummaryRow label="Confidence" value={formatPercent(confidence)} /> : null}
         <ReviewSummaryRow label="Decision" value={formatReviewDecisionText(eligibleForApply, blocker)} />
       </div>
 
+      {aliasSummary ? <AliasReviewSummary summary={aliasSummary} /> : null}
+
       <div className="stack" style={{ gap: "var(--space-2)" }}>
         <span className="section-title">What to check</span>
-        <ul className="review-checklist">
-          <li>The memory text is really about the proposed topic.</li>
-          <li>The proposed key describes the stable slot this memory should be grouped under.</li>
-          <li>Applying the key would group it with the right related memories, not just similar wording.</li>
-        </ul>
+        {aliasSummary ? (
+          <ul className="review-checklist">
+            <li>The current keys describe the same stable slot for the same entity.</li>
+            <li>The proposed key is the best canonical target for all affected durables.</li>
+            <li>Similar wording alone is not enough if the facts belong to different attributes.</li>
+          </ul>
+        ) : (
+          <ul className="review-checklist">
+            <li>The memory text is really about the proposed topic.</li>
+            <li>The proposed key describes the stable slot this memory should be grouped under.</li>
+            <li>Applying the key would group it with the right related memories, not just similar wording.</li>
+          </ul>
+        )}
       </div>
 
       <ReviewEvidenceSummary details={details} />
@@ -452,6 +487,17 @@ function ReviewSummaryRow({ label, value, emphasized = false }: { label: string;
     <div className="review-summary__row">
       <span>{label}</span>
       <strong className={emphasized ? "review-summary__value--emphasized" : undefined}>{value}</strong>
+    </div>
+  );
+}
+
+/** Renders the structured alias-convergence audit in a compact operator view. */
+function AliasReviewSummary({ summary }: { summary: AliasReviewSummaryView }): React.ReactElement {
+  const lines = renderAliasReviewSummaryLines({ summary, formatClaimKeys: formatClaimKeyList });
+  return (
+    <div className="review-evidence">
+      <span className="section-title">Alias convergence audit</span>
+      {lines.map((line) => (line ? <span key={line.key}>{line.text}</span> : null))}
     </div>
   );
 }
@@ -674,6 +720,12 @@ function formatMissingDurableLabel(durableId: string, details: Record<string, un
 /** Formats a structured action detail value for compact display. */
 function formatDetailValue(value: unknown, key: string, durableById: Map<string, DreamRunActionView["durables"][number]>): FormattedDetailValue {
   if (Array.isArray(value)) {
+    if (key === "alias_evidence") {
+      return summarizeAliasEvidence(value);
+    }
+    if (key === "alias_key_profiles") {
+      return summarizeAliasProfiles(value);
+    }
     const entries = value.map((entry) => formatDetailValue(entry, key, durableById));
     return {
       label: summarizeDetailList(entries, key),
@@ -744,26 +796,15 @@ function readNumberDetail(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-/** Formats claim-key arrays for compact review summaries. */
-function formatClaimKeyList(values: string[], fallback: string): string {
-  return values.length > 0 ? values.join(", ") : fallback;
-}
-
 /** Describes the review action available for a proposal. */
 function formatReviewDecisionText(eligibleForApply: boolean, blocker: string | null): string {
   if (eligibleForApply) {
     return "Apply is available if the proposed key is correct.";
   }
   if (blocker) {
-    return `Reject or inspect manually. ${formatAutoApplyBlocker(blocker)}.`;
+    const formattedBlocker = formatAliasAutoApplyBlocker(blocker);
+    return `Reject or inspect manually. ${formattedBlocker}${/[.!?]$/u.test(formattedBlocker) ? "" : "."}`;
   }
   return "Reject or inspect manually. Apply is not available for this proposal.";
 }
 
-/** Formats a stored automatic-apply blocker without internal enum wording. */
-function formatAutoApplyBlocker(blocker: string): string {
-  if (blocker === "cross_type_collision") {
-    return "Another active memory already uses that key for a different type";
-  }
-  return `Automatic apply was blocked by ${titleCase(blocker.replaceAll("_", " ")).toLowerCase()}`;
-}

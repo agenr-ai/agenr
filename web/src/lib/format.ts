@@ -148,6 +148,19 @@ export function titleCase(value: string): string {
 }
 
 /**
+ * Formats dreaming proposal issue kinds for operator-facing views.
+ *
+ * @param value - Raw issue kind.
+ * @returns Readable issue label.
+ */
+export function formatIssueKind(value: string): string {
+  if (value === "claim_key_alias_convergence") {
+    return "Claim-Key Alias Convergence";
+  }
+  return titleCase(value);
+}
+
+/**
  * Truncates text to a maximum length with an ellipsis.
  *
  * @param value - Source text.

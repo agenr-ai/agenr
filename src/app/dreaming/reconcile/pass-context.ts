@@ -9,6 +9,7 @@ import { claimExtractionUsage, resolveClaimExtractionConcurrency } from "./helpe
 import { cloneDurable } from "./helpers/durable.js";
 import {
   createEmptyEntityFamilyConvergenceDecisionStats,
+  createEmptyClaimKeyAliasConvergenceDecisionStats,
   createEmptyMissingBackfillDecisionStats,
   createEmptyRepairCounts,
   createEmptySiblingSlotResonanceShadowStats,
@@ -20,6 +21,7 @@ import type {
   ClaimExtractionPreviewLlm,
   ClaimKeyCircuitBreakerState,
   ClaimKeyCircuitBreakerTrip,
+  ClaimKeyAliasConvergenceDecisionStats,
   DurableSuggestionRecord,
   EntityFamilyConvergenceDecisionStats,
   MissingBackfillDecisionStats,
@@ -43,7 +45,7 @@ export interface ReconcileWorkingSet {
   actualDurablesById: Map<string, Durable>;
   trustedHints: TrustedCleanupHintSeed;
   trustedReusableDurableIds: Set<string>;
-  handledEntityFamilyClaimKeys: Set<string>;
+  handledConvergenceClaimKeys: Set<string>;
   projectedInspectionById: Map<string, ExistingClaimKeyInspection>;
   actualInspectionById: Map<string, ExistingClaimKeyInspection>;
   projectedInspectionTally: ClaimKeyInspectionTally;
@@ -71,6 +73,7 @@ export interface ReconcilePassTelemetry {
   missingDecisionStats: MissingBackfillDecisionStats;
   siblingSlotResonanceShadowStats: SiblingSlotResonanceShadowStats;
   entityFamilyDecisionStats: EntityFamilyConvergenceDecisionStats;
+  aliasConvergenceDecisionStats: ClaimKeyAliasConvergenceDecisionStats;
   skippedDiagnostics: MissingBackfillSkipDiagnostic[];
   circuitBreakerState: ClaimKeyCircuitBreakerState;
   circuitBreaker: ClaimKeyCircuitBreakerTrip | null;
@@ -149,7 +152,7 @@ export async function createReconcilePassContext(options: ReconcileRunOptions, d
       actualDurablesById,
       trustedHints,
       trustedReusableDurableIds,
-      handledEntityFamilyClaimKeys: new Set<string>(),
+      handledConvergenceClaimKeys: new Set<string>(),
       projectedInspectionById: new Map<string, ExistingClaimKeyInspection>(),
       actualInspectionById: new Map<string, ExistingClaimKeyInspection>(),
       projectedInspectionTally: createEmptyClaimKeyInspectionTally(),
@@ -169,6 +172,7 @@ export async function createReconcilePassContext(options: ReconcileRunOptions, d
       missingDecisionStats: createEmptyMissingBackfillDecisionStats(),
       siblingSlotResonanceShadowStats: createEmptySiblingSlotResonanceShadowStats(),
       entityFamilyDecisionStats: createEmptyEntityFamilyConvergenceDecisionStats(),
+      aliasConvergenceDecisionStats: createEmptyClaimKeyAliasConvergenceDecisionStats(),
       skippedDiagnostics: [],
       circuitBreakerState: createCircuitBreakerState(),
       circuitBreaker: null,

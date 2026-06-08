@@ -83,6 +83,65 @@ describe("dream progress log formatting", () => {
     });
   });
 
+  it("renders alias convergence stage and counters", () => {
+    const line = describeEvent({
+      seq: 6,
+      at: "2026-06-08T16:00:05.000Z",
+      kind: "progress",
+      progress: {
+        kind: "reconcile_progress",
+        tier: "deep",
+        apply: true,
+        stage: "claim_key_alias_convergence",
+        status: "applied",
+        completed: 2,
+        total: 2,
+        unitLabel: "groups",
+        previewQueued: 0,
+        previewCompleted: 0,
+        previewTotal: 0,
+        previewConcurrency: 1,
+        processedDurables: 2,
+        totalDurables: 2,
+        elapsedMs: 800,
+        counts: buildCounts({
+          appliedAliasConvergences: 1,
+          proposalsEmitted: 1,
+        }),
+      },
+    });
+
+    expect(line).toEqual({
+      stage: "reconcile",
+      message: "Claim-key alias convergence: Applied 2/2 groups; 1 applied, 1 proposed, 0 skipped.",
+    });
+  });
+
+  it("renders alias proposal resolution issue labels", () => {
+    const line = describeEvent({
+      seq: 7,
+      at: "2026-06-08T16:00:06.000Z",
+      kind: "progress",
+      progress: {
+        kind: "proposal_resolution_progress",
+        tier: "proposal_resolution",
+        apply: true,
+        status: "proposal_processed",
+        totalProposals: 1,
+        processedProposals: 1,
+        appliedCount: 0,
+        rejectedInactiveCount: 0,
+        rejectedInvalidCount: 0,
+        noChangeCount: 1,
+        targetedEntryCount: 1,
+        issueKind: "claim_key_alias_convergence",
+        outcome: "no_change",
+      },
+    });
+
+    expect(line.message).toContain("current issue Claim-Key Alias Convergence");
+  });
+
   it("renders proposal resolution outcomes", () => {
     const line = describeEvent({
       seq: 4,
@@ -137,6 +196,8 @@ function buildCounts(overrides: Partial<ReconcileProgress["counts"]> = {}): Reco
     appliedMetadataRewrites: 0,
     identifiedEntityFamilyConvergences: 0,
     appliedEntityFamilyConvergences: 0,
+    identifiedAliasConvergences: 0,
+    appliedAliasConvergences: 0,
     proposalsEmitted: 0,
     skippedNoClaim: 0,
     skippedLowConfidence: 0,

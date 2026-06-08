@@ -3,6 +3,7 @@ import type { ProposalClaimKeyLifecycleMetadata, ResolvedClaimKeyLifecycle } fro
 import type { DreamRunProposal } from "../../../../core/dreaming/types.js";
 import type { Durable } from "../../../../core/types.js";
 import type {
+  ClaimKeyAliasConvergenceAudit,
   EntityFamilyConvergenceAudit,
   MissingBackfillPromotionPolicy,
   MissingBackfillShadowAudit,
@@ -16,6 +17,7 @@ export type ReconcileIssueKind =
   | "noncanonical_claim_key"
   | "suspect_canonical_claim_key"
   | "entity_family_convergence"
+  | "claim_key_alias_convergence"
   | "mixed_claim_key_group";
 
 /** Snapshot of durable claim-key lifecycle fields before a projected mutation. */
@@ -41,6 +43,7 @@ export interface ClaimKeyUpdateInput {
   rationale: string;
   rawClaimKey?: string | null;
   entityFamilyAudit?: EntityFamilyConvergenceAudit;
+  aliasConvergenceAudit?: ClaimKeyAliasConvergenceAudit;
 }
 
 /** Optional audit metadata attached to one reconcile proposal. */
@@ -52,6 +55,7 @@ export interface ProposalAuditInput {
   supportedCandidate?: boolean;
   shadow?: MissingBackfillShadowAudit;
   entityFamilyAudit?: EntityFamilyConvergenceAudit;
+  aliasConvergenceAudit?: ClaimKeyAliasConvergenceAudit;
   proposalLifecycle?: ProposalClaimKeyLifecycleMetadata;
 }
 
@@ -68,6 +72,7 @@ export interface AppliedClaimKeyActionInput {
   shadow?: MissingBackfillShadowAudit;
   compactness?: ClaimKeyCompactnessEvaluation;
   entityFamilyAudit?: EntityFamilyConvergenceAudit;
+  aliasConvergenceAudit?: ClaimKeyAliasConvergenceAudit;
 }
 
 /**

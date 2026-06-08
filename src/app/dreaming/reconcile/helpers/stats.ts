@@ -1,6 +1,12 @@
 import type { ReconcileRepairCounts } from "../../../../core/dreaming/types.js";
 import { SHADOW_BUCKET_ORDER } from "../constants.js";
-import type { DurableSuggestionRecord, EntityFamilyConvergenceDecisionStats, MissingBackfillDecisionStats, SiblingSlotResonanceShadowStats } from "../types.js";
+import type {
+  ClaimKeyAliasConvergenceDecisionStats,
+  DurableSuggestionRecord,
+  EntityFamilyConvergenceDecisionStats,
+  MissingBackfillDecisionStats,
+  SiblingSlotResonanceShadowStats,
+} from "../types.js";
 
 /** Creates empty missing-key backfill decision counters. */
 export function createEmptyMissingBackfillDecisionStats(): MissingBackfillDecisionStats {
@@ -55,6 +61,15 @@ export function createEmptyEntityFamilyConvergenceDecisionStats(): EntityFamilyC
   };
 }
 
+/** Creates empty same-entity alias convergence decision counters. */
+export function createEmptyClaimKeyAliasConvergenceDecisionStats(): ClaimKeyAliasConvergenceDecisionStats {
+  return {
+    appliedClusters: 0,
+    appliedDurables: 0,
+    proposedClusters: 0,
+  };
+}
+
 /** Creates empty reconcile repair counters. */
 export function createEmptyRepairCounts(): ReconcileRepairCounts {
   return {
@@ -66,6 +81,8 @@ export function createEmptyRepairCounts(): ReconcileRepairCounts {
     appliedMetadataRewrites: 0,
     identifiedEntityFamilyConvergences: 0,
     appliedEntityFamilyConvergences: 0,
+    identifiedAliasConvergences: 0,
+    appliedAliasConvergences: 0,
     proposalsEmitted: 0,
     skippedNoClaim: 0,
     skippedLowConfidence: 0,
@@ -94,6 +111,8 @@ export function cloneRepairCounts(counts: ReconcileRepairCounts): ReconcileRepai
     appliedMetadataRewrites: counts.appliedMetadataRewrites,
     identifiedEntityFamilyConvergences: counts.identifiedEntityFamilyConvergences,
     appliedEntityFamilyConvergences: counts.appliedEntityFamilyConvergences,
+    identifiedAliasConvergences: counts.identifiedAliasConvergences,
+    appliedAliasConvergences: counts.appliedAliasConvergences,
     proposalsEmitted: counts.proposalsEmitted,
     skippedNoClaim: counts.skippedNoClaim,
     skippedLowConfidence: counts.skippedLowConfidence,

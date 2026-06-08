@@ -49,6 +49,7 @@ export async function runClaimKeyPass(
   client: Client,
   overrides: {
     apply?: boolean;
+    tier?: "light" | "standard" | "deep";
     verbose?: boolean;
     config?: AgenrConfig | null;
     createClaimExtractionLlm?: () => CostMeteredLlm;
@@ -58,7 +59,7 @@ export async function runClaimKeyPass(
 ) {
   return runDream(
     {
-      tier: "standard",
+      tier: overrides.tier ?? "standard",
       apply: overrides.apply === true,
       verbose: overrides.verbose === true,
       json: false,
@@ -216,7 +217,10 @@ export class MockClaimLlm implements LlmPort {
     },
   };
 
-  public constructor(private readonly responder: (callIndex: number, systemPrompt: string, userMessage: string) => unknown) {}
+  public constructor(
+    private readonly responder: (callIndex: number, systemPrompt: string, userMessage: string) => unknown,
+    private readonly costPerCall = 0,
+  ) {}
 
   public async complete(): Promise<string> {
     throw new Error("complete() is not used in these tests.");
@@ -225,6 +229,7 @@ export class MockClaimLlm implements LlmPort {
   public async completeJson<T>(systemPrompt: string, userMessage: string): Promise<T> {
     const callIndex = this.metadata.usage.inputTokens;
     this.metadata.usage.inputTokens += 1;
+    this.metadata.usage.totalCost += this.costPerCall;
     const response = this.responder(callIndex, systemPrompt, userMessage);
     if (response instanceof Error) {
       throw response;

@@ -11,6 +11,8 @@ export type {
 
 export type {
   ClaimKeyCircuitBreakerState,
+  ClaimKeyAliasConvergenceAudit,
+  ClaimKeyAliasConvergenceDecisionStats,
   ClaimKeyCircuitBreakerTrip,
   EntityFamilyConvergenceAudit,
   EntityFamilyConvergenceDecisionStats,

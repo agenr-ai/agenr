@@ -473,6 +473,8 @@ function readClaimKeyRepairCounts(value: unknown, label: string, filePath: strin
     "appliedMetadataRewrites",
     "identifiedEntityFamilyConvergences",
     "appliedEntityFamilyConvergences",
+    "identifiedAliasConvergences",
+    "appliedAliasConvergences",
     "proposalsEmitted",
     "skippedNoClaim",
     "skippedLowConfidence",
@@ -515,6 +517,16 @@ function readClaimKeyRepairCounts(value: unknown, label: string, filePath: strin
     ...(record.appliedEntityFamilyConvergences !== undefined
       ? {
           appliedEntityFamilyConvergences: readRequiredInteger(record.appliedEntityFamilyConvergences, `${label}.appliedEntityFamilyConvergences`, filePath),
+        }
+      : {}),
+    ...(record.identifiedAliasConvergences !== undefined
+      ? {
+          identifiedAliasConvergences: readRequiredInteger(record.identifiedAliasConvergences, `${label}.identifiedAliasConvergences`, filePath),
+        }
+      : {}),
+    ...(record.appliedAliasConvergences !== undefined
+      ? {
+          appliedAliasConvergences: readRequiredInteger(record.appliedAliasConvergences, `${label}.appliedAliasConvergences`, filePath),
         }
       : {}),
     ...(record.proposalsEmitted !== undefined ? { proposalsEmitted: readRequiredInteger(record.proposalsEmitted, `${label}.proposalsEmitted`, filePath) } : {}),

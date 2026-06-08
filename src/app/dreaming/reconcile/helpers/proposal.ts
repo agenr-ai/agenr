@@ -2,11 +2,13 @@ import { randomUUID } from "node:crypto";
 
 import { describeClaimKeyNormalizationFailure } from "../../../../core/claim-key.js";
 import type { ClaimKeyInspection } from "../../../../core/claim-key.js";
+import type { ClaimKeyAliasCandidate } from "../../../../core/claim-key-alias.js";
 import type { ClaimKeyEntityFamilyCandidate } from "../../../../core/claim-key-entity-family.js";
 import type { DreamRunProposal } from "../../../../core/dreaming/types.js";
 import type { Durable } from "../../../../core/types.js";
 import type { PersistReconcileProposalInput, ProposalAuditInput } from "../types/mutation-types.js";
 import type { DurableSuggestionRecord, EntityFamilyConvergenceAudit, TrustedGroupReuseCandidate } from "../types.js";
+import type { ClaimKeyAliasConvergenceAudit } from "../types.js";
 import type { MissingBackfillResolvedPreview } from "./missing-backfill.js";
 import { normalizeStringArray } from "./utils.js";
 
@@ -175,6 +177,47 @@ export function buildEntityFamilyPersistInput(
     audit: {
       entityFamilyAudit: input.audit,
       ...input.auditExtras,
+    },
+  };
+}
+
+/**
+ * Builds shared reconcile proposal input for one same-entity claim-key alias cluster.
+ *
+ * @param candidate - Detected same-entity alias candidate.
+ * @param input - Proposal fields and audit metadata.
+ * @returns Proposal payload for `persistReconcileProposal`.
+ */
+export function buildClaimKeyAliasPersistInput(
+  candidate: ClaimKeyAliasCandidate,
+  input: {
+    audit: ClaimKeyAliasConvergenceAudit;
+    proposedClaimKeys: string[];
+    durableIds: string[];
+    rationale: string;
+    source: string;
+    eligibleForApply: boolean;
+    autoApplyBlocker?: string | null;
+  },
+): PersistReconcileProposalInput {
+  return {
+    groupId: `claim-key-alias:${candidate.claimKeys.join(",")}`,
+    issueKind: "claim_key_alias_convergence",
+    scope: "cluster",
+    durableIds: input.durableIds,
+    currentClaimKeys: candidate.claimKeys,
+    proposedClaimKeys: input.proposedClaimKeys,
+    rationale: input.rationale,
+    confidence: candidate.confidence,
+    source: input.source,
+    eligibleForApply: input.eligibleForApply,
+    lifecycle: {
+      proposedClaimKeys: input.proposedClaimKeys,
+      source: input.source,
+    },
+    audit: {
+      aliasConvergenceAudit: input.audit,
+      ...(input.autoApplyBlocker ? { autoApplyBlocker: input.autoApplyBlocker } : {}),
     },
   };
 }

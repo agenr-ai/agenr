@@ -62,7 +62,7 @@ Supported tiers:
 
 - `light` - bounded background tier used by session-end and accumulated-importance triggers. It runs scan, extract, temporalize, and project, but skips reconcile and prune. Extract reads at most two episode sessions per run by default, and skipped stages are recorded in `stages_skipped`.
 - `standard` - default operator tier. It runs the incremental pipeline since the last successful run, including prune.
-- `deep` - operator full-backlog tier. It rereads all episode and durable evidence and still relies on content hashes, claim-key context lookup, and supersession to avoid duplicate writes. Use it for weekly maintenance or after large corpus imports.
+- `deep` - operator full-backlog tier. It rereads all episode and durable evidence, audits same-entity claim-key aliases across the active corpus, and still relies on content hashes, claim-key context lookup, and supersession to avoid duplicate writes. Use it for weekly maintenance or after large corpus imports.
 
 ### Deep tier scheduling
 
@@ -141,13 +141,27 @@ These tables ship alongside `durables` during database initialization. Older per
    - everything else is `new` and is inserted on apply with a `dreaming_extract` claim-key source and `tentative` status when a claim key is emitted;
    - apply persists episode provenance on each insert: `source_file` (`episode:<id>` or `episode-session:<sessionId>:<id>`), `source_context`, `valid_from` (episode end or start), conservative `project` scope via `resolveDurableProjectScope()` (explicit extract output, claim-key entity match, or visible workspace reference - never a blind session-workspace stamp), and episode support metadata even when claim keys are still missing.
    - when the host already wrote `agenr_store` durables in that session window, passes those rows into the mining prompt and classifies re-emitted duplicates as `known` using session claim keys and normalized content hashes. Episode mining still runs so implicit preferences and other facts not captured live can be mined normally.
-3. **Reconcile** - run deterministic claim-key quality maintenance (missing-key backfill, malformed-key normalization, and related structural fixes covered by scenario fixtures).
+3. **Reconcile** - run deterministic claim-key quality maintenance (missing-key backfill, malformed-key normalization, entity-family convergence, same-entity alias convergence on `deep`, and related structural fixes covered by scenario fixtures).
 4. **Temporalize** - apply supersession-based revision to each `refines` candidate. The stage never rewrites content in place: it inserts a successor durable that inherits the predecessor's canonical claim key, closes the predecessor's valid-time window at the revision instant, and links the predecessor to the successor through `superseded_by`. Point-in-time recall before the revision still surfaces the predecessor; current-state recall surfaces the successor.
 5. **Project** - rank current active durables into a bounded profile snapshot candidate and keep directive ids separate. Dry runs and project-scoped runs report the projected bundle without writing or globally activating it. Successful unscoped apply runs insert a `profile_snapshots` row and mark it active in `dream_state` in the final workflow transaction.
 6. **Prune** - on `standard` and `deep`, close validity on only active low-signal candidates after applying protections for current and projected profile ids, directives, `core` expiry, high importance, and recent recall. The stage is deterministic and writes `stale` actions only for actual apply mutations.
 7. **Apply** - when `--apply` is set, persist accepted extract inserts, reconcile mutations, temporalize revisions, prune staleness closes, and successful unscoped profile projection; otherwise emit a dry-run summary only.
 
 The extract and temporalize stages call models only through injected factories, so deterministic-only runs (no mining LLM) skip extract and temporalize without error. Both stages respect the daily cost cap shared across the run.
+
+### Deep claim-key alias audit
+
+Deep reconcile includes a full active-corpus audit for same-entity claim-key aliases. It groups active canonical keys by entity prefix, compares attribute words and stable heads, subject and content overlap, tags, durable type, project, source context, and lifecycle trust, then proposes clusters where keys likely represent one durable slot. For example, `agenr/quality_score_default` and `agenr/quality_score_heuristic` can be flagged as one `agenr` quality-score slot when the affected durables and provenance align.
+
+This audit is intentionally narrower than entity-family convergence:
+
+- It never emits cross-entity aliases; entity-family convergence owns that case.
+- It converges claim-key metadata only. It does not merge durable content rows or supersede duplicates.
+- It runs only during `deep` reconcile over the active working set. `standard` and `light` behavior is unchanged.
+- When the existing claim-extraction LLM factory is available and claim extraction is enabled, deterministic alias candidates are adjudicated with bounded JSON output: `same_slot`, `canonical_claim_key`, `confidence`, and `rationale`.
+- Without an LLM, the audit can emit deterministic proposals but does not auto-apply alias clusters.
+
+Auto-apply is conservative. A deep `--apply` run rewrites alias keys only when deterministic confidence is at least `0.9`, the LLM says `same_slot: true` with confidence at least `0.9`, the LLM canonical key matches the deterministic target, all durables are active and same type, no cross-type target collision exists, and the cluster does not involve multiple trusted or manual canonical keys. Anything ambiguous, conflicting, cost-capped, or not LLM-confirmed remains a proposal for operator review.
 
 Every completion summary includes a compute-efficiency block used by eval scoreboard runs:
 

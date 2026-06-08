@@ -128,7 +128,7 @@ GET    /api/web/dream/jobs/:jobId/stream   (SSE)
 Proposals:
 
 ```txt
-GET    /api/web/proposals
+GET    /api/web/proposals?issueKind=claim_key_alias_convergence
 GET    /api/web/proposals/:id
 POST   /api/web/proposals/:id/review
 ```
@@ -164,6 +164,7 @@ Request bodies and query strings are validated in `src/adapters/web/validation/r
 
 - store and supersede bodies normalize into the shared `StoreDurableInput` shape; unknown keys are rejected
 - metadata updates accept only `importance`, `expiry`, `claimKey`, `validFrom`, `validTo`, and `project`, and require at least one field
+- proposal backlog queries accept optional `issueKind` so operators can filter to one dreaming issue class
 - proposal review requires a known decision (`apply` or `reject`) and a non-empty reason
 - dreaming start requires a known tier and an optional boolean `apply`
 - malformed values produce a `400` with field-level issues
@@ -176,12 +177,13 @@ UI-initiated runs are coordinated in-process by `DreamingRunCoordinator`.
 - The job's progress events are buffered and streamed over `GET /api/web/dream/jobs/:jobId/stream`. The stream replays buffered events on subscribe, then ends once the job reaches a terminal status (`completed`, `failed`, or `aborted`), including the case where the job finished before the client connected.
 - `POST /api/web/dream/jobs/:jobId/cancel` requests cancellation of an in-flight run via abort signal.
 - Run history and details are reload-safe because they come from persisted run and action data, not from the in-process job window.
+- Deep claim-key alias convergence progress is labeled as `Claim-key alias convergence`, and run action details render its structured audit fields as target key, current keys, affected durables, deterministic confidence, and LLM rationale when present.
 
 ## SPA pages
 
 - Ops Cockpit: composite corpus-health score, key metric tiles, claim-key lifecycle and recency distributions, proposal backlog and profile rollups, and recent run history with surfaced failures.
-- Dreaming Runs: launch light/standard/deep runs in dry-run or apply mode, watch a live progress feed, and inspect persisted run details, actions, and proposals.
-- Proposal Review: filterable backlog, a detail drawer with affected durables and current/proposed claim keys, apply/reject with a required reason, and manual settlement choices for ambiguous mixed-key groups.
+- Dreaming Runs: launch light/standard/deep runs in dry-run or apply mode, watch a live progress feed, and inspect persisted run details, actions, and proposals. Alias-convergence actions render as structured audit summaries instead of raw JSON.
+- Proposal Review: filterable backlog including issue-kind filtering, a detail drawer with affected durables and current/proposed claim keys, apply/reject with a required reason, and manual settlement choices for ambiguous mixed-key groups. Claim-key alias convergence proposals show the current key cluster, target key, and whether apply is blocked because the cluster is ambiguous, conflicting, or not LLM-confirmed.
 - Memory Explorer: durable, episode, and procedure browsing with filters and pagination, a durable trace drawer, and lifecycle actions (store, supersede, update metadata, retire).
 - Procedure Editor: a YAML editor with debounced validation, a dirty-worktree banner, and save-and-sync that reports created/updated/unchanged results.
 - Instance Settings: register, select, and remove instances, with resolution diagnostics and a loopback-only security reminder.

@@ -214,6 +214,7 @@ export function parseProposalBacklogQuery(params: URLSearchParams): WebProposalB
     ...readIntParam(params, "limit", issues, (value) => ({ limit: value })),
     ...readNumberParam(params, "minConfidence", issues, (value) => ({ minConfidence: value })),
     ...readStringParam(params, "createdSince", (value) => ({ createdSince: value })),
+    ...readStringParam(params, "issueKind", (value) => ({ issueKind: value })),
     ...(includeIneligible === "true" ? {} : { eligibleOnly: true }),
   };
   throwIfIssues(issues);

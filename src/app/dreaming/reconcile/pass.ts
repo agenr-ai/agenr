@@ -4,6 +4,7 @@ import { emitDreamProgress, type ReconcileProgressStage } from "../progress.js";
 import { buildClaimKeyHealthSnapshot } from "./health.js";
 import { cloneClaimKeyInspectionTally } from "./helpers/claim-key-health-tally.js";
 import { processEntityFamilyConvergenceCandidate } from "./handlers/entity-family.js";
+import { detectDeepClaimKeyAliasCandidates, processClaimKeyAliasConvergenceCandidate } from "./handlers/claim-key-alias.js";
 import { processInvalidOrNoncanonicalDurable } from "./handlers/invalid-durable.js";
 import { processMissingDurable } from "./handlers/missing-durable.js";
 import { processMixedKeyGroup } from "./handlers/mixed-group.js";
@@ -159,14 +160,26 @@ function buildReconcileStageRunners(partitions: ReconcileDurablePartitions): Rec
         process: processEntityFamilyConvergenceCandidate,
         afterItem: (passCtx, candidate) => {
           for (const claimKey of candidate.claimKeys) {
-            passCtx.workingSet.handledEntityFamilyClaimKeys.add(claimKey);
+            passCtx.workingSet.handledConvergenceClaimKeys.add(claimKey);
+          }
+        },
+      }),
+    (ctx) =>
+      runReconcileStage(ctx, {
+        stage: "claim_key_alias_convergence",
+        items: detectDeepClaimKeyAliasCandidates(ctx),
+        unitLabel: "groups",
+        process: processClaimKeyAliasConvergenceCandidate,
+        afterItem: (passCtx, candidate) => {
+          for (const claimKey of candidate.claimKeys) {
+            passCtx.workingSet.handledConvergenceClaimKeys.add(claimKey);
           }
         },
       }),
     (ctx) =>
       runReconcileStage(ctx, {
         stage: "mixed_key_groups",
-        items: findMixedKeyGroups(ctx.workingSet.projectedDurables, ctx.workingSet.handledEntityFamilyClaimKeys),
+        items: findMixedKeyGroups(ctx.workingSet.projectedDurables, ctx.workingSet.handledConvergenceClaimKeys),
         unitLabel: "groups",
         process: processMixedKeyGroup,
       }),
