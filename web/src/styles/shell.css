@@ -476,15 +476,20 @@
 }
 
 .log__line {
-  display: flex;
+  display: grid;
+  grid-template-columns: 82px 100px minmax(0, 1fr);
   gap: var(--space-3);
   animation: fade-in var(--dur) var(--ease);
 }
 
+.log__time {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
 .log__stage {
   color: var(--accent-bright);
-  flex: none;
-  min-width: 90px;
+  min-width: 0;
 }
 
 .log__msg {

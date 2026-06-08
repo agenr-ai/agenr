@@ -369,9 +369,18 @@
   background: var(--neutral);
   position: relative;
 }
+.dot::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: inherit;
+  opacity: 0;
+  pointer-events: none;
+}
 .dot--success {
   background: var(--success);
   --pulse-color: var(--success-soft);
+  --pulse-ring-color: rgba(52, 211, 153, 0.58);
 }
 .dot--warning {
   background: var(--warning);
@@ -386,8 +395,10 @@
 .dot--accent {
   background: var(--accent);
   --pulse-color: var(--accent-glow);
+  --pulse-ring-color: var(--accent-glow);
 }
-.dot--pulse {
+.dot--pulse::after {
+  border: 1px solid var(--pulse-ring-color, var(--pulse-color, var(--accent-glow)));
   animation: pulse-ring 1.8s var(--ease-out) infinite;
 }
 

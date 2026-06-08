@@ -212,6 +212,7 @@ function LiveRun({ job, onFinished }: { job: DreamJobSnapshot; onFinished: () =>
 
   const status = stream.status ?? job.status;
   const isRunning = status === "running" && !stream.finished;
+  const liveDotStatus = isRunning ? "success" : jobStatusVariant(status);
 
   const cancel = async (): Promise<void> => {
     setCancelling(true);
@@ -229,7 +230,7 @@ function LiveRun({ job, onFinished }: { job: DreamJobSnapshot; onFinished: () =>
       <CardHeader
         title={
           <span className="row" style={{ gap: "var(--space-2)" }}>
-            <StatusDot status={jobStatusVariant(status)} pulse={isRunning} />
+            <StatusDot status={liveDotStatus} pulse={isRunning} />
             Live run · {titleCase(job.tier)} {job.apply ? "apply" : "dry-run"}
           </span>
         }
@@ -256,6 +257,7 @@ function LiveRun({ job, onFinished }: { job: DreamJobSnapshot; onFinished: () =>
                 const line = describeEvent(event);
                 return (
                   <div className="log__line" key={event.seq}>
+                    <span className="log__time">{formatLogTime(event.at)}</span>
                     <span className="log__stage">{line.stage}</span>
                     <span className="log__msg">{line.message}</span>
                   </div>
@@ -267,6 +269,15 @@ function LiveRun({ job, onFinished }: { job: DreamJobSnapshot; onFinished: () =>
       </CardBody>
     </Card>
   );
+}
+
+/** Formats a live progress timestamp for the log gutter. */
+function formatLogTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "--:--:--";
+  }
+  return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 /** Drawer showing a persisted run's actions and proposals. */
