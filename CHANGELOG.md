@@ -22,6 +22,7 @@ Web console, dreaming alias audit, and proposal review hardening release.
 
 - **Dreaming duplicate handling** now reduces duplicate claim-key extraction and duplicate insert-durable actions during reconcile passes.
 - **Web console quality review issues** fixed durable metadata drawer layout, proposal review layout, dreaming diagnostics structure, and follow-up quality concerns.
+- **Web console build imports** now resolve nested dreaming review panel dependencies during package builds.
 - **Alias audit maintainability** now consolidates claim-key lexical overlap logic into shared core helpers.
 
 ### Validation

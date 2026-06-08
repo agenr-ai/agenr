@@ -1,14 +1,14 @@
 /** Operator-facing React panels for dream run action review and diagnostics. */
 
-import type { DreamRunActionView } from "../api/types.js";
+import type { DreamRunActionView } from "../../api/types";
 import { Button, Chip } from "../primitives.js";
 import {
   buildAliasReviewSummary,
   formatAliasAutoApplyBlocker,
   formatClaimKeyList,
   type AliasReviewSummaryView,
-} from "../lib/alias-audit.js";
-import { readStringArrayDetail } from "../lib/action-details.js";
+} from "../../lib/alias-audit";
+import { readStringArrayDetail } from "../../lib/action-details";
 import {
   buildReviewEvidenceLines,
   formatActionReasoning,
@@ -18,8 +18,8 @@ import {
   formatDetailValue,
   formatActionTypeLabel,
   hasActionDetails,
-} from "../lib/dream-action-format.js";
-import { formatPercent } from "../lib/format.js";
+} from "../../lib/dream-action-format";
+import { formatPercent } from "../../lib/format";
 
 export { formatActionTypeLabel, formatActionReasoning };
 
