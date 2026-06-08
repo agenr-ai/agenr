@@ -1,4 +1,5 @@
 import type { DreamRunAction } from "../../core/dreaming/domain/action-types.js";
+import type { DreamClaimKeyContextDurable } from "../../core/dreaming/claim-key-context.js";
 import type { DreamTier } from "../../core/dreaming/types.js";
 import type { DreamCompletionSummary, DreamProposalReviewStatus, DreamRunProposal, DreamRunStatus } from "../../core/dreaming/types.js";
 import type { LlmPort } from "../../core/ports.js";
@@ -202,6 +203,8 @@ export interface DreamPort {
   listSessionHostStoreDurables(sessionId: string, startedAt: string, endedAt: string): Promise<Durable[]>;
   /** Loads active durables that share one canonical claim key (context-lookup). */
   findActiveDurablesByClaimKey(claimKey: string): Promise<Durable[]>;
+  /** Loads bounded active keyed durables relevant to one dreaming extract episode. */
+  listActiveClaimKeyContext(query: { project?: string; entityPrefixes?: string[]; limit?: number }): Promise<DreamClaimKeyContextDurable[]>;
   /** Returns the subset of normalized content hashes that already exist among active durables. */
   findExistingNormContentHashes(hashes: string[]): Promise<Set<string>>;
   /** Inserts one new durable row written by the extract or temporalize stages. */

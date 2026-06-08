@@ -1,4 +1,5 @@
 import type { DreamSessionStoreDurable } from "./session-store-guard.js";
+import type { DreamClaimKeyContextDurable } from "./claim-key-context.js";
 import type { TranscriptChunk } from "../types.js";
 
 const GOOD_EPISODE_EXAMPLE = `{
@@ -102,6 +103,14 @@ export function buildDreamExtractSystemPrompt(options: { currentDate?: string } 
     "",
     "- Directive entries require `claim_key`, `directive_polarity`, and usually `directive_trigger`.",
     "",
+    "## Existing Claim-Key Context",
+    "",
+    "- The user prompt may list active corpus durables with existing `claim_key` values.",
+    "- Treat those rows as a bounded claim-key map for this episode, not as transcript evidence.",
+    "- If the summary is already covered by an existing row, omit it instead of paraphrasing it.",
+    "- If the summary adds a genuine update to an existing slot, reuse the exact listed `claim_key`.",
+    "- Prefer `refines`-style updates through exact key reuse over minting sibling keys for the same slot.",
+    "",
     "## Already Stored In Session",
     "",
     "- The user prompt may list durables already written live through `agenr_store` during this session.",
@@ -152,7 +161,11 @@ export function buildDreamExtractSystemPrompt(options: { currentDate?: string } 
  */
 export function buildDreamExtractChunkPrompt(
   chunk: TranscriptChunk,
-  options: { sessionWorkspace?: string | null; existingSessionDurables?: DreamSessionStoreDurable[] } = {},
+  options: {
+    sessionWorkspace?: string | null;
+    existingSessionDurables?: DreamSessionStoreDurable[];
+    existingClaimKeyContext?: DreamClaimKeyContextDurable[];
+  } = {},
 ): string {
   const sections = ["Episode summary to mine for durable knowledge:"];
 
@@ -178,7 +191,30 @@ export function buildDreamExtractChunkPrompt(
     );
   }
 
+  if (options.existingClaimKeyContext && options.existingClaimKeyContext.length > 0) {
+    sections.push(
+      "",
+      "Existing active claim-key context (reuse exact keys or skip covered facts):",
+      ...options.existingClaimKeyContext.map(
+        (durable) =>
+          `- [${durable.type}] ${durable.subject}: ${truncatePromptLine(durable.content, 180)} (claim_key: ${durable.claimKey}${durable.project ? `, project: ${durable.project}` : ""})`,
+      ),
+      "",
+      "Do not invent a nearby claim key when one of these keys already names the durable slot.",
+    );
+  }
+
   sections.push("---", chunk.text, "---", "", "Return JSON only. No markdown fences, no commentary, and no extra keys.");
 
   return sections.join("\n");
+}
+
+/** Keeps prompt context rows bounded even when existing durable content is long. */
+function truncatePromptLine(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
 }

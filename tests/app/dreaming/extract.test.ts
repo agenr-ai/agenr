@@ -24,6 +24,7 @@ interface MinedDurableResponse {
 class FakeExtractLlm implements LlmPort {
   public readonly metadata = { usage: { inputTokens: 0, outputTokens: 0, totalCost: 0 } };
   public calls = 0;
+  public userMessages: string[] = [];
 
   public constructor(
     private readonly durables: MinedDurableResponse[],
@@ -34,8 +35,9 @@ class FakeExtractLlm implements LlmPort {
     throw new Error("complete() is not used by the extract stage.");
   }
 
-  public async completeJson<T>(): Promise<T> {
+  public async completeJson<T>(_systemPrompt: string, userMessage: string): Promise<T> {
     this.calls += 1;
+    this.userMessages.push(userMessage);
     this.metadata.usage.inputTokens += 1;
     this.metadata.usage.totalCost += this.costPerCall;
     return { durables: this.durables } as T;
@@ -210,6 +212,127 @@ describe("dreaming extract stage", () => {
 
     expect(result.candidates).toHaveLength(1);
     expect(result.candidates[0]?.disposition).toBe("new");
+    expect(llm.userMessages[0]).not.toContain("Existing active claim-key context");
+  });
+
+  it("shows relevant active claim-key context in the extraction prompt", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+
+    await insertDurable(client, {
+      id: "quality-default",
+      subject: "quality score default",
+      content: "Agenr uses 0.5 as the default durable quality score when no stronger signal exists.",
+      type: "fact",
+      claim_key: "agenr/quality_score_default",
+      claim_key_status: "trusted",
+      claim_key_source: "manual",
+      project: "agenr",
+      created_at: "2026-04-01T10:00:00.000Z",
+      updated_at: "2026-04-01T10:00:00.000Z",
+    });
+    await insertDurable(client, {
+      id: "skeln-unrelated",
+      subject: "skeln naming",
+      content: "Skeln docs should keep Skeln-native naming.",
+      type: "decision",
+      claim_key: "skeln/naming_policy",
+      claim_key_status: "trusted",
+      project: "skeln",
+    });
+    await insertEpisode(client, {
+      id: "ep-quality-context",
+      summary: "The session discussed Agenr quality score defaults.",
+      project: "agenr",
+    });
+
+    const llm = new FakeExtractLlm([]);
+
+    await runExtractStage({ now: () => TEST_NOW, maxEpisodes: 8, contextLookupEnabled: true, costCapUsd: 10 }, { port, createExtractLlm: () => llm });
+
+    expect(llm.userMessages[0]).toContain("Existing active claim-key context");
+    expect(llm.userMessages[0]).toContain("agenr/quality_score_default");
+    expect(llm.userMessages[0]).not.toContain("skeln/naming_policy");
+  });
+
+  it("classifies same-entity claim-key siblings as refines instead of new", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+
+    await insertDurable(client, {
+      id: "quality-default",
+      subject: "quality score default",
+      content: "Agenr uses 0.5 as the default durable quality score when no stronger signal exists.",
+      type: "fact",
+      claim_key: "agenr/quality_score_default",
+      claim_key_status: "trusted",
+      claim_key_source: "manual",
+      project: "agenr",
+    });
+    await insertEpisode(client, {
+      id: "ep-quality-sibling",
+      summary: "The session restated Agenr quality score defaults with slightly different wording.",
+      project: "agenr",
+    });
+
+    const llm = new FakeExtractLlm([
+      {
+        type: "fact",
+        subject: "quality score heuristic",
+        content: "Agenr defaults durable quality scores to 0.5 when no stronger quality signal exists.",
+        claim_key: "agenr/quality_score_heuristic",
+        project: "agenr",
+      },
+    ]);
+
+    const result = await runExtractStage(
+      { now: () => TEST_NOW, maxEpisodes: 8, contextLookupEnabled: true, costCapUsd: 10 },
+      { port, createExtractLlm: () => llm },
+    );
+
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]?.disposition).toBe("refines");
+    expect(result.candidates[0]?.refinesDurableId).toBe("quality-default");
+    expect(result.summary.refineCandidates).toBe(1);
+    expect(result.summary.newCandidates).toBe(0);
+  });
+
+  it("uses project claim-key context to catch no-key near duplicates", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+
+    await insertDurable(client, {
+      id: "quality-default",
+      subject: "quality score default",
+      content: "Agenr uses 0.5 as the default durable quality score when no stronger signal exists.",
+      type: "fact",
+      claim_key: "agenr/quality_score_default",
+      claim_key_status: "trusted",
+      project: "agenr",
+    });
+    await insertEpisode(client, {
+      id: "ep-quality-no-key",
+      summary: "The session repeated the default durable quality score rule for Agenr.",
+      project: "agenr",
+    });
+
+    const llm = new FakeExtractLlm([
+      {
+        type: "fact",
+        subject: "quality score default",
+        content: "Agenr defaults durable quality scores to 0.5 when no stronger quality signal exists.",
+        project: "agenr",
+      },
+    ]);
+
+    const result = await runExtractStage(
+      { now: () => TEST_NOW, maxEpisodes: 8, contextLookupEnabled: true, costCapUsd: 10 },
+      { port, createExtractLlm: () => llm },
+    );
+
+    expect(result.candidates[0]?.claimKey).toBeNull();
+    expect(result.candidates[0]?.disposition).toBe("refines");
+    expect(result.candidates[0]?.refinesDurableId).toBe("quality-default");
   });
 
   it("inserts only new candidates and records insert actions", async () => {

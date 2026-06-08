@@ -1,4 +1,5 @@
 import type { Durable } from "../../core/types.js";
+import type { DreamClaimKeyContextDurable } from "../../core/dreaming/claim-key-context.js";
 import type { DreamEpisodeEvidence, DreamHealthStats } from "../../app/dreaming/ports.js";
 import {
   buildActiveDurableClause,
@@ -300,6 +301,94 @@ export async function listSessionHostStoreDurables(executor: SqlExecutor, sessio
   });
 
   return result.rows.map((row) => mapDurableRow(row));
+}
+
+/**
+ * Lists active keyed durables relevant to one dreaming extract episode.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param query - Optional project and claim-key entity-prefix filters.
+ * @returns Bounded active durables ordered for prompt usefulness.
+ */
+export async function listActiveClaimKeyContext(
+  executor: SqlExecutor,
+  query: { project?: string; entityPrefixes?: string[]; limit?: number },
+): Promise<DreamClaimKeyContextDurable[]> {
+  const project = normalizeOptionalString(query.project);
+  const entityPrefixes = normalizeStringArray(query.entityPrefixes ?? []);
+  const limit = Number.isFinite(query.limit) && (query.limit ?? 0) > 0 ? Math.floor(query.limit!) : 24;
+  const whereClauses = [`e.claim_key IS NOT NULL`, `instr(e.claim_key, '/') > 1`, buildActiveDurableClause("e")];
+  const relevanceClauses: string[] = [];
+  const relevanceArgs: Array<string | number> = [];
+
+  if (project) {
+    relevanceClauses.push("e.project = ?");
+    relevanceArgs.push(project);
+  }
+
+  if (entityPrefixes.length > 0) {
+    const placeholders = entityPrefixes.map(() => "?").join(", ");
+    relevanceClauses.push(`lower(trim(substr(e.claim_key, 1, instr(e.claim_key, '/') - 1))) IN (${placeholders})`);
+    relevanceArgs.push(...entityPrefixes);
+  }
+
+  if (relevanceClauses.length > 0) {
+    whereClauses.push(`(${relevanceClauses.join(" OR ")})`);
+  }
+
+  const orderArgs: Array<string | number> = [];
+  const projectRank = project ? "CASE WHEN e.project = ? THEN 0 ELSE 1 END" : "1";
+  if (project) {
+    orderArgs.push(project);
+  }
+
+  const entityRank =
+    entityPrefixes.length > 0
+      ? `CASE WHEN lower(trim(substr(e.claim_key, 1, instr(e.claim_key, '/') - 1))) IN (${entityPrefixes.map(() => "?").join(", ")}) THEN 0 ELSE 1 END`
+      : "1";
+  orderArgs.push(...entityPrefixes);
+
+  const result = await executor.execute({
+    sql: `
+      SELECT
+        e.id,
+        e.type,
+        e.subject,
+        e.content,
+        e.claim_key,
+        e.project
+      FROM durables AS e
+      WHERE ${whereClauses.join("\n        AND ")}
+      ORDER BY
+        ${projectRank} ASC,
+        ${entityRank} ASC,
+        CASE WHEN e.claim_key_source IN ('dreaming_extract', 'dreaming_temporalize', 'dreaming_reconcile') THEN 0 ELSE 1 END ASC,
+        e.importance DESC,
+        e.created_at DESC,
+        e.claim_key ASC,
+        e.id ASC
+      LIMIT ?
+    `,
+    args: [...relevanceArgs, ...orderArgs, limit],
+  });
+
+  return result.rows.flatMap((row) => {
+    const claimKey = readOptionalString(row, "claim_key")?.trim();
+    if (!claimKey) {
+      return [];
+    }
+
+    return [
+      {
+        id: readRequiredString(row, "id"),
+        type: readRequiredString(row, "type") as DreamClaimKeyContextDurable["type"],
+        subject: readRequiredString(row, "subject"),
+        content: readRequiredString(row, "content"),
+        claimKey,
+        ...(readOptionalString(row, "project") ? { project: readOptionalString(row, "project") } : {}),
+      },
+    ];
+  });
 }
 
 /**

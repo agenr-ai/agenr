@@ -111,7 +111,7 @@ Typical fields:
 - `tiers.light.enabled`, `tiers.standard.enabled`, `tiers.deep.enabled`, `tiers.deep.intervalHours` - tier availability and operator cadence hints
 - `stages.extract.maxSessionsPerRun` - maximum episode summaries mined per run
 - `stages.extract.lightMaxSessionsPerRun` - optional lower episode-session cap for `light` runs (defaults to 2)
-- `stages.extract.contextLookup.enabled` - whether extract checks existing claim-key families before emitting a new durable
+- `stages.extract.contextLookup.enabled` - whether extract shows bounded active claim-key context and checks existing claim-key families before emitting a new durable
 - `stages.project.maxProfileDurables` - bounded profile durable count for session-start injection
 - `stages.prune.protectRecalledDays` and `stages.prune.protectMinImportance` - prune protection thresholds
 - `triggers.postSessionLightDream` - enable session-end `light` runs after host episode writes
@@ -134,9 +134,10 @@ These tables ship alongside `durables` during database initialization. Older per
 ## Pipeline
 
 1. **Scan** - load active durables and claim-key lifecycle counters for the requested scope.
-2. **Extract** - mine durable candidates from episode evidence since the last successful run using the dreaming-specific extract prompt in `src/core/dreaming/prompts.ts` (not the ingest transcript prompt), then classify each candidate against the active corpus:
+2. **Extract** - mine durable candidates from episode evidence since the last successful run using the dreaming-specific extract prompt in `src/core/dreaming/prompts.ts` (not the ingest transcript prompt). When context lookup is enabled, the prompt includes bounded active claim-key context selected from the episode project and likely claim-key entity prefixes so the model can skip covered facts or reuse exact keys. The stage then classifies each candidate against the active corpus:
    - content-hash equality marks a candidate `known` (dropped, no write or embedding);
-   - an active claim-key family match (when context-lookup is enabled) marks it `refines` and records the predecessor for the temporalize stage;
+   - an active exact claim-key family match (when context-lookup is enabled) marks it `refines` and records the predecessor for the temporalize stage;
+   - a conservative same-entity claim-key sibling or project-scoped text overlap also marks a near miss as `refines`, which is especially important for `light` runs that skip reconcile;
    - everything else is `new` and is inserted on apply with a `dreaming_extract` claim-key source and `tentative` status when a claim key is emitted;
    - apply persists episode provenance on each insert: `source_file` (`episode:<id>` or `episode-session:<sessionId>:<id>`), `source_context`, `valid_from` (episode end or start), conservative `project` scope via `resolveDurableProjectScope()` (explicit extract output, claim-key entity match, or visible workspace reference - never a blind session-workspace stamp), and episode support metadata even when claim keys are still missing.
    - when the host already wrote `agenr_store` durables in that session window, passes those rows into the mining prompt and classifies re-emitted duplicates as `known` using session claim keys and normalized content hashes. Episode mining still runs so implicit preferences and other facts not captured live can be mined normally.
@@ -267,11 +268,11 @@ WS1 mirrors the in-repo injection and pipeline fixtures into `agenr-evals` cases
 Operator sequence:
 
 ```bash
-# terminal 1 — agenr eval server
+# terminal 1 - agenr eval server
 cd /path/to/agenr
 pnpm internal:eval-server
 
-# terminal 2 — run all arms and emit the markdown scoreboard
+# terminal 2 - run all arms and emit the markdown scoreboard
 cd /path/to/agenr-evals
 npm run run-ablation dreaming
 ```

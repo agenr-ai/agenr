@@ -44,6 +44,7 @@ describe("buildDreamExtractChunkPrompt", () => {
     const prompt = buildDreamExtractChunkPrompt(chunk, {
       existingSessionDurables: [
         {
+          id: "quality-default",
           type: "fact",
           subject: "user birthday",
           content: "Jim's birthday is March 15.",
@@ -56,6 +57,31 @@ describe("buildDreamExtractChunkPrompt", () => {
     expect(prompt).toContain("Already stored live during this session");
     expect(prompt).toContain("user/birthday");
     expect(prompt).toContain("Emit only durable knowledge");
+  });
+
+  it("lists existing active claim-key context so mining can reuse keys", () => {
+    const chunk: TranscriptChunk = {
+      chunk_index: 0,
+      message_range: [0, 0],
+      text: "The summary mentions Agenr quality score defaults in new wording.",
+    };
+
+    const prompt = buildDreamExtractChunkPrompt(chunk, {
+      existingClaimKeyContext: [
+        {
+          type: "fact",
+          subject: "quality score default",
+          content: "Agenr uses 0.5 as the default durable quality score when no stronger signal exists.",
+          claimKey: "agenr/quality_score_default",
+          project: "agenr",
+        },
+      ],
+    });
+
+    expect(prompt).toContain("Existing active claim-key context");
+    expect(prompt).toContain("agenr/quality_score_default");
+    expect(prompt).toContain("reuse exact keys");
+    expect(prompt).toContain("project: agenr");
   });
 
   it("includes session workspace as a hint without defaulting every entry", () => {

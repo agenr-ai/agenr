@@ -3,6 +3,7 @@ import { parseExtractionResponse } from "../ingestion/parser.js";
 import type { ExtractionResult } from "../ingestion/extract.js";
 import type { ParsedTranscript, TranscriptChunk } from "../types.js";
 import type { DreamSessionStoreDurable } from "./session-store-guard.js";
+import type { DreamClaimKeyContextDurable } from "./claim-key-context.js";
 import { buildDreamExtractChunkPrompt, buildDreamExtractSystemPrompt } from "./prompts.js";
 
 const MAX_ATTEMPTS = 3;
@@ -13,6 +14,8 @@ export interface DreamEpisodeExtractOptions {
   sessionWorkspace?: string | null;
   /** Host-store durables already written during this session window. */
   existingSessionDurables?: DreamSessionStoreDurable[];
+  /** Active corpus claim-key rows relevant to this episode. */
+  existingClaimKeyContext?: DreamClaimKeyContextDurable[];
 }
 
 /**
@@ -53,6 +56,7 @@ export async function extractFromEpisodeSummary(
         buildDreamExtractChunkPrompt(chunk, {
           sessionWorkspace: options.sessionWorkspace ?? transcript.metadata.project,
           existingSessionDurables: options.existingSessionDurables,
+          existingClaimKeyContext: options.existingClaimKeyContext,
         }),
       );
       const parsed = parseExtractionResponse(raw);
