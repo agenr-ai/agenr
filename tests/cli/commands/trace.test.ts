@@ -41,7 +41,7 @@ describe("registerTraceCommand", () => {
     expect(stdout.join("")).toContain("[lineage]");
     expect(stdout.join("")).toContain("claim_family=jim/home_city");
     expect(stdout.join("")).toContain("[timeline]");
-    expect(stdout.join("")).toContain("Dream stale");
+    expect(stdout.join("")).toContain("Dreaming marked stale");
   });
 
   it("renders structured JSON trace output when requested", async () => {
@@ -178,7 +178,7 @@ function createTrace() {
       {
         at: "2026-03-21T00:00:00.000Z",
         kind: "dream",
-        label: "Dream stale",
+        label: "Dreaming marked stale",
         runId: "run-1",
         actionType: "stale",
       },

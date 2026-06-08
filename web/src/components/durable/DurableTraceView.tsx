@@ -1,5 +1,5 @@
 import type { Durable, DurableTrace } from "../../api/types";
-import { formatDateTime, formatRelative, titleCase } from "../../lib/format";
+import { formatDateTime, formatDateTimeSeconds, formatRelative, titleCase } from "../../lib/format";
 import { claimStatusVariant, durableState, durableStateVariant } from "../../lib/status";
 import { Badge, Chip, KeyValue, Tabs } from "../primitives";
 import { DurableRetireAction } from "./DurableRetireAction";
@@ -102,7 +102,10 @@ export function DurableTraceView({
                   <div className="stack" style={{ gap: 2 }}>
                     <div className="spread">
                       <strong style={{ fontSize: "var(--text-sm)" }}>{event.label}</strong>
-                      <span className="tl-time" title={formatDateTime(event.at)}>{formatRelative(event.at)}</span>
+                      <span className="tl-time" title={event.at}>
+                        <span className="tl-time__exact">{formatDateTimeSeconds(event.at)}</span>
+                        <span className="tl-time__relative">{formatRelative(event.at)}</span>
+                      </span>
                     </div>
                     {event.detail ? <span className="muted" style={{ fontSize: "var(--text-xs)" }}>{event.detail}</span> : null}
                   </div>

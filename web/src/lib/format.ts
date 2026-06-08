@@ -63,6 +63,30 @@ export function formatDateTime(iso: string | null | undefined): string {
 }
 
 /**
+ * Formats an ISO timestamp as a readable local date-time including seconds.
+ *
+ * @param iso - ISO timestamp string, or null.
+ * @returns Localized date-time with seconds, or an em-dash placeholder.
+ */
+export function formatDateTimeSeconds(iso: string | null | undefined): string {
+  if (!iso) {
+    return "-";
+  }
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+/**
  * Formats an ISO timestamp as local date-time with compact relative context.
  *
  * @param iso - ISO timestamp string, or null.

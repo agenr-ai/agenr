@@ -15,7 +15,7 @@ describe("renderDurableTrace", () => {
     expect(output).toContain("claim_family=jim/dog");
     expect(output).toContain("[recall] total=3 showing=1");
     expect(output).toContain("[timeline]");
-    expect(output).toContain("Dream stale");
+    expect(output).toContain("Dreaming marked stale");
   });
 
   it("renders structured JSON with audit fields", () => {
@@ -101,7 +101,7 @@ function createTrace(): DurableTrace {
       {
         at: "2026-06-06T03:30:00.000Z",
         kind: "dream",
-        label: "Dream stale",
+        label: "Dreaming marked stale",
         runId: "run-1",
         actionType: "stale",
       },

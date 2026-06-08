@@ -34,14 +34,16 @@ export function buildDurableTraceTimeline(input: {
   recallEvents: DurableRecallEvent[];
   profileSnapshots: DurableTraceProfileSnapshot[];
 }): DurableTraceTimelineEvent[] {
-  const events: DurableTraceTimelineEvent[] = [
-    {
+  const events: DurableTraceTimelineEvent[] = [];
+
+  if (!isDreamCreatedDurable(input.durable, input.dreamActions)) {
+    events.push({
       at: input.durable.created_at,
       kind: "created",
       label: "Durable created",
       detail: formatProvenanceDetail(input.durable),
-    },
-  ];
+    });
+  }
 
   const createdMs = Date.parse(input.durable.created_at);
   const updatedMs = Date.parse(input.durable.updated_at);
@@ -49,7 +51,7 @@ export function buildDurableTraceTimeline(input: {
     events.push({
       at: input.durable.updated_at,
       kind: "updated",
-      label: "Durable updated",
+      label: input.durable.superseded_by ? "Marked superseded" : "Durable updated",
       detail: formatUpdateDetail(input.durable),
     });
   }
@@ -58,8 +60,8 @@ export function buildDurableTraceTimeline(input: {
     events.push({
       at: action.createdAt,
       kind: "dream",
-      label: `Dream ${action.actionType}`,
-      detail: action.reasoning,
+      label: formatDreamActionLabel(action.actionType),
+      detail: formatDreamActionDetail(action),
       runId: action.runId,
       actionType: action.actionType,
     });
@@ -69,7 +71,7 @@ export function buildDurableTraceTimeline(input: {
     events.push({
       at: snapshot.createdAt,
       kind: "profile",
-      label: snapshot.role === "directive" ? "Included in directive profile snapshot" : "Included in profile snapshot",
+      label: snapshot.role === "directive" ? "Selected for directive startup profile" : "Selected for startup memory profile",
       detail: `snapshot=${snapshot.id}`,
       runId: snapshot.runId ?? undefined,
     });
@@ -85,6 +87,95 @@ export function buildDurableTraceTimeline(input: {
   }
 
   return events.sort(compareTimelineEvents);
+}
+
+/** Returns whether a Dreaming audit action is already the durable creation event. */
+function isDreamCreatedDurable(durable: Durable, dreamActions: DurableTraceDreamAction[]): boolean {
+  return dreamActions.some((action) => {
+    if (action.actionType !== "insert_durable" && action.actionType !== "supersede_durable") {
+      return false;
+    }
+    return action.createdAt === durable.created_at;
+  });
+}
+
+/** Formats a Dreaming audit action into an operator-facing timeline label. */
+function formatDreamActionLabel(actionType: string): string {
+  switch (actionType) {
+    case "insert_durable":
+      return "Dreaming extracted durable";
+    case "supersede_durable":
+      return "Dreaming created revision";
+    case "stale":
+      return "Dreaming marked stale";
+    case "update_durable":
+      return "Dreaming updated durable";
+    case "merge":
+      return "Dreaming merged durable";
+    case "log_conflict":
+      return "Dreaming logged conflict";
+    case "resolve_conflict":
+      return "Dreaming resolved conflict";
+    case "flag_review":
+      return "Dreaming flagged review";
+    case "skip":
+      return "Dreaming skipped action";
+    default:
+      return `Dreaming ${actionType}`;
+  }
+}
+
+/** Formats Dreaming audit details without relying on raw action identifiers. */
+function formatDreamActionDetail(action: DurableTraceDreamAction): string | undefined {
+  const parts: string[] = [];
+  if (action.reasoning) {
+    parts.push(action.reasoning);
+  }
+  if (action.details) {
+    const claimKey = readDetailString(action.details, "claim_key");
+    if (claimKey) {
+      parts.push(`claim_key=${claimKey}`);
+    }
+
+    const evidenceRefs = readDetailStringArray(action.details, "evidence_refs");
+    if (evidenceRefs.length > 0) {
+      parts.push(`evidence=${evidenceRefs.join(", ")}`);
+    }
+
+    const predecessorId = readDetailString(action.details, "predecessor_id");
+    if (predecessorId) {
+      parts.push(`predecessor=${predecessorId}`);
+    }
+
+    const successorId = readDetailString(action.details, "successor_id");
+    if (successorId) {
+      parts.push(`successor=${successorId}`);
+    }
+
+    const validTo = readDetailString(action.details, "valid_to");
+    if (validTo) {
+      parts.push(`valid_to=${validTo}`);
+    }
+  }
+  if (action.runId) {
+    parts.push(`run=${action.runId}`);
+  }
+  return parts.length > 0 ? parts.join(" | ") : undefined;
+}
+
+/** Reads one optional string field from Dreaming action details. */
+function readDetailString(details: Record<string, unknown>, key: string): string | undefined {
+  const value = details[key];
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+/** Reads one optional string array field from Dreaming action details. */
+function readDetailStringArray(details: Record<string, unknown>, key: string): string[] {
+  const value = details[key];
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
 }
 
 /** Formats provenance detail for a created timeline event. */
