@@ -1,6 +1,6 @@
 {
   "name": "agenr",
-  "version": "2026.6.4",
+  "version": "2026.6.5",
   "description": "Agent memory - local-first knowledge infrastructure for AI agents",
   "type": "module",
   "bin": {

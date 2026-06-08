@@ -2,6 +2,41 @@
 
 ## [Unreleased]
 
+## [2026.6.5] - 2026-06-08
+
+Web console, dreaming alias audit, and proposal review hardening release.
+
+### Added
+
+- **Web operator console.** Added `agenr web`, a local-only browser console for corpus health, dreaming operations, proposal review, memory browsing, procedure editing, and instance switching.
+- **Dreaming claim-key alias audit.** Deep dreaming can now detect possible claim-key aliases using shared lexical and adjudication helpers, with focused mutation planning and regression coverage.
+- **Mixed-key proposal settlement.** Proposal review now supports manual settlement flows for mixed-key proposals, including UI review affordances and service-level validation.
+
+### Changed
+
+- **Dreaming review experience** now has clearer action labels, backlog filtering for reviewed proposals, richer live run feedback, improved durable activity history, and tighter proposal diagnostics.
+- **Web console management UX** now exposes structured API validation, same-origin checks, SSE dreaming progress, memory and procedure management services, and reusable frontend primitives for dense operational workflows.
+- **Trace rendering** now includes clearer durable lifecycle and timeline details across CLI and web surfaces.
+
+### Fixed
+
+- **Dreaming duplicate handling** now reduces duplicate claim-key extraction and duplicate insert-durable actions during reconcile passes.
+- **Web console quality review issues** fixed durable metadata drawer layout, proposal review layout, dreaming diagnostics structure, and follow-up quality concerns.
+- **Alias audit maintainability** now consolidates claim-key lexical overlap logic into shared core helpers.
+
+### Validation
+
+Changes since release `2026.6.4`:
+
+- Add the local-only `agenr web` operator console and React SPA
+- Improve web console management UX, memory browsing, procedure editing, and dreaming progress views
+- Add deep-dreaming claim-key alias audit support and shared lexical overlap helpers
+- Add manual settlement for mixed-key proposals
+- Improve dreaming proposal review clarity, action labels, diagnostics, and durable activity history
+- Reduce dreaming duplicate claim-key extraction and duplicate insert-durable actions
+- Address web console quality review findings
+- Keep `pnpm check` green before release
+
 ## [2026.6.4] - 2026-06-07
 
 OpenClaw working-memory parity, durable terminology cleanup, and claim-key guidance release.
