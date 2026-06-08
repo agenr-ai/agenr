@@ -10,6 +10,7 @@ import {
   mapProposalRow,
   mapRunRow,
   parseJsonStringArray,
+  parseJsonRecord,
   parseStoredDreamRunStatus,
   parseStoredDreamTier,
 } from "./dreaming-run-shared.js";
@@ -251,6 +252,30 @@ export async function getDreamProposal(executor: SqlExecutor, proposalId: string
 
   const row = result.rows[0];
   return row ? mapProposalRow(row) : null;
+}
+
+/**
+ * Loads the flag_review action that staged one proposal for operator review.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param proposalId - Proposal identifier to resolve.
+ * @returns Staging action audit details, or null when none is recorded.
+ */
+export async function getDreamProposalStagingActionDetails(executor: SqlExecutor, proposalId: string): Promise<Record<string, unknown> | null> {
+  const result = await executor.execute({
+    sql: `
+      SELECT details_json
+      FROM dream_run_actions
+      WHERE action_type = 'flag_review'
+        AND json_extract(details_json, '$.proposal_id') = ?
+      ORDER BY created_at ASC
+      LIMIT 1
+    `,
+    args: [proposalId.trim()],
+  });
+
+  const raw = readOptionalString(result.rows[0], "details_json");
+  return parseJsonRecord(raw);
 }
 
 /**

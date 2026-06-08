@@ -1,8 +1,9 @@
 import { loadWebProposalBacklog, loadWebProposalDetail, reviewWebProposal } from "../../../app/web/proposal-service.js";
+import { settleManualMixedWebProposal } from "../../../app/web/proposal-settlement-service.js";
 import type { DreamProposal, ProposalBacklogItem, ProposalDetail } from "../../../web-api/types.js";
 import { WebApiError } from "../api-error.js";
 import type { JsonRouteResult, WebRequestContext, WebRoute } from "../router.js";
-import { parseProposalBacklogQuery, parseReviewBody } from "../validation/requests.js";
+import { parseProposalBacklogQuery, parseReviewBody, parseSettleMixedBody } from "../validation/requests.js";
 import { requireInstanceScope } from "./instance-scope.js";
 
 /**
@@ -15,6 +16,7 @@ export function buildProposalRoutes(): WebRoute[] {
     { kind: "json", method: "GET", pattern: "/api/web/proposals", handler: backlogHandler },
     { kind: "json", method: "GET", pattern: "/api/web/proposals/:id", handler: detailHandler },
     { kind: "json", method: "POST", pattern: "/api/web/proposals/:id/review", handler: reviewHandler },
+    { kind: "json", method: "POST", pattern: "/api/web/proposals/:id/settle-mixed", handler: settleMixedHandler },
   ];
 }
 
@@ -49,6 +51,26 @@ async function reviewHandler(ctx: WebRequestContext): Promise<JsonRouteResult<{ 
       reason: body.reason,
       context: scope.context,
       env: ctx.env,
+    });
+    return { status: 200, body: result };
+  } catch (error) {
+    throw new WebApiError(409, "conflict", error instanceof Error ? error.message : String(error));
+  }
+}
+
+/** Atomically settles one open mixed-key proposal without a safe direct target. */
+async function settleMixedHandler(ctx: WebRequestContext): Promise<JsonRouteResult<{ proposal: DreamProposal }>> {
+  const scope = await requireInstanceScope(ctx);
+  const body = parseSettleMixedBody(await ctx.readJson());
+
+  try {
+    const result = await settleManualMixedWebProposal({
+      proposalId: ctx.params.id,
+      choice: body.choice,
+      reason: body.reason,
+      ...(body.targetClaimKey ? { targetClaimKey: body.targetClaimKey } : {}),
+      ...(body.retireDurableIds ? { retireDurableIds: body.retireDurableIds } : {}),
+      context: scope.context,
     });
     return { status: 200, body: result };
   } catch (error) {

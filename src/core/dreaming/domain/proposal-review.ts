@@ -53,3 +53,13 @@ export function resolveDreamProposalApplyTarget(proposal: Pick<DreamRunProposal,
 
   return targetClaimKey;
 }
+
+/**
+ * Returns whether a proposal requires manual operator settlement for a mixed-key group.
+ *
+ * @param proposal - Proposal under review.
+ * @returns True when the proposal has conflicting keys and no safe direct target.
+ */
+export function isManualMixedClaimKeyProposal(proposal: Pick<DreamRunProposal, "issueKind" | "eligibleForApply" | "proposedClaimKeys">): boolean {
+  return proposal.issueKind === "mixed_claim_key_group" && !proposal.eligibleForApply && proposal.proposedClaimKeys.length === 0;
+}

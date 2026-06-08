@@ -165,6 +165,8 @@ export interface DreamPort {
   getRunActions(runId: string): Promise<DreamRunAction[]>;
   getRunProposals(runId: string): Promise<DreamRunProposal[]>;
   getProposal(proposalId: string): Promise<DreamRunProposal | null>;
+  /** Loads audit details from the flag_review action that staged one proposal. */
+  getProposalStagingActionDetails(proposalId: string): Promise<Record<string, unknown> | null>;
   reviewProposal(input: {
     proposalId: string;
     status: Exclude<DreamProposalReviewStatus, "open">;

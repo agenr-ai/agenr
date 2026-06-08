@@ -1,6 +1,7 @@
 /** Operator-facing helpers for claim-key alias convergence audit payloads. */
 
 import { formatPercent, titleCase } from "./format.js";
+import { isRecord, readNullableNumberDetail, readStringArrayDetail } from "./action-details.js";
 
 /** Compact alias audit summary derived from persisted action details. */
 export interface AliasReviewSummaryView {
@@ -145,16 +146,4 @@ export function renderAliasReviewSummaryLines(input: {
     summary.llmConfidence !== null ? { key: "llm-confidence", text: `LLM confidence: ${formatPercent(summary.llmConfidence)}` } : null,
     summary.llmRationale ? { key: "llm-rationale", text: `LLM rationale: ${summary.llmRationale}` } : null,
   ];
-}
-
-function readStringArrayDetail(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0) : [];
-}
-
-function readNullableNumberDetail(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }

@@ -18,6 +18,8 @@ export interface WebProposalDetail {
   activeDurables: Durable[];
   /** Referenced durable ids that are missing or no longer active. */
   inactiveDurableIds: string[];
+  /** Audit details from the flag_review action that staged this proposal. */
+  stagingDetails: Record<string, unknown> | null;
 }
 
 /**
@@ -49,8 +51,9 @@ export async function loadWebProposalDetail(input: { proposalId: string; context
     const durables = await port.getDurables(proposal.durableIds);
     const foundIds = new Set(durables.map((durable) => durable.id));
     const inactiveDurableIds = proposal.durableIds.filter((id) => !foundIds.has(id));
+    const stagingDetails = await port.getProposalStagingActionDetails(proposal.id);
 
-    return { proposal, activeDurables: durables, inactiveDurableIds };
+    return { proposal, activeDurables: durables, inactiveDurableIds, stagingDetails };
   });
 }
 

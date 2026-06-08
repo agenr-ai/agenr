@@ -167,6 +167,11 @@ export const api = {
   /** Applies or rejects one proposal. */
   reviewProposal: (id: string, input: { decision: "apply" | "reject"; reason: string }) =>
     request<{ proposal: DreamProposal }>("POST", `/api/web/proposals/${encodeURIComponent(id)}/review`, input),
+  /** Atomically settles one open mixed-key proposal. */
+  settleMixedProposal: (
+    id: string,
+    input: { choice: "separate" | "canonical" | "retire"; reason: string; targetClaimKey?: string; retireDurableIds?: string[] },
+  ) => request<{ proposal: DreamProposal }>("POST", `/api/web/proposals/${encodeURIComponent(id)}/settle-mixed`, input),
 
   /** Lists durables with structured filters. */
   durables: (input: DurableQueryInput) => request<DurableListResult>("GET", `/api/web/durables${query({ ...input })}`),

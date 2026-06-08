@@ -226,7 +226,7 @@ function parseJsonValue<T>(raw: string | undefined, fallback: T): T {
 }
 
 /** Parses an optional JSON object field. */
-function parseJsonRecord(raw: string | undefined): Record<string, unknown> | null {
+export function parseJsonRecord(raw: string | undefined): Record<string, unknown> | null {
   const parsed = parseJsonValue<unknown>(raw, null);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     return null;

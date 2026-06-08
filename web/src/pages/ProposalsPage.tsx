@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { ApiError, api } from "../api/client";
 import type { Durable, ProposalBacklogItem, ProposalDetail } from "../api/types";
+import { ProposalStagingAuditPanel } from "../components/dreaming/ActionReviewPanels";
 import { Badge, Button, Card, CardBody, Drawer, EmptyState, Field, Input, Select, Textarea } from "../components/primitives";
 import { ErrorCard, RequireInstance, Skeleton } from "../components/states";
 import { useToast } from "../components/Toast";
@@ -290,6 +291,8 @@ function ProposalDrawer({ proposalId, onClose, onReviewed }: { proposalId: strin
             <p className="secondary" style={{ fontSize: "var(--text-sm)" }}>{proposal.rationale}</p>
           </div>
 
+          <ProposalStagingAuditPanel details={state.data.stagingDetails} />
+
           <div className="stack" style={{ gap: "var(--space-2)" }}>
             <span className="section-title">Affected durables ({state.data.activeDurables.length})</span>
             {state.data.activeDurables.map((durable) => (
@@ -369,31 +372,26 @@ function ManualMixedClaimResolution({
   const [busy, setBusy] = useState(false);
 
   const settle = async (): Promise<void> => {
+    if (choice === "canonical") {
+      const targetClaimKey = resolveTargetClaimKey(choice, selectedClaimKey, customClaimKey);
+      if (!targetClaimKey) {
+        toast.error("Claim key required", "Choose or enter a canonical claim key.");
+        return;
+      }
+    } else if (choice === "retire" && selectedRetireIds.length === 0) {
+      toast.error("Selection required", "Select at least one durable to retire.");
+      return;
+    }
+
     const reason = buildManualResolutionReason(choice, note, resolveTargetClaimKey(choice, selectedClaimKey, customClaimKey), selectedRetireIds.length);
     setBusy(true);
     try {
-      if (choice === "canonical") {
-        const targetClaimKey = resolveTargetClaimKey(choice, selectedClaimKey, customClaimKey);
-        if (!targetClaimKey) {
-          toast.error("Claim key required", "Choose or enter a canonical claim key.");
-          return;
-        }
-        for (const durable of durables) {
-          if (durable.claim_key !== targetClaimKey) {
-            await api.updateDurable(durable.id, { claimKey: targetClaimKey });
-          }
-        }
-      } else if (choice === "retire") {
-        if (selectedRetireIds.length === 0) {
-          toast.error("Selection required", "Select at least one durable to retire.");
-          return;
-        }
-        for (const durableId of selectedRetireIds) {
-          await api.retireDurable(durableId, reason);
-        }
-      }
-
-      await api.reviewProposal(proposalId, { decision: "reject", reason });
+      await api.settleMixedProposal(proposalId, {
+        choice,
+        reason,
+        ...(choice === "canonical" ? { targetClaimKey: resolveTargetClaimKey(choice, selectedClaimKey, customClaimKey) } : {}),
+        ...(choice === "retire" ? { retireDurableIds: selectedRetireIds } : {}),
+      });
       toast.success("Issue settled");
       onReviewed();
     } catch (error) {

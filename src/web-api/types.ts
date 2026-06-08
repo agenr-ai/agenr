@@ -273,6 +273,8 @@ export interface ProposalDetail {
   proposal: DreamProposal;
   activeDurables: Durable[];
   inactiveDurableIds: string[];
+  /** Audit details from the flag_review action that staged this proposal. */
+  stagingDetails: Record<string, unknown> | null;
 }
 
 /** An episode record. */

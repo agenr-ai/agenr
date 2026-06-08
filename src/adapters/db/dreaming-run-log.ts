@@ -21,6 +21,7 @@ export { createDreamRun, completeDreamRun, createProfileSnapshot, getDailyDreamC
 export {
   getActiveProfileSnapshot,
   getDreamProposal,
+  getDreamProposalStagingActionDetails,
   getDreamRunActions,
   getDreamRunHistory,
   getDreamRunProposals,

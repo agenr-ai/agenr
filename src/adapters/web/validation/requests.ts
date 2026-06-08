@@ -35,6 +35,12 @@ const SORT_DIRECTIONS = ["asc", "desc"] as const;
 /** Proposal review decisions accepted by the review endpoint. */
 const REVIEW_DECISIONS = ["apply", "reject"] as const;
 
+/** Manual mixed-key settlement choices accepted by the settle endpoint. */
+const SETTLE_MIXED_CHOICES = ["separate", "canonical", "retire"] as const;
+
+/** Allowed body keys for a mixed-key settlement request. */
+const SETTLE_MIXED_KEYS = new Set<string>(["choice", "reason", "targetClaimKey", "retireDurableIds"]);
+
 /** Allowed body keys for a store-durable request. */
 const STORE_DURABLE_KEYS = new Set<string>([
   "type",
@@ -117,6 +123,20 @@ export interface ParsedReviewBody {
   decision: (typeof REVIEW_DECISIONS)[number];
   /** Non-empty operator-provided reason. */
   reason: string;
+}
+
+/**
+ * Validated mixed-key settlement request.
+ */
+export interface ParsedSettleMixedBody {
+  /** Operator settlement choice. */
+  choice: (typeof SETTLE_MIXED_CHOICES)[number];
+  /** Non-empty settlement reason. */
+  reason: string;
+  /** Canonical claim key written when choice is `canonical`. */
+  targetClaimKey?: string;
+  /** Durable ids retired when choice is `retire`. */
+  retireDurableIds?: string[];
 }
 
 /**
@@ -326,6 +346,32 @@ export function parseReviewBody(input: unknown): ParsedReviewBody {
   }
 
   return { decision, reason };
+}
+
+/**
+ * Parses and validates a mixed-key settlement request body.
+ *
+ * @param input - Raw JSON request body.
+ * @returns Validated settlement parameters.
+ * @throws {WebApiError} 400 when the body is malformed.
+ */
+export function parseSettleMixedBody(input: unknown): ParsedSettleMixedBody {
+  const { record, issues } = requireObject(input, SETTLE_MIXED_KEYS);
+  const choice = readEnumValue(record.choice, "choice", SETTLE_MIXED_CHOICES, issues);
+  const reason = parseRequiredTrimmedString(record.reason, "reason", issues) ?? "";
+  const targetClaimKey = parseOptionalTrimmedString(record.targetClaimKey, "targetClaimKey", issues);
+  const retireDurableIds = readOptionalStringArray(record.retireDurableIds, "retireDurableIds", issues);
+  throwIfIssues(issues);
+  if (!choice) {
+    throw WebApiError.invalid([{ path: "choice", message: `Expected one of: ${SETTLE_MIXED_CHOICES.join(", ")}.` }]);
+  }
+
+  return {
+    choice,
+    reason,
+    ...(targetClaimKey ? { targetClaimKey } : {}),
+    ...(retireDurableIds.length > 0 ? { retireDurableIds } : {}),
+  };
 }
 
 /**
@@ -677,4 +723,26 @@ function readBoolean(value: unknown, key: string, issues: ValidationIssue[]): bo
   }
 
   return value;
+}
+
+/** Validates an optional string array body field. */
+function readOptionalStringArray(value: unknown, key: string, issues: ValidationIssue[]): string[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    pushIssue(issues, key, "Expected an array of strings.");
+    return [];
+  }
+
+  const strings: string[] = [];
+  for (const [index, entry] of value.entries()) {
+    if (typeof entry !== "string" || entry.trim().length === 0) {
+      pushIssue(issues, `${key}[${index}]`, "Expected a non-empty string.");
+      continue;
+    }
+    strings.push(entry.trim());
+  }
+
+  return strings;
 }

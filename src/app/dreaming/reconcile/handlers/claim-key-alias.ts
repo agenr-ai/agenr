@@ -3,6 +3,7 @@ import { normalizeClaimKey } from "../../../../core/claim-key.js";
 import { adjudicateClaimKeyAliasCandidate, type ClaimKeyAliasAdjudication } from "../../../../core/dreaming/claim-key-alias-adjudication.js";
 import { claimExtractionUsage } from "../helpers/claim-extraction.js";
 import { resolveCrossTypeCollisionSiblingIds } from "../helpers/cross-type-collision-outcome.js";
+import { buildClaimKeyAliasConvergenceAudit } from "../helpers/claim-key-alias.js";
 import { buildClaimKeyAliasPersistInput } from "../helpers/proposal.js";
 import { expandCrossTypeCollisionDurableIds, persistCrossTypeCollisionProposal, persistReconcileProposal } from "../helpers/reconcile-proposal.js";
 import { applyClaimKeyRepair } from "../pass-apply-handlers.js";
@@ -272,25 +273,6 @@ function resolveProposalBlocker(candidate: ClaimKeyAliasCandidate, adjudication:
     return "LLM adjudication confidence is below the auto-apply threshold.";
   }
   return "LLM adjudication did not confirm the deterministic canonical key.";
-}
-
-function buildClaimKeyAliasConvergenceAudit(candidate: ClaimKeyAliasCandidate, adjudication: ClaimKeyAliasAdjudication | null): ClaimKeyAliasConvergenceAudit {
-  return {
-    entityPrefix: candidate.entityPrefix,
-    currentClaimKeys: [...candidate.claimKeys],
-    proposedClaimKey: candidate.proposedClaimKey,
-    deterministicConfidence: candidate.confidence,
-    deterministicAutoApplyEligible: candidate.deterministicAutoApplyEligible,
-    unresolvedReason: candidate.unresolvedReason,
-    llmAdjudication: adjudication,
-    evidence: candidate.evidence.map((evidence) => ({ ...evidence })),
-    keyProfiles: candidate.keyProfiles.map((profile) => ({
-      ...profile,
-      durableIds: [...profile.durableIds],
-      typeSet: [...profile.typeSet],
-      projectSet: [...profile.projectSet],
-    })),
-  };
 }
 
 function buildAliasRationale(candidate: ClaimKeyAliasCandidate, adjudication: ClaimKeyAliasAdjudication | null, decision: string): string {
