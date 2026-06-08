@@ -181,7 +181,7 @@ UI-initiated runs are coordinated in-process by `DreamingRunCoordinator`.
 
 - Ops Cockpit: composite corpus-health score, key metric tiles, claim-key lifecycle and recency distributions, proposal backlog and profile rollups, and recent run history with surfaced failures.
 - Dreaming Runs: launch light/standard/deep runs in dry-run or apply mode, watch a live progress feed, and inspect persisted run details, actions, and proposals.
-- Proposal Review: filterable backlog, a detail drawer with affected durables and current/proposed claim keys, and apply/reject with a required reason.
+- Proposal Review: filterable backlog, a detail drawer with affected durables and current/proposed claim keys, apply/reject with a required reason, and manual settlement choices for ambiguous mixed-key groups.
 - Memory Explorer: durable, episode, and procedure browsing with filters and pagination, a durable trace drawer, and lifecycle actions (store, supersede, update metadata, retire).
 - Procedure Editor: a YAML editor with debounced validation, a dirty-worktree banner, and save-and-sync that reports created/updated/unchanged results.
 - Instance Settings: register, select, and remove instances, with resolution diagnostics and a loopback-only security reminder.

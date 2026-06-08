@@ -1,8 +1,8 @@
 import { useState } from "react";
 
 import { ApiError, api } from "../api/client";
-import type { ProposalBacklogItem, ProposalDetail } from "../api/types";
-import { Badge, Button, Card, CardBody, Drawer, EmptyState, Field, Textarea } from "../components/primitives";
+import type { Durable, ProposalBacklogItem, ProposalDetail } from "../api/types";
+import { Badge, Button, Card, CardBody, Drawer, EmptyState, Field, Input, Select, Textarea } from "../components/primitives";
 import { ErrorCard, RequireInstance, Skeleton } from "../components/states";
 import { useToast } from "../components/Toast";
 import { useAsync } from "../hooks/useAsync";
@@ -191,6 +191,7 @@ function ProposalDrawer({ proposalId, onClose, onReviewed }: { proposalId: strin
   };
 
   const proposal = state.data?.proposal;
+  const manualMixedResolution = proposal ? isManualMixedClaimProposal(proposal) : false;
 
   return (
     <Drawer
@@ -213,19 +214,32 @@ function ProposalDrawer({ proposalId, onClose, onReviewed }: { proposalId: strin
 
           <div className="review-brief">
             <span className="section-title">Review decision</span>
-            <p>
-              Decide whether the affected memory should be grouped under the proposed claim key. Apply writes the proposed key after creating a
-              backup. Reject keeps the memory as it is and records why this suggestion should not be used.
-            </p>
-            <ul className="review-checklist">
-              <li>The memory text should be about the proposed topic.</li>
-              <li>The proposed key should describe the stable slot for this memory, not incidental wording.</li>
-              <li>The key should group this memory with the right related memories.</li>
-            </ul>
+            {manualMixedResolution ? (
+              <>
+                <p>This group has conflicting current claim keys and no safe proposed target. Settle the flagged issue with one explicit operator decision.</p>
+                <ul className="review-checklist">
+                  <li>Keep the current keys when the memories are separate slots.</li>
+                  <li>Use one canonical key when the memories belong to the same slot.</li>
+                  <li>Retire selected memories when they are duplicate or wrong.</li>
+                </ul>
+              </>
+            ) : (
+              <>
+                <p>
+                  Decide whether the affected memory should be grouped under the proposed claim key. Apply writes the proposed key after creating a
+                  backup. Reject keeps the memory as it is and records why this suggestion should not be used.
+                </p>
+                <ul className="review-checklist">
+                  <li>The memory text should be about the proposed topic.</li>
+                  <li>The proposed key should describe the stable slot for this memory, not incidental wording.</li>
+                  <li>The key should group this memory with the right related memories.</li>
+                </ul>
+              </>
+            )}
           </div>
 
           <div className="stack" style={{ gap: "var(--space-2)" }}>
-            <span className="section-title">Proposed change</span>
+            <span className="section-title">{manualMixedResolution ? "Flagged keys" : "Proposed change"}</span>
             <ClaimDiff current={proposal.currentClaimKeys} proposed={proposal.proposedClaimKeys} />
           </div>
 
@@ -253,7 +267,9 @@ function ProposalDrawer({ proposalId, onClose, onReviewed }: { proposalId: strin
             ) : null}
           </div>
 
-          {proposal.reviewStatus === "open" ? (
+          {proposal.reviewStatus === "open" && manualMixedResolution ? (
+            <ManualMixedClaimResolution proposalId={proposal.id} durables={state.data.activeDurables} onReviewed={onReviewed} />
+          ) : proposal.reviewStatus === "open" ? (
             <div className="stack" style={{ gap: "var(--space-3)" }}>
               <Field label="Decision reason" hint="Explain why the proposed key should or should not be written.">
                 <Textarea rows={3} value={reason} placeholder="Why is this the right decision for this memory?" onChange={(event) => setReason(event.target.value)} />
@@ -287,4 +303,187 @@ function ProposalDrawer({ proposalId, onClose, onReviewed }: { proposalId: strin
       )}
     </Drawer>
   );
+}
+
+type ManualResolutionChoice = "separate" | "canonical" | "retire";
+
+/** Manual settlement workflow for mixed-key groups without a safe direct target. */
+function ManualMixedClaimResolution({
+  proposalId,
+  durables,
+  onReviewed,
+}: {
+  proposalId: string;
+  durables: Durable[];
+  onReviewed: () => void;
+}): React.ReactElement {
+  const toast = useToast();
+  const uniqueClaimKeys = uniqueStrings(durables.flatMap((durable) => (durable.claim_key ? [durable.claim_key] : [])));
+  const [choice, setChoice] = useState<ManualResolutionChoice>("separate");
+  const [selectedClaimKey, setSelectedClaimKey] = useState(uniqueClaimKeys[0] ?? "__custom");
+  const [customClaimKey, setCustomClaimKey] = useState("");
+  const [selectedRetireIds, setSelectedRetireIds] = useState<string[]>([]);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const settle = async (): Promise<void> => {
+    const reason = buildManualResolutionReason(choice, note, resolveTargetClaimKey(choice, selectedClaimKey, customClaimKey), selectedRetireIds.length);
+    setBusy(true);
+    try {
+      if (choice === "canonical") {
+        const targetClaimKey = resolveTargetClaimKey(choice, selectedClaimKey, customClaimKey);
+        if (!targetClaimKey) {
+          toast.error("Claim key required", "Choose or enter a canonical claim key.");
+          return;
+        }
+        for (const durable of durables) {
+          if (durable.claim_key !== targetClaimKey) {
+            await api.updateDurable(durable.id, { claimKey: targetClaimKey });
+          }
+        }
+      } else if (choice === "retire") {
+        if (selectedRetireIds.length === 0) {
+          toast.error("Selection required", "Select at least one durable to retire.");
+          return;
+        }
+        for (const durableId of selectedRetireIds) {
+          await api.retireDurable(durableId, reason);
+        }
+      }
+
+      await api.reviewProposal(proposalId, { decision: "reject", reason });
+      toast.success("Issue settled");
+      onReviewed();
+    } catch (error) {
+      toast.error("Resolution failed", error instanceof ApiError ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleRetireId = (durableId: string): void => {
+    setSelectedRetireIds((current) => (current.includes(durableId) ? current.filter((id) => id !== durableId) : [...current, durableId]));
+  };
+
+  const targetClaimKey = resolveTargetClaimKey(choice, selectedClaimKey, customClaimKey);
+
+  return (
+    <div className="manual-resolution">
+      <span className="section-title">Settle flagged issue</span>
+      <div className="manual-resolution__choices">
+        <ResolutionOption
+          active={choice === "separate"}
+          title="Keep separate"
+          body="Close the flag and leave the current claim keys unchanged."
+          onSelect={() => setChoice("separate")}
+        />
+        <ResolutionOption
+          active={choice === "canonical"}
+          title="Use one key"
+          body="Write one trusted manual claim key to every affected durable, then close the flag."
+          onSelect={() => setChoice("canonical")}
+        />
+        <ResolutionOption
+          active={choice === "retire"}
+          title="Retire selected"
+          body="Close duplicate or wrong durables, then close the flag."
+          onSelect={() => setChoice("retire")}
+        />
+      </div>
+
+      {choice === "canonical" ? (
+        <div className="metadata-form__grid">
+          <div className="metadata-form__field metadata-form__field--wide">
+            <Field label="Canonical claim key">
+              <Select value={selectedClaimKey} onChange={(event) => setSelectedClaimKey(event.target.value)}>
+                {uniqueClaimKeys.map((claimKey) => (
+                  <option key={claimKey} value={claimKey}>
+                    {claimKey}
+                  </option>
+                ))}
+                <option value="__custom">Custom key</option>
+              </Select>
+            </Field>
+          </div>
+          {selectedClaimKey === "__custom" ? (
+            <div className="metadata-form__field metadata-form__field--wide">
+              <Field label="Custom key" hint="Canonical entity/attribute format">
+                <Input value={customClaimKey} placeholder="entity/attribute" onChange={(event) => setCustomClaimKey(event.target.value)} />
+              </Field>
+            </div>
+          ) : null}
+          {targetClaimKey ? <span className="hint metadata-form__field--wide">Every active affected durable will use {targetClaimKey}.</span> : null}
+        </div>
+      ) : null}
+
+      {choice === "retire" ? (
+        <div className="manual-resolution__retire-list">
+          {durables.map((durable) => (
+            <label key={durable.id} className="manual-resolution__retire-row">
+              <input type="checkbox" checked={selectedRetireIds.includes(durable.id)} onChange={() => toggleRetireId(durable.id)} />
+              <span className="stack" style={{ gap: 2, minWidth: 0 }}>
+                <strong>{durable.subject}</strong>
+                <span className="mono muted">{durable.claim_key ?? "(no key)"}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      ) : null}
+
+      <Field label="Decision note" hint="Saved on the proposal review record.">
+        <Textarea rows={3} value={note} placeholder="Why does this settle the flagged issue?" onChange={(event) => setNote(event.target.value)} />
+      </Field>
+
+      <div className="row wrap" style={{ gap: "var(--space-3)", justifyContent: "flex-end" }}>
+        <Button variant="primary" icon="check" loading={busy} onClick={() => void settle()}>
+          Settle issue
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ResolutionOption({
+  active,
+  title,
+  body,
+  onSelect,
+}: {
+  active: boolean;
+  title: string;
+  body: string;
+  onSelect: () => void;
+}): React.ReactElement {
+  return (
+    <button className={`manual-resolution__option${active ? " is-active" : ""}`} onClick={onSelect}>
+      <strong>{title}</strong>
+      <span>{body}</span>
+    </button>
+  );
+}
+
+function isManualMixedClaimProposal(proposal: ProposalDetail["proposal"]): boolean {
+  return proposal.issueKind === "mixed_claim_key_group" && !proposal.eligibleForApply && proposal.proposedClaimKeys.length === 0;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter((value) => value.length > 0))];
+}
+
+function resolveTargetClaimKey(choice: ManualResolutionChoice, selectedClaimKey: string, customClaimKey: string): string {
+  if (choice !== "canonical") {
+    return "";
+  }
+  return selectedClaimKey === "__custom" ? customClaimKey.trim() : selectedClaimKey.trim();
+}
+
+function buildManualResolutionReason(choice: ManualResolutionChoice, note: string, targetClaimKey: string, retireCount: number): string {
+  const suffix = note.trim().length > 0 ? ` Note: ${note.trim()}` : "";
+  if (choice === "canonical") {
+    return `Resolved mixed claim-key group manually by writing canonical key "${targetClaimKey}".${suffix}`;
+  }
+  if (choice === "retire") {
+    return `Resolved mixed claim-key group manually by retiring ${retireCount} duplicate or wrong durable${retireCount === 1 ? "" : "s"}.${suffix}`;
+  }
+  return `Resolved mixed claim-key group manually by keeping the affected durables under separate claim keys.${suffix}`;
 }
