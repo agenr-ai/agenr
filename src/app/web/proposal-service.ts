@@ -29,7 +29,7 @@ export interface WebProposalDetail {
 export async function loadWebProposalBacklog(
   input: WebProposalBacklogQuery & { context: WebInstanceContext; env?: NodeJS.ProcessEnv },
 ): Promise<DreamProposalBacklogItem[]> {
-  return loadDreamBacklogRuntime({ ...input, dbPath: input.context.dbPath });
+  return loadDreamBacklogRuntime({ ...input, state: input.state ?? "open", dbPath: input.context.dbPath });
 }
 
 /**

@@ -5,6 +5,7 @@ import type { ValidationIssue } from "../../../../src/adapters/shared/validation
 import {
   parseDreamStartBody,
   parseDurableListQuery,
+  parseProposalBacklogQuery,
   parseProcedureSaveBody,
   parseProcedureValidateBody,
   parseRegisterInstanceBody,
@@ -154,6 +155,21 @@ describe("parseReviewBody", () => {
   it("rejects an unknown decision", () => {
     const issues = captureIssues(() => parseReviewBody({ decision: "maybe", reason: "later" }));
     expect(paths(issues)).toContain("decision");
+  });
+});
+
+describe("parseProposalBacklogQuery", () => {
+  it("defaults the proposal backlog to open eligible proposals", () => {
+    expect(parseProposalBacklogQuery(new URLSearchParams())).toEqual({
+      state: "open",
+      eligibleOnly: true,
+    });
+  });
+
+  it("keeps handled proposals out when showing all open eligibility states", () => {
+    expect(parseProposalBacklogQuery(new URLSearchParams("includeIneligible=true"))).toEqual({
+      state: "open",
+    });
   });
 });
 

@@ -210,6 +210,7 @@ export function parseProposalBacklogQuery(params: URLSearchParams): WebProposalB
   const issues: ValidationIssue[] = [];
   const includeIneligible = params.get("includeIneligible");
   const query: WebProposalBacklogQuery = {
+    state: "open",
     ...readIntParam(params, "limit", issues, (value) => ({ limit: value })),
     ...readNumberParam(params, "minConfidence", issues, (value) => ({ minConfidence: value })),
     ...readStringParam(params, "createdSince", (value) => ({ createdSince: value })),
