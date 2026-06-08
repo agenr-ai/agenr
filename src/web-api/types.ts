@@ -9,13 +9,9 @@ import type {
   ProcedureSyncPlanItem,
   ProcedureSyncPlanTotals,
 } from "../app/procedures/sync/types.js";
-import type { ProcedureStep } from "../core/types.js";
+import type { DurableKind, EpisodeActivityLevel, Expiry, ProcedureStep } from "../core/types.js";
 
-/** Supported durable kinds accepted by store and supersede endpoints. */
-export type DurableKind = "fact" | "decision" | "preference" | "lesson" | "relationship" | "milestone" | "directive";
-
-/** Supported expiry tiers accepted by store and metadata endpoints. */
-export type Expiry = "core" | "permanent" | "temporary";
+export type { DurableKind, Expiry };
 
 /** Request body for storing or superseding a durable. */
 export interface StoreDurableBody {
@@ -47,7 +43,7 @@ export interface UpdateEpisodeMetadataBody {
   surface?: string;
   userId?: string;
   project?: string;
-  activityLevel?: "substantial" | "minimal" | "none" | "";
+  activityLevel?: EpisodeActivityLevel | "";
   tags?: string[];
   validFrom?: string;
   validTo?: string;

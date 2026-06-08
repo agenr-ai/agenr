@@ -136,6 +136,35 @@ describe("claim-key alias detector", () => {
     ]);
   });
 
+  it("merges bridge-linked keys when only adjacent pairs qualify", () => {
+    const candidates = detectClaimKeyAliasCandidates([
+      durable({
+        id: "slot-a",
+        subject: "Agenr bridge slot alpha",
+        content: "Agenr bridge slot alpha uses foo bar baz tokens for the first adjacent pair.",
+        claim_key: "agenr/foo_bar_baz",
+        tags: ["agenr", "bridge"],
+      }),
+      durable({
+        id: "slot-b",
+        subject: "Agenr bridge slot beta",
+        content: "Agenr bridge slot beta uses bar baz qux tokens for the middle adjacent pair.",
+        claim_key: "agenr/bar_baz_qux",
+        tags: ["agenr", "bridge"],
+      }),
+      durable({
+        id: "slot-c",
+        subject: "Agenr bridge slot gamma",
+        content: "Agenr bridge slot gamma uses baz qux wal tokens for the trailing adjacent pair.",
+        claim_key: "agenr/baz_qux_wal",
+        tags: ["agenr", "bridge"],
+      }),
+    ]);
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]?.claimKeys).toEqual(["agenr/bar_baz_qux", "agenr/baz_qux_wal", "agenr/foo_bar_baz"]);
+  });
+
   it("merges transitive alias clusters when adjacent pairs qualify", () => {
     const sharedSubject = "Agenr quality score";
     const sharedTags = ["agenr", "quality", "scoring"];

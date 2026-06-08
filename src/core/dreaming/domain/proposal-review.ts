@@ -63,3 +63,36 @@ export function resolveDreamProposalApplyTarget(proposal: Pick<DreamRunProposal,
 export function isManualMixedClaimKeyProposal(proposal: Pick<DreamRunProposal, "issueKind" | "eligibleForApply" | "proposedClaimKeys">): boolean {
   return proposal.issueKind === "mixed_claim_key_group" && !proposal.eligibleForApply && proposal.proposedClaimKeys.length === 0;
 }
+
+/** Manual settlement choices accepted for mixed-key proposals. */
+export type ManualMixedSettlementChoice = "separate" | "canonical" | "retire";
+
+/**
+ * Returns whether a proposal is a same-entity claim-key alias convergence cluster.
+ *
+ * @param proposal - Proposal under review.
+ * @returns True when the proposal issue kind is alias convergence.
+ */
+export function isClaimKeyAliasConvergenceProposal(proposal: Pick<DreamRunProposal, "issueKind">): boolean {
+  return proposal.issueKind === "claim_key_alias_convergence";
+}
+
+/**
+ * Builds the persisted review reason for one manual mixed-key settlement.
+ *
+ * @param choice - Operator settlement choice.
+ * @param note - Optional operator note appended after the canonical sentence.
+ * @param targetClaimKey - Canonical key written when choice is `canonical`.
+ * @param retireCount - Number of durables retired when choice is `retire`.
+ * @returns Full settlement reason stored on the proposal review record.
+ */
+export function buildMixedClaimKeySettlementReason(choice: ManualMixedSettlementChoice, note: string, targetClaimKey: string, retireCount: number): string {
+  const suffix = note.trim().length > 0 ? ` Note: ${note.trim()}` : "";
+  if (choice === "canonical") {
+    return `Resolved mixed claim-key group manually by writing canonical key "${targetClaimKey}".${suffix}`;
+  }
+  if (choice === "retire") {
+    return `Resolved mixed claim-key group manually by retiring ${retireCount} duplicate or wrong durable${retireCount === 1 ? "" : "s"}.${suffix}`;
+  }
+  return `Resolved mixed claim-key group manually by keeping the affected durables under separate claim keys.${suffix}`;
+}

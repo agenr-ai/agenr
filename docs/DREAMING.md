@@ -161,6 +161,8 @@ This audit is intentionally narrower than entity-family convergence:
 - When the existing claim-extraction LLM factory is available and claim extraction is enabled, deterministic alias candidates are adjudicated with bounded JSON output: `same_slot`, `canonical_claim_key`, `confidence`, and `rationale`.
 - Without an LLM, the audit can emit deterministic proposals but does not auto-apply alias clusters.
 
+Alias clusters are built transitively from qualifying pairwise edges. If `A` aliases `B` and `B` aliases `C`, all three keys are grouped even when `A` and `C` would not pass pairwise scoring on their own. Cluster confidence is the minimum qualifying pairwise confidence across edges inside the component, so a weak bridge key can still pull a distant sibling into one operator-facing proposal.
+
 Auto-apply is conservative. A deep `--apply` run rewrites alias keys only when deterministic confidence is at least `0.9`, the LLM says `same_slot: true` with confidence at least `0.9`, the LLM canonical key matches the deterministic target, all durables are active and same type, no cross-type target collision exists, and the cluster does not involve multiple trusted or manual canonical keys. Anything ambiguous, conflicting, cost-capped, or not LLM-confirmed remains a proposal for operator review.
 
 Every completion summary includes a compute-efficiency block used by eval scoreboard runs:

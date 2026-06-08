@@ -1,6 +1,10 @@
 import { createDreamPort } from "../../adapters/db/dreaming-port.js";
 import { normalizeManualClaimKeyUpdate } from "../../core/claim-key-lifecycle.js";
-import { isManualMixedClaimKeyProposal } from "../../core/dreaming/domain/proposal-review.js";
+import {
+  buildMixedClaimKeySettlementReason,
+  isManualMixedClaimKeyProposal,
+  type ManualMixedSettlementChoice,
+} from "../../core/dreaming/domain/proposal-review.js";
 import type { DurableUpdateInput } from "../../core/types.js";
 import { resolveLocalFilesystemPath } from "../../filesystem-path.js";
 import { backupDatabaseFile } from "../dreaming/service.js";
@@ -10,8 +14,7 @@ import { withInstanceDatabase, type WebInstanceContext } from "./instance-contex
 /** Provenance source-file label stamped on manual settlement writes. */
 const WEB_SOURCE_FILE = "agenr-web";
 
-/** Manual settlement choices accepted for mixed-key proposals. */
-export type ManualMixedSettlementChoice = "separate" | "canonical" | "retire";
+export type { ManualMixedSettlementChoice };
 
 /**
  * Atomically settles one open mixed-key proposal that lacks a safe direct target.
@@ -28,13 +31,19 @@ export async function settleManualMixedWebProposal(input: {
   retireDurableIds?: string[];
   context: WebInstanceContext;
 }): Promise<DreamProposalReviewResult> {
-  const reason = input.reason.trim();
-  if (reason.length === 0) {
-    throw new Error("A non-empty settlement reason is required.");
+  const note = input.reason.trim();
+  if (note.length === 0) {
+    throw new Error("A non-empty settlement note is required.");
   }
 
   const backupPath = await maybeBackup(input.context.dbPath);
   const reviewedAt = new Date().toISOString();
+  const settlementReason = buildMixedClaimKeySettlementReason(
+    input.choice,
+    note,
+    input.targetClaimKey?.trim() ?? "",
+    input.retireDurableIds?.length ?? 0,
+  );
 
   return withInstanceDatabase(input.context, async (database) => {
     const port = createDreamPort(database);
@@ -55,8 +64,6 @@ export async function settleManualMixedWebProposal(input: {
     if (inactiveDurableIds.length > 0) {
       throw new Error(`Proposal ${proposal.id} can no longer settle missing or inactive durable ${inactiveDurableIds[0]}.`);
     }
-
-    const settlementReason = buildSettlementReason(input.choice, reason, input.targetClaimKey?.trim() ?? "", input.retireDurableIds?.length ?? 0);
 
     await port.withTransaction(async (tx) => {
       if (input.choice === "canonical") {
@@ -112,18 +119,6 @@ export async function settleManualMixedWebProposal(input: {
       backupPath,
     };
   });
-}
-
-/** Builds the persisted settlement reason from the operator choice. */
-function buildSettlementReason(choice: ManualMixedSettlementChoice, note: string, targetClaimKey: string, retireCount: number): string {
-  const suffix = note.length > 0 ? ` Note: ${note}` : "";
-  if (choice === "canonical") {
-    return `Resolved mixed claim-key group manually by writing canonical key "${targetClaimKey}".${suffix}`;
-  }
-  if (choice === "retire") {
-    return `Resolved mixed claim-key group manually by retiring ${retireCount} duplicate or wrong durable${retireCount === 1 ? "" : "s"}.${suffix}`;
-  }
-  return `Resolved mixed claim-key group manually by keeping the affected durables under separate claim keys.${suffix}`;
 }
 
 /** Normalizes a console-supplied claim key into a durable metadata patch. */
