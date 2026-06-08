@@ -151,7 +151,7 @@ export async function loadDreamActionViewsRuntime(input: { runId: string; dbPath
   return withDreamPort(runtime.dbPath, async (port) => {
     const actions = await port.getRunActions(input.runId);
     const durableIds = Array.from(new Set(actions.flatMap((action) => action.durableIds)));
-    const durables = await port.getDurables(durableIds);
+    const durables = await port.getDurables(durableIds, { includeInactive: true });
     const byId = new Map(durables.map((durable) => [durable.id, durable]));
     return actions.map((action) => ({
       ...action,
@@ -170,7 +170,7 @@ export async function loadDreamActionViewsRuntime(input: { runId: string; dbPath
 export interface DreamRunActionView extends DreamRunAction {
   /** Structured action details, when persisted by the dreaming stage. */
   details: Record<string, unknown> | null;
-  /** Hydrated affected durables that still exist in the corpus. */
+  /** Hydrated affected durables, including rows later staled by the same run. */
   durables: Durable[];
 }
 

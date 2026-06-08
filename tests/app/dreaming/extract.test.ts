@@ -135,6 +135,37 @@ describe("dreaming extract stage", () => {
     expect(result.summary.knownCandidates).toBe(1);
   });
 
+  it("classifies later same-claim-key candidates in one batch as known", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+
+    await insertEpisode(client, { id: "ep-1", summary: "Session covering two phrasings of the same durable preference." });
+
+    const llm = new FakeExtractLlm([
+      {
+        type: "preference",
+        subject: "Planning style",
+        content: "Prefers written plans before implementation.",
+        claim_key: "user/planning_style",
+      },
+      {
+        type: "preference",
+        subject: "Planning preference",
+        content: "The user prefers implementation plans to be written before code changes begin.",
+        claim_key: "user/planning_style",
+      },
+    ]);
+
+    const result = await runExtractStage(
+      { now: () => TEST_NOW, maxEpisodes: 8, contextLookupEnabled: true, costCapUsd: 10 },
+      { port, createExtractLlm: () => llm },
+    );
+
+    expect(result.candidates.map((candidate) => candidate.disposition)).toEqual(["new", "known"]);
+    expect(result.summary.newCandidates).toBe(1);
+    expect(result.summary.knownCandidates).toBe(1);
+  });
+
   it("reports cost capped after the extraction call that exhausts budget", async () => {
     const client = await createTestClient(clients);
     const port = createDreamPort(client);

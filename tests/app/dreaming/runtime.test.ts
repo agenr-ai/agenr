@@ -19,8 +19,11 @@ vi.mock("../../../src/adapters/llm.js", async (importActual) => {
 });
 
 import { createDatabase } from "../../../src/adapters/db/client.js";
-import { loadDreamStatusRuntime, runDreamRuntime } from "../../../src/app/dreaming/runtime.js";
+import { createDreamPort } from "../../../src/adapters/db/dreaming-port.js";
+import { loadDreamActionViewsRuntime, loadDreamStatusRuntime, runDreamRuntime } from "../../../src/app/dreaming/runtime.js";
+import { computeContentHash, computeNormContentHash } from "../../../src/core/store/hashing.js";
 import type { LlmPort } from "../../../src/core/ports.js";
+import type { Durable } from "../../../src/core/types.js";
 
 class RuntimeExtractLlm implements LlmPort {
   public readonly metadata = { usage: { inputTokens: 0, outputTokens: 0, totalCost: 0 } };
@@ -116,6 +119,56 @@ describe("loadDreamStatusRuntime", () => {
   });
 });
 
+describe("loadDreamActionViewsRuntime", () => {
+  it("hydrates affected durables that were staled later in the same run", async () => {
+    const { configPath, dbPath } = await createRuntimeFixture({
+      config: {
+        provider: "openai",
+        model: "gpt-5.4-mini",
+      },
+    });
+    let runId: string | undefined;
+    const database = await createDatabase(dbPath);
+    try {
+      const port = createDreamPort(database);
+      const content = "Temporary dreamed rows can be staled after insertion.";
+      await database.insertDurable(
+        buildRuntimeDurable({
+          id: "dreamed-temporary",
+          subject: "temporary dreamed row",
+          content,
+          valid_to: "2026-04-04T12:00:00.000Z",
+          supersession_kind: "stale",
+          supersession_reason: "Dream prune staled a temporary durable after synthesis.",
+        }),
+        [],
+        computeContentHash(content, "episode:ep-1"),
+      );
+      runId = await port.createRun({ tier: "deep", dryRun: false, startedAt: "2026-04-04T10:00:00.000Z" });
+      await port.logRunAction({
+        id: "action-insert-staled",
+        runId,
+        actionType: "insert_durable",
+        durableIds: ["dreamed-temporary"],
+        reasoning: "Inserted durable mined from episode evidence.",
+        details: { claim_key: "agenr/temporary_dreamed_row" },
+        createdAt: "2026-04-04T10:30:00.000Z",
+      });
+    } finally {
+      await database.close();
+    }
+
+    const [action] = await loadDreamActionViewsRuntime({
+      runId: requireRunId(runId),
+      env: { AGENR_CONFIG_PATH: configPath },
+    });
+
+    expect(action?.durables).toHaveLength(1);
+    expect(action?.durables[0]?.id).toBe("dreamed-temporary");
+    expect(action?.durables[0]?.valid_to).toBe("2026-04-04T12:00:00.000Z");
+  });
+});
+
 async function createRuntimeFixture(input: { config: Record<string, unknown> }): Promise<{ directory: string; configPath: string; dbPath: string }> {
   const directory = await mkdtemp(path.join(os.tmpdir(), "agenr-dream-runtime-"));
   tempDirs.push(directory);
@@ -147,6 +200,55 @@ async function insertEpisode(dbPath: string, id: string, summary: string): Promi
   } finally {
     await database.close();
   }
+}
+
+function buildRuntimeDurable(overrides: Pick<Durable, "id" | "subject" | "content"> & Partial<Durable>): Durable {
+  const sourceFile = overrides.source_file ?? "episode:ep-1";
+  return {
+    id: overrides.id,
+    type: overrides.type ?? "fact",
+    subject: overrides.subject,
+    content: overrides.content,
+    importance: overrides.importance ?? 5,
+    expiry: overrides.expiry ?? "temporary",
+    tags: overrides.tags ?? [],
+    source_file: sourceFile,
+    source_context: overrides.source_context,
+    embedding: undefined,
+    content_hash: overrides.content_hash ?? computeContentHash(overrides.content, sourceFile),
+    norm_content_hash: overrides.norm_content_hash ?? computeNormContentHash(overrides.content),
+    quality_score: overrides.quality_score ?? 0.5,
+    recall_count: overrides.recall_count ?? 0,
+    last_recalled_at: overrides.last_recalled_at,
+    superseded_by: overrides.superseded_by,
+    valid_from: overrides.valid_from,
+    valid_to: overrides.valid_to,
+    directive_polarity: overrides.directive_polarity,
+    directive_trigger: overrides.directive_trigger,
+    claim_key: overrides.claim_key,
+    claim_key_raw: overrides.claim_key_raw,
+    claim_key_status: overrides.claim_key_status,
+    claim_key_source: overrides.claim_key_source,
+    claim_key_confidence: overrides.claim_key_confidence,
+    claim_key_rationale: overrides.claim_key_rationale,
+    claim_support_source_kind: overrides.claim_support_source_kind,
+    claim_support_locator: overrides.claim_support_locator,
+    claim_support_observed_at: overrides.claim_support_observed_at,
+    claim_support_mode: overrides.claim_support_mode,
+    supersession_kind: overrides.supersession_kind,
+    supersession_reason: overrides.supersession_reason,
+    user_id: overrides.user_id,
+    project: overrides.project,
+    created_at: overrides.created_at ?? "2026-04-04T10:30:00.000Z",
+    updated_at: overrides.updated_at ?? "2026-04-04T10:30:00.000Z",
+  };
+}
+
+function requireRunId(runId: string | undefined): string {
+  if (!runId) {
+    throw new Error("Expected test fixture to create a dreaming run.");
+  }
+  return runId;
 }
 
 function restoreEnv(key: "AGENR_CONFIG_PATH" | "AGENR_DB_PATH", value: string | undefined): void {

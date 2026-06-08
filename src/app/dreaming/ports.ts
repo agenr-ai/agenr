@@ -174,7 +174,13 @@ export interface DreamPort {
   listProposalBacklog(query?: DreamProposalBacklogQuery): Promise<DreamProposalBacklogItem[]>;
   getHealthStats(now?: Date): Promise<DreamHealthStats>;
   getDurable(durableId: string): Promise<Durable | null>;
-  getDurables(durableIds: string[]): Promise<Durable[]>;
+  getDurables(
+    durableIds: string[],
+    options?: {
+      /** Include rows that have been superseded or closed by later stages. */
+      includeInactive?: boolean;
+    },
+  ): Promise<Durable[]>;
   closeDurableValidity(durableId: string, reason?: string): Promise<boolean>;
   updateDurable(
     durableId: string,

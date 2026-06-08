@@ -139,13 +139,14 @@ export async function insertDurable(executor: SqlExecutor, durable: Durable, emb
 }
 
 /**
- * Fetches active durables by ID, preserving the input order.
+ * Fetches durables by ID, preserving the input order.
  *
  * @param executor - SQL executor used for the lookup.
  * @param ids - Durable IDs to resolve.
- * @returns Active durables for the requested IDs.
+ * @param options - Query flags controlling historical row visibility.
+ * @returns Durables for the requested IDs.
  */
-export async function getDurables(executor: SqlExecutor, ids: string[]): Promise<Durable[]> {
+export async function getDurables(executor: SqlExecutor, ids: string[], options?: { includeInactive?: boolean }): Promise<Durable[]> {
   const normalizedIds = dedupeStrings(ids);
   if (normalizedIds.length === 0) {
     return [];
@@ -160,7 +161,7 @@ export async function getDurables(executor: SqlExecutor, ids: string[]): Promise
           ${DURABLE_SELECT_COLUMNS}
         FROM durables
         WHERE id IN (${placeholders})
-          AND ${ACTIVE_DURABLE_CLAUSE}
+          ${options?.includeInactive === true ? "" : `AND ${ACTIVE_DURABLE_CLAUSE}`}
       `,
       args: chunk,
     });

@@ -257,6 +257,7 @@ export async function classifyCandidates(mined: MinedCandidate[], deps: { port: 
   const normHashByIndex = mined.map((candidate) => computeNormContentHash(candidate.content));
   const existingNormHashes = await deps.port.findExistingNormContentHashes(normHashByIndex);
   const seenNormHashes = new Set<string>(existingNormHashes);
+  const seenClaimKeys = new Set<string>();
   const sessionContextByWindow = new Map<string, DreamSessionStoreContext>();
 
   const candidates: DreamCandidate[] = [];
@@ -266,6 +267,8 @@ export async function classifyCandidates(mined: MinedCandidate[], deps: { port: 
     let refinesDurableId: string | null = null;
 
     if (seenNormHashes.has(normHash)) {
+      disposition = "known";
+    } else if (candidate.claimKey && seenClaimKeys.has(candidate.claimKey)) {
       disposition = "known";
     } else if (candidate.sessionId) {
       const sessionContext = await loadSessionStoreContext(candidate, deps.port, sessionContextByWindow);
@@ -288,6 +291,9 @@ export async function classifyCandidates(mined: MinedCandidate[], deps: { port: 
     // Claim the hash so a later same-content candidate in this batch is `known`.
     if (disposition !== "known") {
       seenNormHashes.add(normHash);
+      if (candidate.claimKey) {
+        seenClaimKeys.add(candidate.claimKey);
+      }
     }
 
     candidates.push({

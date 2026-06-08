@@ -72,7 +72,7 @@ export function createDreamPort(executor: SqlExecutor): DreamPort {
     insertDurable: async (durable, embedding, contentHash) => insertDurable(executor, durable, embedding, contentHash),
     supersedeDurable: async (oldDurableId, newDurableId, kind, reason) => supersedeDurable(executor, oldDurableId, newDurableId, kind, reason),
     getDurable: async (durableId) => getDurable(executor, durableId),
-    getDurables: async (durableIds) => getDurables(executor, durableIds),
+    getDurables: async (durableIds, options) => getDurables(executor, durableIds, options),
     closeDurableValidity: async (durableId, reason) => closeDurableValidity(executor, durableId, reason),
     updateDurable: async (durableId, fields, options) => updateDurable(executor, durableId, fields, options),
     countEpisodesSince: async (since, project) => countEpisodesSince(executor, since, project),
