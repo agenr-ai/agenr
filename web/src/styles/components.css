@@ -272,6 +272,16 @@
   color: var(--text-primary) !important;
 }
 
+.review-summary__diagnostics {
+  width: 100%;
+}
+
+.review-summary__actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: var(--space-1);
+}
+
 .review-checklist {
   display: flex;
   flex-direction: column;
@@ -303,6 +313,17 @@
 
 .diagnostics .change-grid {
   margin-top: var(--space-2);
+  grid-template-columns: minmax(8.5rem, 34%) minmax(0, 1fr);
+}
+
+.diagnostics .change-grid__key {
+  overflow-wrap: anywhere;
+}
+
+.diagnostics .change-grid__value {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .change-grid {

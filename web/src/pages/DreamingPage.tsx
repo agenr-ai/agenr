@@ -419,11 +419,14 @@ function FlagReviewActionSummary({ action, onOpenProposals }: { action: DreamRun
 
       {action.durables.length > 0 ? <ActionDurableList action={action} /> : null}
 
-      <div className="row" style={{ justifyContent: "space-between", gap: "var(--space-3)" }}>
-        <details className="diagnostics">
+      {hasActionDetails(action) ? (
+        <details className="diagnostics review-summary__diagnostics">
           <summary>Diagnostics</summary>
           <ActionDetailsGrid action={action} />
         </details>
+      ) : null}
+
+      <div className="review-summary__actions">
         <Button variant="primary" size="sm" icon="arrow-right" onClick={onOpenProposals}>
           Open review
         </Button>
