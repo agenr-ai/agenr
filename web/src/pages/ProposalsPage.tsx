@@ -42,7 +42,7 @@ function ProposalsInner(): React.ReactElement {
       <div className="page-head">
         <div className="page-head__lead">
           <h2>Proposal review</h2>
-          <p>Adjudicate claim-key proposals raised by dreaming. Applying mutates durables after a backup; both decisions require a reason.</p>
+          <p>Review suggested claim-key changes from dreaming. Apply writes the proposed key after a backup; reject leaves the memory unchanged.</p>
         </div>
         <Button variant="ghost" icon="refresh" onClick={state.refetch}>
           Refresh
@@ -112,7 +112,7 @@ function ProposalRow({ item, onOpen }: { item: ProposalBacklogItem; onOpen: () =
           <div className="stack" style={{ gap: "var(--space-3)", alignItems: "flex-end", flex: "none", width: 140 }}>
             <ConfidenceMeter value={proposal.confidence} />
             <Button variant="primary" size="sm" icon="arrow-right" onClick={onOpen}>
-              Review
+              Open review
             </Button>
           </div>
         </div>
@@ -211,6 +211,19 @@ function ProposalDrawer({ proposalId, onClose, onReviewed }: { proposalId: strin
             <Badge status="accent">{formatPercent(proposal.confidence)} confidence</Badge>
           </div>
 
+          <div className="review-brief">
+            <span className="section-title">Review decision</span>
+            <p>
+              Decide whether the affected memory should be grouped under the proposed claim key. Apply writes the proposed key after creating a
+              backup. Reject keeps the memory as it is and records why this suggestion should not be used.
+            </p>
+            <ul className="review-checklist">
+              <li>The memory text should be about the proposed topic.</li>
+              <li>The proposed key should describe the stable slot for this memory, not incidental wording.</li>
+              <li>The key should group this memory with the right related memories.</li>
+            </ul>
+          </div>
+
           <div className="stack" style={{ gap: "var(--space-2)" }}>
             <span className="section-title">Proposed change</span>
             <ClaimDiff current={proposal.currentClaimKeys} proposed={proposal.proposedClaimKeys} />
@@ -242,8 +255,8 @@ function ProposalDrawer({ proposalId, onClose, onReviewed }: { proposalId: strin
 
           {proposal.reviewStatus === "open" ? (
             <div className="stack" style={{ gap: "var(--space-3)" }}>
-              <Field label="Decision reason" hint="Recorded with the review for auditability.">
-                <Textarea rows={3} value={reason} placeholder="Why apply or reject this proposal?" onChange={(event) => setReason(event.target.value)} />
+              <Field label="Decision reason" hint="Explain why the proposed key should or should not be written.">
+                <Textarea rows={3} value={reason} placeholder="Why is this the right decision for this memory?" onChange={(event) => setReason(event.target.value)} />
               </Field>
               <div className="row" style={{ gap: "var(--space-3)", justifyContent: "flex-end" }}>
                 <Button variant="danger" icon="x" loading={busy === "reject"} onClick={() => void review("reject")}>

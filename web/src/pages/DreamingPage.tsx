@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { ApiError, api } from "../api/client";
 import type { DreamJobSnapshot, DreamProposal, DreamRunActionView, DreamRunRecord, DreamRunsResponse } from "../api/types";
@@ -10,7 +11,7 @@ import { useAsync } from "../hooks/useAsync";
 import { useDreamStream } from "../hooks/useDreamStream";
 import { useInstances } from "../state/InstanceContext";
 import { describeEvent } from "../lib/dream-progress";
-import { formatCost, formatDateTime, formatDateTimeWithRelative, formatRelative, titleCase } from "../lib/format";
+import { formatCost, formatDateTime, formatDateTimeWithRelative, formatPercent, formatRelative, titleCase } from "../lib/format";
 import { jobStatusVariant, runStatusVariant } from "../lib/status";
 
 /** Available dreaming tiers with descriptions. */
@@ -270,6 +271,7 @@ function LiveRun({ job, onFinished }: { job: DreamJobSnapshot; onFinished: () =>
 
 /** Drawer showing a persisted run's actions and proposals. */
 function RunDetailDrawer({ run, onClose }: { run: DreamRunRecord; onClose: () => void }): React.ReactElement {
+  const navigate = useNavigate();
   const actions = useAsync(() => api.runActions(run.id), [run.id]);
   const proposals = useAsync(() => api.runProposals(run.id), [run.id]);
 
@@ -313,15 +315,21 @@ function RunDetailDrawer({ run, onClose }: { run: DreamRunRecord; onClose: () =>
                 return (
                   <div key={action.id} className="card" style={{ padding: "var(--space-3)" }}>
                     <div className="spread">
-                      <Badge status="dream">{titleCase(action.actionType)}</Badge>
+                      <Badge status={action.actionType === "flag_review" ? "warning" : "dream"}>{formatActionTypeLabel(action.actionType)}</Badge>
                       <span className="muted" style={{ fontSize: "var(--text-xs)" }} title={formatDateTimeWithRelative(action.createdAt)}>
                         {formatDateTime(action.createdAt)}
                       </span>
                     </div>
-                    <p className="secondary" style={{ fontSize: "var(--text-sm)", marginTop: "var(--space-2)" }} title={action.reasoning}>
-                      {formatActionReasoning(action.reasoning, action.details, durableById)}
-                    </p>
-                    <DreamActionChangeSummary action={action} />
+                    {action.actionType === "flag_review" ? (
+                      <FlagReviewActionSummary action={action} onOpenProposals={() => navigate("/proposals")} />
+                    ) : (
+                      <>
+                        <p className="secondary" style={{ fontSize: "var(--text-sm)", marginTop: "var(--space-2)" }} title={action.reasoning}>
+                          {formatActionReasoning(action.reasoning, action.details, durableById)}
+                        </p>
+                        <DreamActionChangeSummary action={action} />
+                      </>
+                    )}
                   </div>
                 );
               })}
@@ -360,9 +368,113 @@ function RunDetailDrawer({ run, onClose }: { run: DreamRunRecord; onClose: () =>
   );
 }
 
+/** Plain-language summary for a proposal staged for human review. */
+function FlagReviewActionSummary({ action, onOpenProposals }: { action: DreamRunActionView; onOpenProposals: () => void }): React.ReactElement {
+  const details = action.details ?? {};
+  const currentClaimKeys = readStringArrayDetail(details.current_claim_keys);
+  const proposedClaimKeys = readStringArrayDetail(details.proposed_claim_keys);
+  const confidence = typeof details.confidence === "number" ? details.confidence : null;
+  const eligibleForApply = details.eligible_for_apply === true;
+  const blocker = typeof details.auto_apply_blocker === "string" ? details.auto_apply_blocker : null;
+  const durableById = new Map(action.durables.map((durable) => [durable.id, durable]));
+
+  return (
+    <div className="review-summary">
+      <div className="review-summary__plain">
+        <strong>Dreaming found a suggested claim-key change.</strong>
+        <span>
+          Review means deciding whether the affected memory belongs under the proposed key. Apply writes that key after a backup; reject leaves the
+          memory unchanged and records the reason.
+        </span>
+      </div>
+
+      <div className="review-summary__grid">
+        <ReviewSummaryRow label="Current key" value={formatClaimKeyList(currentClaimKeys, "(no current key)")} />
+        <ReviewSummaryRow label="Proposed key" value={formatClaimKeyList(proposedClaimKeys, "(no proposed key)")} emphasized />
+        {confidence !== null ? <ReviewSummaryRow label="Confidence" value={formatPercent(confidence)} /> : null}
+        <ReviewSummaryRow label="Decision" value={formatReviewDecisionText(eligibleForApply, blocker)} />
+      </div>
+
+      <div className="stack" style={{ gap: "var(--space-2)" }}>
+        <span className="section-title">What to check</span>
+        <ul className="review-checklist">
+          <li>The memory text is really about the proposed topic.</li>
+          <li>The proposed key describes the stable slot this memory should be grouped under.</li>
+          <li>Applying the key would group it with the right related memories, not just similar wording.</li>
+        </ul>
+      </div>
+
+      <ReviewEvidenceSummary details={details} />
+
+      {action.durableIds.length > 0 ? (
+        <div className="row wrap" style={{ gap: "var(--space-2)" }}>
+          <span className="muted" style={{ fontSize: "var(--text-xs)" }}>Affected</span>
+          {action.durableIds.map((durableId) => (
+            <Chip key={durableId} className="chip--compact" title={formatAffectedDurableReferenceTitle(durableId, action.details, durableById)}>
+              <span className="truncate">{formatAffectedDurableReference(durableId, action.details, durableById)}</span>
+            </Chip>
+          ))}
+        </div>
+      ) : null}
+
+      {action.durables.length > 0 ? <ActionDurableList action={action} /> : null}
+
+      <div className="row" style={{ justifyContent: "space-between", gap: "var(--space-3)" }}>
+        <details className="diagnostics">
+          <summary>Diagnostics</summary>
+          <ActionDetailsGrid action={action} />
+        </details>
+        <Button variant="primary" size="sm" icon="arrow-right" onClick={onOpenProposals}>
+          Open review
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** One row in the staged-review summary. */
+function ReviewSummaryRow({ label, value, emphasized = false }: { label: string; value: string; emphasized?: boolean }): React.ReactElement {
+  return (
+    <div className="review-summary__row">
+      <span>{label}</span>
+      <strong className={emphasized ? "review-summary__value--emphasized" : undefined}>{value}</strong>
+    </div>
+  );
+}
+
+/** Plain-language evidence summary for review proposals. */
+function ReviewEvidenceSummary({ details }: { details: Record<string, unknown> }): React.ReactElement | null {
+  const familyReuseCount = readNumberDetail(details.support_family_reuse_count);
+  const groundedFamilyReuseCount = readNumberDetail(details.support_grounded_family_reuse_count);
+  const supportEvidence = readStringArrayDetail(details.support_evidence);
+  const hasSupportedCandidate = details.supported_candidate === true;
+
+  const lines = [
+    familyReuseCount > 0
+      ? `${familyReuseCount} related memor${familyReuseCount === 1 ? "y already uses" : "ies already use"} a compatible key.`
+      : null,
+    groundedFamilyReuseCount > 0
+      ? `${groundedFamilyReuseCount} of those related memories include supporting provenance.`
+      : null,
+    hasSupportedCandidate || supportEvidence.length > 0 ? "Dreaming found matching evidence in the existing corpus." : null,
+  ].filter((line): line is string => line !== null);
+
+  if (lines.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="review-evidence">
+      <span className="section-title">Why it was suggested</span>
+      {lines.map((line) => (
+        <span key={line}>{line}</span>
+      ))}
+    </div>
+  );
+}
+
 /** Renders the concrete change payload for one dream action. */
 function DreamActionChangeSummary({ action }: { action: DreamRunActionView }): React.ReactElement {
-  const details = action.details ? Object.entries(action.details).filter(([, value]) => value !== null && value !== undefined && value !== "") : [];
   const durableById = new Map(action.durables.map((durable) => [durable.id, durable]));
 
   return (
@@ -381,41 +493,73 @@ function DreamActionChangeSummary({ action }: { action: DreamRunActionView }): R
         </div>
       ) : null}
 
-      {details.length > 0 ? (
-        <div className="change-grid">
-          {details.map(([key, value]) => {
-            const formatted = formatDetailValue(value, key, durableById);
-            return (
-              <div key={key} style={{ display: "contents" }}>
-                <span className="change-grid__key">{formatDetailKey(key)}</span>
-                <span className="change-grid__value truncate" title={formatted.title}>
-                  {formatted.label}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      ) : null}
+      {action.durables.length > 0 ? <ActionDurableList action={action} /> : null}
 
-      {action.durables.length > 0 ? (
-        <div className="stack" style={{ gap: "var(--space-2)" }}>
-          {action.durables.map((durable) => (
-            <div key={durable.id} className="change-item">
-              <div className="spread" style={{ gap: "var(--space-2)" }}>
-                <strong className="truncate" style={{ fontSize: "var(--text-xs)" }} title={durable.subject}>{durable.subject}</strong>
-                {durable.claim_key ? (
-                  <span className="mono muted truncate" style={{ fontSize: "var(--text-2xs)" }} title={durable.claim_key}>
-                    {durable.claim_key}
-                  </span>
-                ) : null}
-              </div>
-              <span className="muted truncate" style={{ fontSize: "var(--text-xs)" }} title={durable.content}>{durable.content}</span>
-            </div>
-          ))}
-        </div>
+      {hasActionDetails(action) ? (
+        <details className="diagnostics">
+          <summary>Diagnostics</summary>
+          <ActionDetailsGrid action={action} />
+        </details>
       ) : null}
     </div>
   );
+}
+
+/** Renders action detail fields as an audit grid. */
+function ActionDetailsGrid({ action }: { action: DreamRunActionView }): React.ReactElement | null {
+  const details = action.details ? Object.entries(action.details).filter(([, value]) => value !== null && value !== undefined && value !== "") : [];
+  const durableById = new Map(action.durables.map((durable) => [durable.id, durable]));
+
+  if (details.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="change-grid">
+      {details.map(([key, value]) => {
+        const formatted = formatDetailValue(value, key, durableById);
+        return (
+          <div key={key} style={{ display: "contents" }}>
+            <span className="change-grid__key">{formatDetailKey(key)}</span>
+            <span className="change-grid__value truncate" title={formatted.title}>
+              {formatted.label}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Returns whether an action has raw detail fields worth exposing in diagnostics. */
+function hasActionDetails(action: DreamRunActionView): boolean {
+  return action.details ? Object.values(action.details).some((value) => value !== null && value !== undefined && value !== "") : false;
+}
+
+/** Renders affected durable snippets for an action. */
+function ActionDurableList({ action }: { action: DreamRunActionView }): React.ReactElement {
+  return (
+    <div className="stack" style={{ gap: "var(--space-2)" }}>
+      {action.durables.map((durable) => (
+        <div key={durable.id} className="change-item">
+          <div className="spread" style={{ gap: "var(--space-2)" }}>
+            <strong className="truncate" style={{ fontSize: "var(--text-xs)" }} title={durable.subject}>{durable.subject}</strong>
+            {durable.claim_key ? (
+              <span className="mono muted truncate" style={{ fontSize: "var(--text-2xs)" }} title={durable.claim_key}>
+                {durable.claim_key}
+              </span>
+            ) : null}
+          </div>
+          <span className="muted truncate" style={{ fontSize: "var(--text-xs)" }} title={durable.content}>{durable.content}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Formats a dreaming action type for operator display. */
+function formatActionTypeLabel(actionType: string): string {
+  return actionType === "flag_review" ? "Needs review" : titleCase(actionType);
 }
 
 /** Formats an action detail key for compact display. */
@@ -574,4 +718,38 @@ function isEvidenceReference(value: string): boolean {
 function friendlyIdentifierLabel(key: string): string {
   const label = DETAIL_KEY_LABELS[key] ?? titleCase(key.replaceAll("_", " "));
   return label.toLowerCase().includes("durable") ? label : `${label} record`;
+}
+
+/** Reads a string array from an untyped action-detail payload. */
+function readStringArrayDetail(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0) : [];
+}
+
+/** Reads a number from an untyped action-detail payload. */
+function readNumberDetail(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+/** Formats claim-key arrays for compact review summaries. */
+function formatClaimKeyList(values: string[], fallback: string): string {
+  return values.length > 0 ? values.join(", ") : fallback;
+}
+
+/** Describes the review action available for a proposal. */
+function formatReviewDecisionText(eligibleForApply: boolean, blocker: string | null): string {
+  if (eligibleForApply) {
+    return "Apply is available if the proposed key is correct.";
+  }
+  if (blocker) {
+    return `Reject or inspect manually. ${formatAutoApplyBlocker(blocker)}.`;
+  }
+  return "Reject or inspect manually. Apply is not available for this proposal.";
+}
+
+/** Formats a stored automatic-apply blocker without internal enum wording. */
+function formatAutoApplyBlocker(blocker: string): string {
+  if (blocker === "cross_type_collision") {
+    return "Another active memory already uses that key for a different type";
+  }
+  return `Automatic apply was blocked by ${titleCase(blocker.replaceAll("_", " ")).toLowerCase()}`;
 }
