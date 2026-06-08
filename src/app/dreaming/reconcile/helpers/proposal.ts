@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { describeClaimKeyNormalizationFailure } from "../../../../core/claim-key.js";
 import type { ClaimKeyInspection } from "../../../../core/claim-key.js";
-import type { ClaimKeyAliasCandidate } from "../../../../core/claim-key-alias.js";
+import type { ClaimKeyAliasCandidate, ClaimKeyAliasProposalSource } from "../../../../core/claim-key-alias.js";
 import type { ClaimKeyEntityFamilyCandidate } from "../../../../core/claim-key-entity-family.js";
 import type { DreamRunProposal } from "../../../../core/dreaming/types.js";
 import type { Durable } from "../../../../core/types.js";
@@ -195,7 +195,7 @@ export function buildClaimKeyAliasPersistInput(
     proposedClaimKeys: string[];
     durableIds: string[];
     rationale: string;
-    source: string;
+    source: ClaimKeyAliasProposalSource;
     eligibleForApply: boolean;
     autoApplyBlocker?: string | null;
   },

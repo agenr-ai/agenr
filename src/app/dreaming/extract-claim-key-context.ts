@@ -1,4 +1,5 @@
 import type { DreamClaimKeyContextDurable } from "../../core/dreaming/claim-key-context.js";
+import { computeClaimKeyTokenOverlap, tokenizeClaimKeyAttributeTokens, tokenizeClaimKeyTextTokens } from "../../core/claim-key-lexical.js";
 import { normalizeClaimKey, normalizeClaimKeySegment } from "../../core/claim-key.js";
 import type { DreamPort } from "./ports.js";
 
@@ -9,23 +10,6 @@ const MIN_ATTRIBUTE_OVERLAP_TOKENS = 2;
 const MIN_CONTENT_OVERLAP_TOKENS = 4;
 const STRONG_ATTRIBUTE_OVERLAP = 0.6;
 const STRONG_CONTENT_OVERLAP = 0.72;
-const CONTEXT_TOKEN_STOPWORDS = new Set([
-  "about",
-  "again",
-  "already",
-  "during",
-  "from",
-  "have",
-  "into",
-  "that",
-  "their",
-  "there",
-  "this",
-  "used",
-  "user",
-  "where",
-  "with",
-]);
 
 /** Minimal candidate shape used by claim-key context matching during extract classification. */
 export interface ClaimKeyContextCandidate {
@@ -129,17 +113,13 @@ function hasStrongClaimKeyAttributeOverlap(leftClaimKey: string, rightClaimKey: 
     return false;
   }
 
-  const leftTokens = tokenizeClaimKeyAttribute(left.value.attribute);
-  const rightTokens = tokenizeClaimKeyAttribute(right.value.attribute);
-  const overlap = calculateOverlap(leftTokens, rightTokens);
+  const overlap = computeClaimKeyTokenOverlap(tokenizeClaimKeyAttributeTokens(left.value.attribute), tokenizeClaimKeyAttributeTokens(right.value.attribute));
   return overlap.commonCount >= MIN_ATTRIBUTE_OVERLAP_TOKENS && overlap.coefficient >= STRONG_ATTRIBUTE_OVERLAP;
 }
 
 /** Detects strongly overlapping subject/content text for candidates without a useful exact key. */
 function hasStrongTextOverlap(left: string, right: string): boolean {
-  const leftTokens = tokenizeExtractContextText(left);
-  const rightTokens = tokenizeExtractContextText(right);
-  const overlap = calculateOverlap(leftTokens, rightTokens);
+  const overlap = computeClaimKeyTokenOverlap(tokenizeClaimKeyTextTokens(left), tokenizeClaimKeyTextTokens(right));
   return overlap.commonCount >= MIN_CONTENT_OVERLAP_TOKENS && overlap.coefficient >= STRONG_CONTENT_OVERLAP;
 }
 
@@ -147,36 +127,4 @@ function hasStrongTextOverlap(left: string, right: string): boolean {
 function readClaimKeyEntity(claimKey: string): string | null {
   const normalized = normalizeClaimKey(claimKey);
   return normalized.ok ? normalized.value.entity : null;
-}
-
-/** Tokenizes claim-key attributes for sibling-slot overlap checks. */
-function tokenizeClaimKeyAttribute(attribute: string): Set<string> {
-  return new Set(attribute.split("_").filter((token) => token.length >= 3 && !CONTEXT_TOKEN_STOPWORDS.has(token)));
-}
-
-/** Tokenizes prompt or durable text for conservative lexical overlap checks. */
-export function tokenizeExtractContextText(text: string): Set<string> {
-  return new Set(
-    text
-      .toLowerCase()
-      .split(/[^a-z0-9]+/u)
-      .map((token) => token.trim())
-      .filter((token) => token.length >= 3 && !CONTEXT_TOKEN_STOPWORDS.has(token)),
-  );
-}
-
-/** Calculates overlap coefficient for two token sets. */
-function calculateOverlap(left: Set<string>, right: Set<string>): { commonCount: number; coefficient: number } {
-  if (left.size === 0 || right.size === 0) {
-    return { commonCount: 0, coefficient: 0 };
-  }
-
-  let commonCount = 0;
-  for (const token of left) {
-    if (right.has(token)) {
-      commonCount += 1;
-    }
-  }
-
-  return { commonCount, coefficient: commonCount / Math.min(left.size, right.size) };
 }

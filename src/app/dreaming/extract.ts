@@ -5,7 +5,8 @@ import type { DreamClaimKeyContextDurable } from "../../core/dreaming/claim-key-
 import { buildDreamSessionStoreContext, toDreamSessionStoreDurables } from "../../core/dreaming/session-store-context.js";
 import type { DreamSessionStoreContext } from "../../core/dreaming/session-store-context.js";
 import { normalizeClaimKey, normalizeClaimKeySegment } from "../../core/claim-key.js";
-import { findLikelyClaimKeyContextMatch, tokenizeExtractContextText } from "./extract-claim-key-context.js";
+import { tokenizeClaimKeyTextTokens } from "../../core/claim-key-lexical.js";
+import { findLikelyClaimKeyContextMatch } from "./extract-claim-key-context.js";
 import type { EmbeddingPort } from "../../core/ports.js";
 import { composeEmbeddingText } from "../../core/store/embedding-text.js";
 import { computeContentHash, computeNormContentHash } from "../../core/store/hashing.js";
@@ -350,7 +351,7 @@ function extractEpisodeEntityPrefixes(episode: DreamEpisodeEvidence): string[] {
     prefixes.push(project);
   }
 
-  for (const token of tokenizeExtractContextText(episode.summary)) {
+  for (const token of tokenizeClaimKeyTextTokens(episode.summary)) {
     if (token.length >= 3 && token.length <= 40) {
       prefixes.push(token);
     }

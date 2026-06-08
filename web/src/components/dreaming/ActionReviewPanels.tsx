@@ -6,7 +6,6 @@ import {
   buildAliasReviewSummary,
   formatAliasAutoApplyBlocker,
   formatClaimKeyList,
-  renderAliasReviewSummaryLines,
   type AliasReviewSummaryView,
 } from "../lib/alias-audit.js";
 import { readStringArrayDetail } from "../lib/action-details.js";
@@ -216,11 +215,16 @@ function ReviewSummaryRow({ label, value, emphasized = false }: { label: string;
 
 /** Renders the structured alias-convergence audit in a compact operator view. */
 function AliasReviewSummary({ summary }: { summary: AliasReviewSummaryView }): React.ReactElement {
-  const lines = renderAliasReviewSummaryLines({ summary, formatClaimKeys: formatClaimKeyList });
   return (
     <div className="review-evidence">
       <span className="section-title">Alias convergence audit</span>
-      {lines.map((line) => (line ? <span key={line.key}>{line.text}</span> : null))}
+      {summary.entityPrefix ? <span>Entity: {summary.entityPrefix}</span> : null}
+      <span>Current keys: {formatClaimKeyList(summary.currentKeys, "(none)")}</span>
+      {summary.proposedKey ? <span>Target key: {summary.proposedKey}</span> : null}
+      {summary.deterministicConfidence !== null ? <span>Deterministic confidence: {formatPercent(summary.deterministicConfidence)}</span> : null}
+      {summary.llmSameSlot !== null ? <span>LLM verdict: {summary.llmSameSlot ? "same slot" : "different slots"}</span> : null}
+      {summary.llmConfidence !== null ? <span>LLM confidence: {formatPercent(summary.llmConfidence)}</span> : null}
+      {summary.llmRationale ? <span>LLM rationale: {summary.llmRationale}</span> : null}
     </div>
   );
 }

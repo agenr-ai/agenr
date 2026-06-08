@@ -1,6 +1,6 @@
 /** Operator-facing helpers for claim-key alias convergence audit payloads. */
 
-import { formatPercent, titleCase } from "./format.js";
+import { titleCase } from "./format.js";
 import { isRecord, readNullableNumberDetail, readStringArrayDetail } from "./action-details.js";
 
 /** Compact alias audit summary derived from persisted action details. */
@@ -119,31 +119,4 @@ export function summarizeAliasProfiles(value: unknown[]): FormattedAliasDetailVa
  */
 export function formatClaimKeyList(values: string[], fallback: string): string {
   return values.length > 0 ? values.join(", ") : fallback;
-}
-
-/**
- * Renders deterministic and LLM alias audit fields for operator review.
- *
- * @param input - Alias audit summary fields.
- * @returns JSX lines for the alias audit block.
- */
-export function renderAliasReviewSummaryLines(input: {
-  summary: AliasReviewSummaryView;
-  formatClaimKeys: (values: string[], fallback: string) => string;
-}): Array<{ key: string; text: string } | null> {
-  const { summary } = input;
-  const formatKeys = input.formatClaimKeys;
-  return [
-    summary.entityPrefix ? { key: "entity", text: `Entity: ${summary.entityPrefix}` } : null,
-    { key: "current-keys", text: `Current keys: ${formatKeys(summary.currentKeys, "(none)")}` },
-    summary.proposedKey ? { key: "target-key", text: `Target key: ${summary.proposedKey}` } : null,
-    summary.deterministicConfidence !== null
-      ? { key: "deterministic-confidence", text: `Deterministic confidence: ${formatPercent(summary.deterministicConfidence)}` }
-      : null,
-    summary.llmSameSlot !== null
-      ? { key: "llm-verdict", text: `LLM verdict: ${summary.llmSameSlot ? "same slot" : "different slots"}` }
-      : null,
-    summary.llmConfidence !== null ? { key: "llm-confidence", text: `LLM confidence: ${formatPercent(summary.llmConfidence)}` } : null,
-    summary.llmRationale ? { key: "llm-rationale", text: `LLM rationale: ${summary.llmRationale}` } : null,
-  ];
 }

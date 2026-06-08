@@ -1,12 +1,20 @@
 import { inspectClaimKey } from "./claim-key.js";
+import {
+  computeClaimKeyTokenOverlap,
+  readClaimKeyAttributeHead,
+  tokenizeClaimKeyAttributeTokens,
+  tokenizeClaimKeyTextTokens,
+  tokenizeOptionalClaimKeyTextTokens,
+} from "./claim-key-lexical.js";
 import type { ClaimKeySource, ClaimKeyStatus, Durable } from "./types.js";
 
-const STOP_TOKENS = new Set(["a", "an", "and", "as", "by", "for", "from", "in", "is", "of", "on", "or", "that", "the", "this", "to", "with"]);
 const ATTRIBUTE_ALIAS_MIN_CONFIDENCE = 0.72;
 /** Minimum deterministic confidence required before alias auto-apply may be considered. */
 export const CLAIM_KEY_ALIAS_AUTO_APPLY_THRESHOLD = 0.9;
 const ATTRIBUTE_ALIAS_MAX_KEYS_PER_ENTITY = 40;
-const ATTRIBUTE_ALIAS_MAX_CANDIDATES_PER_ENTITY = 12;
+
+/** Persisted proposal sources for same-entity claim-key alias convergence. */
+export type ClaimKeyAliasProposalSource = "claim_key_alias_collision" | "claim_key_alias_llm_adjudicated" | "claim_key_alias_deterministic";
 
 /** Evidence kinds emitted by same-entity claim-key alias detection. */
 export type ClaimKeyAliasEvidenceKind =
@@ -72,6 +80,89 @@ interface PairSupport {
   evidence: ClaimKeyAliasEvidence[];
 }
 
+interface PairEvaluationContext {
+  left: AliasProfile;
+  right: AliasProfile;
+  attributeOverlap: ReturnType<typeof computeClaimKeyTokenOverlap>;
+  subjectOverlap: ReturnType<typeof computeClaimKeyTokenOverlap>;
+  contentOverlap: ReturnType<typeof computeClaimKeyTokenOverlap>;
+  tagOverlap: ReturnType<typeof computeClaimKeyTokenOverlap>;
+  sharedAttributeHead: boolean;
+}
+
+interface PairSignal {
+  applies: (context: PairEvaluationContext) => boolean;
+  score: number;
+  buildEvidence: (context: PairEvaluationContext) => ClaimKeyAliasEvidence;
+}
+
+const PAIR_SIGNALS: PairSignal[] = [
+  {
+    applies: (context) => context.attributeOverlap.commonCount >= 2 && context.attributeOverlap.coefficient >= 0.5,
+    score: 0.28,
+    buildEvidence: (context) => ({
+      kind: "attribute_token_overlap",
+      detail: `Attributes share ${context.attributeOverlap.commonCount} stable tokens.`,
+    }),
+  },
+  {
+    applies: (context) => context.sharedAttributeHead,
+    score: 0.12,
+    buildEvidence: (context) => ({
+      kind: "attribute_head_overlap",
+      detail: `Attributes share head "${readClaimKeyAttributeHead(context.left.attribute)}".`,
+    }),
+  },
+  {
+    applies: (context) => context.subjectOverlap.commonCount >= 2 && context.subjectOverlap.coefficient >= 0.5,
+    score: 0.16,
+    buildEvidence: (context) => ({
+      kind: "subject_overlap",
+      detail: `Subjects share ${context.subjectOverlap.commonCount} stable tokens.`,
+    }),
+  },
+  {
+    applies: (context) => context.contentOverlap.commonCount >= 4 && context.contentOverlap.coefficient >= 0.45,
+    score: 0.2,
+    buildEvidence: (context) => ({
+      kind: "content_overlap",
+      detail: `Content shares ${context.contentOverlap.commonCount} stable tokens.`,
+    }),
+  },
+  {
+    applies: (context) => context.tagOverlap.commonCount >= 1,
+    score: 0.06,
+    buildEvidence: (context) => ({
+      kind: "shared_tags",
+      detail: `Durables share ${context.tagOverlap.commonCount} tag tokens.`,
+    }),
+  },
+  {
+    applies: (context) => setsEqual(context.left.typeSet, context.right.typeSet),
+    score: 0.1,
+    buildEvidence: (context) => ({
+      kind: "same_type",
+      detail: `Both keys are used by ${[...context.left.typeSet].sort().join(", ")} durables.`,
+    }),
+  },
+  {
+    applies: (context) => context.left.projectSet.size > 0 && setsEqual(context.left.projectSet, context.right.projectSet),
+    score: 0.06,
+    buildEvidence: (context) => ({
+      kind: "same_project",
+      detail: `Both keys share project scope ${[...context.left.projectSet].sort().join(", ")}.`,
+    }),
+  },
+  {
+    applies: (context) => context.left.trustedOrManualCount > 0 || context.right.trustedOrManualCount > 0,
+    score: 0.04,
+    buildEvidence: () => ({
+      kind: "lifecycle_trust",
+      detail: "At least one side has trusted or manual lifecycle metadata.",
+    }),
+  },
+];
+
 /**
  * Detects likely same-slot aliases among active canonical claim keys.
  *
@@ -130,14 +221,14 @@ function buildAliasProfiles(durables: Durable[]): Map<string, AliasProfile[]> {
     if (durable.project) {
       profile.projectSet.add(durable.project);
     }
-    for (const token of tokenizeText(durable.subject)) {
+    for (const token of tokenizeOptionalClaimKeyTextTokens(durable.subject)) {
       profile.subjectTokens.add(token);
     }
-    for (const token of tokenizeText(durable.content)) {
+    for (const token of tokenizeOptionalClaimKeyTextTokens(durable.content)) {
       profile.contentTokens.add(token);
     }
     for (const tag of durable.tags) {
-      for (const token of tokenizeText(tag)) {
+      for (const token of tokenizeClaimKeyTextTokens(tag)) {
         profile.tagTokens.add(token);
       }
     }
@@ -208,10 +299,11 @@ function buildPairSupport(profiles: AliasProfile[]): PairSupport[] {
     }
   }
 
-  return support.sort((left, right) => right.confidence - left.confidence).slice(0, ATTRIBUTE_ALIAS_MAX_CANDIDATES_PER_ENTITY);
+  return support.sort((left, right) => right.confidence - left.confidence);
 }
 
 function evaluatePair(left: AliasProfile, right: AliasProfile): PairSupport | null {
+  const context = buildPairEvaluationContext(left, right);
   const evidence: ClaimKeyAliasEvidence[] = [
     {
       kind: "same_entity",
@@ -220,54 +312,12 @@ function evaluatePair(left: AliasProfile, right: AliasProfile): PairSupport | nu
   ];
   let score = 0.2;
 
-  const attributeOverlap = overlap(tokenizeAttribute(left.attribute), tokenizeAttribute(right.attribute));
-  if (attributeOverlap.commonCount >= 2 && attributeOverlap.coefficient >= 0.5) {
-    score += 0.28;
-    evidence.push({
-      kind: "attribute_token_overlap",
-      detail: `Attributes share ${attributeOverlap.commonCount} stable tokens.`,
-    });
-  }
-
-  if (attributeHead(left.attribute) === attributeHead(right.attribute)) {
-    score += 0.12;
-    evidence.push({
-      kind: "attribute_head_overlap",
-      detail: `Attributes share head "${attributeHead(left.attribute)}".`,
-    });
-  }
-
-  const subjectOverlap = overlap(left.subjectTokens, right.subjectTokens);
-  if (subjectOverlap.commonCount >= 2 && subjectOverlap.coefficient >= 0.5) {
-    score += 0.16;
-    evidence.push({ kind: "subject_overlap", detail: `Subjects share ${subjectOverlap.commonCount} stable tokens.` });
-  }
-
-  const contentOverlap = overlap(left.contentTokens, right.contentTokens);
-  if (contentOverlap.commonCount >= 4 && contentOverlap.coefficient >= 0.45) {
-    score += 0.2;
-    evidence.push({ kind: "content_overlap", detail: `Content shares ${contentOverlap.commonCount} stable tokens.` });
-  }
-
-  const tagOverlap = overlap(left.tagTokens, right.tagTokens);
-  if (tagOverlap.commonCount >= 1) {
-    score += 0.06;
-    evidence.push({ kind: "shared_tags", detail: `Durables share ${tagOverlap.commonCount} tag tokens.` });
-  }
-
-  if (setsEqual(left.typeSet, right.typeSet)) {
-    score += 0.1;
-    evidence.push({ kind: "same_type", detail: `Both keys are used by ${[...left.typeSet].sort().join(", ")} durables.` });
-  }
-
-  if (left.projectSet.size > 0 && setsEqual(left.projectSet, right.projectSet)) {
-    score += 0.06;
-    evidence.push({ kind: "same_project", detail: `Both keys share project scope ${[...left.projectSet].sort().join(", ")}.` });
-  }
-
-  if (left.trustedOrManualCount > 0 || right.trustedOrManualCount > 0) {
-    score += 0.04;
-    evidence.push({ kind: "lifecycle_trust", detail: "At least one side has trusted or manual lifecycle metadata." });
+  for (const signal of PAIR_SIGNALS) {
+    if (!signal.applies(context)) {
+      continue;
+    }
+    score += signal.score;
+    evidence.push(signal.buildEvidence(context));
   }
 
   const confidence = Math.min(0.98, Number(score.toFixed(3)));
@@ -276,6 +326,18 @@ function evaluatePair(left: AliasProfile, right: AliasProfile): PairSupport | nu
   }
 
   return { left, right, confidence, evidence };
+}
+
+function buildPairEvaluationContext(left: AliasProfile, right: AliasProfile): PairEvaluationContext {
+  return {
+    left,
+    right,
+    attributeOverlap: computeClaimKeyTokenOverlap(tokenizeClaimKeyAttributeTokens(left.attribute), tokenizeClaimKeyAttributeTokens(right.attribute)),
+    subjectOverlap: computeClaimKeyTokenOverlap(left.subjectTokens, right.subjectTokens),
+    contentOverlap: computeClaimKeyTokenOverlap(left.contentTokens, right.contentTokens),
+    tagOverlap: computeClaimKeyTokenOverlap(left.tagTokens, right.tagTokens),
+    sharedAttributeHead: readClaimKeyAttributeHead(left.attribute) === readClaimKeyAttributeHead(right.attribute),
+  };
 }
 
 /**
@@ -384,37 +446,6 @@ function buildUnresolvedReason(input: { multipleTrustedOrManual: boolean; sameTy
     return "Deterministic confidence is below the auto-apply threshold.";
   }
   return "Alias cluster requires review.";
-}
-
-function tokenizeAttribute(attribute: string): Set<string> {
-  return new Set(attribute.split("_").filter((token) => token.length >= 3 && !STOP_TOKENS.has(token)));
-}
-
-function tokenizeText(value: string | undefined): Set<string> {
-  return new Set(
-    (value ?? "")
-      .toLowerCase()
-      .split(/[^a-z0-9]+/u)
-      .filter((token) => token.length >= 3 && !STOP_TOKENS.has(token)),
-  );
-}
-
-function attributeHead(attribute: string): string {
-  const tokens = [...tokenizeAttribute(attribute)];
-  return tokens[tokens.length - 1] ?? attribute;
-}
-
-function overlap(left: Set<string>, right: Set<string>): { commonCount: number; coefficient: number } {
-  if (left.size === 0 || right.size === 0) {
-    return { commonCount: 0, coefficient: 0 };
-  }
-  let commonCount = 0;
-  for (const token of left) {
-    if (right.has(token)) {
-      commonCount += 1;
-    }
-  }
-  return { commonCount, coefficient: commonCount / Math.min(left.size, right.size) };
 }
 
 function setsEqual(left: Set<string>, right: Set<string>): boolean {

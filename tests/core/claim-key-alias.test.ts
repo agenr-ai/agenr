@@ -86,6 +86,56 @@ describe("claim-key alias detector", () => {
     expect(candidates).toEqual([]);
   });
 
+  it("merges four-key transitive alias chains from all qualifying pairs", () => {
+    const sharedSubject = "Agenr quality score";
+    const sharedTags = ["agenr", "quality", "scoring"];
+    const sharedContext = "Dreaming quality score implementation notes";
+    const candidates = detectClaimKeyAliasCandidates([
+      durable({
+        id: "quality-default",
+        subject: sharedSubject,
+        content: "Agenr durable quality scoring uses a default score when no evaluator is available.",
+        claim_key: "agenr/quality_score_default",
+        tags: sharedTags,
+        source_context: sharedContext,
+        claim_key_status: "trusted",
+        claim_key_source: "manual",
+      }),
+      durable({
+        id: "quality-heuristic",
+        subject: sharedSubject,
+        content: "Agenr durable quality scoring falls back to a heuristic score when no evaluator is available.",
+        claim_key: "agenr/quality_score_heuristic",
+        tags: sharedTags,
+        source_context: sharedContext,
+      }),
+      durable({
+        id: "quality-fallback",
+        subject: sharedSubject,
+        content: "Agenr durable quality scoring uses a fallback score when no evaluator is available.",
+        claim_key: "agenr/quality_score_fallback",
+        tags: sharedTags,
+        source_context: sharedContext,
+      }),
+      durable({
+        id: "quality-reserve",
+        subject: sharedSubject,
+        content: "Agenr durable quality scoring keeps a reserve score when no evaluator is available.",
+        claim_key: "agenr/quality_score_reserve",
+        tags: sharedTags,
+        source_context: sharedContext,
+      }),
+    ]);
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]?.claimKeys).toEqual([
+      "agenr/quality_score_default",
+      "agenr/quality_score_fallback",
+      "agenr/quality_score_heuristic",
+      "agenr/quality_score_reserve",
+    ]);
+  });
+
   it("merges transitive alias clusters when adjacent pairs qualify", () => {
     const sharedSubject = "Agenr quality score";
     const sharedTags = ["agenr", "quality", "scoring"];
