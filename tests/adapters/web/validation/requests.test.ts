@@ -10,6 +10,7 @@ import {
   parseRegisterInstanceBody,
   parseReviewBody,
   parseStoreDurableBody,
+  parseUpdateEpisodeMetadataBody,
   parseUpdateMetadataBody,
 } from "../../../../src/adapters/web/validation/requests.js";
 
@@ -83,6 +84,10 @@ describe("parseUpdateMetadataBody", () => {
     expect(parseUpdateMetadataBody({ importance: 5 })).toEqual({ importance: 5 });
   });
 
+  it("preserves empty clearable durable metadata fields", () => {
+    expect(parseUpdateMetadataBody({ project: "", validTo: "" })).toEqual({ project: "", validTo: "" });
+  });
+
   it("requires at least one field", () => {
     const issues = captureIssues(() => parseUpdateMetadataBody({}));
     expect(paths(issues)).toContain("$");
@@ -96,6 +101,40 @@ describe("parseUpdateMetadataBody", () => {
   it("rejects unexpected metadata fields", () => {
     const issues = captureIssues(() => parseUpdateMetadataBody({ content: "no in-place edits" }));
     expect(issues).toContainEqual({ path: "content", message: "Unexpected field." });
+  });
+});
+
+describe("parseUpdateEpisodeMetadataBody", () => {
+  it("accepts editable episode metadata fields", () => {
+    expect(
+      parseUpdateEpisodeMetadataBody({
+        project: " agenr ",
+        activityLevel: "substantial",
+        tags: [" web ", " console "],
+        sourceRef: " transcript.jsonl ",
+        validTo: "",
+      }),
+    ).toEqual({
+      project: "agenr",
+      activityLevel: "substantial",
+      tags: ["web", "console"],
+      sourceRef: "transcript.jsonl",
+      validTo: "",
+    });
+  });
+
+  it("accepts empty activity and tags as clear operations", () => {
+    expect(parseUpdateEpisodeMetadataBody({ activityLevel: "", tags: [] })).toEqual({ activityLevel: "", tags: [] });
+  });
+
+  it("rejects unsupported activity levels", () => {
+    const issues = captureIssues(() => parseUpdateEpisodeMetadataBody({ activityLevel: "busy" }));
+    expect(paths(issues)).toContain("activityLevel");
+  });
+
+  it("rejects unexpected episode metadata fields", () => {
+    const issues = captureIssues(() => parseUpdateEpisodeMetadataBody({ summary: "no in-place edits" }));
+    expect(issues).toContainEqual({ path: "summary", message: "Unexpected field." });
   });
 });
 

@@ -6,6 +6,7 @@ export type {
   DreamJobSnapshot,
   DreamJobStatus,
   DreamProposal,
+  DreamRunActionView,
   DreamRunRecord,
   DreamRunStatus,
   DreamRunsResponse,
@@ -33,4 +34,5 @@ export type {
   SelectedInstanceResponse,
   StoreDurableBody,
   UpdateDurableMetadataBody,
+  UpdateEpisodeMetadataBody,
 } from "../../../src/web-api/types.js";

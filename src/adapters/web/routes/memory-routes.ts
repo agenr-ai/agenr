@@ -4,6 +4,7 @@ import {
   listProcedures,
   loadDurableDetail,
   loadMemoryFacets,
+  updateEpisode,
 } from "../../../app/web/memory-browser-service.js";
 import {
   closeWebDurableValidity,
@@ -19,6 +20,7 @@ import {
   parseDurableListQuery,
   parseEpisodeListQuery,
   parseStoreDurableBody,
+  parseUpdateEpisodeMetadataBody,
   parseUpdateMetadataBody,
 } from "../validation/requests.js";
 import { requireInstanceScope } from "./instance-scope.js";
@@ -41,6 +43,7 @@ export function buildMemoryRoutes(): WebRoute[] {
     { kind: "json", method: "POST", pattern: "/api/web/durables/:id/retire", handler: retireDurableHandler },
     { kind: "json", method: "GET", pattern: "/api/web/memory/facets", handler: facetsHandler },
     { kind: "json", method: "GET", pattern: "/api/web/episodes", handler: listEpisodesHandler },
+    { kind: "json", method: "POST", pattern: "/api/web/episodes/:id/metadata", handler: updateEpisodeMetadataHandler },
     { kind: "json", method: "GET", pattern: "/api/web/procedures", handler: listProceduresHandler },
   ];
 }
@@ -144,6 +147,25 @@ async function listEpisodesHandler(ctx: WebRequestContext): Promise<JsonRouteRes
   const query = parseEpisodeListQuery(ctx.url.searchParams);
   const result = await listEpisodes({ ...query, context: scope.context });
   return { status: 200, body: result };
+}
+
+/** Updates metadata-only fields on one active episode. */
+async function updateEpisodeMetadataHandler(ctx: WebRequestContext): Promise<JsonRouteResult<{ updated: boolean; backupPath: string | null }>> {
+  const scope = await requireInstanceScope(ctx);
+  const fields = parseUpdateEpisodeMetadataBody(await ctx.readJson());
+
+  try {
+    const result = await updateEpisode({ id: ctx.params.id, fields, context: scope.context });
+    if (!result.updated) {
+      throw WebApiError.notFound(`Unknown active episode: ${ctx.params.id}.`);
+    }
+    return { status: 200, body: result };
+  } catch (error) {
+    if (error instanceof WebApiError) {
+      throw error;
+    }
+    throw new WebApiError(400, "invalid_request", error instanceof Error ? error.message : String(error));
+  }
 }
 
 /** Lists active procedures for the read-side browser. */

@@ -1,12 +1,12 @@
 import { useState } from "react";
 
 import { ApiError, api, type DurableQueryInput } from "../api/client";
-import type { Episode, Procedure } from "../api/types";
+import type { Episode, Procedure, UpdateEpisodeMetadataBody } from "../api/types";
 import { DataTable } from "../components/DataTable";
 import { DURABLE_TYPES, DurableContentFields, emptyDurableContent, toStorePayload, type DurableContentValue } from "../components/DurableFields";
 import { DurableTraceDrawer } from "../components/DurableTraceDrawer";
 import { Icon } from "../components/Icon";
-import { Badge, Button, Card, CardBody, CardHeader, Chip, Drawer, EmptyState, Input, KeyValue, Select, Tabs } from "../components/primitives";
+import { Badge, Button, Card, CardBody, CardHeader, Chip, Drawer, EmptyState, Field, Input, KeyValue, Select, Tabs } from "../components/primitives";
 import { ErrorCard, RequireInstance, Skeleton } from "../components/states";
 import { useToast } from "../components/Toast";
 import { useAsync } from "../hooks/useAsync";
@@ -195,6 +195,7 @@ function DurablesTab(): React.ReactElement {
                     ),
                   },
                   { header: "Type", render: (durable) => <Badge status="neutral">{titleCase(durable.type)}</Badge> },
+                  { header: "Claim key", render: (durable) => (durable.claim_key ? <span className="mono muted" style={{ fontSize: "var(--text-2xs)" }}>{durable.claim_key}</span> : <span className="muted">-</span>) },
                   { header: "State", render: (durable) => <Badge status={durableStateVariant(durableState(durable))}>{durableState(durable)}</Badge> },
                   { header: "Imp.", align: "right", render: (durable) => <span className="numeric">{durable.importance.toFixed(2)}</span> },
                   { header: "Recalls", align: "right", render: (durable) => <span className="numeric muted">{durable.recall_count}</span> },
@@ -272,7 +273,10 @@ function EpisodesTab(): React.ReactElement {
   const { selected } = useInstances();
   const [project, setProject] = useState("");
   const [active, setActive] = useState<Episode | null>(null);
-  const state = useAsync(() => api.episodes({ project: project.trim() || undefined, limit: 50 }), [selected?.record.id, project]);
+  const [reloadToken, setReloadToken] = useState(0);
+  const state = useAsync(() => api.episodes({ project: project.trim() || undefined, limit: 50 }), [selected?.record.id, project, reloadToken]);
+
+  const reload = (): void => setReloadToken((value) => value + 1);
 
   return (
     <div className="stack" style={{ gap: "var(--space-4)" }}>
@@ -320,26 +324,207 @@ function EpisodesTab(): React.ReactElement {
         </div>
       )}
 
-      {active ? (
-        <Drawer title="Episode" subtitle={<span className="mono">{active.id}</span>} onClose={() => setActive(null)}>
-          <div className="stack" style={{ gap: "var(--space-4)" }}>
-            <KeyValue
-              rows={[
-                { key: "Source", value: active.source },
-                { key: "Project", value: active.project ?? "-" },
-                { key: "Started", value: formatDateTime(active.startedAt) },
-                { key: "Ended", value: active.endedAt ? formatDateTime(active.endedAt) : "-" },
-                { key: "Messages", value: active.messageCount != null ? String(active.messageCount) : "-" },
-                { key: "Activity", value: active.activityLevel ?? "-" },
-              ]}
-            />
-            <div className="stack" style={{ gap: "var(--space-2)" }}>
-              <span className="section-title">Summary</span>
-              <div className="code-surface">{active.summary ?? "(no summary)"}</div>
-            </div>
+      {active ? <EpisodeDrawer episode={active} onClose={() => setActive(null)} onSaved={(episode) => { setActive(episode); reload(); }} /> : null}
+    </div>
+  );
+}
+
+/** Episode detail drawer with metadata editing. */
+function EpisodeDrawer({
+  episode,
+  onClose,
+  onSaved,
+}: {
+  episode: Episode;
+  onClose: () => void;
+  onSaved: (episode: Episode) => void;
+}): React.ReactElement {
+  const [editing, setEditing] = useState(false);
+
+  return (
+    <Drawer
+      title="Episode"
+      subtitle={<span className="mono">{episode.id}</span>}
+      onClose={onClose}
+      actions={
+        editing ? undefined : (
+          <Button variant="ghost" size="sm" icon="edit" onClick={() => setEditing(true)}>
+            Edit metadata
+          </Button>
+        )
+      }
+    >
+      {editing ? (
+        <EpisodeMetadataForm episode={episode} onCancel={() => setEditing(false)} onSaved={(updated) => { setEditing(false); onSaved(updated); }} />
+      ) : (
+        <div className="stack" style={{ gap: "var(--space-4)" }}>
+          <KeyValue
+            rows={[
+              { key: "Source", value: episode.source },
+              { key: "Source ref", value: episode.sourceRef ?? "-" },
+              { key: "Surface", value: episode.surface ?? "-" },
+              { key: "Project", value: episode.project ?? "-" },
+              { key: "User", value: episode.userId ?? "-" },
+              { key: "Started", value: formatDateTime(episode.startedAt) },
+              { key: "Ended", value: episode.endedAt ? formatDateTime(episode.endedAt) : "-" },
+              { key: "Messages", value: episode.messageCount != null ? String(episode.messageCount) : "-" },
+              { key: "Activity", value: episode.activityLevel ?? "-" },
+              { key: "Tags", value: episode.tags.length > 0 ? episode.tags.join(", ") : "-" },
+              { key: "Valid from", value: episode.validFrom ? formatDateTime(episode.validFrom) : "-" },
+              { key: "Valid to", value: episode.validTo ? formatDateTime(episode.validTo) : "-" },
+            ]}
+          />
+          <div className="stack" style={{ gap: "var(--space-2)" }}>
+            <span className="section-title">Summary</span>
+            <div className="code-surface">{episode.summary ?? "(no summary)"}</div>
           </div>
-        </Drawer>
-      ) : null}
+        </div>
+      )}
+    </Drawer>
+  );
+}
+
+/** Form for episode metadata fields that are safe to correct in place. */
+function EpisodeMetadataForm({
+  episode,
+  onCancel,
+  onSaved,
+}: {
+  episode: Episode;
+  onCancel: () => void;
+  onSaved: (episode: Episode) => void;
+}): React.ReactElement {
+  const toast = useToast();
+  const [sourceRef, setSourceRef] = useState(episode.sourceRef ?? "");
+  const [surface, setSurface] = useState(episode.surface ?? "");
+  const [project, setProject] = useState(episode.project ?? "");
+  const [userId, setUserId] = useState(episode.userId ?? "");
+  const [activityLevel, setActivityLevel] = useState(episode.activityLevel ?? "");
+  const [tags, setTags] = useState(episode.tags.join(", "));
+  const [validFrom, setValidFrom] = useState(episode.validFrom ? episode.validFrom.slice(0, 10) : "");
+  const [validTo, setValidTo] = useState(episode.validTo ? episode.validTo.slice(0, 10) : "");
+  const [busy, setBusy] = useState(false);
+
+  const save = async (): Promise<void> => {
+    const fields: UpdateEpisodeMetadataBody = {};
+    if (sourceRef.trim() !== (episode.sourceRef ?? "")) {
+      fields.sourceRef = sourceRef.trim();
+    }
+    if (surface.trim() !== (episode.surface ?? "")) {
+      fields.surface = surface.trim();
+    }
+    if (project.trim() !== (episode.project ?? "")) {
+      fields.project = project.trim();
+    }
+    if (userId.trim() !== (episode.userId ?? "")) {
+      fields.userId = userId.trim();
+    }
+    if (activityLevel !== (episode.activityLevel ?? "")) {
+      fields.activityLevel = activityLevel as UpdateEpisodeMetadataBody["activityLevel"];
+    }
+
+    const parsedTags = tags.split(",").map((tag) => tag.trim()).filter((tag) => tag.length > 0);
+    if (parsedTags.join("\n") !== episode.tags.join("\n")) {
+      fields.tags = parsedTags;
+    }
+
+    if (validFrom.trim()) {
+      fields.validFrom = new Date(`${validFrom}T00:00:00Z`).toISOString();
+    } else if (episode.validFrom) {
+      fields.validFrom = "";
+    }
+    if (validTo.trim()) {
+      fields.validTo = new Date(`${validTo}T00:00:00Z`).toISOString();
+    } else if (episode.validTo) {
+      fields.validTo = "";
+    }
+
+    if (Object.keys(fields).length === 0) {
+      toast.info("No changes", "Adjust a metadata field before saving.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      await api.updateEpisode(episode.id, fields);
+      toast.success("Episode metadata updated");
+      onSaved({
+        ...episode,
+        sourceRef: "sourceRef" in fields ? fields.sourceRef || undefined : episode.sourceRef,
+        surface: "surface" in fields ? fields.surface || undefined : episode.surface,
+        project: "project" in fields ? fields.project || undefined : episode.project,
+        userId: "userId" in fields ? fields.userId || undefined : episode.userId,
+        activityLevel: "activityLevel" in fields ? fields.activityLevel || undefined : episode.activityLevel,
+        tags: "tags" in fields ? fields.tags ?? [] : episode.tags,
+        validFrom: "validFrom" in fields ? fields.validFrom || undefined : episode.validFrom,
+        validTo: "validTo" in fields ? fields.validTo || undefined : episode.validTo,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      toast.error("Update failed", error instanceof ApiError ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="stack" style={{ gap: "var(--space-4)" }}>
+      <span className="section-title">Edit episode metadata</span>
+      <Field label="Project">
+        <Input value={project} onChange={(event) => setProject(event.target.value)} />
+      </Field>
+      <div className="row" style={{ gap: "var(--space-3)" }}>
+        <div className="grow">
+          <Field label="Activity">
+            <Select value={activityLevel} onChange={(event) => setActivityLevel(event.target.value)}>
+              <option value="">Unspecified</option>
+              <option value="substantial">substantial</option>
+              <option value="minimal">minimal</option>
+              <option value="none">none</option>
+            </Select>
+          </Field>
+        </div>
+        <div className="grow">
+          <Field label="Tags" hint="Comma separated">
+            <Input value={tags} onChange={(event) => setTags(event.target.value)} />
+          </Field>
+        </div>
+      </div>
+      <div className="row" style={{ gap: "var(--space-3)" }}>
+        <div className="grow">
+          <Field label="Source ref">
+            <Input value={sourceRef} onChange={(event) => setSourceRef(event.target.value)} />
+          </Field>
+        </div>
+        <div className="grow">
+          <Field label="Surface">
+            <Input value={surface} onChange={(event) => setSurface(event.target.value)} />
+          </Field>
+        </div>
+      </div>
+      <Field label="User">
+        <Input value={userId} onChange={(event) => setUserId(event.target.value)} />
+      </Field>
+      <div className="row" style={{ gap: "var(--space-3)" }}>
+        <div className="grow">
+          <Field label="Valid from">
+            <Input type="date" value={validFrom} onChange={(event) => setValidFrom(event.target.value)} />
+          </Field>
+        </div>
+        <div className="grow">
+          <Field label="Valid to">
+            <Input type="date" value={validTo} onChange={(event) => setValidTo(event.target.value)} />
+          </Field>
+        </div>
+      </div>
+      <div className="row" style={{ gap: "var(--space-2)", justifyContent: "flex-end" }}>
+        <Button variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button variant="primary" icon="check" loading={busy} onClick={() => void save()}>
+          Save metadata
+        </Button>
+      </div>
     </div>
   );
 }

@@ -141,6 +141,40 @@ export async function loadDreamActionsRuntime(input: { runId: string; dbPath?: s
 }
 
 /**
+ * Loads the action audit trail for one dreaming run with affected durable previews.
+ *
+ * @param input - Runtime input with optional db-path and required run ID.
+ * @returns Recorded actions plus hydrated durables for each action.
+ */
+export async function loadDreamActionViewsRuntime(input: { runId: string; dbPath?: string; env?: NodeJS.ProcessEnv }): Promise<DreamRunActionView[]> {
+  const runtime = loadRuntimeConfig(input);
+  return withDreamPort(runtime.dbPath, async (port) => {
+    const actions = await port.getRunActions(input.runId);
+    const durableIds = Array.from(new Set(actions.flatMap((action) => action.durableIds)));
+    const durables = await port.getDurables(durableIds);
+    const byId = new Map(durables.map((durable) => [durable.id, durable]));
+    return actions.map((action) => ({
+      ...action,
+      details: action.details ?? null,
+      durables: action.durableIds.flatMap((durableId) => {
+        const durable = byId.get(durableId);
+        return durable ? [durable] : [];
+      }),
+    }));
+  });
+}
+
+/**
+ * Operator-facing dreaming action view with affected durable previews.
+ */
+export interface DreamRunActionView extends DreamRunAction {
+  /** Structured action details, when persisted by the dreaming stage. */
+  details: Record<string, unknown> | null;
+  /** Hydrated affected durables that still exist in the corpus. */
+  durables: Durable[];
+}
+
+/**
  * Loads the unresolved proposal trail for one dreaming run.
  *
  * @param input - Runtime input with optional db-path and required run ID.

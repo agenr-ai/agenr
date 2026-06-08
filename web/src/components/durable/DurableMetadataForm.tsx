@@ -41,6 +41,8 @@ export function DurableMetadataForm({
     }
     if (validTo.trim()) {
       fields.validTo = new Date(`${validTo}T00:00:00Z`).toISOString();
+    } else if (durable.valid_to) {
+      fields.validTo = "";
     }
 
     if (Object.keys(fields).length === 0) {
@@ -81,7 +83,7 @@ export function DurableMetadataForm({
           </Field>
         </div>
       </div>
-      <Field label="Claim key">
+      <Field label="Claim key" hint="Changing this writes a trusted manual lifecycle bundle.">
         <Input value={claimKey} onChange={(event) => setClaimKey(event.target.value)} placeholder="entity/attribute" />
       </Field>
       <div className="row" style={{ gap: "var(--space-3)" }}>

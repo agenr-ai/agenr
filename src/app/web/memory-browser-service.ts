@@ -1,7 +1,15 @@
 import { listWebDurables, type WebDurableListQuery, type WebDurableListResult } from "../../adapters/db/web-durable-queries.js";
-import { listActiveProcedures, listRecentEpisodes, type WebEpisodeListResult } from "../../adapters/db/web-read-queries.js";
+import {
+  listActiveProcedures,
+  listRecentEpisodes,
+  updateEpisodeMetadata,
+  type WebEpisodeListResult,
+  type WebEpisodeMetadataPatch,
+} from "../../adapters/db/web-read-queries.js";
 import { createMemoryRepository } from "../../adapters/db/memory-repository.js";
 import type { Procedure } from "../../core/types.js";
+import { resolveLocalFilesystemPath } from "../../filesystem-path.js";
+import { backupDatabaseFile } from "../dreaming/service.js";
 import type { DurableTrace } from "../memory/ports.js";
 import { withInstanceDatabase, type WebInstanceContext } from "./instance-context.js";
 
@@ -51,6 +59,24 @@ export async function listEpisodes(input: { project?: string; limit?: number; of
 }
 
 /**
+ * Updates metadata-only fields on an active episode.
+ *
+ * @param input - Target id, metadata fields, and instance runtime context.
+ * @returns True when the episode was found and updated.
+ */
+export async function updateEpisode(input: {
+  id: string;
+  fields: WebEpisodeMetadataPatch;
+  context: WebInstanceContext;
+}): Promise<{ updated: boolean; backupPath: string | null }> {
+  const backupPath = await maybeBackup(input.context.dbPath);
+  return withInstanceDatabase(input.context, async (database) => {
+    const updated = await updateEpisodeMetadata(database, input.id, input.fields);
+    return { updated, backupPath };
+  });
+}
+
+/**
  * Lists active procedures for the read-side browser.
  *
  * @param input - Optional limit plus instance runtime context.
@@ -71,4 +97,13 @@ export async function loadMemoryFacets(input: { context: WebInstanceContext }): 
     const claimKeyPrefixes = await database.getDistinctClaimKeyPrefixes();
     return { claimKeyPrefixes };
   });
+}
+
+/** Creates a database backup when the path is a real local file. */
+async function maybeBackup(dbPath: string): Promise<string | null> {
+  if (dbPath === ":memory:" || resolveLocalFilesystemPath(dbPath) === null) {
+    return null;
+  }
+
+  return backupDatabaseFile(dbPath);
 }

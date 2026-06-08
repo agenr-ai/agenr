@@ -3,6 +3,7 @@ import type {
   CockpitSnapshot,
   DreamJobSnapshot,
   DreamProposal,
+  DreamRunActionView,
   DreamRunsResponse,
   DurableListResult,
   DurableTrace,
@@ -20,6 +21,7 @@ import type {
   SelectedInstanceResponse,
   StoreDurableBody,
   UpdateDurableMetadataBody,
+  UpdateEpisodeMetadataBody,
 } from "./types";
 
 /** Error thrown for non-2xx API responses, carrying the structured envelope. */
@@ -141,7 +143,7 @@ export const api = {
   /** Requests cancellation of one job. */
   cancelDream: (jobId: string) => request<{ cancelled: boolean }>("POST", `/api/web/dream/jobs/${encodeURIComponent(jobId)}/cancel`),
   /** Loads the action trail for one persisted run. */
-  runActions: (runId: string) => request<{ actions: { id: string; actionType: string; reasoning: string; createdAt: string }[] }>(
+  runActions: (runId: string) => request<{ actions: DreamRunActionView[] }>(
     "GET",
     `/api/web/dream/runs/${encodeURIComponent(runId)}/actions`,
   ),
@@ -186,6 +188,9 @@ export const api = {
   /** Lists recent episodes. */
   episodes: (params: { project?: string; limit?: number; offset?: number }) =>
     request<EpisodeListResult>("GET", `/api/web/episodes${query({ ...params })}`),
+  /** Updates metadata-only fields on an episode. */
+  updateEpisode: (id: string, input: UpdateEpisodeMetadataBody) =>
+    request<{ updated: boolean; backupPath: string | null }>("POST", `/api/web/episodes/${encodeURIComponent(id)}/metadata`, input),
   /** Lists active procedures (read side). */
   procedures: () => request<{ procedures: Procedure[] }>("GET", "/api/web/procedures"),
 

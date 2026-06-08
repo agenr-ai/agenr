@@ -144,6 +144,7 @@ POST   /api/web/durables/:id/metadata
 POST   /api/web/durables/:id/retire
 GET    /api/web/memory/facets
 GET    /api/web/episodes
+POST   /api/web/episodes/:id/metadata
 GET    /api/web/procedures
 ```
 

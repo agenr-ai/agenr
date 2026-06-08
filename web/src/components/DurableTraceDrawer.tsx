@@ -41,7 +41,7 @@ export function DurableTraceDrawer({ id, onClose, onMutated }: { id: string; onC
         mode === "view" && state.data ? (
           <div className="row" style={{ gap: "var(--space-2)" }}>
             <Button variant="ghost" size="sm" icon="edit" onClick={() => setMode("metadata")}>
-              Metadata
+              Metadata and claim key
             </Button>
             <Button variant="ghost" size="sm" icon="history" onClick={() => setMode("supersede")}>
               Supersede

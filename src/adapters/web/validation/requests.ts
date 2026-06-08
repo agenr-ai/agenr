@@ -1,7 +1,15 @@
 import type { WebProposalBacklogQuery } from "../../../app/web/proposal-service.js";
 import type { RegisterInstanceInput } from "../../../app/web/instance-registry.js";
 import { DREAM_TIERS, type DreamTier } from "../../../core/dreaming/types.js";
-import { DURABLE_KINDS, EXPIRY_LEVELS, type DurableKind, type Expiry, type StoreDurableInput } from "../../../core/types.js";
+import {
+  DURABLE_KINDS,
+  EPISODE_ACTIVITY_LEVELS,
+  EXPIRY_LEVELS,
+  type DurableKind,
+  type EpisodeActivityLevel,
+  type Expiry,
+  type StoreDurableInput,
+} from "../../../core/types.js";
 import {
   isRecord,
   parseOptionalTrimmedString,
@@ -44,6 +52,9 @@ const STORE_DURABLE_KEYS = new Set<string>([
 /** Allowed body keys for a metadata-update request. */
 const UPDATE_METADATA_KEYS = new Set<string>(["importance", "expiry", "claimKey", "validFrom", "validTo", "project"]);
 
+/** Allowed body keys for an episode metadata-update request. */
+const UPDATE_EPISODE_METADATA_KEYS = new Set<string>(["sourceRef", "surface", "userId", "project", "activityLevel", "tags", "validFrom", "validTo"]);
+
 /** Allowed body keys for a dreaming-start request. */
 const DREAM_START_KEYS = new Set<string>(["tier", "apply", "project"]);
 
@@ -74,6 +85,28 @@ export interface ParsedUpdateMetadataBody {
   validTo?: string;
   /** Updated project scope, when provided. */
   project?: string;
+}
+
+/**
+ * Validated metadata-update fields for an existing episode.
+ */
+export interface ParsedUpdateEpisodeMetadataBody {
+  /** Updated source reference, when provided. Empty clears it. */
+  sourceRef?: string;
+  /** Updated host surface, when provided. Empty clears it. */
+  surface?: string;
+  /** Updated user id, when provided. Empty clears it. */
+  userId?: string;
+  /** Updated project scope, when provided. Empty clears it. */
+  project?: string;
+  /** Updated activity level, when provided. */
+  activityLevel?: EpisodeActivityLevel | "";
+  /** Updated tag list, when provided. Empty clears tags. */
+  tags?: string[];
+  /** Updated valid-from timestamp, when provided. Empty clears it. */
+  validFrom?: string;
+  /** Updated valid-to timestamp, when provided. Empty clears it. */
+  validTo?: string;
 }
 
 /**
@@ -214,13 +247,42 @@ export function parseUpdateMetadataBody(input: unknown): ParsedUpdateMetadataBod
     ...readNumberField(record, "importance", issues, (value) => ({ importance: value })),
     ...readEnumField<Expiry>(record, "expiry", EXPIRY_LEVELS, issues, (value) => ({ expiry: value })),
     ...readStringField(record, "claimKey", issues, (value) => ({ claimKey: value })),
-    ...readStringField(record, "validFrom", issues, (value) => ({ validFrom: value })),
-    ...readStringField(record, "validTo", issues, (value) => ({ validTo: value })),
-    ...readStringField(record, "project", issues, (value) => ({ project: value })),
+    ...readStringFieldPreserveEmpty(record, "validFrom", issues, (value) => ({ validFrom: value })),
+    ...readStringFieldPreserveEmpty(record, "validTo", issues, (value) => ({ validTo: value })),
+    ...readStringFieldPreserveEmpty(record, "project", issues, (value) => ({ project: value })),
   };
 
   if (Object.keys(fields).length === 0) {
     pushIssue(issues, "$", "Provide at least one metadata field to update.");
+  }
+
+  throwIfIssues(issues);
+  return fields;
+}
+
+/**
+ * Parses and validates an episode metadata-update request body.
+ *
+ * @param input - Raw JSON request body.
+ * @returns Validated metadata fields.
+ * @throws {WebApiError} 400 when the body is malformed or empty.
+ */
+export function parseUpdateEpisodeMetadataBody(input: unknown): ParsedUpdateEpisodeMetadataBody {
+  const { record, issues } = requireObject(input, UPDATE_EPISODE_METADATA_KEYS);
+
+  const fields: ParsedUpdateEpisodeMetadataBody = {
+    ...readStringFieldPreserveEmpty(record, "sourceRef", issues, (value) => ({ sourceRef: value })),
+    ...readStringFieldPreserveEmpty(record, "surface", issues, (value) => ({ surface: value })),
+    ...readStringFieldPreserveEmpty(record, "userId", issues, (value) => ({ userId: value })),
+    ...readStringFieldPreserveEmpty(record, "project", issues, (value) => ({ project: value })),
+    ...readEpisodeActivityLevelField(record, "activityLevel", issues),
+    ...readStringArrayFieldPreserveEmpty(record, "tags", issues, (value) => ({ tags: value })),
+    ...readStringFieldPreserveEmpty(record, "validFrom", issues, (value) => ({ validFrom: value })),
+    ...readStringFieldPreserveEmpty(record, "validTo", issues, (value) => ({ validTo: value })),
+  };
+
+  if (Object.keys(fields).length === 0) {
+    pushIssue(issues, "$", "Provide at least one episode metadata field to update.");
   }
 
   throwIfIssues(issues);
@@ -503,6 +565,26 @@ function readStringField<T>(record: Record<string, unknown>, key: string, issues
   return trimmed.length > 0 ? build(trimmed) : {};
 }
 
+/** Reads a string body field, preserving empty strings for clear operations. */
+function readStringFieldPreserveEmpty<T>(
+  record: Record<string, unknown>,
+  key: string,
+  issues: ValidationIssue[],
+  build: (value: string) => T,
+): T | Record<never, never> {
+  const value = record[key];
+  if (value === undefined) {
+    return {};
+  }
+
+  if (typeof value !== "string") {
+    pushIssue(issues, key, "Expected a string.");
+    return {};
+  }
+
+  return build(value.trim());
+}
+
 /** Reads a string-array body field, reporting malformed values. */
 function readStringArrayField(record: Record<string, unknown>, key: string, issues: ValidationIssue[]): { tags: string[] } | Record<never, never> {
   const value = record[key];
@@ -517,6 +599,26 @@ function readStringArrayField(record: Record<string, unknown>, key: string, issu
 
   const tags = value.map((entry) => (entry as string).trim()).filter((entry) => entry.length > 0);
   return tags.length > 0 ? { tags } : {};
+}
+
+/** Reads a string-array body field, preserving empty arrays for clear operations. */
+function readStringArrayFieldPreserveEmpty<T>(
+  record: Record<string, unknown>,
+  key: string,
+  issues: ValidationIssue[],
+  build: (value: string[]) => T,
+): T | Record<never, never> {
+  const value = record[key];
+  if (value === undefined) {
+    return {};
+  }
+
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    pushIssue(issues, key, "Expected an array of strings.");
+    return {};
+  }
+
+  return build(value.map((entry) => (entry as string).trim()).filter((entry) => entry.length > 0));
 }
 
 /** Reads an enum body field, reporting unsupported values. */
@@ -534,6 +636,25 @@ function readEnumField<T extends string>(
 
   const parsed = readEnumValue(value, key, allowed, issues);
   return parsed ? build(parsed) : {};
+}
+
+/** Reads an episode activity body field, preserving an empty string to clear it. */
+function readEpisodeActivityLevelField(
+  record: Record<string, unknown>,
+  key: string,
+  issues: ValidationIssue[],
+): { activityLevel: EpisodeActivityLevel | "" } | Record<never, never> {
+  const value = record[key];
+  if (value === undefined) {
+    return {};
+  }
+
+  if (typeof value === "string" && value.trim().length === 0) {
+    return { activityLevel: "" };
+  }
+
+  const parsed = readEnumValue(value, key, EPISODE_ACTIVITY_LEVELS, issues);
+  return parsed ? { activityLevel: parsed } : {};
 }
 
 /** Validates a single enum value, reporting unsupported or wrong-typed input. */

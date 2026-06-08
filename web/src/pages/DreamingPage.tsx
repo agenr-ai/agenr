@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 
 import { ApiError, api } from "../api/client";
-import type { DreamJobSnapshot, DreamProposal, DreamRunRecord, DreamRunsResponse } from "../api/types";
+import type { DreamJobSnapshot, DreamProposal, DreamRunActionView, DreamRunRecord, DreamRunsResponse } from "../api/types";
 import { DataTable } from "../components/DataTable";
-import { Badge, Button, Card, CardBody, CardHeader, Drawer, Field, Input, KeyValue, Spinner, StatusDot } from "../components/primitives";
+import { Badge, Button, Card, CardBody, CardHeader, Chip, Drawer, Field, Input, KeyValue, Spinner, StatusDot } from "../components/primitives";
 import { ErrorCard, RequireInstance, Skeleton } from "../components/states";
 import { useToast } from "../components/Toast";
 import { useAsync } from "../hooks/useAsync";
@@ -302,6 +302,7 @@ function RunDetailDrawer({ run, onClose }: { run: DreamRunRecord; onClose: () =>
                   <p className="secondary" style={{ fontSize: "var(--text-sm)", marginTop: "var(--space-2)" }}>
                     {action.reasoning}
                   </p>
+                  <DreamActionChangeSummary action={action} />
                 </div>
               ))}
             </div>
@@ -337,4 +338,65 @@ function RunDetailDrawer({ run, onClose }: { run: DreamRunRecord; onClose: () =>
       </div>
     </Drawer>
   );
+}
+
+/** Renders the concrete change payload for one dream action. */
+function DreamActionChangeSummary({ action }: { action: DreamRunActionView }): React.ReactElement {
+  const details = action.details ? Object.entries(action.details).filter(([, value]) => value !== null && value !== undefined && value !== "") : [];
+
+  return (
+    <div className="stack" style={{ gap: "var(--space-2)", marginTop: "var(--space-3)" }}>
+      {action.durableIds.length > 0 ? (
+        <div className="row wrap" style={{ gap: "var(--space-2)" }}>
+          <span className="muted" style={{ fontSize: "var(--text-xs)" }}>Affected</span>
+          {action.durableIds.map((durableId) => (
+            <Chip key={durableId} mono>{durableId}</Chip>
+          ))}
+        </div>
+      ) : null}
+
+      {details.length > 0 ? (
+        <div className="change-grid">
+          {details.map(([key, value]) => (
+            <div key={key} style={{ display: "contents" }}>
+              <span className="change-grid__key">{formatDetailKey(key)}</span>
+              <span className="change-grid__value">{formatDetailValue(value)}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {action.durables.length > 0 ? (
+        <div className="stack" style={{ gap: "var(--space-2)" }}>
+          {action.durables.map((durable) => (
+            <div key={durable.id} className="change-item">
+              <div className="spread" style={{ gap: "var(--space-2)" }}>
+                <strong className="truncate" style={{ fontSize: "var(--text-xs)" }}>{durable.subject}</strong>
+                {durable.claim_key ? <span className="mono muted" style={{ fontSize: "var(--text-2xs)" }}>{durable.claim_key}</span> : null}
+              </div>
+              <span className="muted truncate" style={{ fontSize: "var(--text-xs)" }}>{durable.content}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Formats an action detail key for compact display. */
+function formatDetailKey(key: string): string {
+  return key.replaceAll("_", " ");
+}
+
+/** Formats a structured action detail value for compact display. */
+function formatDetailValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map((entry) => formatDetailValue(entry)).join(", ");
+  }
+
+  if (typeof value === "object" && value !== null) {
+    return JSON.stringify(value);
+  }
+
+  return String(value);
 }

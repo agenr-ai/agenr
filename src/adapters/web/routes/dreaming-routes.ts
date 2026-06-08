@@ -1,4 +1,4 @@
-import { loadDreamActionsRuntime, loadDreamHistoryRuntime, loadDreamProposalsRuntime } from "../../../app/dreaming/runtime.js";
+import { loadDreamActionViewsRuntime, loadDreamHistoryRuntime, loadDreamProposalsRuntime } from "../../../app/dreaming/runtime.js";
 import { loadCockpitSnapshot } from "../../../app/web/health-service.js";
 import type { CockpitSnapshot, DreamJobSnapshot, DreamRunsResponse } from "../../../web-api/types.js";
 import { WebApiError } from "../api-error.js";
@@ -66,9 +66,9 @@ async function startRunHandler(ctx: WebRequestContext): Promise<JsonRouteResult<
 }
 
 /** Returns the action audit trail for one persisted run. */
-async function runActionsHandler(ctx: WebRequestContext): Promise<JsonRouteResult<{ actions: Awaited<ReturnType<typeof loadDreamActionsRuntime>> }>> {
+async function runActionsHandler(ctx: WebRequestContext): Promise<JsonRouteResult<{ actions: Awaited<ReturnType<typeof loadDreamActionViewsRuntime>> }>> {
   const scope = await requireInstanceScope(ctx);
-  const actions = await loadDreamActionsRuntime({ runId: ctx.params.runId, dbPath: scope.dbPath, env: ctx.env });
+  const actions = await loadDreamActionViewsRuntime({ runId: ctx.params.runId, dbPath: scope.dbPath, env: ctx.env });
   return { status: 200, body: { actions } };
 }
 

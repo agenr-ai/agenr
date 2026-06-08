@@ -41,6 +41,18 @@ export interface UpdateDurableMetadataBody {
   project?: string;
 }
 
+/** Request body for metadata-only episode updates. */
+export interface UpdateEpisodeMetadataBody {
+  sourceRef?: string;
+  surface?: string;
+  userId?: string;
+  project?: string;
+  activityLevel?: "substantial" | "minimal" | "none" | "";
+  tags?: string[];
+  validFrom?: string;
+  validTo?: string;
+}
+
 /** Standard error envelope returned by the web API on failure. */
 export interface ApiErrorBody {
   status: "error";
@@ -162,6 +174,18 @@ export interface DreamRunsResponse {
   jobs: DreamJobSnapshot[];
 }
 
+/** Operator-facing action audit row for one dreaming run. */
+export interface DreamRunActionView {
+  id: string;
+  runId: string;
+  actionType: string;
+  durableIds: string[];
+  reasoning: string;
+  details: Record<string, unknown> | null;
+  createdAt: string;
+  durables: Durable[];
+}
+
 /** A durable knowledge record. */
 export interface Durable {
   id: string;
@@ -255,13 +279,27 @@ export interface ProposalDetail {
 export interface Episode {
   id: string;
   source: string;
+  sourceId?: string;
+  sourceRef?: string;
+  transcriptHash?: string;
+  summaryHash?: string;
+  agentId?: string;
+  surface?: string;
   summary?: string;
   startedAt: string;
   endedAt?: string;
   project?: string;
   messageCount?: number;
   activityLevel?: string;
+  userId?: string;
   tags: string[];
+  validFrom?: string;
+  validTo?: string;
+  supersessionKind?: string;
+  supersessionReason?: string;
+  supersededBy?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /** Paginated episode list result. */
