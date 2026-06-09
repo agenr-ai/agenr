@@ -54,18 +54,20 @@ export function resolveDreamProposalApplyTarget(proposal: Pick<DreamRunProposal,
   return targetClaimKey;
 }
 
+/** Manual settlement choices accepted for proposals without a safe direct apply target. */
+export type ManualProposalSettlementChoice = "separate" | "canonical" | "retire";
+
+const MANUAL_SETTLEMENT_ISSUE_KINDS = new Set(["mixed_claim_key_group", "entity_family_convergence", "claim_key_alias_convergence"]);
+
 /**
- * Returns whether a proposal requires manual operator settlement for a mixed-key group.
+ * Returns whether an open proposal can be settled by an explicit operator decision.
  *
  * @param proposal - Proposal under review.
- * @returns True when the proposal has conflicting keys and no safe direct target.
+ * @returns True when the issue kind has no safe apply target but can be closed manually.
  */
-export function isManualMixedClaimKeyProposal(proposal: Pick<DreamRunProposal, "issueKind" | "eligibleForApply" | "proposedClaimKeys">): boolean {
-  return proposal.issueKind === "mixed_claim_key_group" && !proposal.eligibleForApply && proposal.proposedClaimKeys.length === 0;
+export function isManualProposalSettlementEligible(proposal: Pick<DreamRunProposal, "issueKind" | "eligibleForApply">): boolean {
+  return !proposal.eligibleForApply && MANUAL_SETTLEMENT_ISSUE_KINDS.has(proposal.issueKind);
 }
-
-/** Manual settlement choices accepted for mixed-key proposals. */
-export type ManualMixedSettlementChoice = "separate" | "canonical" | "retire";
 
 /**
  * Returns whether a proposal is a same-entity claim-key alias convergence cluster.
@@ -78,21 +80,48 @@ export function isClaimKeyAliasConvergenceProposal(proposal: Pick<DreamRunPropos
 }
 
 /**
- * Builds the persisted review reason for one manual mixed-key settlement.
+ * Builds the persisted review reason for one manual proposal settlement.
  *
+ * @param issueKind - Proposal issue kind being settled.
  * @param choice - Operator settlement choice.
  * @param note - Optional operator note appended after the canonical sentence.
  * @param targetClaimKey - Canonical key written when choice is `canonical`.
  * @param retireCount - Number of durables retired when choice is `retire`.
  * @returns Full settlement reason stored on the proposal review record.
  */
-export function buildMixedClaimKeySettlementReason(choice: ManualMixedSettlementChoice, note: string, targetClaimKey: string, retireCount: number): string {
+export function buildManualProposalSettlementReason(
+  issueKind: string,
+  choice: ManualProposalSettlementChoice,
+  note: string,
+  targetClaimKey: string,
+  retireCount: number,
+): string {
   const suffix = note.trim().length > 0 ? ` Note: ${note.trim()}` : "";
+  const label = formatManualSettlementIssueKind(issueKind);
   if (choice === "canonical") {
-    return `Resolved mixed claim-key group manually by writing canonical key "${targetClaimKey}".${suffix}`;
+    return `Resolved ${label} manually by writing canonical key "${targetClaimKey}".${suffix}`;
   }
   if (choice === "retire") {
-    return `Resolved mixed claim-key group manually by retiring ${retireCount} duplicate or wrong durable${retireCount === 1 ? "" : "s"}.${suffix}`;
+    return `Resolved ${label} manually by retiring ${retireCount} duplicate or wrong durable${retireCount === 1 ? "" : "s"}.${suffix}`;
   }
-  return `Resolved mixed claim-key group manually by keeping the affected durables under separate claim keys.${suffix}`;
+  return `Resolved ${label} manually by keeping the affected durables under separate claim keys.${suffix}`;
+}
+
+/**
+ * Formats a proposal issue kind for persisted manual settlement reasons.
+ *
+ * @param issueKind - Proposal issue kind stored on the proposal.
+ * @returns Human-readable issue label.
+ */
+function formatManualSettlementIssueKind(issueKind: string): string {
+  switch (issueKind) {
+    case "claim_key_alias_convergence":
+      return "claim-key alias convergence";
+    case "entity_family_convergence":
+      return "entity-family convergence";
+    case "mixed_claim_key_group":
+      return "mixed claim-key group";
+    default:
+      return issueKind.replaceAll("_", " ");
+  }
 }

@@ -1,9 +1,9 @@
 import { loadWebProposalBacklog, loadWebProposalDetail, reviewWebProposal } from "../../../app/web/proposal-service.js";
-import { settleManualMixedWebProposal } from "../../../app/web/proposal-settlement-service.js";
+import { settleManualWebProposal } from "../../../app/web/proposal-settlement-service.js";
 import type { DreamProposal, ProposalBacklogItem, ProposalDetail } from "../../../web-api/types.js";
 import { WebApiError } from "../api-error.js";
 import type { JsonRouteResult, WebRequestContext, WebRoute } from "../router.js";
-import { parseProposalBacklogQuery, parseReviewBody, parseSettleMixedBody } from "../validation/requests.js";
+import { parseProposalBacklogQuery, parseReviewBody, parseSettleProposalBody } from "../validation/requests.js";
 import { requireInstanceScope } from "./instance-scope.js";
 
 /**
@@ -16,7 +16,7 @@ export function buildProposalRoutes(): WebRoute[] {
     { kind: "json", method: "GET", pattern: "/api/web/proposals", handler: backlogHandler },
     { kind: "json", method: "GET", pattern: "/api/web/proposals/:id", handler: detailHandler },
     { kind: "json", method: "POST", pattern: "/api/web/proposals/:id/review", handler: reviewHandler },
-    { kind: "json", method: "POST", pattern: "/api/web/proposals/:id/settle-mixed", handler: settleMixedHandler },
+    { kind: "json", method: "POST", pattern: "/api/web/proposals/:id/settle", handler: settleHandler },
   ];
 }
 
@@ -58,13 +58,13 @@ async function reviewHandler(ctx: WebRequestContext): Promise<JsonRouteResult<{ 
   }
 }
 
-/** Atomically settles one open mixed-key proposal without a safe direct target. */
-async function settleMixedHandler(ctx: WebRequestContext): Promise<JsonRouteResult<{ proposal: DreamProposal }>> {
+/** Atomically settles one open proposal without a safe direct target. */
+async function settleHandler(ctx: WebRequestContext): Promise<JsonRouteResult<{ proposal: DreamProposal }>> {
   const scope = await requireInstanceScope(ctx);
-  const body = parseSettleMixedBody(await ctx.readJson());
+  const body = parseSettleProposalBody(await ctx.readJson());
 
   try {
-    const result = await settleManualMixedWebProposal({
+    const result = await settleManualWebProposal({
       proposalId: ctx.params.id,
       choice: body.choice,
       reason: body.reason,

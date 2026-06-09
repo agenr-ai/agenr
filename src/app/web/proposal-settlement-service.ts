@@ -1,9 +1,9 @@
 import { createDreamPort } from "../../adapters/db/dreaming-port.js";
 import { normalizeManualClaimKeyUpdate } from "../../core/claim-key-lifecycle.js";
 import {
-  buildMixedClaimKeySettlementReason,
-  isManualMixedClaimKeyProposal,
-  type ManualMixedSettlementChoice,
+  buildManualProposalSettlementReason,
+  isManualProposalSettlementEligible,
+  type ManualProposalSettlementChoice,
 } from "../../core/dreaming/domain/proposal-review.js";
 import type { DurableUpdateInput } from "../../core/types.js";
 import { resolveLocalFilesystemPath } from "../../filesystem-path.js";
@@ -14,22 +14,58 @@ import { withInstanceDatabase, type WebInstanceContext } from "./instance-contex
 /** Provenance source-file label stamped on manual settlement writes. */
 const WEB_SOURCE_FILE = "agenr-web";
 
-export type { ManualMixedSettlementChoice };
+export type { ManualProposalSettlementChoice };
 
 /**
- * Atomically settles one open mixed-key proposal that lacks a safe direct target.
+ * Atomically settles one open proposal that lacks a safe direct target.
  *
  * @param input - Proposal id, settlement choice, reason, and instance binding.
  * @returns Final proposal state plus backup path when one was created.
  * @throws Error When the proposal is not eligible for manual settlement.
  */
-export async function settleManualMixedWebProposal(input: {
+export async function settleManualWebProposal(input: {
   proposalId: string;
-  choice: ManualMixedSettlementChoice;
+  choice: ManualProposalSettlementChoice;
   reason: string;
   targetClaimKey?: string;
   retireDurableIds?: string[];
   context: WebInstanceContext;
+}): Promise<DreamProposalReviewResult> {
+  return settleManualProposal({
+    ...input,
+    buildReason: (proposal) =>
+      buildManualProposalSettlementReason(
+        proposal.issueKind,
+        input.choice,
+        input.reason.trim(),
+        input.targetClaimKey?.trim() ?? "",
+        normalizeStringIds(input.retireDurableIds ?? []).length,
+      ),
+    supportLocator: `${WEB_SOURCE_FILE}#settle-proposal`,
+    validateProposal: (proposal) => {
+      if (!isManualProposalSettlementEligible(proposal)) {
+        throw new Error(`Proposal ${proposal.id} is not eligible for manual settlement.`);
+      }
+    },
+  });
+}
+
+/**
+ * Shared settlement implementation for proposal types that require explicit operator judgment.
+ *
+ * @param input - Settlement request, validation policy, and persistence context.
+ * @returns Final proposal state plus backup path when one was created.
+ */
+async function settleManualProposal(input: {
+  proposalId: string;
+  choice: ManualProposalSettlementChoice;
+  reason: string;
+  targetClaimKey?: string;
+  retireDurableIds?: string[];
+  context: WebInstanceContext;
+  buildReason: (proposal: { issueKind: string }) => string;
+  supportLocator: string;
+  validateProposal: (proposal: { id: string; issueKind: string; eligibleForApply: boolean; proposedClaimKeys: string[] }) => void;
 }): Promise<DreamProposalReviewResult> {
   const note = input.reason.trim();
   if (note.length === 0) {
@@ -38,12 +74,6 @@ export async function settleManualMixedWebProposal(input: {
 
   const backupPath = await maybeBackup(input.context.dbPath);
   const reviewedAt = new Date().toISOString();
-  const settlementReason = buildMixedClaimKeySettlementReason(
-    input.choice,
-    note,
-    input.targetClaimKey?.trim() ?? "",
-    input.retireDurableIds?.length ?? 0,
-  );
 
   return withInstanceDatabase(input.context, async (database) => {
     const port = createDreamPort(database);
@@ -54,16 +84,11 @@ export async function settleManualMixedWebProposal(input: {
     if (proposal.reviewStatus !== "open") {
       throw new Error(`Proposal ${proposal.id} was already reviewed as ${proposal.reviewStatus}.`);
     }
-    if (!isManualMixedClaimKeyProposal(proposal)) {
-      throw new Error(`Proposal ${proposal.id} is not eligible for manual mixed-key settlement.`);
-    }
+    input.validateProposal(proposal);
+    const settlementReason = input.buildReason(proposal);
 
     const activeDurables = await port.getDurables(proposal.durableIds);
     const activeIds = new Set(activeDurables.map((durable) => durable.id));
-    const inactiveDurableIds = proposal.durableIds.filter((id) => !activeIds.has(id));
-    if (inactiveDurableIds.length > 0) {
-      throw new Error(`Proposal ${proposal.id} can no longer settle missing or inactive durable ${inactiveDurableIds[0]}.`);
-    }
 
     await port.withTransaction(async (tx) => {
       if (input.choice === "canonical") {
@@ -71,7 +96,7 @@ export async function settleManualMixedWebProposal(input: {
         if (targetClaimKey.length === 0) {
           throw new Error("A canonical claim key is required for this settlement choice.");
         }
-        const patch = buildManualClaimKeyPatch(targetClaimKey);
+        const patch = buildManualClaimKeyPatch(targetClaimKey, input.supportLocator);
         for (const durable of activeDurables) {
           if (durable.claim_key !== targetClaimKey) {
             const updated = await tx.updateDurable(durable.id, patch);
@@ -122,13 +147,13 @@ export async function settleManualMixedWebProposal(input: {
 }
 
 /** Normalizes a console-supplied claim key into a durable metadata patch. */
-function buildManualClaimKeyPatch(claimKey: string): DurableUpdateInput {
+function buildManualClaimKeyPatch(claimKey: string, supportLocator: string): DurableUpdateInput {
   try {
     const normalized = normalizeManualClaimKeyUpdate({
       claimKey,
       rawClaimKey: claimKey,
       supportSourceKind: "tool_call",
-      supportLocator: `${WEB_SOURCE_FILE}#settle-mixed`,
+      supportLocator,
       supportObservedAt: new Date().toISOString(),
       supportMode: "explicit",
     });

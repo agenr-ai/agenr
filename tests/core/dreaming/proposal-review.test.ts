@@ -1,25 +1,35 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  buildMixedClaimKeySettlementReason,
+  buildManualProposalSettlementReason,
   isClaimKeyAliasConvergenceProposal,
-  isManualMixedClaimKeyProposal,
+  isManualProposalSettlementEligible,
 } from "../../../src/core/dreaming/domain/proposal-review.js";
 
 describe("proposal review domain helpers", () => {
-  it("detects manual mixed-key proposals", () => {
+  it("detects proposals eligible for manual settlement", () => {
     expect(
-      isManualMixedClaimKeyProposal({
+      isManualProposalSettlementEligible({
         issueKind: "mixed_claim_key_group",
         eligibleForApply: false,
-        proposedClaimKeys: [],
       }),
     ).toBe(true);
     expect(
-      isManualMixedClaimKeyProposal({
-        issueKind: "mixed_claim_key_group",
+      isManualProposalSettlementEligible({
+        issueKind: "entity_family_convergence",
+        eligibleForApply: false,
+      }),
+    ).toBe(true);
+    expect(
+      isManualProposalSettlementEligible({
+        issueKind: "claim_key_alias_convergence",
+        eligibleForApply: false,
+      }),
+    ).toBe(true);
+    expect(
+      isManualProposalSettlementEligible({
+        issueKind: "claim_key_alias_convergence",
         eligibleForApply: true,
-        proposedClaimKeys: ["agenr/status"],
       }),
     ).toBe(false);
   });
@@ -29,13 +39,15 @@ describe("proposal review domain helpers", () => {
     expect(isClaimKeyAliasConvergenceProposal({ issueKind: "missing_claim_key" })).toBe(false);
   });
 
-  it("builds mixed-key settlement reasons from operator notes only", () => {
-    expect(buildMixedClaimKeySettlementReason("separate", "distinct slots", "", 0)).toBe(
+  it("builds settlement reasons from operator notes only", () => {
+    expect(buildManualProposalSettlementReason("mixed_claim_key_group", "separate", "distinct slots", "", 0)).toBe(
       "Resolved mixed claim-key group manually by keeping the affected durables under separate claim keys. Note: distinct slots",
     );
-    expect(buildMixedClaimKeySettlementReason("canonical", "same slot", "agenr/status", 0)).toBe(
-      'Resolved mixed claim-key group manually by writing canonical key "agenr/status". Note: same slot',
+    expect(buildManualProposalSettlementReason("claim_key_alias_convergence", "canonical", "same slot", "agenr/status", 0)).toBe(
+      'Resolved claim-key alias convergence manually by writing canonical key "agenr/status". Note: same slot',
     );
-    expect(buildMixedClaimKeySettlementReason("retire", "", "", 2)).toBe("Resolved mixed claim-key group manually by retiring 2 duplicate or wrong durables.");
+    expect(buildManualProposalSettlementReason("entity_family_convergence", "retire", "", "", 2)).toBe(
+      "Resolved entity-family convergence manually by retiring 2 duplicate or wrong durables.",
+    );
   });
 });

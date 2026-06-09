@@ -2,7 +2,7 @@ import { useState } from "react";
 
 import { ApiError, api } from "../../api/client";
 import type { ProposalDetail } from "../../api/types";
-import { isClaimKeyAliasConvergenceProposal, isManualMixedClaimKeyProposal } from "../../api/types";
+import { isClaimKeyAliasConvergenceProposal, isManualProposalSettlementEligible } from "../../api/types";
 import { ProposalStagingAuditPanel } from "../../components/dreaming/ActionReviewPanels";
 import { Badge, Button, Card, CardBody, Drawer, EmptyState, Field, Textarea } from "../../components/primitives";
 import { ErrorCard, Skeleton } from "../../components/states";
@@ -10,7 +10,7 @@ import { useToast } from "../../components/Toast";
 import { useAsync } from "../../hooks/useAsync";
 import { formatIssueKind, formatPercent, formatRelative, titleCase, truncate } from "../../lib/format";
 import { ClaimDiff } from "./ClaimDiff";
-import { ManualMixedClaimResolution } from "./ManualMixedClaimResolution";
+import { ManualProposalResolution } from "./ManualProposalResolution";
 import { formatIneligibleProposalHint } from "./proposal-review-ui";
 
 /** Detail drawer with the proposal, affected durables, and review actions. */
@@ -38,7 +38,7 @@ export function ProposalDrawer({ proposalId, onClose, onReviewed }: { proposalId
   };
 
   const proposal = state.data?.proposal;
-  const manualMixedResolution = proposal ? isManualMixedClaimKeyProposal(proposal) : false;
+  const manualResolution = proposal ? isManualProposalSettlementEligible(proposal) : false;
 
   return (
     <Drawer
@@ -61,9 +61,9 @@ export function ProposalDrawer({ proposalId, onClose, onReviewed }: { proposalId
 
           <div className="review-brief">
             <span className="section-title">Review decision</span>
-            {manualMixedResolution ? (
+            {manualResolution ? (
               <>
-                <p>This group has conflicting current claim keys and no safe proposed target. Settle the flagged issue with one explicit operator decision.</p>
+                <p>This proposal has no safe direct apply target. Settle the flagged issue with one explicit operator decision.</p>
                 <ul className="review-checklist">
                   <li>Keep the current keys when the memories are separate slots.</li>
                   <li>Use one canonical key when the memories belong to the same slot.</li>
@@ -99,7 +99,7 @@ export function ProposalDrawer({ proposalId, onClose, onReviewed }: { proposalId
 
           <div className="stack" style={{ gap: "var(--space-2)" }}>
             <span className="section-title">
-              {manualMixedResolution ? "Flagged keys" : isClaimKeyAliasConvergenceProposal(proposal) ? "Alias cluster" : "Proposed change"}
+              {manualResolution ? "Flagged keys" : isClaimKeyAliasConvergenceProposal(proposal) ? "Alias cluster" : "Proposed change"}
             </span>
             <ClaimDiff current={proposal.currentClaimKeys} proposed={proposal.proposedClaimKeys} />
           </div>
@@ -130,8 +130,8 @@ export function ProposalDrawer({ proposalId, onClose, onReviewed }: { proposalId
             ) : null}
           </div>
 
-          {proposal.reviewStatus === "open" && manualMixedResolution ? (
-            <ManualMixedClaimResolution proposalId={proposal.id} durables={state.data.activeDurables} onReviewed={onReviewed} />
+          {proposal.reviewStatus === "open" && manualResolution ? (
+            <ManualProposalResolution proposal={proposal} durables={state.data.activeDurables} onReviewed={onReviewed} />
           ) : proposal.reviewStatus === "open" ? (
             <div className="stack" style={{ gap: "var(--space-3)" }}>
               <Field label="Decision reason" hint="Explain why the proposed key should or should not be written.">

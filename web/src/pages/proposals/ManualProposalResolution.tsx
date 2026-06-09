@@ -1,23 +1,27 @@
 import { useState } from "react";
 
 import { ApiError, api } from "../../api/client";
-import type { Durable, ManualMixedSettlementChoice } from "../../api/types";
+import type { DreamProposal, Durable, ManualProposalSettlementChoice } from "../../api/types";
 import { Button, Field, Input, Select, Textarea } from "../../components/primitives";
 import { useToast } from "../../components/Toast";
 
-/** Manual settlement workflow for mixed-key groups without a safe direct target. */
-export function ManualMixedClaimResolution({
-  proposalId,
+/** Manual settlement workflow for proposals without a safe direct target. */
+export function ManualProposalResolution({
+  proposal,
   durables,
   onReviewed,
 }: {
-  proposalId: string;
+  proposal: DreamProposal;
   durables: Durable[];
   onReviewed: () => void;
 }): React.ReactElement {
   const toast = useToast();
-  const uniqueClaimKeys = uniqueStrings(durables.flatMap((durable) => (durable.claim_key ? [durable.claim_key] : [])));
-  const [choice, setChoice] = useState<ManualMixedSettlementChoice>("separate");
+  const uniqueClaimKeys = uniqueStrings([
+    ...proposal.proposedClaimKeys,
+    ...proposal.currentClaimKeys,
+    ...durables.flatMap((durable) => (durable.claim_key ? [durable.claim_key] : [])),
+  ]);
+  const [choice, setChoice] = useState<ManualProposalSettlementChoice>("separate");
   const [selectedClaimKey, setSelectedClaimKey] = useState(uniqueClaimKeys[0] ?? "__custom");
   const [customClaimKey, setCustomClaimKey] = useState("");
   const [selectedRetireIds, setSelectedRetireIds] = useState<string[]>([]);
@@ -44,7 +48,7 @@ export function ManualMixedClaimResolution({
 
     setBusy(true);
     try {
-      await api.settleMixedProposal(proposalId, {
+      await api.settleProposal(proposal.id, {
         choice,
         reason: trimmedNote,
         ...(choice === "canonical" ? { targetClaimKey: resolveTargetClaimKey(choice, selectedClaimKey, customClaimKey) } : {}),
@@ -164,7 +168,7 @@ function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter((value) => value.length > 0))];
 }
 
-function resolveTargetClaimKey(choice: ManualMixedSettlementChoice, selectedClaimKey: string, customClaimKey: string): string {
+function resolveTargetClaimKey(choice: ManualProposalSettlementChoice, selectedClaimKey: string, customClaimKey: string): string {
   if (choice !== "canonical") {
     return "";
   }

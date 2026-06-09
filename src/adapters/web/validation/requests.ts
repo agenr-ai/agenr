@@ -29,6 +29,6 @@ export { parseProcedureSaveBody, parseProcedureValidateBody } from "./procedure-
 
 export type {
   ParsedReviewBody,
-  ParsedSettleMixedBody,
+  ParsedSettleProposalBody,
 } from "./proposal-requests.js";
-export { parseProposalBacklogQuery, parseReviewBody, parseSettleMixedBody } from "./proposal-requests.js";
+export { parseProposalBacklogQuery, parseReviewBody, parseSettleProposalBody } from "./proposal-requests.js";

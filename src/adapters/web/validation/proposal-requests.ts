@@ -16,11 +16,11 @@ import {
 /** Proposal review decisions accepted by the review endpoint. */
 const REVIEW_DECISIONS = ["apply", "reject"] as const;
 
-/** Manual mixed-key settlement choices accepted by the settle endpoint. */
-const SETTLE_MIXED_CHOICES = ["separate", "canonical", "retire"] as const;
+/** Manual proposal settlement choices accepted by settlement endpoints. */
+const SETTLE_CHOICES = ["separate", "canonical", "retire"] as const;
 
-/** Allowed body keys for a mixed-key settlement request. */
-const SETTLE_MIXED_KEYS = new Set<string>(["choice", "reason", "targetClaimKey", "retireDurableIds"]);
+/** Allowed body keys for a proposal settlement request. */
+const SETTLE_KEYS = new Set<string>(["choice", "reason", "targetClaimKey", "retireDurableIds"]);
 
 /**
  * Validated proposal-review decision.
@@ -31,10 +31,10 @@ export interface ParsedReviewBody {
 }
 
 /**
- * Validated mixed-key settlement request.
+ * Validated manual proposal settlement request.
  */
-export interface ParsedSettleMixedBody {
-  choice: (typeof SETTLE_MIXED_CHOICES)[number];
+export interface ParsedSettleProposalBody {
+  choice: (typeof SETTLE_CHOICES)[number];
   /** Operator note appended to the server-built settlement reason. */
   reason: string;
   targetClaimKey?: string;
@@ -83,21 +83,21 @@ export function parseReviewBody(input: unknown): ParsedReviewBody {
 }
 
 /**
- * Parses and validates a mixed-key settlement request body.
+ * Parses and validates a proposal settlement request body.
  *
  * @param input - Raw JSON request body.
  * @returns Validated settlement parameters.
  * @throws {WebApiError} 400 when the body is malformed.
  */
-export function parseSettleMixedBody(input: unknown): ParsedSettleMixedBody {
-  const { record, issues } = requireObject(input, SETTLE_MIXED_KEYS);
-  const choice = readEnumValue(record.choice, "choice", SETTLE_MIXED_CHOICES, issues);
+export function parseSettleProposalBody(input: unknown): ParsedSettleProposalBody {
+  const { record, issues } = requireObject(input, SETTLE_KEYS);
+  const choice = readEnumValue(record.choice, "choice", SETTLE_CHOICES, issues);
   const reason = parseRequiredTrimmedString(record.reason, "reason", issues) ?? "";
   const targetClaimKey = parseOptionalTrimmedString(record.targetClaimKey, "targetClaimKey", issues);
   const retireDurableIds = readOptionalStringArray(record.retireDurableIds, "retireDurableIds", issues);
   throwIfIssues(issues);
   if (!choice) {
-    throw WebApiError.invalid([{ path: "choice", message: `Expected one of: ${SETTLE_MIXED_CHOICES.join(", ")}.` }]);
+    throw WebApiError.invalid([{ path: "choice", message: `Expected one of: ${SETTLE_CHOICES.join(", ")}.` }]);
   }
 
   return {

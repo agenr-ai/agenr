@@ -1,8 +1,8 @@
 /** Browser-safe proposal review helpers shared by the operator console. */
 
 export {
-  buildMixedClaimKeySettlementReason,
+  buildManualProposalSettlementReason,
   isClaimKeyAliasConvergenceProposal,
-  isManualMixedClaimKeyProposal,
-  type ManualMixedSettlementChoice,
+  isManualProposalSettlementEligible,
+  type ManualProposalSettlementChoice,
 } from "../core/dreaming/domain/proposal-review.js";

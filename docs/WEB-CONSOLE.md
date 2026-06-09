@@ -131,6 +131,7 @@ Proposals:
 GET    /api/web/proposals?issueKind=claim_key_alias_convergence
 GET    /api/web/proposals/:id
 POST   /api/web/proposals/:id/review
+POST   /api/web/proposals/:id/settle
 ```
 
 Memory:
@@ -183,7 +184,7 @@ UI-initiated runs are coordinated in-process by `DreamingRunCoordinator`.
 
 - Ops Cockpit: composite corpus-health score, key metric tiles, claim-key lifecycle and recency distributions, proposal backlog and profile rollups, and recent run history with surfaced failures.
 - Dreaming Runs: launch light/standard/deep runs in dry-run or apply mode, watch a live progress feed, and inspect persisted run details, actions, and proposals. Alias-convergence actions render as structured audit summaries instead of raw JSON.
-- Proposal Review: filterable backlog including issue-kind filtering, a detail drawer with affected durables and current/proposed claim keys, apply/reject with a required reason, and manual settlement choices for ambiguous mixed-key groups. Claim-key alias convergence proposals show the current key cluster, target key, and whether apply is blocked because the cluster is ambiguous, conflicting, or not LLM-confirmed.
+- Proposal Review: filterable backlog including issue-kind filtering, a detail drawer with affected durables and current/proposed claim keys, apply/reject with a required reason, and manual settlement choices for ineligible mixed-key, entity-family convergence, and claim-key alias convergence proposals. Claim-key alias convergence proposals show the current key cluster, target key, and whether apply is blocked because the cluster is ambiguous, conflicting, or not LLM-confirmed.
 - Memory Explorer: durable, episode, and procedure browsing with filters and pagination, a durable trace drawer, and lifecycle actions (store, supersede, update metadata, retire).
 - Procedure Editor: a YAML editor with debounced validation, a dirty-worktree banner, and save-and-sync that reports created/updated/unchanged results.
 - Instance Settings: register, select, and remove instances, with resolution diagnostics and a loopback-only security reminder.

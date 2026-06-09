@@ -1,9 +1,8 @@
 /** Re-exports shared operator-console API types and review helpers. */
 export {
-  buildMixedClaimKeySettlementReason,
   isClaimKeyAliasConvergenceProposal,
-  isManualMixedClaimKeyProposal,
-  type ManualMixedSettlementChoice,
+  isManualProposalSettlementEligible,
+  type ManualProposalSettlementChoice,
 } from "../../../src/web-api/proposal-review.js";
 export type {
   ApiErrorBody,
