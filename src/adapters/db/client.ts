@@ -32,6 +32,7 @@ import {
 import {
   closeDurableValidity,
   findActiveDurablesByClaimKey,
+  findSimilarActiveDurables,
   getClaimKeyEntityPrefixStats,
   findExistingHashes,
   findExistingNormHashes,
@@ -227,6 +228,11 @@ class LibsqlDatabase implements SqlDatabase {
   /** Finds active entries by exact claim key. */
   public async findActiveDurablesByClaimKey(claimKey: string): Promise<Durable[]> {
     return findActiveDurablesByClaimKey(this.executor, claimKey);
+  }
+
+  /** Finds active entries nearest to one embedding by vector similarity. */
+  public async findSimilarActiveDurables(embedding: number[], limit: number) {
+    return findSimilarActiveDurables(this.executor, embedding, limit);
   }
 
   /** Lists distinct entity prefixes derived from active claim keys. */

@@ -762,13 +762,12 @@ describe("storeDurables", () => {
     expect(db.supersedeCalls).toEqual([]);
   });
 
-  it("skips auto-supersession and warns when multiple active siblings share the claim key", async () => {
+  it("auto-supersedes all active siblings when multiple share the claim key", async () => {
+    const siblingOne = createExistingEntry({ claim_key: "jim/home_city", subject: "Jim home city v1" });
+    const siblingTwo = createExistingEntry({ claim_key: "jim/home_city", subject: "Jim home city v2" });
     const db = new MockDatabase({
       activeDurablesByClaimKey: {
-        "jim/home_city": [
-          createExistingEntry({ claim_key: "jim/home_city", subject: "Jim home city v1" }),
-          createExistingEntry({ claim_key: "jim/home_city", subject: "Jim home city v2" }),
-        ],
+        "jim/home_city": [siblingOne, siblingTwo],
       },
     });
     const embedding = new MockEmbeddingPort();
@@ -790,8 +789,232 @@ describe("storeDurables", () => {
     );
 
     expect(result).toEqual({ stored: 1, skipped: 0, rejected: 0 });
-    expect(db.supersedeCalls).toEqual([]);
-    expect(warnings).toEqual([expect.stringMatching(/2 active siblings/i)]);
+    const newId = db.insertions[0]?.durable.id ?? "";
+    expect(db.supersedeCalls).toEqual([
+      { oldId: siblingOne.id, newId, kind: "update", reason: undefined },
+      { oldId: siblingTwo.id, newId, kind: "update", reason: undefined },
+    ]);
+    expect(warnings).toEqual([]);
+  });
+
+  it("skips only rule-failing siblings while superseding the compatible ones", async () => {
+    const compatibleSibling = createExistingEntry({ type: "fact", claim_key: "jim/home_city", subject: "Jim home city v1" });
+    const incompatibleSibling = createExistingEntry({ type: "decision", claim_key: "jim/home_city", subject: "Jim home city policy" });
+    const db = new MockDatabase({
+      activeDurablesByClaimKey: {
+        "jim/home_city": [compatibleSibling, incompatibleSibling],
+      },
+    });
+    const embedding = new MockEmbeddingPort();
+    const warnings: string[] = [];
+
+    const result = await storeDurables(
+      [
+        createInput({
+          type: "fact",
+          subject: "Jim's home city",
+          content: "Jim now lives in Denver, Colorado.",
+          claim_key: "jim/home_city",
+        }),
+      ],
+      db,
+      embedding,
+      {
+        onWarning: (warning) => warnings.push(warning),
+      },
+    );
+
+    expect(result).toEqual({ stored: 1, skipped: 0, rejected: 0 });
+    const newId = db.insertions[0]?.durable.id ?? "";
+    expect(db.supersedeCalls).toEqual([{ oldId: compatibleSibling.id, newId, kind: "update", reason: undefined }]);
+    expect(warnings).toEqual([expect.stringContaining(incompatibleSibling.id)]);
+  });
+
+  it("skips a same-claim-key near-duplicate found by DB semantic dedup", async () => {
+    const existing = createExistingEntry({
+      claim_key: "jim/home_city",
+      subject: "Jim home city",
+      content: "Jim lives in Denver, Colorado.",
+    });
+    const db = new MockDatabase({
+      similarActiveDurables: [{ durable: existing, similarity: 0.95 }],
+    });
+    const embedding = new MockEmbeddingPort();
+    const warnings: string[] = [];
+
+    const result = await storeDurablesDetailed(
+      [
+        createInput({
+          subject: "Jim's current city",
+          content: "Jim currently resides in Denver, CO.",
+          claim_key: "jim/home_city",
+        }),
+      ],
+      db,
+      embedding,
+      {
+        onWarning: (warning) => warnings.push(warning),
+      },
+    );
+
+    expect(result).toMatchObject({ stored: 0, skipped: 1, rejected: 0 });
+    expect(result.details).toEqual([
+      {
+        inputIndex: 0,
+        outcome: "skipped",
+        reason: "db_semantic_duplicate",
+      },
+    ]);
+    expect(db.insertions).toEqual([]);
+    expect(db.similarLookupCalls).toHaveLength(1);
+    expect(warnings).toEqual([expect.stringMatching(/semantic duplicate/i)]);
+  });
+
+  it("never dedups an entry against the durable it explicitly supersedes", async () => {
+    const existing = createExistingEntry({
+      claim_key: "jim/home_city",
+      subject: "Jim home city",
+      content: "Jim lives in Denver, Colorado.",
+    });
+    const db = new MockDatabase({
+      similarActiveDurables: [{ durable: existing, similarity: 0.97 }],
+    });
+    const embedding = new MockEmbeddingPort();
+
+    const result = await storeDurables(
+      [
+        createInput({
+          subject: "Jim home city",
+          content: "Jim lives in Denver, Colorado (confirmed).",
+          claim_key: "jim/home_city",
+          supersedes: existing.id,
+        }),
+      ],
+      db,
+      embedding,
+    );
+
+    expect(result).toEqual({ stored: 1, skipped: 0, rejected: 0 });
+    expect(db.insertions).toHaveLength(1);
+  });
+
+  it("skips a near-duplicate when the new entry has no claim key", async () => {
+    const existing = createExistingEntry({
+      claim_key: "jim/home_city",
+      subject: "Jim home city",
+      content: "Jim lives in Denver, Colorado.",
+    });
+    const db = new MockDatabase({
+      similarActiveDurables: [{ durable: existing, similarity: 0.92 }],
+    });
+    const embedding = new MockEmbeddingPort();
+
+    const result = await storeDurables(
+      [
+        createInput({
+          subject: "Jim's current city",
+          content: "Jim currently resides in Denver, CO.",
+        }),
+      ],
+      db,
+      embedding,
+    );
+
+    expect(result).toEqual({ stored: 0, skipped: 1, rejected: 0 });
+    expect(db.insertions).toEqual([]);
+  });
+
+  it("stores a different-claim-key near-duplicate with a warning", async () => {
+    const existing = createExistingEntry({
+      claim_key: "jim/work_city",
+      subject: "Jim work city",
+      content: "Jim works in Denver, Colorado.",
+    });
+    const db = new MockDatabase({
+      similarActiveDurables: [{ durable: existing, similarity: 0.93 }],
+    });
+    const embedding = new MockEmbeddingPort();
+    const warnings: string[] = [];
+
+    const result = await storeDurables(
+      [
+        createInput({
+          subject: "Jim's home city",
+          content: "Jim lives in Denver, Colorado.",
+          claim_key: "jim/home_city",
+        }),
+      ],
+      db,
+      embedding,
+      {
+        onWarning: (warning) => warnings.push(warning),
+      },
+    );
+
+    expect(result).toEqual({ stored: 1, skipped: 0, rejected: 0 });
+    expect(db.insertions).toHaveLength(1);
+    expect(warnings).toEqual([expect.stringMatching(/claim keys differ/i)]);
+  });
+
+  it("stores normally when semantic dedup is disabled", async () => {
+    const existing = createExistingEntry({
+      claim_key: "jim/home_city",
+      subject: "Jim home city",
+      content: "Jim lives in Denver, Colorado.",
+    });
+    const db = new MockDatabase({
+      similarActiveDurables: [{ durable: existing, similarity: 0.99 }],
+    });
+    const embedding = new MockEmbeddingPort();
+
+    const result = await storeDurables(
+      [
+        createInput({
+          subject: "Jim's current city",
+          content: "Jim currently resides in Denver, CO.",
+          claim_key: "jim/home_city",
+        }),
+      ],
+      db,
+      embedding,
+      {
+        semanticDedup: { enabled: false },
+      },
+    );
+
+    expect(result).toEqual({ stored: 1, skipped: 0, rejected: 0 });
+    expect(db.insertions).toHaveLength(1);
+    expect(db.similarLookupCalls).toEqual([]);
+  });
+
+  it("keeps below-threshold semantic matches when a custom threshold is configured", async () => {
+    const existing = createExistingEntry({
+      claim_key: "jim/home_city",
+      subject: "Jim home city",
+      content: "Jim lives in Denver, Colorado.",
+    });
+    const db = new MockDatabase({
+      similarActiveDurables: [{ durable: existing, similarity: 0.91 }],
+    });
+    const embedding = new MockEmbeddingPort();
+
+    const result = await storeDurables(
+      [
+        createInput({
+          subject: "Jim's current city",
+          content: "Jim currently resides in Denver, CO.",
+          claim_key: "jim/home_city",
+        }),
+      ],
+      db,
+      embedding,
+      {
+        semanticDedup: { enabled: true, threshold: 0.95 },
+      },
+    );
+
+    expect(result).toEqual({ stored: 1, skipped: 0, rejected: 0 });
+    expect(db.insertions).toHaveLength(1);
   });
 
   it("skips auto-supersession for deterministic-repair claim keys even when one active sibling matches", async () => {
@@ -1047,6 +1270,8 @@ class MockDatabase implements DatabasePort {
   public readonly activeDurablesByClaimKey: Record<string, Durable[]>;
   public readonly claimKeyLookupCalls: string[] = [];
   public readonly supersedeCalls: Array<{ oldId: string; newId: string; kind?: string; reason?: string }> = [];
+  public readonly similarLookupCalls: Array<{ embedding: number[]; limit: number }> = [];
+  public readonly similarActiveDurables: Array<{ durable: Durable; similarity: number }>;
   public transactionCount = 0;
   private readonly supersedeResult: boolean;
 
@@ -1057,6 +1282,7 @@ class MockDatabase implements DatabasePort {
       claimKeyPrefixes?: string[];
       claimKeyExamples?: string[];
       activeDurablesByClaimKey?: Record<string, Durable[]>;
+      similarActiveDurables?: Array<{ durable: Durable; similarity: number }>;
       supersedeResult?: boolean;
     } = {},
   ) {
@@ -1065,6 +1291,7 @@ class MockDatabase implements DatabasePort {
     this.claimKeyPrefixes = options.claimKeyPrefixes ?? [];
     this.claimKeyExamples = options.claimKeyExamples ?? [];
     this.activeDurablesByClaimKey = options.activeDurablesByClaimKey ?? {};
+    this.similarActiveDurables = options.similarActiveDurables ?? [];
     this.supersedeResult = options.supersedeResult ?? true;
   }
 
@@ -1109,6 +1336,11 @@ class MockDatabase implements DatabasePort {
   public async findActiveDurablesByClaimKey(claimKey: string): Promise<Durable[]> {
     this.claimKeyLookupCalls.push(claimKey);
     return this.activeDurablesByClaimKey[claimKey] ?? [];
+  }
+
+  public async findSimilarActiveDurables(embedding: number[], limit: number): Promise<Array<{ durable: Durable; similarity: number }>> {
+    this.similarLookupCalls.push({ embedding, limit });
+    return this.similarActiveDurables.slice(0, limit);
   }
 
   public async getDistinctClaimKeyPrefixes(): Promise<string[]> {

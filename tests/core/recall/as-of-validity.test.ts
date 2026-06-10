@@ -22,7 +22,14 @@ function buildTraceSummary(): RecallExecutionTraceSummary {
     filtering: { types: [], tags: [] },
     ranking: { limit: 5, threshold: 0, budget: null },
     candidateCounts: { merged: 0, thresholdQualified: 0, budgetAccepted: 0, finalRanked: 0, returned: 0 },
-    claimKey: { historicalBoosted: 0, tentativeLineageSuppressed: 0, trustPenalized: 0, redundancyPenalized: 0 },
+    claimKey: {
+      historicalBoosted: 0,
+      tentativeLineageSuppressed: 0,
+      trustPenalized: 0,
+      redundancyPenalized: 0,
+      exclusiveSlotCollapsed: 0,
+      exclusiveSlotCollapsedIds: [],
+    },
     rrf: { applied: false, channelCount: 0, rankConstant: 60, fusedCandidateCount: 0, maxFusedScore: 0 },
     neighborhood: {
       expansionRequested: false,

@@ -141,13 +141,15 @@ These tables ship alongside `durables` during database initialization. Older per
    - everything else is `new` and is inserted on apply with a `dreaming_extract` claim-key source and `tentative` status when a claim key is emitted;
    - apply persists episode provenance on each insert: `source_file` (`episode:<id>` or `episode-session:<sessionId>:<id>`), `source_context`, `valid_from` (episode end or start), conservative `project` scope via `resolveDurableProjectScope()` (explicit extract output, claim-key entity match, or visible workspace reference - never a blind session-workspace stamp), and episode support metadata even when claim keys are still missing.
    - when the host already wrote `agenr_store` durables in that session window, passes those rows into the mining prompt and classifies re-emitted duplicates as `known` using session claim keys and normalized content hashes. Episode mining still runs so implicit preferences and other facts not captured live can be mined normally.
-3. **Reconcile** - run deterministic claim-key quality maintenance (missing-key backfill, malformed-key normalization, entity-family convergence, same-entity alias convergence on `deep`, and related structural fixes covered by scenario fixtures).
+3. **Reconcile** - run deterministic claim-key quality maintenance (missing-key backfill, malformed-key normalization, entity-family convergence, same-entity alias convergence on `deep`, duplicate exclusive-slot collapse, and related structural fixes covered by scenario fixtures).
 4. **Temporalize** - apply supersession-based revision to each `refines` candidate. The stage never rewrites content in place: it inserts a successor durable that inherits the predecessor's canonical claim key, closes the predecessor's valid-time window at the revision instant, and links the predecessor to the successor through `superseded_by`. Point-in-time recall before the revision still surfaces the predecessor; current-state recall surfaces the successor.
 5. **Project** - rank current active durables into a bounded profile snapshot candidate and keep directive ids separate. Dry runs and project-scoped runs report the projected bundle without writing or globally activating it. Successful unscoped apply runs insert a `profile_snapshots` row and mark it active in `dream_state` in the final workflow transaction.
 6. **Prune** - on `standard` and `deep`, close validity on only active low-signal candidates after applying protections for current and projected profile ids, directives, `core` expiry, high importance, and recent recall. The stage is deterministic and writes `stale` actions only for actual apply mutations.
 7. **Apply** - when `--apply` is set, persist accepted extract inserts, reconcile mutations, temporalize revisions, prune staleness closes, and successful unscoped profile projection; otherwise emit a dry-run summary only.
 
 The extract and temporalize stages call models only through injected factories, so deterministic-only runs (no mining LLM) skip extract and temporalize without error. Both stages respect the daily cost cap shared across the run.
+
+When the daily cost cap is already spent before a run starts, the runtime no longer throws. It creates the run record and immediately finishes it with status `budget_exhausted`, a summary explaining the cap hit, and zero actions, so operators see the blocked attempt in `agenr dream history` instead of an unrecorded error.
 
 ### Deep claim-key alias audit
 
@@ -156,7 +158,7 @@ Deep reconcile includes a full active-corpus audit for same-entity claim-key ali
 This audit is intentionally narrower than entity-family convergence:
 
 - It never emits cross-entity aliases; entity-family convergence owns that case.
-- It converges claim-key metadata only. It does not merge durable content rows or supersede duplicates.
+- It converges claim-key metadata only. It does not merge durable content rows or supersede duplicates; the duplicate slot collapse sub-stage below owns that content-level cleanup.
 - It runs only during `deep` reconcile over the active working set. `standard` and `light` behavior is unchanged.
 - When the existing claim-extraction LLM factory is available and claim extraction is enabled, deterministic alias candidates are adjudicated with bounded JSON output: `same_slot`, `canonical_claim_key`, `confidence`, and `rationale`.
 - Without an LLM, the audit can emit deterministic proposals but does not auto-apply alias clusters.
@@ -164,6 +166,17 @@ This audit is intentionally narrower than entity-family convergence:
 Alias clusters are built transitively from qualifying pairwise edges. If `A` aliases `B` and `B` aliases `C`, all three keys are grouped even when `A` and `C` would not pass pairwise scoring on their own. Cluster confidence is the minimum qualifying pairwise confidence across edges inside the component, so a weak bridge key can still pull a distant sibling into one operator-facing proposal.
 
 Auto-apply is conservative. A deep `--apply` run rewrites alias keys only when deterministic confidence is at least `0.9`, the LLM says `same_slot: true` with confidence at least `0.9`, the LLM canonical key matches the deterministic target, all durables are active and same type, no cross-type target collision exists, and the cluster does not involve multiple trusted or manual canonical keys. Anything ambiguous, conflicting, cost-capped, or not LLM-confirmed remains a proposal for operator review.
+
+### Duplicate slot collapse
+
+After convergence stages rewrite alias keys onto one canonical key, an exclusive claim slot can end up with several active durables that all answer the same question, flooding recall. The duplicate slot collapse sub-stage runs in `standard` and `deep` reconcile, right after alias convergence:
+
+- It detects claim keys with more than one active durable (`valid_to IS NULL AND superseded_by IS NULL`) whose slot policy is exclusive. Multivalued attribute heads (such as `preference`) from `src/core/claim-slot-policy.ts` are exempt.
+- For each group it deterministically selects one canonical survivor: trusted claim-key status first, then highest importance, then newest `created_at`, then lexicographically smallest id.
+- It emits a `dream_proposals` row with issue kind `duplicate_slot_collapse` proposing to supersede every non-survivor with the survivor.
+- It auto-applies the collapse only when every group member shares the same claim key and durable type and all members are trusted. On apply, each non-survivor gets `superseded_by` set to the survivor, `supersession_kind` set to `duplicate_collapse`, and its validity window closed, with one `merge` dream run action logged per superseded row. The `merge` action type therefore means: content-level duplicate exclusive-slot collapse.
+- Auto-applied supersessions are capped at 20 per run; groups beyond the cap (and any mixed-status or mixed-type group) stay as open proposals for operator review.
+- Applying a `duplicate_slot_collapse` proposal through `agenr dream review` or the web console performs the same supersession over the still-active group members, recomputing the survivor with the same deterministic ordering.
 
 Every completion summary includes a compute-efficiency block used by eval scoreboard runs:
 

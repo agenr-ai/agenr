@@ -169,6 +169,8 @@ function formatReconcileStage(stage: string): string {
       return "Entity-family convergence";
     case "claim_key_alias_convergence":
       return "Claim-key alias convergence";
+    case "duplicate_slot_collapse":
+      return "Duplicate slot collapse";
     case "mixed_key_groups":
       return "Mixed key groups";
     default:
@@ -220,7 +222,8 @@ function summarizeRepairCounts(counts: ReconcileProgress["counts"]): {
       counts.appliedBackfills +
       counts.appliedMetadataRewrites +
       counts.appliedEntityFamilyConvergences +
-      counts.appliedAliasConvergences,
+      counts.appliedAliasConvergences +
+      counts.appliedDuplicateSlotCollapses,
     proposed: counts.proposalsEmitted + counts.flaggedAmbiguousProposals,
     skipped: counts.skippedNoClaim + counts.skippedLowConfidence + counts.skippedCollision,
   };

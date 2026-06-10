@@ -599,6 +599,35 @@ describe("createDatabase", () => {
     expect(stored?.last_recalled_at).toBeTruthy();
   });
 
+  it("bumps quality_score with a bounded EMA step when a recall event is recorded", async () => {
+    const database = await createTestDatabase();
+    const adapter = createRecallAdapter(database, createEmbeddingPort());
+    const entry = createEntry();
+
+    await database.insertDurable(entry, createEmbedding(0, 1), "quality-hash");
+    await adapter.recordRecallEvents({
+      durableIds: [entry.id],
+      query: "hexagonal",
+    });
+
+    const bumped = await database.getDurable(entry.id);
+    // 0.5 + 0.05 * (1 - 0.5) = 0.525.
+    expect(bumped?.quality_score).toBeCloseTo(0.525, 6);
+
+    // Force the score next to the ceiling and verify the MIN() clamp.
+    await database.execute({
+      sql: "UPDATE durables SET quality_score = 0.949 WHERE id = ?",
+      args: [entry.id],
+    });
+    await adapter.recordRecallEvents({
+      durableIds: [entry.id],
+      query: "hexagonal again",
+    });
+
+    const clamped = await database.getDurable(entry.id);
+    expect(clamped?.quality_score).toBe(0.95);
+  });
+
   it("stores and retrieves ingest log entries", async () => {
     const database = await createTestDatabase();
 

@@ -4,11 +4,13 @@ import type { ParsedTranscript } from "../../core/types.js";
 
 /**
  * Phase 4 shutdown and session-end activity gate shared by Skeln and OpenClaw adapters.
- * Requires at least eight material turns or twenty minutes of session duration.
+ * Requires at least four material turns or ten minutes of session duration. The bar is
+ * intentionally low: production corpora showed most real sessions never crossed the prior
+ * eight-turn / twenty-minute gate, starving episodic memory.
  */
 const HOST_SHUTDOWN_EPISODE_ACTIVITY_THRESHOLD: EpisodeActivityThreshold = {
-  minMaterialTurns: 8,
-  minDurationMs: 20 * 60 * 1000,
+  minMaterialTurns: 4,
+  minDurationMs: 10 * 60 * 1000,
 };
 
 export { HOST_SHUTDOWN_EPISODE_ACTIVITY_THRESHOLD };

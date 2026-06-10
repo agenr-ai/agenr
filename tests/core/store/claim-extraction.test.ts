@@ -1165,6 +1165,10 @@ class MockDatabasePort implements DatabasePort {
     return [];
   }
 
+  public async findSimilarActiveDurables(): Promise<Array<{ durable: Durable; similarity: number }>> {
+    return [];
+  }
+
   public async getDistinctClaimKeyPrefixes(): Promise<string[]> {
     return this.values.claimKeyPrefixes ?? [];
   }

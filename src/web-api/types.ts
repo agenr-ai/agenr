@@ -100,7 +100,7 @@ export interface HealthStats {
 }
 
 /** Dreaming run status union. */
-export type DreamRunStatus = "running" | "completed" | "failed" | "aborted" | "budget_exhausted" | "cost_capped" | "no_work" | "stalled";
+export type DreamRunStatus = "running" | "completed" | "failed" | "aborted" | "budget_exhausted" | "cost_capped";
 
 /** Persisted dreaming run record. */
 export interface DreamRunRecord {

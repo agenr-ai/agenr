@@ -824,11 +824,166 @@ describe("recall raw evidence gating", () => {
         // the phase-3 calibrated penalty magnitude, flipping the order
         // this test is specifically designed to verify.
         rankingPolicy: { rrfSmallPoolRankConstant: 60 },
+        // Verify the legacy penalty-only behavior behind the opt-out flag.
+        collapseExclusiveSlots: false,
       },
     );
 
     expect(results.map((result) => result.durable.id)).toEqual(["vite-primary", "release-rollout", "vite-shadow"]);
     expect(results[2]?.scores.claimKeyRedundancyPenalty).toBeGreaterThan(0);
+  });
+
+  it("collapses an exclusive slot to its best current answer and backfills with other content", async () => {
+    const traceSummaries: RecallExecutionTraceSummary[] = [];
+    const fixture = createRecallPortsFixture({
+      durables: [
+        buildDurable({
+          id: "vite-primary",
+          subject: "current build toolchain",
+          content: "Use Vite for the current build toolchain.",
+          claim_key: "deployments/build_toolchain",
+          claim_key_status: "trusted",
+          created_at: "2026-03-20T09:00:00.000Z",
+        }),
+        buildDurable({
+          id: "vite-shadow",
+          subject: "packaging toolchain note",
+          content: "Vite also appears in a second active build toolchain note.",
+          claim_key: "deployments/build_toolchain",
+          claim_key_status: "trusted",
+          created_at: "2026-03-19T09:00:00.000Z",
+        }),
+        buildDurable({
+          id: "vite-echo",
+          subject: "build toolchain reminder",
+          content: "Reminder that Vite remains the active build toolchain everywhere.",
+          claim_key: "deployments/build_toolchain",
+          claim_key_status: "tentative",
+          created_at: "2026-03-18T09:00:00.000Z",
+        }),
+        buildDurable({
+          id: "release-rollout",
+          subject: "release rollout checklist",
+          content: "Run the release rollout checklist before packaging the build toolchain output.",
+          created_at: "2026-03-17T09:00:00.000Z",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "vite-primary", vectorSim: 0.74 },
+        { id: "vite-shadow", vectorSim: 0.73 },
+        { id: "vite-echo", vectorSim: 0.72 },
+        { id: "release-rollout", vectorSim: 0.65 },
+      ],
+    });
+
+    const results = await recall(
+      {
+        text: "current build toolchain",
+        limit: 2,
+      },
+      fixture.ports,
+      {
+        trace: {
+          reportSummary(summary): void {
+            traceSummaries.push(summary);
+          },
+        },
+      },
+    );
+
+    // Only the best slot member survives; the freed limit slot backfills
+    // with unrelated content instead of a same-slot duplicate.
+    expect(results.map((result) => result.durable.id)).toEqual(["vite-primary", "release-rollout"]);
+    expect(traceSummaries[0]?.claimKey.exclusiveSlotCollapsed).toBe(2);
+    expect(traceSummaries[0]?.claimKey.exclusiveSlotCollapsedIds.slice().sort()).toEqual(["vite-echo", "vite-shadow"]);
+  });
+
+  it("keeps same-slot duplicates under the opt-out flag", async () => {
+    const fixture = createRecallPortsFixture({
+      durables: [
+        buildDurable({
+          id: "vite-primary",
+          subject: "current build toolchain",
+          content: "Use Vite for the current build toolchain.",
+          claim_key: "deployments/build_toolchain",
+          claim_key_status: "trusted",
+          created_at: "2026-03-20T09:00:00.000Z",
+        }),
+        buildDurable({
+          id: "vite-shadow",
+          subject: "packaging toolchain note",
+          content: "Vite also appears in a second active build toolchain note.",
+          claim_key: "deployments/build_toolchain",
+          claim_key_status: "trusted",
+          created_at: "2026-03-19T09:00:00.000Z",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "vite-primary", vectorSim: 0.74 },
+        { id: "vite-shadow", vectorSim: 0.72 },
+      ],
+    });
+
+    const results = await recall(
+      {
+        text: "current build toolchain",
+        limit: 5,
+      },
+      fixture.ports,
+      {
+        collapseExclusiveSlots: false,
+      },
+    );
+
+    expect(results.map((result) => result.durable.id)).toEqual(["vite-primary", "vite-shadow"]);
+  });
+
+  it("does not collapse same-slot current siblings for the historical-state profile", async () => {
+    const traceSummaries: RecallExecutionTraceSummary[] = [];
+    const fixture = createRecallPortsFixture({
+      durables: [
+        buildDurable({
+          id: "vite-primary",
+          subject: "current build toolchain",
+          content: "Use Vite for the current build toolchain.",
+          claim_key: "deployments/build_toolchain",
+          claim_key_status: "trusted",
+          created_at: "2026-03-20T09:00:00.000Z",
+        }),
+        buildDurable({
+          id: "vite-shadow",
+          subject: "packaging toolchain note",
+          content: "Vite also appears in a second active build toolchain note.",
+          claim_key: "deployments/build_toolchain",
+          claim_key_status: "trusted",
+          created_at: "2026-03-19T09:00:00.000Z",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "vite-primary", vectorSim: 0.74 },
+        { id: "vite-shadow", vectorSim: 0.72 },
+      ],
+    });
+
+    const results = await recall(
+      {
+        text: "current build toolchain history",
+        limit: 5,
+        rankingProfile: "historical_state",
+      },
+      fixture.ports,
+      {
+        trace: {
+          reportSummary(summary): void {
+            traceSummaries.push(summary);
+          },
+        },
+      },
+    );
+
+    expect(results.map((result) => result.durable.id).sort()).toEqual(["vite-primary", "vite-shadow"]);
+    expect(traceSummaries[0]?.claimKey.exclusiveSlotCollapsed).toBe(0);
+    expect(traceSummaries[0]?.claimKey.exclusiveSlotCollapsedIds).toEqual([]);
   });
 
   it("keeps tentative same-slot siblings from outranking a trusted current answer", async () => {
@@ -863,6 +1018,12 @@ describe("recall raw evidence gating", () => {
         limit: 5,
       },
       fixture.ports,
+      {
+        // Trust penalties are observable only when the exclusive-slot
+        // collapse is disabled; with the default collapse the tentative
+        // sibling is dropped outright.
+        collapseExclusiveSlots: false,
+      },
     );
 
     expect(results.map((result) => result.durable.id)).toEqual(["vite-trusted", "vite-tentative"]);
@@ -2122,6 +2283,11 @@ describe("recall raw evidence gating", () => {
         limit: 5,
       },
       fixture.ports,
+      {
+        // Both rows share one exclusive slot; disable the collapse so this
+        // test can still observe the observed-at vs created-at ordering.
+        collapseExclusiveSlots: false,
+      },
     );
 
     expect(results.map((result) => result.durable.id)).toEqual(["timezone-observed", "timezone-created"]);

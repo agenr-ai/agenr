@@ -126,7 +126,9 @@ async function executeDreamRun(options: DreamRunOptions, deps: DreamWorkflowDeps
   const dailyCost = await deps.port.getDailyCost(now());
   const dailyCap = deps.config?.dreaming?.dailyCostCap ?? DEFAULT_DREAMING_DAILY_COST_CAP;
   if (dailyCost >= dailyCap) {
-    throw new Error(`Daily dreaming cost cap reached (${dailyCost.toFixed(2)} / ${dailyCap.toFixed(2)} USD).`);
+    // Record a forensic run instead of throwing so operators can see the cap
+    // hit in run history with its summary.
+    return recordBudgetExhaustedRun(options, deps, { dailyCost, dailyCap, now });
   }
   const remainingDailyBudgetUsd = Math.max(0, dailyCap - dailyCost);
 
@@ -417,6 +419,67 @@ async function executeDreamRun(options: DreamRunOptions, deps: DreamWorkflowDeps
     });
     throw error;
   }
+}
+
+/**
+ * Records one immediately finished `budget_exhausted` run when the daily cap is
+ * already spent before any pipeline work starts.
+ *
+ * @param options - Dreaming run options from the CLI or host trigger.
+ * @param deps - Resolved database, config, and progress dependencies.
+ * @param budget - Observed daily spend and the configured cap.
+ * @returns Terminal run result with the budget message as its summary.
+ */
+async function recordBudgetExhaustedRun(
+  options: DreamRunOptions,
+  deps: DreamWorkflowDeps,
+  budget: { dailyCost: number; dailyCap: number; now: () => Date },
+): Promise<DreamRunResult> {
+  const message = `Daily dreaming cost cap reached (${budget.dailyCost.toFixed(2)} / ${budget.dailyCap.toFixed(2)} USD). No pipeline stages were run.`;
+  const runId = await deps.port.createRun({
+    tier: options.tier,
+    project: options.project,
+    dryRun: !options.apply,
+    config: {
+      tier: options.tier,
+      project: options.project ?? null,
+      type: options.type ?? null,
+      claimKeyPrefix: options.claimKeyPrefix ?? null,
+      durableIds: options.durableIds ?? [],
+      includeInactive: options.includeInactive ?? false,
+    },
+  });
+  const completionSummary: DreamCompletionSummary = {
+    actions_taken: 0,
+    durables_skipped: [],
+    observations: [message],
+    recommendations: ["Wait for the daily cost window to reset or raise dreaming.dailyCostCap before retrying."],
+  };
+  await deps.port.completeRun(runId, {
+    status: "budget_exhausted",
+    inputTokens: 0,
+    outputTokens: 0,
+    estimatedCostUsd: 0,
+    actionsTaken: 0,
+    actionsSkipped: 0,
+    durablesStaled: 0,
+    summaryJson: completionSummary,
+    error: message,
+  });
+
+  return {
+    runId,
+    status: "budget_exhausted",
+    tier: options.tier,
+    actionsTaken: 0,
+    actionsSkipped: 0,
+    durablesStaled: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    estimatedCostUsd: 0,
+    summary: message,
+    completionSummary,
+  };
 }
 
 /**

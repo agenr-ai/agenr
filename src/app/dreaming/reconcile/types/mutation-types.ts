@@ -18,6 +18,7 @@ export type ReconcileIssueKind =
   | "suspect_canonical_claim_key"
   | "entity_family_convergence"
   | "claim_key_alias_convergence"
+  | "duplicate_slot_collapse"
   | "mixed_claim_key_group";
 
 /** Snapshot of durable claim-key lifecycle fields before a projected mutation. */

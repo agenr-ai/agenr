@@ -10,6 +10,7 @@ import type { ReconcileIssueKind } from "../types/mutation-types.js";
  */
 export function defaultFlagAmbiguousProposal(issueKind: ReconcileIssueKind): boolean {
   switch (issueKind) {
+    case "duplicate_slot_collapse":
     case "mixed_claim_key_group":
     case "noncanonical_claim_key":
       return false;

@@ -136,6 +136,10 @@ export interface RecallClaimKeyTrace {
   trustPenalized: number;
   /** Current-state trusted same-slot duplicates down-ranked for diversity. */
   redundancyPenalized: number;
+  /** Current-state candidates dropped by the exclusive-slot collapse. */
+  exclusiveSlotCollapsed: number;
+  /** Durable IDs dropped by the exclusive-slot collapse, in dropped order. */
+  exclusiveSlotCollapsedIds: string[];
 }
 
 /**
@@ -345,6 +349,15 @@ export interface RecallExecutionOptions {
   slotPolicyConfig?: ClaimSlotPolicyConfig;
   /** Optional ranking policy overrides, including MMR toggles. */
   rankingPolicy?: RecallRankingPolicy;
+  /**
+   * Whether each exclusive claim slot collapses to its single best-ranked
+   * current-state candidate before budgeting. Defaults to `true`. The
+   * `historical_state` ranking profile never collapses regardless of this
+   * flag because historical queries legitimately want slot lineage. Evals
+   * and debug callers can pass `false` to compare against the
+   * penalty-only legacy behavior.
+   */
+  collapseExclusiveSlots?: boolean;
   /** Optional semantic clock used for relative dates, validity, and recency. */
   now?: Date;
 }

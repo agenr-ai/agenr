@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { DatabasePort, EmbeddingPort, LlmPort } from "../ports.js";
+import type { DatabasePort, EmbeddingPort, LlmPort, SimilarActiveDurable } from "../ports.js";
 import type { SupersessionRuleFailureReason } from "../supersession.js";
 import type { Durable, StoreDurableInput, StoreResult } from "../types.js";
 import {
@@ -20,6 +20,18 @@ import { validateEntriesWithIndexes } from "./validation.js";
 
 const AUTO_SUPERSESSION_MIN_EXTRACTED_CONFIDENCE = 0.9;
 const AUTO_SUPERSESSION_ELIGIBLE_SOURCES = new Set<NonNullable<Durable["claim_key_source"]>>(["model", "json_retry"]);
+const SEMANTIC_DEDUP_DEFAULT_THRESHOLD = 0.9;
+const SEMANTIC_DEDUP_CANDIDATE_LIMIT = 5;
+
+/**
+ * Configuration for DB-backed semantic dedup at store time.
+ */
+export interface SemanticDedupOptions {
+  /** Whether to run vector-similarity dedup against active durables. */
+  enabled: boolean;
+  /** Cosine similarity at or above which a match counts as a duplicate. Defaults to 0.9. */
+  threshold?: number;
+}
 
 /**
  * Runtime switches for the store pipeline.
@@ -27,6 +39,8 @@ const AUTO_SUPERSESSION_ELIGIBLE_SOURCES = new Set<NonNullable<Durable["claim_ke
 export interface StorePipelineOptions {
   dryRun?: boolean;
   verbose?: boolean;
+  /** Store-time semantic dedup against active DB durables. Enabled by default. */
+  semanticDedup?: SemanticDedupOptions;
 }
 
 /**
@@ -59,7 +73,7 @@ interface PreparedDurable {
 /** Final pipeline outcome assigned to one store input. */
 type StoreDurableOutcome = "stored" | "skipped" | "rejected" | "dry_run";
 /** Reason code recorded for a skipped or rejected store input. */
-type StoreDurableReason = "content_hash" | "norm_content_hash" | "validation" | "dry_run";
+type StoreDurableReason = "content_hash" | "norm_content_hash" | "db_semantic_duplicate" | "validation" | "dry_run";
 
 /**
  * Per-input store decision emitted by the store pipeline.
@@ -89,8 +103,10 @@ interface TransactionCapableDatabasePort extends DatabasePort {
  */
 interface AutoSupersessionPlan {
   kind: "link" | "skip";
-  oldDurableId?: string;
-  warning?: string;
+  /** Active sibling IDs the new durable should supersede when `kind` is `link`. */
+  oldDurableIds?: string[];
+  /** Non-fatal warnings explaining skipped links or skipped siblings. */
+  warnings?: string[];
 }
 
 /**
@@ -165,17 +181,19 @@ export async function storeDurablesDetailed(
     };
   }
 
-  const pendingEntries = plan.pendingEntries;
-  const extractedClaimKeys = await maybeExtractClaimKeys(pendingEntries, options);
-  applyExtractedClaimKeyMetadata(pendingEntries, extractedClaimKeys);
-  const embeddings = await resolvePendingEmbeddings(inputs, pendingEntries, embedding, options.precomputedEmbeddings);
-  const storedIds = await persistDurables(db, pendingEntries, embeddings, extractedClaimKeys, options.claimExtraction?.config, options.onWarning);
+  const extractedClaimKeys = await maybeExtractClaimKeys(plan.pendingEntries, options);
+  applyExtractedClaimKeyMetadata(plan.pendingEntries, extractedClaimKeys);
+  const resolvedEmbeddings = await resolvePendingEmbeddings(inputs, plan.pendingEntries, embedding, options.precomputedEmbeddings);
+  const dedup = await applyDbSemanticDedup(db, plan.pendingEntries, resolvedEmbeddings, options.semanticDedup, options.onWarning);
+  const pendingEntries = dedup.entries;
+  const storedIds = await persistDurables(db, pendingEntries, dedup.embeddings, extractedClaimKeys, options.claimExtraction?.config, options.onWarning);
   return {
     stored: pendingEntries.length,
-    skipped: plan.skipped,
+    skipped: plan.skipped + dedup.details.length,
     rejected: plan.rejected,
     details: sortStoreDetails([
       ...plan.details,
+      ...dedup.details,
       ...pendingEntries.map((entry) => ({
         inputIndex: entry.inputIndex,
         outcome: "stored" as const,
@@ -183,6 +201,97 @@ export async function storeDurablesDetailed(
       })),
     ]),
   };
+}
+
+/**
+ * Result of the store-time DB semantic dedup pass.
+ */
+interface SemanticDedupOutcome {
+  /** Entries that survived dedup, aligned with `embeddings`. */
+  entries: PreparedDurable[];
+  /** Embeddings for the surviving entries. */
+  embeddings: number[][];
+  /** Skip details for entries dropped as semantic duplicates. */
+  details: StoreDurableDetail[];
+}
+
+/**
+ * Drops new entries that are near-duplicates of active durables already in the DB.
+ *
+ * An entry is treated as a duplicate when an active durable scores at or above
+ * the similarity threshold and either shares the same claim key or the new
+ * entry has no claim key. Near-duplicates with a different claim key are kept
+ * with a warning because they may be genuinely different claims.
+ */
+async function applyDbSemanticDedup(
+  db: DatabasePort,
+  entries: PreparedDurable[],
+  embeddings: number[][],
+  options: SemanticDedupOptions | undefined,
+  onWarning?: (warning: string) => void,
+): Promise<SemanticDedupOutcome> {
+  const enabled = options?.enabled ?? true;
+  if (!enabled || entries.length === 0) {
+    return { entries, embeddings, details: [] };
+  }
+
+  const threshold = options?.threshold ?? SEMANTIC_DEDUP_DEFAULT_THRESHOLD;
+  const keptEntries: PreparedDurable[] = [];
+  const keptEmbeddings: number[][] = [];
+  const details: StoreDurableDetail[] = [];
+
+  for (const [index, entry] of entries.entries()) {
+    const vector = embeddings[index] ?? [];
+    let matches: SimilarActiveDurable[];
+    try {
+      matches = await db.findSimilarActiveDurables(vector, SEMANTIC_DEDUP_CANDIDATE_LIMIT);
+    } catch (error) {
+      // Dedup is best-effort: vector search failures must never block stores.
+      onWarning?.(`Skipped DB semantic dedup for "${entry.input.subject}": ${formatPipelineError(error)}`);
+      keptEntries.push(entry);
+      keptEmbeddings.push(vector);
+      continue;
+    }
+
+    const aboveThreshold = matches.filter((match) => match.similarity >= threshold);
+    if (aboveThreshold.length === 0) {
+      keptEntries.push(entry);
+      keptEmbeddings.push(vector);
+      continue;
+    }
+
+    const newClaimKey = entry.claimKey?.claim_key ?? entry.input.claim_key;
+    // An entry that explicitly supersedes a durable is a replacement, not a
+    // duplicate of its target; never dedup it against that target.
+    const duplicate = aboveThreshold.find(
+      (match) => match.durable.id !== entry.input.supersedes && (newClaimKey === undefined || match.durable.claim_key === newClaimKey),
+    );
+    if (duplicate) {
+      details.push({
+        inputIndex: entry.inputIndex,
+        outcome: "skipped",
+        reason: "db_semantic_duplicate",
+      });
+      onWarning?.(
+        `Skipped storing "${entry.input.subject}" because it is a semantic duplicate of active durable ${duplicate.durable.id} ` +
+          `(similarity ${duplicate.similarity.toFixed(3)}).`,
+      );
+      continue;
+    }
+
+    const closest = aboveThreshold[0];
+    if (closest) {
+      onWarning?.(
+        `Stored durable "${entry.input.subject}" with claim_key "${newClaimKey}" despite high similarity ${closest.similarity.toFixed(3)} to active durable ` +
+          `${closest.durable.id} with claim_key "${closest.durable.claim_key ?? "(none)"}" because the claim keys differ.`,
+      );
+    }
+
+    keptEntries.push(entry);
+    keptEmbeddings.push(vector);
+  }
+
+  return { entries: keptEntries, embeddings: keptEmbeddings, details };
 }
 
 /** Resolves embeddings for pending durables from precomputed vectors or the embedding port. */
@@ -250,18 +359,22 @@ async function persistDurables(
       }
 
       const autoSupersessionPlan = autoSupersessionPlans.get(preparedEntry.inputIndex);
-      if (autoSupersessionPlan?.kind === "link" && autoSupersessionPlan.oldDurableId) {
-        const superseded = await targetDb.supersedeDurable(autoSupersessionPlan.oldDurableId, durableId, "update");
-        if (!superseded) {
-          onWarning?.(
-            `Stored durable ${durableId} with claim_key "${preparedEntry.input.claim_key}" but could not auto-supersede ${autoSupersessionPlan.oldDurableId} because the target was missing or inactive.`,
-          );
+      if (autoSupersessionPlan?.kind === "link") {
+        for (const oldDurableId of autoSupersessionPlan.oldDurableIds ?? []) {
+          const superseded = await targetDb.supersedeDurable(oldDurableId, durableId, "update");
+          if (!superseded) {
+            onWarning?.(
+              `Stored durable ${durableId} with claim_key "${preparedEntry.input.claim_key}" but could not auto-supersede ${oldDurableId} because the target was missing or inactive.`,
+            );
+          }
         }
       }
 
-      if (autoSupersessionPlan?.warning && !emittedWarnings.has(autoSupersessionPlan.warning)) {
-        emittedWarnings.add(autoSupersessionPlan.warning);
-        onWarning?.(autoSupersessionPlan.warning);
+      for (const warning of autoSupersessionPlan?.warnings ?? []) {
+        if (!emittedWarnings.has(warning)) {
+          emittedWarnings.add(warning);
+          onWarning?.(warning);
+        }
       }
     }
 
@@ -424,47 +537,47 @@ async function planAutoSupersession(
     if (batchSiblingCount > 1) {
       plans.set(preparedEntry.inputIndex, {
         kind: "skip",
-        warning: `Skipped auto-supersession for claim_key "${claimKey}" because this store batch contains ${batchSiblingCount} durables for the same slot.`,
+        warnings: [`Skipped auto-supersession for claim_key "${claimKey}" because this store batch contains ${batchSiblingCount} durables for the same slot.`],
       });
-      continue;
-    }
-
-    if (siblings.length > 1) {
-      plans.set(preparedEntry.inputIndex, {
-        kind: "skip",
-        warning: `Skipped auto-supersession for claim_key "${claimKey}" because ${siblings.length} active siblings already exist for that slot.`,
-      });
-      continue;
-    }
-
-    const sibling = siblings[0];
-    if (!sibling) {
       continue;
     }
 
     if (!isAutoSupersessionEligible(preparedEntry.claimKey, claimExtractionConfig)) {
       plans.set(preparedEntry.inputIndex, {
         kind: "skip",
-        warning: buildAutoSupersessionEligibilityWarning(preparedEntry),
+        warnings: [buildAutoSupersessionEligibilityWarning(preparedEntry)],
       });
       continue;
     }
 
-    const supersessionValidation = validateSupersessionRules(sibling, {
-      type: preparedEntry.input.type,
-      expiry: preparedEntry.input.expiry ?? "temporary",
-    });
-    if (!supersessionValidation.ok) {
+    // Validate rules per sibling: an incompatible sibling is skipped with a
+    // warning while the remaining compatible siblings are still superseded.
+    const warnings: string[] = [];
+    const supersedableSiblingIds: string[] = [];
+    for (const sibling of siblings) {
+      const supersessionValidation = validateSupersessionRules(sibling, {
+        type: preparedEntry.input.type,
+        expiry: preparedEntry.input.expiry ?? "temporary",
+      });
+      if (supersessionValidation.ok) {
+        supersedableSiblingIds.push(sibling.id);
+      } else {
+        warnings.push(buildAutoSupersessionRuleWarning(preparedEntry, sibling, supersessionValidation.reason));
+      }
+    }
+
+    if (supersedableSiblingIds.length === 0) {
       plans.set(preparedEntry.inputIndex, {
         kind: "skip",
-        warning: buildAutoSupersessionRuleWarning(preparedEntry, sibling, supersessionValidation.reason),
+        warnings,
       });
       continue;
     }
 
     plans.set(preparedEntry.inputIndex, {
       kind: "link",
-      oldDurableId: sibling.id,
+      oldDurableIds: supersedableSiblingIds,
+      warnings: warnings.length > 0 ? warnings : undefined,
     });
   }
 
@@ -548,18 +661,18 @@ function buildAutoSupersessionEligibilityWarning(preparedEntry: PreparedDurable)
 /** Explains why a same-claim-key sibling failed the conservative type-policy checks. */
 function buildAutoSupersessionRuleWarning(
   preparedEntry: PreparedDurable,
-  sibling: Pick<Durable, "type" | "expiry">,
+  sibling: Pick<Durable, "id" | "type" | "expiry">,
   reason: SupersessionRuleFailureReason,
 ): string {
   if (reason === "type_mismatch") {
     return (
-      `Stored durable "${preparedEntry.input.subject}" with claim_key "${preparedEntry.input.claim_key}" but skipped auto-supersession because the matching ` +
+      `Stored durable "${preparedEntry.input.subject}" with claim_key "${preparedEntry.input.claim_key}" but skipped auto-supersession of ${sibling.id} because the matching ` +
       `active durable is type "${sibling.type}" and the new durable is type "${preparedEntry.input.type}". ${describeSupersessionRuleFailure(reason)}`
     );
   }
 
   return (
-    `Stored durable "${preparedEntry.input.subject}" with claim_key "${preparedEntry.input.claim_key}" but skipped auto-supersession: ` +
+    `Stored durable "${preparedEntry.input.subject}" with claim_key "${preparedEntry.input.claim_key}" but skipped auto-supersession of ${sibling.id}: ` +
     `${describeSupersessionRuleFailure(reason)}`
   );
 }

@@ -6,7 +6,7 @@ import type { DreamCompletionSummary, DreamProposalReviewStatus, DreamRunProposa
 import { readBoolean, readNumber, readOptionalString, readRequiredString } from "./row-mapping.js";
 
 /** Persisted status values accepted for dreaming runs. */
-const DREAM_RUN_STATUSES = ["running", "completed", "failed", "aborted", "budget_exhausted", "cost_capped", "no_work", "stalled"] as const;
+const DREAM_RUN_STATUSES = ["running", "completed", "failed", "aborted", "budget_exhausted", "cost_capped"] as const;
 /** Persisted review status values accepted for dreaming proposals. */
 const DREAM_PROPOSAL_REVIEW_STATUSES = ["open", "applied", "rejected"] as const;
 

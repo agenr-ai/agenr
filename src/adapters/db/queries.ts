@@ -4,9 +4,19 @@ import type { InArgs, InStatement, ResultSet } from "@libsql/client";
 
 import { validateDirectClaimKeyLifecycleUpdate } from "../../core/claim-key-lifecycle.js";
 import type { ClaimKeyEntityPrefixStats } from "../../core/claim-key-entity-family.js";
+import type { SimilarActiveDurable } from "../../core/ports.js";
 import { validateTemporalValidityRange } from "../../core/temporal-validity.js";
 import type { Durable, DurableUpdateInput } from "../../core/types.js";
-import { ACTIVE_DURABLE_CLAUSE, DURABLE_SELECT_COLUMNS, mapDurableRow, readRequiredString, serializeEmbeddingForVector, serializeTags } from "./row-mapping.js";
+import {
+  ACTIVE_DURABLE_CLAUSE,
+  buildActiveDurableClause,
+  cosineSimilarity,
+  DURABLE_SELECT_COLUMNS,
+  mapDurableRow,
+  readRequiredString,
+  serializeEmbeddingForVector,
+  serializeTags,
+} from "./row-mapping.js";
 
 const LOOKUP_CHUNK_SIZE = 100;
 const DEFAULT_QUALITY_SCORE = 0.5;
@@ -357,6 +367,49 @@ export async function findActiveDurablesByClaimKey(executor: SqlExecutor, claimK
 }
 
 /**
+ * Finds active durables nearest to one embedding via the vector index.
+ *
+ * Reuses the recall vector_top_k machinery while keeping results limited to
+ * active rows so store-time semantic dedup never matches superseded or stale
+ * durables.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param embedding - Query embedding vector.
+ * @param limit - Maximum number of similar durables to return.
+ * @returns Active durables with cosine similarity, ordered highest first.
+ */
+export async function findSimilarActiveDurables(executor: SqlExecutor, embedding: number[], limit: number): Promise<SimilarActiveDurable[]> {
+  if (limit <= 0) {
+    return [];
+  }
+
+  const serializedEmbedding = serializeEmbeddingForVector(embedding);
+  if (!serializedEmbedding) {
+    return [];
+  }
+
+  const result = await executor.execute({
+    sql: `
+      SELECT d.*
+      FROM vector_top_k('idx_durables_embedding', vector32(?), ?) AS v
+      JOIN durables AS d ON d.rowid = v.id
+      WHERE ${buildActiveDurableClause("d")}
+      LIMIT ?
+    `,
+    args: [serializedEmbedding, limit, limit],
+  });
+
+  return result.rows
+    .map((row) => {
+      const durable = mapDurableRow(row);
+      return { durable, similarity: cosineSimilarity(embedding, durable.embedding ?? []) };
+    })
+    .filter((candidate) => candidate.similarity > 0)
+    .sort((left, right) => right.similarity - left.similarity)
+    .slice(0, limit);
+}
+
+/**
  * Lists distinct entity prefixes derived from active claim keys.
  *
  * @param executor - SQL executor used for the lookup.
@@ -609,7 +662,21 @@ async function loadCurrentValidityBounds(
 }
 
 /**
+ * EMA-style step applied to `quality_score` each time a durable is recalled.
+ * Each surfaced recall moves quality 5% of the remaining distance toward 1.
+ */
+const RECALL_QUALITY_BUMP_ALPHA = 0.05;
+
+/** Hard ceiling for recall-driven `quality_score` bumps. */
+const RECALL_QUALITY_BUMP_CEILING = 0.95;
+
+/**
  * Records a recall event and updates the durable recall counters.
+ *
+ * Being surfaced by recall is treated as a live usefulness signal, so the
+ * same atomic update also nudges `quality_score` upward with a bounded
+ * exponential-moving-average bump clamped at the ceiling. Decay for
+ * never-recalled durables is owned by dreaming, not this write path.
  *
  * @param executor - SQL executor used for the write.
  * @param durableId - Durable that was recalled.
@@ -624,6 +691,10 @@ export async function recordRecallEvent(executor: SqlExecutor, durableId: string
       UPDATE durables
       SET recall_count = COALESCE(recall_count, 0) + 1,
           last_recalled_at = ?,
+          quality_score = MIN(
+            ${RECALL_QUALITY_BUMP_CEILING},
+            COALESCE(quality_score, 0.5) + ${RECALL_QUALITY_BUMP_ALPHA} * (1 - COALESCE(quality_score, 0.5))
+          ),
           updated_at = ?
       WHERE id = ?
         AND ${ACTIVE_DURABLE_CLAUSE}

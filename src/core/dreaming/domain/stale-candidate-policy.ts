@@ -8,20 +8,12 @@ const STATUS_ARTIFACT_SUBJECT_HINTS = ["session handoff", "status update", "prog
 /**
  * Action types that suppress same-run stale reconsideration.
  */
-const DREAM_PRUNE_SAME_RUN_SUPPRESSION_ACTION_TYPES: Array<Extract<DreamRunAction["actionType"], "skip" | "stale" | "update_durable">> = [
-  "skip",
-  "stale",
-  "update_durable",
-];
+const DREAM_PRUNE_SAME_RUN_SUPPRESSION_ACTION_TYPES: Array<Extract<DreamRunAction["actionType"], "stale" | "update_durable">> = ["stale", "update_durable"];
 
 /**
  * Action types that mark a candidate as recently evaluated for later stale runs.
  */
-const DREAM_PRUNE_RECENT_EVALUATION_ACTION_TYPES: Array<Extract<DreamRunAction["actionType"], "skip" | "stale" | "update_durable">> = [
-  "skip",
-  "stale",
-  "update_durable",
-];
+const DREAM_PRUNE_RECENT_EVALUATION_ACTION_TYPES: Array<Extract<DreamRunAction["actionType"], "stale" | "update_durable">> = ["stale", "update_durable"];
 
 export { DREAM_PRUNE_RECENT_EVALUATION_ACTION_TYPES, DREAM_PRUNE_SAME_RUN_SUPPRESSION_ACTION_TYPES };
 

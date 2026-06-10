@@ -6,7 +6,12 @@ import { readConfig, type ResolvedAgenrConfig } from "../../config.js";
 import type { DreamRunAction } from "../../core/dreaming/domain/action-types.js";
 import type { DreamRunProposal } from "../../core/dreaming/types.js";
 import type { Logger } from "../../logger.js";
-import { applyProposalToDurables, loadActiveProposalDurables } from "./proposal-review.js";
+import {
+  applyDuplicateSlotCollapseProposal,
+  applyProposalToDurables,
+  DUPLICATE_SLOT_COLLAPSE_ISSUE_KIND,
+  loadActiveProposalDurables,
+} from "./proposal-review.js";
 import type { DreamHealthStats, DreamProfileSnapshot, DreamProposalBacklogItem, DreamProposalBacklogQuery, DreamRunRecord } from "./ports.js";
 import type { DreamPort } from "./ports.js";
 import type { Durable } from "../../core/types.js";
@@ -244,7 +249,25 @@ export async function reviewDreamProposalRuntime(input: {
 
     await database.execute("BEGIN IMMEDIATE");
     try {
-      if (input.decision === "apply") {
+      if (input.decision === "apply" && proposal.issueKind === DUPLICATE_SLOT_COLLAPSE_ISSUE_KIND) {
+        // Collapse proposals tolerate members that became inactive after staging;
+        // the collapse simply runs over the remaining active slot occupants.
+        const { activeDurables } = await loadActiveProposalDurables(proposal, (durableId) => port.getDurable(durableId));
+        const applied = await applyDuplicateSlotCollapseProposal(
+          {
+            proposal,
+            activeDurables,
+            reviewReason,
+            reviewedAt,
+          },
+          {
+            supersedeDurable: (oldDurableId, newDurableId, kind, reason) => port.supersedeDurable(oldDurableId, newDurableId, kind, reason),
+            updateDurable: (durableId, fields) => port.updateDurable(durableId, fields, { includeInactive: true }),
+            logRunAction: (action) => port.logRunAction(action),
+          },
+        );
+        updatedDurableIds.push(...applied.supersededDurableIds);
+      } else if (input.decision === "apply") {
         const { activeDurables, inactiveDurableIds } = await loadActiveProposalDurables(proposal, (durableId) => port.getDurable(durableId));
         if (inactiveDurableIds.length > 0) {
           throw new Error(`Proposal ${proposal.id} can no longer update missing or inactive durable ${inactiveDurableIds[0]}.`);

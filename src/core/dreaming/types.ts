@@ -52,6 +52,8 @@ export interface ReconcileRepairCounts {
   appliedEntityFamilyConvergences: number;
   identifiedAliasConvergences: number;
   appliedAliasConvergences: number;
+  identifiedDuplicateSlotCollapses: number;
+  appliedDuplicateSlotCollapses: number;
   proposalsEmitted: number;
   skippedNoClaim: number;
   skippedLowConfidence: number;
@@ -154,7 +156,7 @@ export interface DreamRunProposal {
 }
 
 /** Lifecycle states for one dreaming run. */
-export type DreamRunStatus = "running" | "completed" | "failed" | "aborted" | "budget_exhausted" | "cost_capped" | "no_work" | "stalled";
+export type DreamRunStatus = "running" | "completed" | "failed" | "aborted" | "budget_exhausted" | "cost_capped";
 
 /** Evidence locator referenced by dreaming mutations. */
 export interface DreamEvidenceRef {

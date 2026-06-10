@@ -247,11 +247,18 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
     );
     const rerankedCandidates = neighborhoodEnabled ? applySeededDurableRerank(historicallyBoosted, summary.neighborhood) : historicallyBoosted;
     const shaped = applyClaimKeyResultShaping(rerankedCandidates, summary.claimKey, nowMs, slotPolicyConfig).sort((left, right) => right.score - left.score);
+    // Collapse each exclusive claim slot to its single best current-state
+    // answer before MMR, thresholding, and budgeting so the freed budget
+    // backfills with different content instead of same-slot duplicates. The
+    // historical-state profile keeps lineage siblings, so it never collapses.
+    const collapsed = shouldCollapseExclusiveSlots(query.rankingProfile, options.collapseExclusiveSlots)
+      ? collapseExclusiveClaimSlots(shaped, summary.claimKey, nowMs, slotPolicyConfig)
+      : shaped;
     // MMR diversifies the final shortlist after claim-key shaping so trust
     // penalties and redundancy shaping still have the last word on which
     // rows dominate. MMR only reorders; it never mutates the composite
     // score, keeping the threshold check grounded in the shaped score.
-    const diversified = applyMmrDiversification(shaped, queryEmbedding, options.rankingPolicy, summary.mmr);
+    const diversified = applyMmrDiversification(collapsed, queryEmbedding, options.rankingPolicy, summary.mmr);
     // Cross-encoder reranks the top-K shortlist after diversification so
     // it observes the post-MMR ordering, and before thresholding so the
     // rerank-adjusted composite score is what decides admission to the
@@ -376,6 +383,8 @@ function buildRecallTraceSummary(params: {
       tentativeLineageSuppressed: 0,
       trustPenalized: 0,
       redundancyPenalized: 0,
+      exclusiveSlotCollapsed: 0,
+      exclusiveSlotCollapsedIds: [],
     },
     rrf: {
       applied: false,
@@ -1397,6 +1406,75 @@ function applyClaimKeyResultShaping(
       },
     };
   });
+}
+
+/**
+ * Decide whether the exclusive-slot collapse runs for one recall execution.
+ *
+ * The historical-state profile intentionally keeps same-slot lineage and
+ * siblings answerable, so it never collapses. Every other profile collapses
+ * unless the caller explicitly opted out.
+ *
+ * @param rankingProfile - Active recall ranking profile, when any.
+ * @param collapseExclusiveSlots - Caller opt-out flag; defaults to enabled.
+ * @returns True when exclusive slots should collapse to one answer.
+ */
+function shouldCollapseExclusiveSlots(rankingProfile: RecallRankingProfile | undefined, collapseExclusiveSlots: boolean | undefined): boolean {
+  if (rankingProfile === "historical_state") {
+    return false;
+  }
+
+  return collapseExclusiveSlots !== false;
+}
+
+/**
+ * Collapse each exclusive claim slot to its single best-ranked current answer.
+ *
+ * Current-state candidates that share the exact claim key of an exclusive
+ * slot are near-certain duplicates of one factual answer, so only the
+ * top-scored member survives. Dropping the rest before thresholding and
+ * budgeting frees budget for unrelated content instead of letting one
+ * crowded slot dominate the result list. Multivalued slots and candidates
+ * that are not currently valid (superseded or expired lineage) keep the
+ * existing behavior and are never dropped here.
+ *
+ * @param candidates - Score-sorted candidates after claim-key shaping.
+ * @param claimKeyTrace - Mutable claim-key trace counters for one recall execution.
+ * @param nowMs - Execution clock shared across recall scoring.
+ * @param slotPolicyConfig - Optional runtime slot-policy overrides.
+ * @returns Candidates with redundant exclusive-slot members removed.
+ */
+function collapseExclusiveClaimSlots(
+  candidates: RankedCandidate[],
+  claimKeyTrace: RecallExecutionTraceSummary["claimKey"],
+  nowMs: number,
+  slotPolicyConfig?: RecallExecutionOptions["slotPolicyConfig"],
+): RankedCandidate[] {
+  if (candidates.length === 0) {
+    return candidates;
+  }
+
+  const seenExclusiveClaimKeys = new Set<string>();
+  const survivors: RankedCandidate[] = [];
+  for (const candidate of candidates) {
+    const entry = candidate.durable;
+    const claimKey = entry.claim_key;
+    if (!claimKey || !isPotentialCurrentPeer(entry, nowMs) || resolveClaimSlotPolicy(claimKey, slotPolicyConfig).policy !== "exclusive") {
+      survivors.push(candidate);
+      continue;
+    }
+
+    if (seenExclusiveClaimKeys.has(claimKey)) {
+      claimKeyTrace.exclusiveSlotCollapsed += 1;
+      claimKeyTrace.exclusiveSlotCollapsedIds.push(entry.id);
+      continue;
+    }
+
+    seenExclusiveClaimKeys.add(claimKey);
+    survivors.push(candidate);
+  }
+
+  return survivors;
 }
 
 /**

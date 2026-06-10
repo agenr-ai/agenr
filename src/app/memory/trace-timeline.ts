@@ -112,14 +112,8 @@ function formatDreamActionLabel(actionType: string): string {
       return "Dreaming updated durable";
     case "merge":
       return "Dreaming merged durable";
-    case "log_conflict":
-      return "Dreaming logged conflict";
-    case "resolve_conflict":
-      return "Dreaming resolved conflict";
     case "flag_review":
       return "Dreaming flagged review";
-    case "skip":
-      return "Dreaming skipped action";
     default:
       return `Dreaming ${actionType}`;
   }

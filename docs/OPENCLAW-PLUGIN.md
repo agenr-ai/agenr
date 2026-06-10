@@ -274,7 +274,7 @@ Current behavior:
 
 - resolves the current session transcript from synchronous `sessionFile` facts when present, otherwise from OpenClaw state via `resolveOpenClawCurrentSessionTarget(...)`
 - routes through the shared `app/episode-ingest` workflow
-- applies the same phase 4 activity thresholds as Skeln shutdown episodes: at least 8 material turns or 20 minutes
+- applies the same phase 4 activity thresholds as Skeln shutdown episodes: at least 4 material turns or 10 minutes
 - skips automatic session-end capture when `reason` is `compaction` because pre-compaction hooks already wrote the full transcript snapshot
 - parses the transcript with the OpenClaw JSONL parser
 - uses an OpenClaw-authenticated LLM client for summary generation

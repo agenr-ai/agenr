@@ -430,6 +430,19 @@ This is intentionally conservative:
 - the rerank reinforces structure already present in the pool
 - it does not replace the underlying relevance model
 
+## Exclusive-slot collapse
+
+After claim-key trust and redundancy shaping, the default and entity-attribute ranking profiles collapse each exclusive claim slot to its single best-ranked current-state candidate. The remaining current-state members of the same exact `claim_key` are dropped from the candidate list before MMR, thresholding, and budgeting, so the freed budget backfills with different content instead of near-identical same-slot duplicates.
+
+Rules:
+
+- only current/active candidates collapse; superseded, expired, and stale lineage is untouched
+- multivalued slots (per the claim-slot policy) never collapse
+- the `historical_state` profile never collapses, because historical queries legitimately want slot lineage and siblings
+- callers can opt out with `collapseExclusiveSlots: false` on the recall execution options, which restores the legacy penalty-only behavior for evals and debugging
+
+The trace summary records the dropped durable IDs under `claimKey.exclusiveSlotCollapsedIds` (with a matching `claimKey.exclusiveSlotCollapsed` count) so `agenr trace` and debug artifacts can show why a result disappeared.
+
 ## Historical-state durable recall
 
 Historical-state recall is a ranking variant for questions such as:
@@ -772,6 +785,11 @@ For recalled entries, telemetry updates:
 - `recall_count`
 - `last_recalled_at`
 - `recall_events`
+- `quality_score`
+
+Being surfaced by recall is treated as a live usefulness signal. The same atomic SQL update that bumps the recall counters also nudges `quality_score` upward with a bounded exponential-moving-average step: `quality_score = MIN(0.95, quality_score + 0.05 * (1 - quality_score))`. The bump is capped at 0.95 and never decays here; durables that stop being recalled drift back toward neutral only through dreaming maintenance. Dreaming's profile projection and prune protection consume the score, so frequently useful durables gain a live advantage.
+
+The quality bump rides inside the gated recall-event write path, so eval snapshot replays that gate telemetry writes (see `telemetry-write-gate.ts`) also suppress quality bumps.
 
 Telemetry failures are swallowed so the user still receives results.
 

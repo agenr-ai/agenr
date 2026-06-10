@@ -14,6 +14,16 @@ import type { DurableFilters, FtsCandidate, RecallCandidateDurable, VectorCandid
 // ── Database ─────────────────────────────────────────────────────────
 
 /**
+ * One active durable matched by store-time vector similarity search.
+ */
+export interface SimilarActiveDurable {
+  /** Matched active durable. */
+  durable: Durable;
+  /** Cosine similarity between the query embedding and the durable embedding. */
+  similarity: number;
+}
+
+/**
  * Storage contract for persisting, updating, and querying durables.
  */
 export interface DatabasePort {
@@ -46,6 +56,15 @@ export interface DatabasePort {
 
   /** Find active durables with the given claim key. */
   findActiveDurablesByClaimKey(claimKey: string): Promise<Durable[]>;
+
+  /**
+   * Find active durables nearest to one embedding by vector similarity.
+   *
+   * Used by store-time semantic dedup. Implementations must restrict results
+   * to active rows (no successor, open valid-time window) and return matches
+   * ordered by descending similarity.
+   */
+  findSimilarActiveDurables(embedding: number[], limit: number): Promise<SimilarActiveDurable[]>;
 
   /** Get distinct entity prefixes from existing claim keys. */
   getDistinctClaimKeyPrefixes(): Promise<string[]>;

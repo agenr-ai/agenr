@@ -19,7 +19,7 @@ const DIRECTIVE_POLARITIES = ["abstain", "proactive"] as const;
 const DIRECTIVE_BASE_TRIGGERS = ["session_start", "always"] as const;
 
 /** Ordered list of supported explicit supersession relationships. */
-const SUPERSESSION_KINDS = ["update", "correction", "duplicate", "merge", "refinement", "stale"] as const;
+const SUPERSESSION_KINDS = ["update", "correction", "duplicate", "duplicate_collapse", "merge", "refinement", "stale"] as const;
 
 /** Ordered list of supported recall durability levels. */
 const EXPIRY_LEVELS = ["core", "permanent", "temporary"] as const;

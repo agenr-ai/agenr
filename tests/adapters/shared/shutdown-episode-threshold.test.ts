@@ -4,33 +4,33 @@ import { resolveHostShutdownEpisodeEligibility } from "../../../src/adapters/sha
 import type { ParsedTranscript } from "../../../src/core/types.js";
 
 describe("resolveHostShutdownEpisodeEligibility", () => {
-  it("accepts sessions with at least eight material turns", () => {
-    expect(resolveHostShutdownEpisodeEligibility(buildTranscript({ messageCount: 8 }))).toMatchObject({
+  it("accepts sessions with at least four material turns", () => {
+    expect(resolveHostShutdownEpisodeEligibility(buildTranscript({ messageCount: 4 }))).toMatchObject({
       eligible: true,
-      materialTurns: 8,
+      materialTurns: 4,
     });
   });
 
-  it("accepts sessions that lasted at least twenty minutes", () => {
+  it("accepts sessions that lasted at least ten minutes", () => {
     expect(
       resolveHostShutdownEpisodeEligibility(
         buildTranscript({
           messageCount: 2,
           startedAt: "2026-05-30T10:00:00.000Z",
-          endedAt: "2026-05-30T10:20:00.000Z",
+          endedAt: "2026-05-30T10:10:00.000Z",
         }),
       ),
     ).toMatchObject({
       eligible: true,
-      durationMs: 20 * 60 * 1000,
+      durationMs: 10 * 60 * 1000,
     });
   });
 
   it("skips short sessions below the phase 4 thresholds", () => {
-    expect(resolveHostShutdownEpisodeEligibility(buildTranscript({ messageCount: 4 }))).toEqual({
+    expect(resolveHostShutdownEpisodeEligibility(buildTranscript({ messageCount: 2 }))).toEqual({
       eligible: false,
       reason: "below_activity_threshold",
-      materialTurns: 4,
+      materialTurns: 2,
       durationMs: 3 * 60 * 1000,
     });
   });

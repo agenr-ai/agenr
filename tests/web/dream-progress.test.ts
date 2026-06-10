@@ -198,6 +198,8 @@ function buildCounts(overrides: Partial<ReconcileProgress["counts"]> = {}): Reco
     appliedEntityFamilyConvergences: 0,
     identifiedAliasConvergences: 0,
     appliedAliasConvergences: 0,
+    identifiedDuplicateSlotCollapses: 0,
+    appliedDuplicateSlotCollapses: 0,
     proposalsEmitted: 0,
     skippedNoClaim: 0,
     skippedLowConfidence: 0,

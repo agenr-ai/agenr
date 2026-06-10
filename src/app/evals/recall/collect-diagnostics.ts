@@ -216,6 +216,8 @@ export function createRecallEvalDiagnosticsCollector(request: RecallEvalCaseRequ
         tentativeLineageSuppressed: summary.claimKey.tentativeLineageSuppressed,
         trustPenalized: summary.claimKey.trustPenalized,
         redundancyPenalized: summary.claimKey.redundancyPenalized,
+        exclusiveSlotCollapsed: summary.claimKey.exclusiveSlotCollapsed,
+        exclusiveSlotCollapsedIds: [...summary.claimKey.exclusiveSlotCollapsedIds],
       };
       rrf = {
         applied: summary.rrf.applied,

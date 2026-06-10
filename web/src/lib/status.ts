@@ -14,14 +14,11 @@ export function runStatusVariant(status: DreamRunStatus): Status {
     case "running":
       return "accent";
     case "failed":
-    case "stalled":
       return "danger";
     case "aborted":
     case "budget_exhausted":
     case "cost_capped":
       return "warning";
-    case "no_work":
-      return "neutral";
     default:
       return "neutral";
   }

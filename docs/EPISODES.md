@@ -59,8 +59,8 @@ When OpenClaw emits `before_compaction`, the plugin may also write a pre-compact
 
 OpenClaw session-end episode writes use the same phase 4 activity thresholds as Skeln shutdown episodes:
 
-- at least 8 material user or assistant turns, or
-- at least 20 minutes of session duration
+- at least 4 material user or assistant turns, or
+- at least 10 minutes of session duration
 
 Session-end capture is skipped when `reason` is `compaction` because the pre-compaction hook already captured the full transcript snapshot.
 
@@ -81,7 +81,7 @@ When Skeln emits `session_before_compact`, the adapter may also write a pre-comp
 
 The shutdown writer is bounded and conservative:
 
-- it skips sessions below both phase 4 thresholds: fewer than 8 material user or assistant turns and under 20 minutes
+- it skips sessions below both phase 4 thresholds: fewer than 4 material user or assistant turns and under 10 minutes
 - it skips active-session checks because Skeln has already emitted shutdown
 - it uses the configured agenr episode model and credentials
 - it applies a 45 second write timeout

@@ -20,7 +20,7 @@ vi.mock("../../../src/adapters/llm.js", async (importActual) => {
 
 import { createDatabase } from "../../../src/adapters/db/client.js";
 import { createDreamPort } from "../../../src/adapters/db/dreaming-port.js";
-import { loadDreamActionViewsRuntime, loadDreamStatusRuntime, runDreamRuntime } from "../../../src/app/dreaming/runtime.js";
+import { loadDreamActionViewsRuntime, loadDreamStatusRuntime, reviewDreamProposalRuntime, runDreamRuntime } from "../../../src/app/dreaming/runtime.js";
 import { computeContentHash, computeNormContentHash } from "../../../src/core/store/hashing.js";
 import type { LlmPort } from "../../../src/core/ports.js";
 import type { Durable } from "../../../src/core/types.js";
@@ -166,6 +166,94 @@ describe("loadDreamActionViewsRuntime", () => {
     expect(action?.durables).toHaveLength(1);
     expect(action?.durables[0]?.id).toBe("dreamed-temporary");
     expect(action?.durables[0]?.valid_to).toBe("2026-04-04T12:00:00.000Z");
+  });
+});
+
+describe("reviewDreamProposalRuntime", () => {
+  it("applies a duplicate-slot-collapse proposal through the supersession path", async () => {
+    const { configPath, dbPath } = await createRuntimeFixture({
+      config: {
+        provider: "openai",
+        model: "gpt-5.4-mini",
+      },
+    });
+    let runId: string | undefined;
+    const database = await createDatabase(dbPath);
+    try {
+      const port = createDreamPort(database);
+      for (const [id, createdAt] of [
+        ["collapse-old", "2026-01-01T00:00:00.000Z"],
+        ["collapse-new", "2026-02-01T00:00:00.000Z"],
+      ] as const) {
+        await database.insertDurable(
+          buildRuntimeDurable({
+            id,
+            subject: `Default shell ${id}`,
+            content: `Default shell content ${id}`,
+            claim_key: "mac_mini/default_shell",
+            claim_key_status: "trusted",
+            created_at: createdAt,
+            valid_to: undefined,
+            supersession_kind: undefined,
+            supersession_reason: undefined,
+            expiry: "permanent",
+          }),
+          [],
+          computeContentHash(`Default shell content ${id}`, "episode:ep-1"),
+        );
+      }
+      runId = await port.createRun({ tier: "deep", dryRun: false });
+      await port.logRunProposal({
+        id: "proposal-collapse",
+        runId,
+        groupId: "claim-key-duplicate-slot:mac_mini/default_shell",
+        issueKind: "duplicate_slot_collapse",
+        scope: "cluster",
+        durableIds: ["collapse-new", "collapse-old"],
+        currentClaimKeys: ["mac_mini/default_shell"],
+        proposedClaimKeys: ["mac_mini/default_shell"],
+        rationale: "Exclusive slot holds two active durables.",
+        confidence: 0.9,
+        source: "duplicate_slot_collapse",
+        eligibleForApply: true,
+        createdAt: "2026-04-04T12:00:00.000Z",
+        reviewStatus: "open",
+        reviewedAt: null,
+        reviewReason: null,
+        appliedActionCount: 0,
+      });
+    } finally {
+      await database.close();
+    }
+
+    const result = await reviewDreamProposalRuntime({
+      proposalId: "proposal-collapse",
+      decision: "apply",
+      reason: "Operator confirmed the collapse.",
+      env: { AGENR_CONFIG_PATH: configPath },
+    });
+
+    expect(result.proposal.reviewStatus).toBe("applied");
+    expect(result.updatedDurableIds).toEqual(["collapse-old"]);
+
+    const verifyDatabase = await createDatabase(dbPath);
+    try {
+      const rows = await verifyDatabase.execute({
+        sql: "SELECT id, superseded_by, supersession_kind FROM durables ORDER BY id ASC",
+        args: [],
+      });
+      expect(rows.rows).toEqual([
+        expect.objectContaining({ id: "collapse-new", superseded_by: null }),
+        expect.objectContaining({ id: "collapse-old", superseded_by: "collapse-new", supersession_kind: "duplicate_collapse" }),
+      ]);
+
+      const actions = await createDreamPort(verifyDatabase).getRunActions(requireRunId(runId));
+      const mergeActions = actions.filter((action) => action.actionType === "merge");
+      expect(mergeActions).toHaveLength(1);
+      expect(mergeActions[0]?.durableIds).toEqual(["collapse-old", "collapse-new"]);
+    } finally {
+      await verifyDatabase.close();
+    }
   });
 });
 

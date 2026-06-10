@@ -184,25 +184,39 @@ describe("runDream", () => {
     clients.length = 0;
   });
 
-  it("rejects runs when the daily dreaming cost cap is already exhausted", async () => {
+  it("records a budget_exhausted run when the daily dreaming cost cap is already exhausted", async () => {
+    const completeRun = vi.fn(async () => undefined);
     const port = createDreamPortDouble({
       getDailyCost: vi.fn(async () => 2.5),
+      completeRun,
     });
 
-    await expect(
-      runDream(
-        {
-          tier: "standard",
-          apply: false,
-          verbose: false,
-          json: false,
-        },
-        {
-          port,
-          config: { dreaming: { dailyCostCap: 2.5 } },
-        },
-      ),
-    ).rejects.toThrow("Daily dreaming cost cap reached");
+    const result = await runDream(
+      {
+        tier: "standard",
+        apply: false,
+        verbose: false,
+        json: false,
+      },
+      {
+        port,
+        config: { dreaming: { dailyCostCap: 2.5 } },
+      },
+    );
+
+    expect(result.status).toBe("budget_exhausted");
+    expect(result.summary).toContain("Daily dreaming cost cap reached");
+    expect(result.actionsTaken).toBe(0);
+    expect(completeRun).toHaveBeenCalledWith(
+      result.runId,
+      expect.objectContaining({
+        status: "budget_exhausted",
+        error: expect.stringContaining("Daily dreaming cost cap reached"),
+        summaryJson: expect.objectContaining({
+          observations: [expect.stringContaining("Daily dreaming cost cap reached")],
+        }),
+      }),
+    );
   });
 
   it("rejects disabled dreaming tiers before creating run state", async () => {

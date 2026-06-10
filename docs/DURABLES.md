@@ -161,6 +161,7 @@ There is no CLI option surface yet, but the pipeline supports these programmatic
 interface StoreDurablesOptions {
   dryRun?: boolean;
   verbose?: boolean;
+  semanticDedup?: { enabled: boolean; threshold?: number };
   precomputedEmbeddings?: number[][];
   claimExtraction?: {
     llm: LlmPort;
@@ -174,6 +175,7 @@ interface StoreDurablesOptions {
 
 - `dryRun` runs validation and dedup planning but skips claim-key extraction side effects, embedding calls, and persistence
 - `verbose` exists in the option type, but the core store pipeline itself does not currently branch on it
+- `semanticDedup` controls store-time vector dedup against active DB durables; it defaults to enabled with a `0.9` cosine-similarity threshold
 - `precomputedEmbeddings` lets callers reuse vectors computed earlier, aligned to the original input array
 - `claimExtraction` enables best-effort claim-key extraction for pending entries that do not already carry accepted lifecycle metadata
 - `onWarning` receives non-fatal validation, claim-key, and supersession warnings
@@ -343,7 +345,20 @@ Precomputed embeddings must match the original input array length exactly. If th
 
 If the embedding provider returns a different number of vectors than pending entries, the store call also throws.
 
-### 7. Persistence and supersession
+### 7. DB-backed semantic dedup
+
+After embeddings are resolved and before persistence, the pipeline runs a vector-similarity dedup pass against active durables already in the database. This is what catches cross-session paraphrases that hash dedup cannot see.
+
+Current behavior:
+
+- enabled by default; callers can disable or tune it through `options.semanticDedup` (`{ enabled, threshold }`, default threshold `0.9`)
+- each pending entry's embedding is searched through `db.findSimilarActiveDurables(embedding, limit)`, which only considers active rows (`superseded_by IS NULL` with an open valid-time window)
+- when an active durable scores at or above the threshold and either shares the new entry's claim key or the new entry has no claim key, the entry is skipped with reason `db_semantic_duplicate`
+- when the closest above-threshold match has a different claim key, the entry is still stored and a warning is emitted, since it may be a genuinely different claim
+- vector-search failures are non-fatal: the entry is stored normally and a warning is emitted
+- dry runs never reach this step, so they do not require vector search
+
+### 8. Persistence and supersession
 
 `persistDurables()` writes the surviving prepared entries in order.
 
@@ -352,9 +367,9 @@ Persistence behavior:
 - each stored row gets a fresh UUID
 - `created_at` uses the input value when present, otherwise `now`
 - `updated_at` is always set to `now`
-- `quality_score` is initialized to neutral `0.5` and currently stays there for normal production-created durables
-- while `quality_score` is neutral/defaulted, it is reserved for diagnostics and conservative tie-breaks only; it should not be used as an active recall-ranking signal
-- any future non-neutral quality scorer should be introduced behind evals and/or a feature flag so bad heuristics cannot silently harm recall
+- `quality_score` is initialized to neutral `0.5`; afterwards each surfaced recall nudges it upward with a bounded EMA step (`MIN(0.95, quality_score + 0.05 * (1 - quality_score))`) recorded atomically alongside the recall counters (see the recall telemetry section in `docs/RECALL.md`)
+- `quality_score` feeds dreaming's profile projection and prune protection as a live usefulness signal; it is still not an active recall-ranking signal
+- recall only bumps quality upward; decay toward neutral for never-recalled durables is owned by dreaming maintenance
 - `recall_count` is initialized to `0`
 - `user_id`, `project`, `valid_from`, `valid_to`, `content_hash`, and `norm_content_hash` are copied through when present
 - stale rows are represented by a closed `valid_to` plus optional `supersession_kind` / `supersession_reason`, not a separate retirement flag
@@ -369,11 +384,11 @@ Explicit supersession behavior:
 Automatic claim-key supersession behavior:
 
 - runs before inserts so it only considers pre-existing active siblings, not other entries in the current batch
-- requires exactly one active sibling with the same claim key
+- supersedes every active sibling with the same claim key, so a slot that accumulated multiple active rows collapses back to one on the next eligible store
 - is skipped when the current batch itself contains multiple entries for that claim key
 - accepts trusted manual claim keys
 - also accepts high-confidence extracted claim keys from `model` or `json_retry`
-- validates supersession rules before linking, including type/expiry compatibility
+- validates supersession rules per sibling, including type/expiry compatibility; a sibling that fails the rules is skipped with a warning while the remaining compatible siblings are still superseded
 - emits warnings instead of failing the store when auto-linking is unsafe or ambiguous
 
 Transaction behavior:
@@ -382,7 +397,7 @@ Transaction behavior:
 - it also uses a transaction for single-entry writes that may perform `supersedes` or claim-key-driven supersession work
 - otherwise inserts and follow-up supersession updates run sequentially without an explicit transaction wrapper
 
-### 8. Ingest wrapper behavior
+### 9. Ingest wrapper behavior
 
 The core store pipeline itself does not manage FTS or vector-index rebuilds.
 
@@ -410,14 +425,15 @@ So the current durable-ingest path is:
 1. ingest extracts entries
 2. ingest optionally runs semantic dedup across the batch
 3. ingest may run claim-key extraction across the dedup survivors
-4. store runs validation, hash dedup, optional extraction, embedding, and persistence
+4. store runs validation, hash dedup, optional extraction, embedding, DB-backed semantic dedup, and persistence
 
-That means ingest has two distinct dedup layers:
+That means ingest has three distinct dedup layers:
 
-- semantic dedup in `src/core/ingestion/dedup.ts`
+- within-run semantic dedup in `src/core/ingestion/dedup.ts`
 - hash dedup in `src/core/store/pipeline.ts`
+- DB-backed semantic dedup against active durables in `src/core/store/pipeline.ts`
 
-### 9. OpenClaw tool behavior
+### 10. OpenClaw tool behavior
 
 The OpenClaw `agenr_store` tool stores one entry at a time and calls `storeDurablesDetailed()` directly without the ingest bulk-write wrapper.
 

@@ -5,6 +5,7 @@ import { buildClaimKeyHealthSnapshot } from "./health.js";
 import { cloneClaimKeyInspectionTally } from "./helpers/claim-key-health-tally.js";
 import { processEntityFamilyConvergenceCandidate } from "./handlers/entity-family.js";
 import { detectDeepClaimKeyAliasCandidates, processClaimKeyAliasConvergenceCandidate } from "./handlers/claim-key-alias.js";
+import { detectDuplicateSlotCollapseGroups, processDuplicateSlotCollapseGroup } from "./handlers/duplicate-slot-collapse.js";
 import { processInvalidOrNoncanonicalDurable } from "./handlers/invalid-durable.js";
 import { processMissingDurable } from "./handlers/missing-durable.js";
 import { processMixedKeyGroup } from "./handlers/mixed-group.js";
@@ -175,6 +176,13 @@ function buildReconcileStageRunners(partitions: ReconcileDurablePartitions): Rec
             passCtx.workingSet.handledConvergenceClaimKeys.add(claimKey);
           }
         },
+      }),
+    (ctx) =>
+      runReconcileStage(ctx, {
+        stage: "duplicate_slot_collapse",
+        items: detectDuplicateSlotCollapseGroups(ctx),
+        unitLabel: "groups",
+        process: processDuplicateSlotCollapseGroup,
       }),
     (ctx) =>
       runReconcileStage(ctx, {

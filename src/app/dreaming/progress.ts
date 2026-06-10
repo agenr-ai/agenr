@@ -24,6 +24,7 @@ export type ReconcileProgressStage =
   | "suspect_canonical"
   | "entity_family_convergence"
   | "claim_key_alias_convergence"
+  | "duplicate_slot_collapse"
   | "mixed_key_groups";
 
 /**
