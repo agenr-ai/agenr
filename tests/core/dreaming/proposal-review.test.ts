@@ -4,6 +4,7 @@ import {
   buildManualProposalSettlementReason,
   isClaimKeyAliasConvergenceProposal,
   isManualProposalSettlementEligible,
+  isSingleDurableClaimKeyRepairProposal,
 } from "../../../src/core/dreaming/domain/proposal-review.js";
 
 describe("proposal review domain helpers", () => {
@@ -32,11 +33,23 @@ describe("proposal review domain helpers", () => {
         eligibleForApply: true,
       }),
     ).toBe(false);
+    expect(
+      isManualProposalSettlementEligible({
+        issueKind: "suspect_canonical_claim_key",
+        eligibleForApply: false,
+      }),
+    ).toBe(true);
   });
 
   it("detects alias convergence proposals", () => {
     expect(isClaimKeyAliasConvergenceProposal({ issueKind: "claim_key_alias_convergence" })).toBe(true);
     expect(isClaimKeyAliasConvergenceProposal({ issueKind: "missing_claim_key" })).toBe(false);
+  });
+
+  it("detects single-durable claim-key repair proposals", () => {
+    expect(isSingleDurableClaimKeyRepairProposal({ issueKind: "suspect_canonical_claim_key" })).toBe(true);
+    expect(isSingleDurableClaimKeyRepairProposal({ issueKind: "missing_claim_key" })).toBe(true);
+    expect(isSingleDurableClaimKeyRepairProposal({ issueKind: "mixed_claim_key_group" })).toBe(false);
   });
 
   it("builds settlement reasons from operator notes only", () => {
@@ -48,6 +61,9 @@ describe("proposal review domain helpers", () => {
     );
     expect(buildManualProposalSettlementReason("entity_family_convergence", "retire", "", "", 2)).toBe(
       "Resolved entity-family convergence manually by retiring 2 duplicate or wrong durables.",
+    );
+    expect(buildManualProposalSettlementReason("suspect_canonical_claim_key", "separate", "existing key is intentional", "", 0)).toBe(
+      "Resolved suspect canonical claim key manually by keeping claim-key metadata unchanged. Note: existing key is intentional",
     );
   });
 });

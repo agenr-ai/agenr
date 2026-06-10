@@ -2,7 +2,7 @@ import { useState } from "react";
 
 import { ApiError, api } from "../../api/client";
 import type { ProposalDetail } from "../../api/types";
-import { isClaimKeyAliasConvergenceProposal, isManualProposalSettlementEligible } from "../../api/types";
+import { isClaimKeyAliasConvergenceProposal, isManualProposalSettlementEligible, isSingleDurableClaimKeyRepairProposal } from "../../api/types";
 import { ProposalStagingAuditPanel } from "../../components/dreaming/ActionReviewPanels";
 import { Badge, Button, Card, CardBody, Drawer, EmptyState, Field, Textarea } from "../../components/primitives";
 import { ErrorCard, Skeleton } from "../../components/states";
@@ -39,6 +39,7 @@ export function ProposalDrawer({ proposalId, onClose, onReviewed }: { proposalId
 
   const proposal = state.data?.proposal;
   const manualResolution = proposal ? isManualProposalSettlementEligible(proposal) : false;
+  const singleDurableRepair = proposal ? isSingleDurableClaimKeyRepairProposal(proposal) : false;
 
   return (
     <Drawer
@@ -63,11 +64,25 @@ export function ProposalDrawer({ proposalId, onClose, onReviewed }: { proposalId
             <span className="section-title">Review decision</span>
             {manualResolution ? (
               <>
-                <p>This proposal has no safe direct apply target. Settle the flagged issue with one explicit operator decision.</p>
+                <p>
+                  {singleDurableRepair
+                    ? "Resolve this flagged claim-key issue with one explicit operator decision."
+                    : "This proposal has no safe direct apply target. Settle the flagged issue with one explicit operator decision."}
+                </p>
                 <ul className="review-checklist">
-                  <li>Keep the current keys when the memories are separate slots.</li>
-                  <li>Use one canonical key when the memories belong to the same slot.</li>
-                  <li>Retire selected memories when they are duplicate or wrong.</li>
+                  {singleDurableRepair ? (
+                    <>
+                      <li>Keep the current metadata when the stored claim key is acceptable.</li>
+                      <li>Write a trusted canonical key when the current key is wrong or too generic.</li>
+                      <li>Retire the affected memory when it is duplicate or wrong.</li>
+                    </>
+                  ) : (
+                    <>
+                      <li>Keep the current keys when the memories are separate slots.</li>
+                      <li>Use one canonical key when the memories belong to the same slot.</li>
+                      <li>Retire selected memories when they are duplicate or wrong.</li>
+                    </>
+                  )}
                 </ul>
               </>
             ) : isClaimKeyAliasConvergenceProposal(proposal) ? (

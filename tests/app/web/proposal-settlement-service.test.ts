@@ -150,6 +150,74 @@ describe("settleManualWebProposal", () => {
       claim_key_source: "manual",
     });
   });
+
+  it("writes a manual canonical key for an ineligible suspect-key proposal", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agenr-settle-"));
+    tempRoots.push(root);
+    const dbPath = path.join(root, "knowledge.db");
+    const client = createClient({ url: `file:${dbPath}` });
+    clients.push(client);
+    await initSchema(client);
+    const port = createDreamPort(client);
+    const runId = await port.createRun({ tier: "deep", dryRun: false });
+
+    await insertDurable(client, {
+      id: "siblings",
+      subject: "user siblings",
+      type: "fact",
+      claim_key: "user/siblings",
+      content: "The user's siblings are Kurt, Kevin, and Lori.",
+    });
+    await port.logRunProposal(
+      buildProposal({
+        id: "proposal-suspect",
+        runId,
+        durableIds: ["siblings"],
+        issueKind: "suspect_canonical_claim_key",
+        scope: "single_durable",
+        currentClaimKeys: ["user/siblings"],
+        proposedClaimKeys: [],
+        eligibleForApply: false,
+        rationale: 'Claim key "user/siblings" is structurally canonical but suspect.',
+        source: "heuristic",
+        confidence: 0.5,
+      }),
+    );
+
+    const env: NodeJS.ProcessEnv = { ...process.env, AGENR_CONFIG_DIR: root };
+    const context = createInstanceContext(
+      {
+        record: { id: "test", name: "Test", createdAt: "2026-04-04T15:00:00.000Z" },
+        dbPath,
+        configPath: path.join(root, "config.json"),
+        dbExists: true,
+      },
+      env,
+    );
+
+    const settled = await settleManualWebProposal({
+      proposalId: "proposal-suspect",
+      choice: "canonical",
+      targetClaimKey: "jmartin/siblings",
+      reason: "The durable describes the user's sibling list, not generic users.",
+      context,
+    });
+
+    expect(settled.proposal.reviewStatus).toBe("rejected");
+    expect(settled.proposal.reviewReason).toBe(
+      buildManualProposalSettlementReason(
+        "suspect_canonical_claim_key",
+        "canonical",
+        "The durable describes the user's sibling list, not generic users.",
+        "jmartin/siblings",
+        0,
+      ),
+    );
+    await expect(getDurable(client, "siblings")).resolves.toMatchObject({
+      claim_key: "jmartin/siblings",
+      claim_key_source: "manual",
+    });
+  });
 });
 
 function buildProposal(overrides: Partial<DreamRunProposal> & Pick<DreamRunProposal, "id" | "runId" | "durableIds">): DreamRunProposal {

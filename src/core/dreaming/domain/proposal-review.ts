@@ -57,7 +57,19 @@ export function resolveDreamProposalApplyTarget(proposal: Pick<DreamRunProposal,
 /** Manual settlement choices accepted for proposals without a safe direct apply target. */
 export type ManualProposalSettlementChoice = "separate" | "canonical" | "retire";
 
-const MANUAL_SETTLEMENT_ISSUE_KINDS = new Set(["mixed_claim_key_group", "entity_family_convergence", "claim_key_alias_convergence"]);
+const SINGLE_DURABLE_CLAIM_KEY_REPAIR_ISSUE_KINDS = new Set([
+  "missing_claim_key",
+  "suspect_canonical_claim_key",
+  "noncanonical_claim_key",
+  "malformed_claim_key",
+]);
+
+const MANUAL_SETTLEMENT_ISSUE_KINDS = new Set([
+  "mixed_claim_key_group",
+  "entity_family_convergence",
+  "claim_key_alias_convergence",
+  ...SINGLE_DURABLE_CLAIM_KEY_REPAIR_ISSUE_KINDS,
+]);
 
 /**
  * Returns whether an open proposal can be settled by an explicit operator decision.
@@ -67,6 +79,16 @@ const MANUAL_SETTLEMENT_ISSUE_KINDS = new Set(["mixed_claim_key_group", "entity_
  */
 export function isManualProposalSettlementEligible(proposal: Pick<DreamRunProposal, "issueKind" | "eligibleForApply">): boolean {
   return !proposal.eligibleForApply && MANUAL_SETTLEMENT_ISSUE_KINDS.has(proposal.issueKind);
+}
+
+/**
+ * Returns whether a proposal describes one durable with claim-key metadata that needs operator repair.
+ *
+ * @param proposal - Proposal under review.
+ * @returns True when the issue can be fixed by writing a manual key to the affected durable.
+ */
+export function isSingleDurableClaimKeyRepairProposal(proposal: Pick<DreamRunProposal, "issueKind">): boolean {
+  return SINGLE_DURABLE_CLAIM_KEY_REPAIR_ISSUE_KINDS.has(proposal.issueKind);
 }
 
 /**
@@ -104,6 +126,9 @@ export function buildManualProposalSettlementReason(
   if (choice === "retire") {
     return `Resolved ${label} manually by retiring ${retireCount} duplicate or wrong durable${retireCount === 1 ? "" : "s"}.${suffix}`;
   }
+  if (SINGLE_DURABLE_CLAIM_KEY_REPAIR_ISSUE_KINDS.has(issueKind)) {
+    return `Resolved ${label} manually by keeping claim-key metadata unchanged.${suffix}`;
+  }
   return `Resolved ${label} manually by keeping the affected durables under separate claim keys.${suffix}`;
 }
 
@@ -121,6 +146,14 @@ function formatManualSettlementIssueKind(issueKind: string): string {
       return "entity-family convergence";
     case "mixed_claim_key_group":
       return "mixed claim-key group";
+    case "malformed_claim_key":
+      return "malformed claim key";
+    case "missing_claim_key":
+      return "missing claim key";
+    case "noncanonical_claim_key":
+      return "noncanonical claim key";
+    case "suspect_canonical_claim_key":
+      return "suspect canonical claim key";
     default:
       return issueKind.replaceAll("_", " ");
   }

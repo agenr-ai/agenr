@@ -2,6 +2,7 @@
 export {
   isClaimKeyAliasConvergenceProposal,
   isManualProposalSettlementEligible,
+  isSingleDurableClaimKeyRepairProposal,
   type ManualProposalSettlementChoice,
 } from "../../../src/web-api/proposal-review.js";
 export type {

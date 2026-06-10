@@ -1,9 +1,18 @@
 import { useState } from "react";
 
 import { ApiError, api } from "../../api/client";
-import type { DreamProposal, Durable, ManualProposalSettlementChoice } from "../../api/types";
+import { isSingleDurableClaimKeyRepairProposal, type DreamProposal, type Durable, type ManualProposalSettlementChoice } from "../../api/types";
 import { Button, Field, Input, Select, Textarea } from "../../components/primitives";
 import { useToast } from "../../components/Toast";
+
+interface ManualResolutionCopy {
+  separateTitle: string;
+  separateBody: string;
+  canonicalTitle: string;
+  canonicalBody: string;
+  retireTitle: string;
+  retireBody: string;
+}
 
 /** Manual settlement workflow for proposals without a safe direct target. */
 export function ManualProposalResolution({
@@ -27,6 +36,7 @@ export function ManualProposalResolution({
   const [selectedRetireIds, setSelectedRetireIds] = useState<string[]>([]);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const copy = buildManualResolutionCopy(proposal);
 
   const settle = async (): Promise<void> => {
     const trimmedNote = note.trim();
@@ -75,20 +85,20 @@ export function ManualProposalResolution({
       <div className="manual-resolution__choices">
         <ResolutionOption
           active={choice === "separate"}
-          title="Keep separate"
-          body="Close the flag and leave the current claim keys unchanged."
+          title={copy.separateTitle}
+          body={copy.separateBody}
           onSelect={() => setChoice("separate")}
         />
         <ResolutionOption
           active={choice === "canonical"}
-          title="Use one key"
-          body="Write one trusted manual claim key to every affected durable, then close the flag."
+          title={copy.canonicalTitle}
+          body={copy.canonicalBody}
           onSelect={() => setChoice("canonical")}
         />
         <ResolutionOption
           active={choice === "retire"}
-          title="Retire selected"
-          body="Close duplicate or wrong durables, then close the flag."
+          title={copy.retireTitle}
+          body={copy.retireBody}
           onSelect={() => setChoice("retire")}
         />
       </div>
@@ -162,6 +172,28 @@ function ResolutionOption({
       <span>{body}</span>
     </button>
   );
+}
+
+function buildManualResolutionCopy(proposal: DreamProposal): ManualResolutionCopy {
+  if (isSingleDurableClaimKeyRepairProposal(proposal)) {
+    return {
+      separateTitle: "Keep current",
+      separateBody: "Close the flag and leave claim-key metadata unchanged.",
+      canonicalTitle: "Write claim key",
+      canonicalBody: "Write one trusted manual claim key to the affected durable, then close the flag.",
+      retireTitle: "Retire memory",
+      retireBody: "Retire the affected durable when it is duplicate or wrong.",
+    };
+  }
+
+  return {
+    separateTitle: "Keep separate",
+    separateBody: "Close the flag and leave the current claim keys unchanged.",
+    canonicalTitle: "Use one key",
+    canonicalBody: "Write one trusted manual claim key to every affected durable, then close the flag.",
+    retireTitle: "Retire selected",
+    retireBody: "Close duplicate or wrong durables, then close the flag.",
+  };
 }
 
 function uniqueStrings(values: string[]): string[] {
