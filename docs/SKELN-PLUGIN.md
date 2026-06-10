@@ -451,7 +451,7 @@ The plugin also registers Codex-compatible `get_goal`, `create_goal`, and `updat
 - `create_goal` creates one active goal working set for the resolved scope, forks current session working state into that goal, and may initialize a token budget when the model was explicitly instructed to do so.
 - `update_goal` only allows `complete` or `blocked`; pause, resume, budget, usage, and close state remain trusted host controls.
 
-Trusted Skeln UI and lifecycle code can call `executeWorkCommand(...)` on the controller returned by `registerAgenrSkelnMemory(...)`. That path can set `continuationPolicy: "on_idle"`, configure budgets, account token/time/turn usage, record heartbeat, lease, resume, and stale metadata, and call `prepare_external_goal_mutation` before external `/goal` mutations. These trusted operations update Agenr state but do not schedule continuation turns; Skeln owns the runtime loop.
+Trusted Skeln UI and lifecycle code can call `executeWorkCommand(...)` on the controller returned by `registerAgenrSkelnMemory(...)`. That path can set `continuationPolicy: "on_idle"`, configure budgets, account token/time/turn usage, record heartbeat, lease, resume, and stale metadata, and call `prepare_external_goal_mutation` before external `/goal` mutations. Goal preparation only ever selects goal-layer working sets; when a supplied `workingSetId` resolves to a session-scoped set, prepare returns `prepared: false` instead of mutating it. These trusted operations update Agenr state but do not schedule continuation turns; Skeln owns the runtime loop.
 
 ## Tool failure signaling
 

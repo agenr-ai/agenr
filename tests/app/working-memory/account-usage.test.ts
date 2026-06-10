@@ -452,4 +452,45 @@ describe("account_usage control plane", () => {
       await closeWorkingMemoryTestService(database, dbPath);
     }
   });
+
+  it("refuses to prepare goal mutations against a session-scoped working set id", async () => {
+    const { database, dbPath, service } = await createWorkingMemoryTestService();
+
+    try {
+      const created = await service.run({
+        action: "create",
+        target: "session",
+        scope: TRUSTED_SCOPE,
+        operation: {
+          type: "set_objective",
+          objective: "Session working set, not a goal.",
+        },
+        updateReason: "Started session set.",
+        source: "lifecycle_hook",
+      });
+      if (!created.ok || created.action !== "create") {
+        throw new Error("Expected create success.");
+      }
+
+      const prepared = await service.prepareExternalGoalMutation({
+        mutationKind: "set",
+        workingSetId: created.workingSet.id,
+        scope: TRUSTED_SCOPE,
+        checkpoint: {
+          summary: "Stale host cache pointed at the session set.",
+          recordedAt: "2026-05-30T12:10:00.000Z",
+        },
+        source: "goal_command",
+      });
+
+      expect(prepared).toMatchObject({
+        ok: true,
+        action: "prepare_external_goal_mutation",
+        prepared: false,
+        events: [],
+      });
+    } finally {
+      await closeWorkingMemoryTestService(database, dbPath);
+    }
+  });
 });

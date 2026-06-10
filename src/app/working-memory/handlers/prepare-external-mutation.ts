@@ -1,6 +1,6 @@
 import { applyOperation } from "../apply-operation.js";
 import { commitAppliedWorkingSetChange, isAppliedWorkingSetCommitFailure } from "./commit-applied-change.js";
-import { isMutableWorkingSetStatus, isTrustedHostMutationSource } from "../constants.js";
+import { isGoalScopeKind, isMutableWorkingSetStatus, isTrustedHostMutationSource } from "../constants.js";
 import type { WorkingMemoryHandlerContext } from "../handler-context.js";
 import type { AgenrWorkUpdateOperation, PrepareExternalGoalMutationParams } from "../mutations.js";
 import type { WorkingEventRecord, WorkingSetRecord } from "../records.js";
@@ -24,7 +24,8 @@ export async function handlePrepareExternalGoalMutation(
     return createFailure("invalid_request", "prepare_external_goal_mutation is reserved for trusted host runtime paths.");
   }
 
-  const selection = await selectWorkingSet({ ...params, target: params.target ?? "goal" }, ctx.repository, { policy: ctx.policy });
+  const target = params.target ?? "goal";
+  const selection = await selectWorkingSet({ ...params, target }, ctx.repository, { policy: ctx.policy });
   if (!selection.ok) {
     if (selection.code === "missing_active_set") {
       return {
@@ -36,6 +37,17 @@ export async function handlePrepareExternalGoalMutation(
     }
 
     return selection;
+  }
+
+  // A stale host cache may pass a workingSetId that no longer points at a goal
+  // set. Goal preparation must never mutate session-layer working sets.
+  if (target === "goal" && !isGoalScopeKind(selection.workingSet.scopeKind)) {
+    return {
+      ok: true,
+      action: "prepare_external_goal_mutation",
+      prepared: false,
+      events: [],
+    };
   }
 
   if (params.requireCheckpoint && !params.checkpoint && !selection.workingSet.snapshot.checkpoint) {
