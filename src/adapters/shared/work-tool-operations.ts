@@ -84,8 +84,7 @@ const WORK_TOOL_PARAMETERS = {
         type: "string",
         enum: [...WORKING_SET_STATUSES],
       },
-      description:
-        "Optional working-set statuses to include in list output. Defaults to active and recent current statuses when omitted.",
+      description: "Optional working-set statuses to include in list output. Defaults to active and recent current statuses when omitted.",
     },
   },
   required: ["action"],
