@@ -159,6 +159,8 @@ export interface DreamPort {
   ): Promise<void>;
   logRunAction(action: DreamRunAction): Promise<void>;
   getLastRun(): Promise<DreamRunRecord | null>;
+  /** Returns the most recent completed run, used as the incremental scan cursor. */
+  getLastCompletedRun(): Promise<DreamRunRecord | null>;
   getRunHistory(limit?: number): Promise<DreamRunRecord[]>;
   /** Returns the most recent applied (non-dry-run) `light` runs, newest first. */
   getRecentAppliedLightRuns(limit: number): Promise<DreamRunRecord[]>;
@@ -199,8 +201,12 @@ export interface DreamPort {
     durableIds?: string[];
     includeInactive?: boolean;
   }): Promise<Durable[]>;
-  /** Reads recent episode narrative evidence newer than one timestamp. */
-  listEpisodeEvidenceSince(since: string, options?: { project?: string; limit?: number }): Promise<DreamEpisodeEvidence[]>;
+  /** Reads active episode narrative evidence not yet mined by an applied extract pass. */
+  listUnsynthesizedEpisodeEvidence(options?: { project?: string; limit?: number }): Promise<DreamEpisodeEvidence[]>;
+  /** Counts active episodes still awaiting an applied extract pass. */
+  countUnsynthesizedEpisodes(project?: string): Promise<number>;
+  /** Records episodes mined by an applied extract pass so later runs skip them. */
+  markEpisodesSynthesized(input: { episodeIds: string[]; runId: string; synthesizedAt: string }): Promise<void>;
   /** Lists live host-store durables written during one episode session window. */
   listSessionHostStoreDurables(sessionId: string, startedAt: string, endedAt: string): Promise<Durable[]>;
   /** Loads active durables that share one canonical claim key (context-lookup). */

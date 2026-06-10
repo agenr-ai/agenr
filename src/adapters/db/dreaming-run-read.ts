@@ -150,6 +150,50 @@ export async function getLastDreamRun(executor: SqlExecutor): Promise<DreamRun |
 }
 
 /**
+ * Loads the most recent completed dreaming run when one exists.
+ *
+ * Scan and extract use this as their incremental cursor. The status filter is
+ * load-bearing: the in-flight run's own row already exists with status
+ * `running` when the stages execute, so an unfiltered latest-run lookup would
+ * always observe an incomplete run and reset the cursor to the epoch.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @returns Latest completed dreaming run, or null when none has completed.
+ */
+export async function getLastCompletedDreamRun(executor: SqlExecutor): Promise<DreamRun | null> {
+  const result = await executor.execute({
+    sql: `
+      SELECT
+        id,
+        tier,
+        project,
+        started_at,
+        completed_at,
+        status,
+        input_tokens,
+        output_tokens,
+        estimated_cost_usd,
+        model,
+        actions_taken,
+        actions_skipped,
+        durables_staled,
+        summary_json,
+        error,
+        dry_run,
+        config_json
+      FROM dream_runs
+      WHERE status = 'completed'
+        AND completed_at IS NOT NULL
+      ORDER BY completed_at DESC
+      LIMIT 1
+    `,
+  });
+
+  const row = result.rows[0];
+  return row ? mapRunRow(row) : null;
+}
+
+/**
  * Loads the persisted action audit trail for one run.
  *
  * @param executor - SQL executor used for the lookup.

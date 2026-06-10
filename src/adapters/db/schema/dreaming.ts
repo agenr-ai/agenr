@@ -116,6 +116,29 @@ const CREATE_DREAM_PROPOSALS_OPEN_ISSUE_INDEX_SQL = `
   ON dream_proposals(review_status, group_id, issue_kind)
 `;
 
+/**
+ * Tracks episodes already mined by an applied extract pass so dreaming never
+ * re-mines the same session evidence.
+ *
+ * Intentionally absent from DREAMING_TABLE_NAMES: it was added after the
+ * required-initialized-tables check shipped, so existing databases must be
+ * able to gain it in place through CREATE TABLE IF NOT EXISTS instead of
+ * being rejected as uninitialized.
+ */
+const CREATE_DREAM_SYNTHESIZED_EPISODES_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS dream_synthesized_episodes (
+    episode_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    synthesized_at TEXT NOT NULL
+  )
+`;
+
+/** Index for synthesized-episode lookups by run id. */
+const CREATE_DREAM_SYNTHESIZED_EPISODES_RUN_ID_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_dream_synthesized_episodes_run_id
+  ON dream_synthesized_episodes(run_id)
+`;
+
 /** Creates the persisted dreaming state table. */
 const CREATE_DREAM_STATE_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS dream_state (
@@ -166,6 +189,8 @@ const DREAMING_EXTENDED_SCHEMA_STATEMENTS = [
   CREATE_DREAM_PROPOSALS_CREATED_AT_INDEX_SQL,
   CREATE_DREAM_PROPOSALS_REVIEW_STATUS_INDEX_SQL,
   CREATE_DREAM_PROPOSALS_OPEN_ISSUE_INDEX_SQL,
+  CREATE_DREAM_SYNTHESIZED_EPISODES_TABLE_SQL,
+  CREATE_DREAM_SYNTHESIZED_EPISODES_RUN_ID_INDEX_SQL,
   CREATE_DREAM_STATE_TABLE_SQL,
   CREATE_PROFILE_SNAPSHOTS_TABLE_SQL,
   CREATE_PROFILE_SNAPSHOTS_CREATED_AT_INDEX_SQL,

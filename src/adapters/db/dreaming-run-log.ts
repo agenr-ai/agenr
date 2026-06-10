@@ -25,6 +25,7 @@ export {
   getDreamRunActions,
   getDreamRunHistory,
   getDreamRunProposals,
+  getLastCompletedDreamRun,
   getLastDreamRun,
   getRecentAppliedLightRuns,
   listDreamProposalBacklog,

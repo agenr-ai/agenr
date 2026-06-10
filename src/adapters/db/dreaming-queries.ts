@@ -212,24 +212,31 @@ export async function listReconcileDurables(
   return result.rows.map((row) => mapDurableRow(row));
 }
 
+/** SQL predicate excluding episodes already mined by an applied extract pass. */
+const UNSYNTHESIZED_EPISODE_CLAUSE = `NOT EXISTS (
+        SELECT 1
+        FROM dream_synthesized_episodes AS s
+        WHERE s.episode_id = episodes.id
+      )`;
+
 /**
- * Lists recent episode narrative evidence newer than a timestamp.
+ * Lists active episode evidence not yet mined by an applied extract pass.
  *
  * Episodes are first-class dreaming evidence: the extract stage mines durable
- * candidates from their summaries. Rows are ordered oldest-first so candidate
- * provenance follows the natural session timeline.
+ * candidates from their summaries exactly once. Selection prefers the newest
+ * sessions so a post-session light run mines the session that just ended, but
+ * the selected rows are returned oldest-first so candidate provenance follows
+ * the natural session timeline within one run.
  *
  * @param executor - SQL executor used for the lookup.
- * @param since - ISO timestamp lower bound (exclusive of older rows).
  * @param options - Optional project filter and row cap.
- * @returns Active episode evidence rows ordered oldest-first.
+ * @returns Unsynthesized episode evidence rows ordered oldest-first.
  */
-export async function listEpisodeEvidenceSince(
+export async function listUnsynthesizedEpisodeEvidence(
   executor: SqlExecutor,
-  since: string,
   options: { project?: string; limit?: number } = {},
 ): Promise<DreamEpisodeEvidence[]> {
-  const args: Array<string | number> = [since];
+  const args: Array<string | number> = [];
   let projectClause = "";
   const project = options.project?.trim();
   if (project) {
@@ -242,19 +249,23 @@ export async function listEpisodeEvidenceSince(
 
   const result = await executor.execute({
     sql: `
-      SELECT
-        id,
-        summary,
-        started_at,
-        ended_at,
-        source_id,
-        project
-      FROM episodes
-      WHERE created_at >= ?
-        AND ${buildActiveEpisodeClause()}
-        ${projectClause}
+      SELECT *
+      FROM (
+        SELECT
+          id,
+          summary,
+          started_at,
+          ended_at,
+          source_id,
+          project
+        FROM episodes
+        WHERE ${UNSYNTHESIZED_EPISODE_CLAUSE}
+          AND ${buildActiveEpisodeClause()}
+          ${projectClause}
+        ORDER BY started_at DESC, id DESC
+        LIMIT ?
+      )
       ORDER BY started_at ASC, id ASC
-      LIMIT ?
     `,
     args,
   });
@@ -267,6 +278,59 @@ export async function listEpisodeEvidenceSince(
     sessionId: readOptionalString(row, "source_id") ?? null,
     project: readOptionalString(row, "project") ?? null,
   }));
+}
+
+/**
+ * Counts active episodes not yet mined by an applied extract pass.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param project - Optional project filter.
+ * @returns Number of active episodes still awaiting synthesis.
+ */
+export async function countUnsynthesizedEpisodes(executor: SqlExecutor, project?: string): Promise<number> {
+  const args: Array<string> = [];
+  let projectClause = "";
+  if (project?.trim()) {
+    projectClause = " AND project = ?";
+    args.push(project.trim());
+  }
+
+  const result = await executor.execute({
+    sql: `
+      SELECT COUNT(*) AS total
+      FROM episodes
+      WHERE ${UNSYNTHESIZED_EPISODE_CLAUSE}
+        AND ${buildActiveEpisodeClause()}
+        ${projectClause}
+    `,
+    args,
+  });
+
+  const row = result.rows[0];
+  return row ? readNumber(row, "total", 0) : 0;
+}
+
+/**
+ * Records episodes mined by an applied extract pass so later runs skip them.
+ *
+ * The first synthesis record wins: re-marking an already-synthesized episode
+ * keeps the original run attribution.
+ *
+ * @param executor - SQL executor used for the writes.
+ * @param input - Episode ids plus the run id and timestamp to attribute.
+ */
+export async function markEpisodesSynthesized(executor: SqlExecutor, input: { episodeIds: string[]; runId: string; synthesizedAt: string }): Promise<void> {
+  const episodeIds = normalizeStringArray(input.episodeIds);
+  for (const episodeId of episodeIds) {
+    await executor.execute({
+      sql: `
+        INSERT INTO dream_synthesized_episodes (episode_id, run_id, synthesized_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(episode_id) DO NOTHING
+      `,
+      args: [episodeId, input.runId.trim(), input.synthesizedAt],
+    });
+  }
 }
 
 const HOST_STORE_SOURCE_CLAUSE = `(source_file LIKE 'skeln-session:%' OR source_file LIKE 'openclaw-session:%')`;

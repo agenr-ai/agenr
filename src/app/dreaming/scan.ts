@@ -27,8 +27,9 @@ export interface DreamScanDeps {
 export async function runDreamScan(options: DreamScanOptions, deps: DreamScanDeps): Promise<DreamScanSummary> {
   const since = await resolveScanSince(options, deps.port);
 
-  const [episodesSinceLastRun, ingestFilesSinceLastRun, durablesCreatedSinceLastRun, unsynthesizedImportanceSum] = await Promise.all([
+  const [episodesSinceLastRun, episodesPendingSynthesis, ingestFilesSinceLastRun, durablesCreatedSinceLastRun, unsynthesizedImportanceSum] = await Promise.all([
     deps.port.countEpisodesSince(since, options.project),
+    deps.port.countUnsynthesizedEpisodes(options.project),
     deps.port.countIngestFilesSince(since),
     deps.port.countDurablesCreatedSince(since, options.project),
     deps.port.sumDurableImportanceCreatedSince(since, options.project),
@@ -42,16 +43,17 @@ export async function runDreamScan(options: DreamScanOptions, deps: DreamScanDep
       observedAt: options.now().toISOString(),
     });
   }
-  if (episodesSinceLastRun > 0) {
+  if (episodesPendingSynthesis > 0) {
     evidenceRefs.push({
       kind: "episode",
-      locator: `since:${since}`,
+      locator: `pending_synthesis:${episodesPendingSynthesis}`,
       observedAt: options.now().toISOString(),
     });
   }
 
   return {
     episodesSinceLastRun,
+    episodesPendingSynthesis,
     ingestFilesSinceLastRun,
     durablesCreatedSinceLastRun,
     evidenceRefs,
@@ -62,8 +64,12 @@ export async function runDreamScan(options: DreamScanOptions, deps: DreamScanDep
 /**
  * Resolves the scan cursor for one run.
  *
+ * The cursor must come from the last *completed* run. The in-flight run's own
+ * row already exists with status `running` when scan executes, so reading the
+ * unfiltered latest run would always reset the cursor to the epoch.
+ *
  * @param options - Scan options that may request a full-backlog pass.
- * @param port - Dreaming persistence port used to read the latest run.
+ * @param port - Dreaming persistence port used to read the latest completed run.
  * @returns ISO lower-bound timestamp for evidence reads.
  */
 async function resolveScanSince(options: Pick<DreamScanOptions, "fullBacklog">, port: DreamPort): Promise<string> {
@@ -71,7 +77,6 @@ async function resolveScanSince(options: Pick<DreamScanOptions, "fullBacklog">, 
     return "1970-01-01T00:00:00.000Z";
   }
 
-  const lastRun = await port.getLastRun();
-  const lastSuccessfulAt = lastRun?.status === "completed" ? lastRun.completedAt : null;
-  return lastSuccessfulAt ?? "1970-01-01T00:00:00.000Z";
+  const lastCompletedRun = await port.getLastCompletedRun();
+  return lastCompletedRun?.completedAt ?? "1970-01-01T00:00:00.000Z";
 }

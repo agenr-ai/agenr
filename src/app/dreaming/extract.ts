@@ -32,7 +32,6 @@ export interface DreamExtractUsage {
 export interface DreamExtractOptions {
   now(): Date;
   project?: string;
-  fullBacklog?: boolean;
   maxEpisodes: number;
   contextLookupEnabled: boolean;
   /** Remaining LLM budget for the run; mining stops once it is exhausted. */
@@ -58,14 +57,22 @@ export interface DreamExtractResult {
   summary: DreamExtractSummary;
   usage: DreamExtractUsage;
   warnings: string[];
+  /** Ids of episodes actually mined, so apply runs can mark them synthesized. */
+  scannedEpisodeIds: string[];
 }
 
 const DEFAULT_CANDIDATE_IMPORTANCE = 5;
 const CLAIM_KEY_PROMPT_CONTEXT_LIMIT = 24;
 
 /**
- * Mines durable candidates from recent episode evidence and classifies each
- * candidate against the active corpus with a context-lookup dedup step.
+ * Mines durable candidates from unsynthesized episode evidence and classifies
+ * each candidate against the active corpus with a context-lookup dedup step.
+ *
+ * Episode selection is marker-based, not time-based: only active episodes
+ * without a `dream_synthesized_episodes` record are eligible, so an episode is
+ * mined at most once across all tiers. Selection prefers the newest sessions,
+ * which lets a post-session light run mine the session that just ended while
+ * older backlog drains across subsequent runs.
  *
  * The stage never writes durable rows. It returns classified candidates so the
  * apply path can insert `new` candidates and the temporalize stage can revise
@@ -74,7 +81,7 @@ const CLAIM_KEY_PROMPT_CONTEXT_LIMIT = 24;
  *
  * @param options - Scope, budget, and clock controls for the run.
  * @param deps - Persistence port and optional mining LLM factory.
- * @returns Classified candidates plus usage and summary counters.
+ * @returns Classified candidates plus usage, summary counters, and mined episode ids.
  */
 export async function runExtractStage(options: DreamExtractOptions, deps: DreamExtractDeps): Promise<DreamExtractResult> {
   const emptyUsage: DreamExtractUsage = { inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0 };
@@ -88,22 +95,22 @@ export async function runExtractStage(options: DreamExtractOptions, deps: DreamE
   };
 
   if (!deps.createExtractLlm) {
-    return { status: "completed", candidates: [], summary: emptySummary, usage: emptyUsage, warnings: [] };
+    return { status: "completed", candidates: [], summary: emptySummary, usage: emptyUsage, warnings: [], scannedEpisodeIds: [] };
   }
 
-  const since = await resolveExtractSince(deps.port, options.fullBacklog === true);
-  const episodes = await deps.port.listEpisodeEvidenceSince(since, {
+  const episodes = await deps.port.listUnsynthesizedEpisodeEvidence({
     ...(options.project ? { project: options.project } : {}),
     limit: options.maxEpisodes,
   });
 
   if (episodes.length === 0) {
-    return { status: "completed", candidates: [], summary: emptySummary, usage: emptyUsage, warnings: [] };
+    return { status: "completed", candidates: [], summary: emptySummary, usage: emptyUsage, warnings: [], scannedEpisodeIds: [] };
   }
 
   const llm = deps.createExtractLlm();
   const mined: MinedCandidate[] = [];
   const warnings: string[] = [];
+  const scannedEpisodeIds: string[] = [];
   let episodesScanned = 0;
   let status: DreamExtractStatus = "completed";
 
@@ -134,6 +141,7 @@ export async function runExtractStage(options: DreamExtractOptions, deps: DreamE
       existingClaimKeyContext,
     });
     episodesScanned += 1;
+    scannedEpisodeIds.push(episode.id);
     warnings.push(...extraction.warnings.map((warning) => `Episode ${episode.id}: ${warning}`));
     if (readUsage(llm).estimatedCostUsd >= options.costCapUsd) {
       status = "cost_capped";
@@ -162,7 +170,7 @@ export async function runExtractStage(options: DreamExtractOptions, deps: DreamE
     durablesInserted: 0,
   };
 
-  return { status, candidates, summary, usage: readUsage(llm), warnings };
+  return { status, candidates, summary, usage: readUsage(llm), warnings, scannedEpisodeIds };
 }
 
 /**
@@ -437,17 +445,6 @@ export function buildDurableFromCandidate(
   }
 
   return durable;
-}
-
-/** Resolves the evidence lower bound from the last completed dreaming run. */
-async function resolveExtractSince(port: DreamPort, fullBacklog: boolean): Promise<string> {
-  if (fullBacklog) {
-    return "1970-01-01T00:00:00.000Z";
-  }
-
-  const lastRun = await port.getLastRun();
-  const lastSuccessfulAt = lastRun?.status === "completed" ? lastRun.completedAt : null;
-  return lastSuccessfulAt ?? "1970-01-01T00:00:00.000Z";
 }
 
 /** Wraps one episode summary in a single-message transcript for mining. */

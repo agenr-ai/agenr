@@ -8,6 +8,16 @@ import { createTestClient, insertDurable } from "../../helpers/dreaming-reconcil
 
 const clients: Client[] = [];
 
+async function insertEpisode(client: Client, id: string, summary: string): Promise<void> {
+  await client.execute({
+    sql: `
+      INSERT INTO episodes (id, source, source_id, started_at, ended_at, summary, created_at, updated_at)
+      VALUES (?, 'skeln', ?, '2026-06-05T10:00:00.000Z', '2026-06-05T11:00:00.000Z', ?, '2026-06-05T11:00:00.000Z', '2026-06-05T11:00:00.000Z')
+    `,
+    args: [id, `session-${id}`, summary],
+  });
+}
+
 describe("maybeRunLightDream", () => {
   afterEach(async () => {
     resetDreamingConcurrencyStateForTests();
@@ -79,6 +89,40 @@ describe("maybeRunLightDream", () => {
       reason: "importance_below_threshold",
       unsynthesizedImportanceSum: 6,
     });
+    expect(await port.getLastRun()).toBeNull();
+  });
+
+  it("runs a post-session light dream when an unsynthesized episode exists", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+    await insertEpisode(client, "ep-fresh", "Session that just ended and still needs mining.");
+
+    const result = await maybeRunLightDream(
+      { trigger: "post_session", now: () => new Date("2026-06-05T12:05:00.000Z") },
+      {
+        port,
+        config: { dreaming: { triggers: { minIntervalMinutes: 0 } } },
+      },
+    );
+
+    expect(result.status).toBe("ran");
+  });
+
+  it("skips the post-session trigger when every episode is already synthesized", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+    await insertEpisode(client, "ep-mined", "Session already mined by an earlier run.");
+    await port.markEpisodesSynthesized({ episodeIds: ["ep-mined"], runId: "run-prior", synthesizedAt: "2026-06-05T11:00:00.000Z" });
+
+    const result = await maybeRunLightDream(
+      { trigger: "post_session", now: () => new Date("2026-06-05T12:05:00.000Z") },
+      {
+        port,
+        config: { dreaming: { triggers: { minIntervalMinutes: 0 } } },
+      },
+    );
+
+    expect(result).toEqual({ status: "skipped", reason: "no_evidence", unsynthesizedImportanceSum: 0 });
     expect(await port.getLastRun()).toBeNull();
   });
 

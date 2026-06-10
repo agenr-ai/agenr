@@ -60,9 +60,9 @@ agenr dream review <proposalId> --decision apply --reason "verified safe"
 
 Supported tiers:
 
-- `light` - bounded background tier used by session-end and accumulated-importance triggers. It runs scan, extract, temporalize, and project, but skips reconcile and prune. Extract reads at most two episode sessions per run by default, and skipped stages are recorded in `stages_skipped`.
-- `standard` - default operator tier. It runs the incremental pipeline since the last successful run, including prune.
-- `deep` - operator full-backlog tier. It rereads all episode and durable evidence, audits same-entity claim-key aliases across the active corpus, and still relies on content hashes, claim-key context lookup, and supersession to avoid duplicate writes. Use it for weekly maintenance or after large corpus imports.
+- `light` - bounded background tier used by session-end and accumulated-importance triggers. It runs scan, extract, temporalize, and project, but skips reconcile and prune. Extract reads at most two episode sessions per run by default, preferring the newest unsynthesized sessions so a post-session run mines the session that just ended, and skipped stages are recorded in `stages_skipped`.
+- `standard` - default operator tier. It runs the incremental pipeline since the last completed run, including prune.
+- `deep` - operator full-backlog tier. It rereads all durable evidence, audits same-entity claim-key aliases across the active corpus, and still relies on content hashes, claim-key context lookup, and supersession to avoid duplicate writes. Episode mining stays marker-based on every tier: an episode already recorded in `dream_synthesized_episodes` is never re-mined, even on `deep`. Use `deep` for weekly maintenance or after large corpus imports.
 
 ### Deep tier scheduling
 
@@ -127,14 +127,15 @@ Dreaming state is stored in:
 - `dream_run_actions` - per-action audit trail
 - `dream_proposals` - unresolved structural proposals
 - `dream_state` - lightweight cross-run bookkeeping
+- `dream_synthesized_episodes` - episodes already mined by an applied extract pass, keyed by episode id with the originating run id and timestamp
 - `profile_snapshots` - ordered profile durable ids, directive ids, as-of time, content hash, run id, and creation time
 
 These tables ship alongside `durables` during database initialization. Older persisted databases require `agenr db reset`.
 
 ## Pipeline
 
-1. **Scan** - load active durables and claim-key lifecycle counters for the requested scope.
-2. **Extract** - mine durable candidates from episode evidence since the last successful run using the dreaming-specific extract prompt in `src/core/dreaming/prompts.ts` (not the ingest transcript prompt). When context lookup is enabled, the prompt includes bounded active claim-key context selected from the episode project and likely claim-key entity prefixes so the model can skip covered facts or reuse exact keys. The stage then classifies each candidate against the active corpus:
+1. **Scan** - load active durables and claim-key lifecycle counters for the requested scope. Time-based counters use the last _completed_ run as their cursor, and `episodesPendingSynthesis` reports how many active episodes still lack a `dream_synthesized_episodes` record.
+2. **Extract** - mine durable candidates from unsynthesized episode evidence using the dreaming-specific extract prompt in `src/core/dreaming/prompts.ts` (not the ingest transcript prompt). Episode selection is marker-based: only active episodes without a `dream_synthesized_episodes` record are eligible, the newest sessions are selected first up to the per-run cap, and the selected rows are mined in chronological order. Apply runs record each mined episode in `dream_synthesized_episodes` (even when every candidate was already known), so an episode is mined at most once across all runs and tiers; dry runs do not mark episodes. When context lookup is enabled, the prompt includes bounded active claim-key context selected from the episode project and likely claim-key entity prefixes so the model can skip covered facts or reuse exact keys. The stage then classifies each candidate against the active corpus:
    - content-hash equality marks a candidate `known` (dropped, no write or embedding);
    - an active exact claim-key family match (when context-lookup is enabled) marks it `refines` and records the predecessor for the temporalize stage;
    - a conservative same-entity claim-key sibling or project-scoped text overlap also marks a near miss as `refines`, which is especially important for `light` runs that skip reconcile;
@@ -142,7 +143,7 @@ These tables ship alongside `durables` during database initialization. Older per
    - apply persists episode provenance on each insert: `source_file` (`episode:<id>` or `episode-session:<sessionId>:<id>`), `source_context`, `valid_from` (episode end or start), conservative `project` scope via `resolveDurableProjectScope()` (explicit extract output, claim-key entity match, or visible workspace reference - never a blind session-workspace stamp), and episode support metadata even when claim keys are still missing.
    - when the host already wrote `agenr_store` durables in that session window, passes those rows into the mining prompt and classifies re-emitted duplicates as `known` using session claim keys and normalized content hashes. Episode mining still runs so implicit preferences and other facts not captured live can be mined normally.
 3. **Reconcile** - run deterministic claim-key quality maintenance (missing-key backfill, malformed-key normalization, entity-family convergence, same-entity alias convergence on `deep`, duplicate exclusive-slot collapse, and related structural fixes covered by scenario fixtures).
-4. **Temporalize** - apply supersession-based revision to each `refines` candidate. The stage never rewrites content in place: it inserts a successor durable that inherits the predecessor's canonical claim key, closes the predecessor's valid-time window at the revision instant, and links the predecessor to the successor through `superseded_by`. Point-in-time recall before the revision still surfaces the predecessor; current-state recall surfaces the successor.
+4. **Temporalize** - apply supersession-based revision to each `refines` candidate. The stage never rewrites content in place: it inserts a successor durable that inherits the predecessor's canonical claim key, closes the predecessor's valid-time window at the revision instant, and links the predecessor to the successor through `superseded_by`. Point-in-time recall before the revision still surfaces the predecessor; current-state recall surfaces the successor. Revisions whose episode evidence (`validFrom`) predates the predecessor's belief start are skipped, so backlog mining can never overwrite a newer belief with stale facts.
 5. **Project** - rank current active durables into a bounded profile snapshot candidate and keep directive ids separate. Dry runs and project-scoped runs report the projected bundle without writing or globally activating it. Successful unscoped apply runs insert a `profile_snapshots` row and mark it active in `dream_state` in the final workflow transaction.
 6. **Prune** - on `standard` and `deep`, close validity on only active low-signal candidates after applying protections for current and projected profile ids, directives, `core` expiry, high importance, and recent recall. The stage is deterministic and writes `stale` actions only for actual apply mutations.
 7. **Apply** - when `--apply` is set, persist accepted extract inserts, reconcile mutations, temporalize revisions, prune staleness closes, and successful unscoped profile projection; otherwise emit a dry-run summary only.
@@ -226,7 +227,7 @@ Host adapters do not expose dreaming tools. They launch bounded `light` runs in 
 - Skeln writes the current session episode from `session_shutdown`, then evaluates `triggers.postSessionLightDream`.
 - OpenClaw and Skeln both evaluate the accumulated-importance trigger after a successful `agenr_store` call.
 
-The trigger gate skips when the light tier is disabled, another dreaming run holds the process-wide lock (`run_in_progress`), an episode write is still in progress for store-triggered importance dreams (`episode_write_in_progress`), the interval guard has not elapsed, no unsynthesized evidence exists, or the accumulated durable importance is below `triggers.importanceThreshold`.
+The trigger gate skips when the light tier is disabled, another dreaming run holds the process-wide lock (`run_in_progress`), an episode write is still in progress for store-triggered importance dreams (`episode_write_in_progress`), the interval guard has not elapsed, no unsynthesized evidence exists (`no_evidence`: no episodes pending synthesis, no new ingest files, and no new durables since the last completed run), or the accumulated durable importance is below `triggers.importanceThreshold`.
 
 ### Concurrency and serialization
 

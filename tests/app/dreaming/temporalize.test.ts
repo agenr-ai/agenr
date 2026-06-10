@@ -23,6 +23,7 @@ function buildRefineCandidate(overrides: Partial<DreamCandidate> & Pick<DreamCan
     disposition: "refines",
     refinesDurableId: overrides.refinesDurableId,
     evidenceRefs: overrides.evidenceRefs ?? [{ kind: "episode", locator: "ep-1", observedAt: "2026-04-04T11:00:00.000Z" }],
+    ...(overrides.validFrom ? { validFrom: overrides.validFrom } : {}),
   };
 }
 
@@ -130,6 +131,62 @@ describe("dreaming temporalize stage", () => {
 
     const predecessor = await readDurableRow(client, "home-1");
     expect(predecessor?.superseded_by).toBeNull();
+  });
+
+  it("skips revisions when the episode evidence predates the predecessor belief", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+
+    await insertDurable(client, {
+      id: "home-1",
+      subject: "Home base",
+      content: "Home base is now San Francisco for the foreseeable future.",
+      type: "fact",
+      claim_key: "user/home_base",
+      claim_key_status: "trusted",
+      valid_from: "2026-04-01T00:00:00.000Z",
+    });
+
+    const runId = await port.createRun({ tier: "standard", dryRun: false });
+    const candidate = buildRefineCandidate({
+      refinesDurableId: "home-1",
+      content: "Home base is Boston for the foreseeable future.",
+      validFrom: "2026-03-01T00:00:00.000Z",
+    });
+
+    const result = await runTemporalizeStage({ runId, candidates: [candidate], apply: true, now: () => TEST_NOW }, { port, embedding });
+
+    expect(result.summary.revisionsIdentified).toBe(0);
+    expect(result.summary.revisionsApplied).toBe(0);
+    expect(result.summary.revisionsSkipped).toBe(1);
+
+    const predecessor = await readDurableRow(client, "home-1");
+    expect(predecessor?.superseded_by).toBeNull();
+    expect(predecessor?.valid_to).toBeNull();
+  });
+
+  it("applies revisions when the episode evidence is newer than the predecessor belief", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+
+    await insertDurable(client, {
+      id: "home-1",
+      subject: "Home base",
+      content: "Home base is Boston for the foreseeable future.",
+      type: "fact",
+      claim_key: "user/home_base",
+      claim_key_status: "trusted",
+      valid_from: "2026-01-01T00:00:00.000Z",
+    });
+
+    const runId = await port.createRun({ tier: "standard", dryRun: false });
+    const candidate = buildRefineCandidate({ refinesDurableId: "home-1", validFrom: "2026-04-04T11:00:00.000Z" });
+
+    const result = await runTemporalizeStage({ runId, candidates: [candidate], apply: true, now: () => TEST_NOW }, { port, embedding });
+
+    expect(result.summary.revisionsApplied).toBe(1);
+    const predecessor = await readDurableRow(client, "home-1");
+    expect(predecessor?.superseded_by).toBeTruthy();
   });
 
   it("skips revisions when the predecessor is no longer active", async () => {

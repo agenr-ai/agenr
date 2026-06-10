@@ -75,6 +75,14 @@ export async function runTemporalizeStage(options: DreamTemporalizeOptions, deps
       continue;
     }
 
+    if (isStaleEvidenceRevision(candidate, predecessor)) {
+      // Backlog mining can surface an episode older than the current belief.
+      // Old evidence must never supersede a newer belief, so the revision is
+      // dropped rather than rewriting present state with stale facts.
+      revisionsSkipped += 1;
+      continue;
+    }
+
     revisionsIdentified += 1;
     if (!options.apply) {
       continue;
@@ -152,6 +160,28 @@ async function applyRevision(
       createdAt: nowIso,
     });
   });
+}
+
+/**
+ * Returns whether a refine candidate's evidence predates the predecessor belief.
+ *
+ * The candidate's `validFrom` is the episode observation time. When it is
+ * strictly older than the predecessor's belief start (`valid_from`, falling
+ * back to `created_at`), the evidence is stale and must not revise the newer
+ * belief. Unparseable timestamps keep the revision eligible.
+ */
+function isStaleEvidenceRevision(candidate: Pick<DreamCandidate, "validFrom">, predecessor: Durable): boolean {
+  if (!candidate.validFrom) {
+    return false;
+  }
+
+  const evidenceMs = Date.parse(candidate.validFrom);
+  const beliefStartMs = Date.parse(predecessor.valid_from ?? predecessor.created_at);
+  if (Number.isNaN(evidenceMs) || Number.isNaN(beliefStartMs)) {
+    return false;
+  }
+
+  return evidenceMs < beliefStartMs;
 }
 
 /** Decides whether closing the predecessor window keeps a strictly ordered range. */

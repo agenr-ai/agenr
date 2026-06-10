@@ -26,6 +26,7 @@ const DREAM_COMPLETION_SUMMARY_KEYS = new Set<string>([
 ]);
 const DREAM_SCAN_KEYS = new Set<string>([
   "episodesSinceLastRun",
+  "episodesPendingSynthesis",
   "ingestFilesSinceLastRun",
   "durablesCreatedSinceLastRun",
   "evidenceRefs",
@@ -129,8 +130,14 @@ function parseDreamScanSummary(value: unknown, path: string, issues: ValidationI
 
   pushUnexpectedFields(scan, DREAM_SCAN_KEYS, path, issues);
 
+  const episodesPendingSynthesis =
+    scan.episodesPendingSynthesis === undefined
+      ? undefined
+      : parseRequiredNonNegativeInteger(scan.episodesPendingSynthesis, `${path}.episodesPendingSynthesis`, issues);
+
   return {
     episodesSinceLastRun: parseRequiredNonNegativeInteger(scan.episodesSinceLastRun, `${path}.episodesSinceLastRun`, issues) ?? 0,
+    ...(episodesPendingSynthesis !== undefined ? { episodesPendingSynthesis } : {}),
     ingestFilesSinceLastRun: parseRequiredNonNegativeInteger(scan.ingestFilesSinceLastRun, `${path}.ingestFilesSinceLastRun`, issues) ?? 0,
     durablesCreatedSinceLastRun: parseRequiredNonNegativeInteger(scan.durablesCreatedSinceLastRun, `${path}.durablesCreatedSinceLastRun`, issues) ?? 0,
     evidenceRefs: parseEvidenceRefs(scan.evidenceRefs, `${path}.evidenceRefs`, issues) ?? [],

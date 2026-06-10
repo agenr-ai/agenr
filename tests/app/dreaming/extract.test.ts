@@ -168,6 +168,43 @@ describe("dreaming extract stage", () => {
     expect(result.summary.knownCandidates).toBe(1);
   });
 
+  it("skips episodes already marked synthesized and reports mined episode ids", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+
+    await insertEpisode(client, { id: "ep-old", summary: "Older session already mined by a previous run." });
+    await insertEpisode(client, { id: "ep-new", summary: "Fresh session that still needs mining." });
+    await port.markEpisodesSynthesized({ episodeIds: ["ep-old"], runId: "run-prior", synthesizedAt: "2026-04-04T12:00:00.000Z" });
+
+    const llm = new FakeExtractLlm([{ type: "preference", subject: "Coffee", content: "Prefers oat milk in coffee.", claim_key: "user/coffee_preference" }]);
+
+    const result = await runExtractStage(
+      { now: () => TEST_NOW, maxEpisodes: 8, contextLookupEnabled: true, costCapUsd: 10 },
+      { port, createExtractLlm: () => llm },
+    );
+
+    expect(result.summary.episodesScanned).toBe(1);
+    expect(result.scannedEpisodeIds).toEqual(["ep-new"]);
+  });
+
+  it("prefers the newest episodes under the cap and mines them in chronological order", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+
+    await insertEpisode(client, { id: "ep-oldest", summary: "Oldest backlog session.", startedAt: "2026-04-01T10:00:00.000Z" });
+    await insertEpisode(client, { id: "ep-middle", summary: "Middle backlog session.", startedAt: "2026-04-02T10:00:00.000Z" });
+    await insertEpisode(client, { id: "ep-newest", summary: "Session that just ended.", startedAt: "2026-04-03T10:00:00.000Z" });
+
+    const llm = new FakeExtractLlm([]);
+
+    const result = await runExtractStage(
+      { now: () => TEST_NOW, maxEpisodes: 2, contextLookupEnabled: true, costCapUsd: 10 },
+      { port, createExtractLlm: () => llm },
+    );
+
+    expect(result.scannedEpisodeIds).toEqual(["ep-middle", "ep-newest"]);
+  });
+
   it("reports cost capped after the extraction call that exhausts budget", async () => {
     const client = await createTestClient(clients);
     const port = createDreamPort(client);

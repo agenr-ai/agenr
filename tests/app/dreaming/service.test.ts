@@ -40,13 +40,15 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((directory) => rm(directory, { force: true, recursive: true })));
 });
 
-async function insertEpisode(client: Client, id: string, summary: string): Promise<void> {
+async function insertEpisode(client: Client, id: string, summary: string, overrides: { startedAt?: string; createdAt?: string } = {}): Promise<void> {
+  const startedAt = overrides.startedAt ?? "2026-04-04T10:00:00.000Z";
+  const createdAt = overrides.createdAt ?? "2026-04-04T11:00:00.000Z";
   await client.execute({
     sql: `
       INSERT INTO episodes (id, source, source_id, started_at, ended_at, summary, created_at, updated_at)
-      VALUES (?, 'openclaw', ?, '2026-04-04T10:00:00.000Z', '2026-04-04T11:00:00.000Z', ?, '2026-04-04T11:00:00.000Z', '2026-04-04T11:00:00.000Z')
+      VALUES (?, 'openclaw', ?, ?, '2026-04-04T11:00:00.000Z', ?, ?, ?)
     `,
-    args: [id, `session-${id}`, summary],
+    args: [id, `session-${id}`, startedAt, summary, createdAt, createdAt],
   });
 }
 
@@ -57,11 +59,13 @@ function createDreamPortDouble(overrides: Partial<DreamPort> = {}): DreamPort {
     completeRun: vi.fn(async () => undefined),
     logRunAction: vi.fn(async () => undefined),
     getLastRun: vi.fn(async () => null),
+    getLastCompletedRun: vi.fn(async () => null),
     getRunHistory: vi.fn(async () => []),
     getRecentAppliedLightRuns: vi.fn(async () => []),
     getRunActions: vi.fn(async () => []),
     getRunProposals: vi.fn(async () => []),
     getProposal: vi.fn(async () => null),
+    getProposalStagingActionDetails: vi.fn(async () => null),
     reviewProposal: vi.fn(async () => false),
     listProposalBacklog: vi.fn(async () => []),
     getHealthStats: vi.fn(async () => ({
@@ -76,7 +80,9 @@ function createDreamPortDouble(overrides: Partial<DreamPort> = {}): DreamPort {
       quality: { high: 0, medium: 0, low: 0, average: 0 },
     })),
     listReconcileDurables: vi.fn(async () => []),
-    listEpisodeEvidenceSince: vi.fn(async () => []),
+    listUnsynthesizedEpisodeEvidence: vi.fn(async () => []),
+    countUnsynthesizedEpisodes: vi.fn(async () => 0),
+    markEpisodesSynthesized: vi.fn(async () => undefined),
     listSessionHostStoreDurables: vi.fn(async () => []),
     findActiveDurablesByClaimKey: vi.fn(async () => []),
     listActiveClaimKeyContext: vi.fn(async () => []),
@@ -418,6 +424,126 @@ describe("runDream", () => {
     );
 
     expect(result.completionSummary?.extract?.episodesScanned).toBe(3);
+  });
+
+  it("never re-mines episodes that an apply run already synthesized", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+
+    await insertEpisode(client, "ep-1", "Session about the user's coffee preferences.");
+
+    const first = await runDream(
+      { tier: "light", apply: true, verbose: false, json: false, skipBackup: true },
+      {
+        port,
+        config: null,
+        now: () => new Date("2026-06-05T12:00:00.000Z"),
+        createExtractLlm: () =>
+          new PipelineExtractLlm([{ type: "preference", subject: "Coffee", content: "Prefers oat milk in coffee.", claim_key: "user/coffee_preference" }]),
+        embedding: createDeterministicEmbedding(),
+      },
+    );
+
+    expect(first.completionSummary?.extract?.episodesScanned).toBe(1);
+    expect(first.completionSummary?.extract?.durablesInserted).toBe(1);
+
+    // A rephrased mining output must not become a duplicate durable: the
+    // episode was synthesized by the first run and is never read again.
+    const second = await runDream(
+      { tier: "light", apply: true, verbose: false, json: false, skipBackup: true },
+      {
+        port,
+        config: null,
+        now: () => new Date("2026-06-05T13:00:00.000Z"),
+        createExtractLlm: () =>
+          new PipelineExtractLlm([
+            { type: "preference", subject: "Coffee habits", content: "Oat milk is the user's go-to coffee milk.", claim_key: "user/coffee_milk" },
+          ]),
+        embedding: createDeterministicEmbedding(),
+      },
+    );
+
+    expect(second.completionSummary?.extract?.episodesScanned).toBe(0);
+    expect(second.completionSummary?.extract?.durablesInserted).toBe(0);
+
+    const synthesized = await client.execute("SELECT episode_id, run_id FROM dream_synthesized_episodes");
+    expect(synthesized.rows).toHaveLength(1);
+    expect(synthesized.rows[0]?.episode_id).toBe("ep-1");
+    expect(synthesized.rows[0]?.run_id).toBe(first.runId);
+  });
+
+  it("does not mark episodes synthesized during dry runs", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+
+    await insertEpisode(client, "ep-1", "Session about the user's coffee preferences.");
+
+    const dryRun = await runDream(
+      { tier: "light", apply: false, verbose: false, json: false },
+      {
+        port,
+        config: null,
+        now: () => new Date("2026-06-05T12:00:00.000Z"),
+        createExtractLlm: () => new PipelineExtractLlm([]),
+      },
+    );
+
+    expect(dryRun.completionSummary?.extract?.episodesScanned).toBe(1);
+
+    const synthesized = await client.execute("SELECT COUNT(*) AS count FROM dream_synthesized_episodes");
+    expect(Number(synthesized.rows[0]?.count)).toBe(0);
+
+    const applyRun = await runDream(
+      { tier: "light", apply: true, verbose: false, json: false, skipBackup: true },
+      {
+        port,
+        config: null,
+        now: () => new Date("2026-06-05T13:00:00.000Z"),
+        createExtractLlm: () => new PipelineExtractLlm([]),
+        embedding: createDeterministicEmbedding(),
+      },
+    );
+
+    expect(applyRun.completionSummary?.extract?.episodesScanned).toBe(1);
+  });
+
+  it("scans evidence since the last completed run instead of the in-flight run", async () => {
+    const client = await createTestClient(clients);
+    const port = createDreamPort(client);
+
+    await insertEpisode(client, "ep-1", "Session before the first run.", { createdAt: "2026-06-05T11:00:00.000Z" });
+
+    const first = await runDream(
+      { tier: "light", apply: true, verbose: false, json: false, skipBackup: true },
+      {
+        port,
+        config: null,
+        now: () => new Date("2026-06-05T12:00:00.000Z"),
+        createExtractLlm: () => new PipelineExtractLlm([]),
+        embedding: createDeterministicEmbedding(),
+      },
+    );
+
+    expect(first.completionSummary?.scan?.episodesSinceLastRun).toBe(1);
+
+    await insertEpisode(client, "ep-2", "Session after the first run.", { createdAt: "2026-06-05T13:00:00.000Z" });
+
+    const second = await runDream(
+      { tier: "light", apply: true, verbose: false, json: false, skipBackup: true },
+      {
+        port,
+        config: null,
+        now: () => new Date("2026-06-05T14:00:00.000Z"),
+        createExtractLlm: () => new PipelineExtractLlm([]),
+        embedding: createDeterministicEmbedding(),
+      },
+    );
+
+    // Before episode-synthesis tracking, the in-flight run's own `running` row
+    // reset the cursor to the epoch and every run re-counted all episodes.
+    expect(second.completionSummary?.scan?.episodesSinceLastRun).toBe(1);
+    expect(second.completionSummary?.scan?.episodesPendingSynthesis).toBe(1);
+    expect(second.completionSummary?.extract?.episodesScanned).toBe(1);
   });
 
   it("preserves cost-capped status when extract exhausts the remaining run budget", async () => {

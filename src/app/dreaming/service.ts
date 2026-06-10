@@ -198,7 +198,6 @@ async function executeDreamRun(options: DreamRunOptions, deps: DreamWorkflowDeps
       {
         now,
         ...(options.project ? { project: options.project } : {}),
-        fullBacklog,
         maxEpisodes: extractStages.maxEpisodes,
         contextLookupEnabled: extractStages.contextLookupEnabled,
         costCapUsd: remainingDailyBudgetUsd,
@@ -213,6 +212,15 @@ async function executeDreamRun(options: DreamRunOptions, deps: DreamWorkflowDeps
     if (options.apply) {
       const applied = await applyExtractedDurables({ runId, candidates: extract.candidates, now }, { port: deps.port, embedding });
       durablesInserted = applied.inserted;
+      // Mark mined episodes even when every candidate was known: the episode's
+      // evidence has been consumed and must never be re-mined into the corpus.
+      if (extract.scannedEpisodeIds.length > 0) {
+        await deps.port.markEpisodesSynthesized({
+          episodeIds: extract.scannedEpisodeIds,
+          runId,
+          synthesizedAt: now().toISOString(),
+        });
+      }
     }
     extractSummary = { ...extract.summary, durablesInserted };
     actionsTaken = durablesInserted;
@@ -354,6 +362,9 @@ async function executeDreamRun(options: DreamRunOptions, deps: DreamWorkflowDeps
       durablesStaled,
       summaryJson: completionSummary,
       error: reconcileError,
+      // The completion time doubles as the next run's scan cursor, so it must
+      // come from the injected clock rather than the adapter's wall clock.
+      completedAt: now().toISOString(),
     };
     const dreamStateUpdate = {
       unsynthesizedImportanceSum: status === "completed" ? 0 : scan.unsynthesizedImportanceSum,
@@ -416,6 +427,7 @@ async function executeDreamRun(options: DreamRunOptions, deps: DreamWorkflowDeps
       durablesStaled,
       summaryJson: failureSummary,
       error: message,
+      completedAt: now().toISOString(),
     });
     throw error;
   }
@@ -465,6 +477,7 @@ async function recordBudgetExhaustedRun(
     durablesStaled: 0,
     summaryJson: completionSummary,
     error: message,
+    completedAt: budget.now().toISOString(),
   });
 
   return {

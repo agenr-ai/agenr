@@ -264,6 +264,12 @@ export interface DreamEfficiencySummary {
 /** Scan delta describing unsynthesized evidence since the last successful run. */
 export interface DreamScanSummary {
   episodesSinceLastRun: number;
+  /**
+   * Active episodes not yet mined by an applied extract pass. Optional because
+   * summaries persisted before episode-synthesis tracking lack the counter;
+   * fresh scans always set it.
+   */
+  episodesPendingSynthesis?: number;
   ingestFilesSinceLastRun: number;
   durablesCreatedSinceLastRun: number;
   evidenceRefs: DreamEvidenceRef[];

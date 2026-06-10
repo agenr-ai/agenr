@@ -157,5 +157,5 @@ function isWithinMinInterval(lastRun: DreamRunRecord | null, now: Date, minInter
 
 /** Returns whether a scan found evidence worth reconciling in a light dream. */
 function hasEvidence(scan: DreamScanSummary): boolean {
-  return scan.episodesSinceLastRun > 0 || scan.ingestFilesSinceLastRun > 0 || scan.durablesCreatedSinceLastRun > 0;
+  return (scan.episodesPendingSynthesis ?? 0) > 0 || scan.ingestFilesSinceLastRun > 0 || scan.durablesCreatedSinceLastRun > 0;
 }
