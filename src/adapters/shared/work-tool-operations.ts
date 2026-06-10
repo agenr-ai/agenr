@@ -1,4 +1,5 @@
 import type { AgenrWorkParams, AgenrWorkUpdateOperation } from "../../app/working-memory/mutations.js";
+import { WORKING_SET_STATUSES, type WorkingSetStatus } from "../../app/working-memory/constants.js";
 import type { WorkingScope } from "../../app/working-memory/scope.js";
 import { isModelVisibleOperationType } from "../../app/working-memory/operations/manifest.js";
 import { asRecord } from "./durable-tools.js";
@@ -77,6 +78,15 @@ const WORK_TOOL_PARAMETERS = {
       maximum: 100,
       description: "Maximum working sets for list output.",
     },
+    statuses: {
+      type: "array",
+      items: {
+        type: "string",
+        enum: [...WORKING_SET_STATUSES],
+      },
+      description:
+        "Optional working-set statuses to include in list output. Defaults to active and recent current statuses when omitted.",
+    },
   },
   required: ["action"],
 } as const;
@@ -108,9 +118,27 @@ export function parseWorkToolParams(rawParams: unknown, defaultScope: Partial<Wo
     ...optionalBooleanParam(params, "includeEvents"),
     ...optionalNumberParam(params, "eventLimit", reader),
     ...optionalNumberParam(params, "listLimit", reader),
+    ...(params.statuses !== undefined ? { statuses: parseListStatuses(params.statuses, reader) } : {}),
     actor: "model",
     source: "tool",
   };
+}
+
+/** Parses optional list status filters. */
+function parseListStatuses(value: unknown, reader: MemoryToolParamReader): WorkingSetStatus[] {
+  const statuses = reader.readStringArray(asRecord({ statuses: value }), "statuses");
+  if (!statuses || statuses.length === 0) {
+    throw new Error("statuses must be a non-empty string array.");
+  }
+
+  const normalized = statuses.map((status) => {
+    if (!WORKING_SET_STATUSES.includes(status as WorkingSetStatus)) {
+      throw new Error(`statuses contains unsupported value "${status}".`);
+    }
+    return status as WorkingSetStatus;
+  });
+
+  return [...new Set(normalized)];
 }
 
 /** Parses the optional target enum. */

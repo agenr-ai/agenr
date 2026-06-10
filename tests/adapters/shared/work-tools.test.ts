@@ -52,6 +52,7 @@ describe("parseWorkToolParams", () => {
           action: "list",
           target: "session",
           listLimit: 10,
+          statuses: ["active", "paused"],
           actor: "user",
           source: "goal_command",
         },
@@ -66,9 +67,23 @@ describe("parseWorkToolParams", () => {
         cwd: "/tmp/project",
       },
       listLimit: 10,
+      statuses: ["active", "paused"],
       actor: "model",
       source: "tool",
     });
+  });
+
+  it("rejects unsupported list status filters", () => {
+    expect(() =>
+      parseWorkToolParams(
+        {
+          action: "list",
+          statuses: ["active", "missing"],
+        },
+        { sessionId: "skeln:session:1" },
+        READER,
+      ),
+    ).toThrow('statuses contains unsupported value "missing".');
   });
 
   it("parses a target-specific scratchpad update", () => {

@@ -54,6 +54,8 @@ export interface AgenrSkelnWorkListCommandParams {
   scope?: Partial<WorkingScope>;
   /** Maximum working sets to return. */
   listLimit?: number;
+  /** Optional working-set statuses to include. */
+  statuses?: AgenrWorkParams["statuses"];
 }
 
 /** Create command accepted by the trusted Skeln work-command controller. */
@@ -225,6 +227,7 @@ export function toAgenrWorkParams(params: AgenrSkelnWorkCommandParams): AgenrWor
         action: "list",
         ...(params.target !== undefined ? { target: params.target } : {}),
         ...(params.listLimit !== undefined ? { listLimit: params.listLimit } : {}),
+        ...(params.statuses !== undefined ? { statuses: params.statuses } : {}),
       };
     case "create":
       return {

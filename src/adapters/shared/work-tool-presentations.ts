@@ -43,7 +43,16 @@ export function buildWorkingMemoryDetails(result: WorkingMemoryResult): Record<s
         status: "ok",
         action: "list",
         count: result.workingSets.length,
-        workingSetIds: result.workingSets.map((set) => set.id),
+        workingSets: result.workingSets.map((set) => ({
+          workingSetId: set.id,
+          revision: set.revision,
+          scopeKind: set.scopeKind,
+          scopeKey: set.scopeKey,
+          status: set.status,
+          objective: set.snapshot.objective ?? set.objective ?? null,
+          title: set.title ?? null,
+          lastActiveAt: set.lastActiveAt,
+        })),
       };
     case "create":
       return {

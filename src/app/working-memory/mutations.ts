@@ -95,6 +95,8 @@ export interface AgenrWorkParams {
   eventLimit?: number;
   /** Maximum working sets to return for list responses. */
   listLimit?: number;
+  /** Optional working-set statuses to include in list responses. */
+  statuses?: WorkingSetStatus[];
   /** Reason supplied when closing or abandoning a working set. */
   closeReason?: string;
   /** Explicit terminal intent for close actions. */

@@ -1,3 +1,4 @@
+import { CURRENT_WORKING_SET_STATUSES } from "../constants.js";
 import { normalizeListLimit } from "../limits.js";
 import type { WorkingMemoryHandlerContext } from "../handler-context.js";
 import type { AgenrWorkParams } from "../mutations.js";
@@ -11,11 +12,11 @@ import type { ResolvedWorkingScope } from "../scope.js";
 /** Handles the list action. */
 export async function handleList(params: AgenrWorkParams, ctx: WorkingMemoryHandlerContext): Promise<WorkingMemoryResult> {
   const limit = normalizeListLimit(params.listLimit);
-  const policyFilter = listFilter(ctx.policy);
+  const listQuery = buildListQuery(params, listFilter(ctx.policy));
 
   if (!params.scope) {
     const workingSets = await ctx.repository.listWorkingSets({
-      ...policyFilter,
+      ...listQuery,
       limit,
     });
     return {
@@ -30,7 +31,7 @@ export async function handleList(params: AgenrWorkParams, ctx: WorkingMemoryHand
     return scopeResolution;
   }
 
-  const workingSets = await listWorkingSetsForScopes(ctx.repository, scopeResolution.scopes, limit, policyFilter);
+  const workingSets = await listWorkingSetsForScopes(ctx.repository, scopeResolution.scopes, limit, listQuery);
   return {
     ok: true,
     action: "list",
@@ -43,12 +44,12 @@ async function listWorkingSetsForScopes(
   repository: WorkingMemoryHandlerContext["repository"],
   scopes: ResolvedWorkingScope[],
   limit: number,
-  policyFilter: Pick<WorkingSetListFilter, "scopeKinds">,
+  listQuery: Pick<WorkingSetListFilter, "scopeKinds" | "statuses">,
 ): Promise<WorkingSetRecord[]> {
   if (scopes.length === 1) {
     return repository.listWorkingSets({
       scope: scopes[0],
-      ...policyFilter,
+      ...listQuery,
       limit,
     });
   }
@@ -57,7 +58,7 @@ async function listWorkingSetsForScopes(
     scopes.map((scope) =>
       repository.listWorkingSets({
         scope,
-        ...policyFilter,
+        ...listQuery,
         limit,
       }),
     ),
@@ -71,4 +72,15 @@ async function listWorkingSetsForScopes(
   }
 
   return [...merged.values()].sort((left, right) => right.lastActiveAt.localeCompare(left.lastActiveAt)).slice(0, limit);
+}
+
+/** Builds shared list query filters from request params and host policy. */
+function buildListQuery(
+  params: AgenrWorkParams,
+  policyFilter: Pick<WorkingSetListFilter, "scopeKinds">,
+): Pick<WorkingSetListFilter, "scopeKinds" | "statuses"> {
+  return {
+    ...policyFilter,
+    statuses: params.statuses && params.statuses.length > 0 ? params.statuses : [...CURRENT_WORKING_SET_STATUSES],
+  };
 }

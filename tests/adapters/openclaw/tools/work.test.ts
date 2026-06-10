@@ -70,6 +70,24 @@ describe("createAgenrWorkTool", () => {
         type: "text",
         text: expect.stringContaining("Ship OpenClaw working memory."),
       });
+
+      const listResult = await tool.execute("tool-3", { action: "list" });
+      expect(listResult.details).toMatchObject({
+        status: "ok",
+        action: "list",
+        count: 1,
+        workingSets: [
+          {
+            status: "active",
+            objective: "Ship OpenClaw working memory.",
+            scopeKind: "session",
+          },
+        ],
+      });
+      expect(listResult.content[0]).toMatchObject({
+        type: "text",
+        text: expect.stringContaining("Ship OpenClaw working memory."),
+      });
     } finally {
       await closeTestDatabase(database);
       await removeTestPath(dbPath);

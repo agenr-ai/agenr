@@ -14,6 +14,22 @@ import { createWorkingMemoryService } from "../../../src/app/working-memory/serv
 import { closeTestDatabase, removeTestPath } from "../../helpers/temp-paths.js";
 
 describe("toAgenrWorkParams", () => {
+  it("maps trusted list commands with optional filters", () => {
+    expect(
+      toAgenrWorkParams({
+        action: "list",
+        target: "session",
+        listLimit: 5,
+        statuses: ["active", "paused"],
+      }),
+    ).toEqual({
+      action: "list",
+      target: "session",
+      listLimit: 5,
+      statuses: ["active", "paused"],
+    });
+  });
+
   it("maps trusted update commands without scope fields or expectedRevision", () => {
     expect(
       toAgenrWorkParams({
@@ -65,6 +81,29 @@ describe("executeAgenrSkelnWorkCommand", () => {
         action: "create",
         workingSetId: expect.any(String),
       });
+
+      await executeAgenrSkelnWorkCommand(servicesPromise, async () => scope, context, {
+        action: "create",
+        target: "session",
+        source: "tool",
+        updateReason: "Started session working set.",
+        operation: {
+          type: "set_objective",
+          objective: "Session scratchpad for list coverage.",
+        },
+      });
+
+      const listed = await executeAgenrSkelnWorkCommand(servicesPromise, async () => scope, context, {
+        action: "list",
+        statuses: ["active"],
+      });
+      expect(listed.failed).toBe(false);
+      expect(listed.details).toMatchObject({
+        action: "list",
+        count: 2,
+      });
+      expect(listed.text).toContain("Ship trusted work commands.");
+      expect(listed.text).toContain("Session scratchpad for list coverage.");
 
       const read = await executeAgenrSkelnWorkCommand(servicesPromise, async () => scope, context, {
         action: "get",
