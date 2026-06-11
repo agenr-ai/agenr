@@ -200,14 +200,29 @@ Closed sets can retain the final snapshot and candidate list for later review. T
 Working sets can accumulate candidate memories:
 
 - `episodic` candidates carry a summary and evidence event sequences.
-- `semantic` candidates carry suggested durable subject, content, optional claim key, and evidence event sequences.
+- `semantic` candidates carry suggested durable subject, content, optional claim key, optional suggested durable kind, and evidence event sequences.
 - `procedural` candidates carry suggested procedure subject, content, and evidence event sequences.
 
-Candidate status is `pending`, `promoted`, or `dismissed`.
+Candidate status is `pending`, `promoted`, `rejected`, or `dismissed`. `rejected` records a pipeline rejection during promotion; `dismissed` records a manual dismissal.
 
 The working-memory subsystem only records candidates and their provenance. Promotion into `episodes`, `durables`, or `procedures` must go through the owning subsystem path so validation, claim-key policy, procedure normalization, embeddings, and audit behavior remain centralized.
 
-One episodic promotion path is wired in production today. When a Skeln goal close emits a pending episodic candidate, the adapter writes a goal-close episode through the episode subsystem, feeding a bounded distillation of the closing snapshot (objective, final checkpoint, plan state, decisions, assumptions, blockers) to summary generation alongside the transcript. On success, `recordWorkingSetEpisodicPromotion` flips the pending episodic candidates on the closed set to `promoted` and records the emitted episode id on the row's `episodeId` column. This bookkeeping write requires a close-managed status, does not advance the revision, and does not append ledger events. See [`docs/EPISODES.md`](./EPISODES.md) for the episode-side behavior.
+### Episodic promotion
+
+When a Skeln goal close emits a pending episodic candidate, the adapter writes a goal-close episode through the episode subsystem, feeding a bounded distillation of the closing snapshot (objective, final checkpoint, plan state, decisions, assumptions, blockers) to summary generation alongside the transcript. On success, `recordWorkingSetEpisodicPromotion` flips the pending episodic candidates on the closed set to `promoted` and records the emitted episode id on the row's `episodeId` column. This bookkeeping write requires a close-managed status, does not advance the revision, and does not append ledger events. See [`docs/EPISODES.md`](./EPISODES.md) for the episode-side behavior.
+
+Session closes record the episode id the same way: after the Skeln shutdown episode write or the OpenClaw session-end episode capture succeeds, the adapter records the emitted episode id on the just-closed session working set through the same bookkeeping path.
+
+### Durable and procedural consolidation
+
+Semantic and procedural candidates are promoted by a host-neutral consolidation job, `runWorkingSetConsolidation` in `src/app/working-memory/consolidation.ts`. Host adapters kick it off best-effort and asynchronously after a working set closes (Skeln goal close, Skeln session shutdown, OpenClaw `session_end`). Kickoff failures are logged and never thrown into host hooks, and the job is idempotent and re-runnable: stranded pending candidates are picked up the next time the closed set is consolidated.
+
+The job requires a close-managed status and only touches `pending` semantic and procedural candidates; episodic candidates stay owned by the episode path above.
+
+- Semantic candidates go through `storeDurablesDetailed()`, the claim-key-aware durable store pipeline. The durable `type` comes from `suggestedKind` (default `fact`), the claim key from `suggestedClaimKey`, and provenance is recorded as `source_file: "working_set:<id>"` with evidence event sequences in `source_context`. Stored and duplicate outcomes mark the candidate `promoted`; pipeline validation rejections mark it `rejected`. Content-hash dedup makes re-runs naturally idempotent. See [`docs/DURABLES.md`](./DURABLES.md).
+- Procedural candidates become open rows in the `procedure_proposals` table, reviewed later through `agenr procedures proposals` and `agenr procedures review`. A fingerprint over the candidate kind, subject, and content keeps re-runs from creating duplicate proposals for the same working set. See [`docs/PROCEDURES.md`](./PROCEDURES.md).
+
+The consolidation pass records its outcomes in one bookkeeping write, `recordCandidateConsolidation`: candidate statuses flip in the snapshot, one `consolidated` ledger event with per-candidate outcomes is appended with `actor: "system"` and `source: "consolidation_job"`, and the revision does not advance.
 
 ## Feature Flags and Capabilities
 

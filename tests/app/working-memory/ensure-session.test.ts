@@ -108,5 +108,7 @@ function createEnsureRepository(options: { retryMatches: Awaited<ReturnType<Work
     updateWorkingSet: async () => ({ kind: "not_found" }),
     patchWorkingSetUsage: async () => ({ kind: "not_found" }),
     patchWorkingSetUsageAndUpdate: async () => ({ kind: "not_found" }),
+    recordEpisodePromotion: async () => ({ kind: "not_found" }),
+    recordCandidateConsolidation: async () => ({ kind: "not_found" }),
   };
 }

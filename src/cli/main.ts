@@ -9,6 +9,7 @@ import { registerRecallCommand } from "./commands/recall.js";
 import { registerScenariosCommand } from "./commands/scenarios.js";
 import { registerSetupCommand } from "./commands/setup.js";
 import { registerDreamingCommand } from "./commands/dreaming.js";
+import { registerProceduresCommand } from "./commands/procedures.js";
 import { registerTraceCommand } from "./commands/trace.js";
 import { registerWebCommand } from "./commands/web.js";
 
@@ -33,6 +34,7 @@ export function createProgram(): Command {
   registerSetupCommand(program);
   registerInitCommand(program);
   registerDreamingCommand(program);
+  registerProceduresCommand(program);
   registerTraceCommand(program);
   registerWebCommand(program);
 

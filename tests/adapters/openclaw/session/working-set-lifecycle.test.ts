@@ -39,7 +39,7 @@ describe("openclaw session working-set lifecycle", () => {
   });
 
   it("closes the session working set at session end", async () => {
-    const run = vi.fn(async () => ({ ok: true as const, action: "close" as const }));
+    const run = vi.fn(async () => ({ ok: true as const, action: "close" as const, workingSet: { id: "ws-1" }, candidates: [] }));
     const services = createLifecycleServices({ workingMemory: true, run });
 
     await closeOpenClawSessionWorkingSet(
@@ -97,7 +97,7 @@ describe("openclaw session working-set lifecycle", () => {
   });
 
   it("refuses to close when OpenClaw scope falls back to unknown identity", async () => {
-    const run = vi.fn(async () => ({ ok: true as const, action: "close" as const }));
+    const run = vi.fn(async () => ({ ok: true as const, action: "close" as const, workingSet: { id: "ws-1" }, candidates: [] }));
     const logger = { warn: vi.fn() };
     const services = createLifecycleServices({ workingMemory: true, run });
 

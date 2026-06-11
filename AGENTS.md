@@ -114,6 +114,8 @@ agenr ingest <path>
 agenr ingest durables <path>
 agenr ingest episodes [path]
 agenr ingest procedures [path]
+agenr procedures proposals
+agenr procedures review <proposalId>
 agenr recall <query>
 agenr trace
 agenr dream run

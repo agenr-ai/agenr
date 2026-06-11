@@ -1,4 +1,5 @@
 import { WORKING_CANDIDATE_PROMOTION_STATUSES } from "../../app/working-memory/constants.js";
+import { DURABLE_KINDS } from "../../core/types.js";
 
 const NEXT_ACTION_STATUSES = ["pending", "in_progress", "blocked", "done"] as const;
 const ASSUMPTION_CONFIDENCE_VALUES = ["low", "medium", "high"] as const;
@@ -152,6 +153,7 @@ export function candidateSchema() {
         subject: { type: "string" },
         content: { type: "string" },
         suggestedClaimKey: { type: "string" },
+        suggestedKind: { type: "string", enum: [...DURABLE_KINDS] },
         provenance: candidateProvenanceSchema(),
         promotionStatus: candidatePromotionSchema(),
       }),

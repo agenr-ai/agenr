@@ -169,6 +169,8 @@ function createCloseRepository(overrides: CloseRepositoryOverrides): WorkingMemo
     updateWorkingSet: overrides.updateWorkingSet,
     patchWorkingSetUsage: async () => ({ kind: "not_found" }),
     patchWorkingSetUsageAndUpdate: async () => ({ kind: "not_found" }),
+    recordEpisodePromotion: async () => ({ kind: "not_found" }),
+    recordCandidateConsolidation: async () => ({ kind: "not_found" }),
   };
 }
 

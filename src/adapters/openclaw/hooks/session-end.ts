@@ -37,7 +37,7 @@ export async function handleAgenrSessionEnd(
     }
   }
 
-  await closeOpenClawSessionWorkingSet(params.servicesPromise, scopeContext, event, params.logger);
+  const closeResult = await closeOpenClawSessionWorkingSet(params.servicesPromise, scopeContext, event, params.logger);
 
   if (!policy.captureEpisode) {
     return;
@@ -52,6 +52,7 @@ export async function handleAgenrSessionEnd(
     event,
     ctx,
     servicesPromise: params.servicesPromise,
+    ...(closeResult ? { workingSetId: closeResult.workingSet.id } : {}),
     logger: params.logger,
   });
 }

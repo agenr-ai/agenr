@@ -192,6 +192,38 @@ export interface WorkingSetEpisodePromotionResult {
 /** Repository response for episode-promotion bookkeeping writes. */
 export type WorkingSetEpisodePromotionWriteResult = WorkingSetEpisodePromotionResult | WorkingSetWriteFailure;
 
+/** Input used to record one candidate consolidation pass on a closed working set. */
+export interface RecordWorkingSetCandidateConsolidationInput {
+  /** Working-set id to annotate. */
+  workingSetId: string;
+  /** Revision observed by the caller; must match the stored row without incrementing. */
+  expectedRevision: number;
+  /** Next snapshot payload with candidate promotion statuses already flipped. */
+  snapshot: WorkingSnapshot;
+  /** Audit event appended to the ledger for the consolidation pass. */
+  auditEvent: {
+    /** JSON-serializable per-candidate outcome payload. */
+    payload: unknown;
+    /** Actor that ran the consolidation. */
+    actor?: AgenrWorkMutationActor;
+    /** Source surface that ran the consolidation. */
+    source?: AgenrWorkMutationSource;
+  };
+  /** Timestamp to use for row and event updates. */
+  now: string;
+}
+
+/** Successful candidate-consolidation bookkeeping response. */
+export interface WorkingSetCandidateConsolidationResult {
+  /** Updated working set after the bookkeeping write commits. */
+  workingSet: WorkingSetRecord;
+  /** Appended consolidation audit event. */
+  event: WorkingEventRecord;
+}
+
+/** Repository response for candidate-consolidation bookkeeping writes. */
+export type WorkingSetCandidateConsolidationWriteResult = WorkingSetCandidateConsolidationResult | WorkingSetWriteFailure;
+
 /** Returns true when a repository create result is a failure. */
 export function isWorkingSetCreateFailure(result: WorkingSetCreateResult): result is WorkingSetCreateFailure {
   return "kind" in result;
@@ -199,7 +231,7 @@ export function isWorkingSetCreateFailure(result: WorkingSetCreateResult): resul
 
 /** Returns true when a repository write result is a failure. */
 export function isWorkingSetWriteFailure(
-  result: WorkingSetWriteResult | WorkingSetUsagePatchWriteResult | WorkingSetEpisodePromotionWriteResult,
+  result: WorkingSetWriteResult | WorkingSetUsagePatchWriteResult | WorkingSetEpisodePromotionWriteResult | WorkingSetCandidateConsolidationWriteResult,
 ): result is WorkingSetWriteFailure {
   return "kind" in result;
 }
@@ -281,4 +313,14 @@ export interface WorkingMemoryRepository {
    * @returns Updated row, or a stable write failure.
    */
   recordEpisodePromotion(input: RecordWorkingSetEpisodePromotionInput): Promise<WorkingSetEpisodePromotionWriteResult>;
+
+  /**
+   * Records one candidate consolidation pass on a close-managed working set
+   * without advancing revision. Flips candidate promotion statuses in the
+   * snapshot and appends one `consolidated` audit event to the ledger.
+   *
+   * @param input - Flipped snapshot, audit payload, and expected revision.
+   * @returns Updated row plus appended event, or a stable write failure.
+   */
+  recordCandidateConsolidation(input: RecordWorkingSetCandidateConsolidationInput): Promise<WorkingSetCandidateConsolidationWriteResult>;
 }

@@ -15,9 +15,11 @@ import type {
   CreateWorkingSetInput,
   PatchWorkingSetUsageInput,
   PatchWorkingSetUsageAndUpdateInput,
+  RecordWorkingSetCandidateConsolidationInput,
   RecordWorkingSetEpisodePromotionInput,
   UpdateWorkingSetInput,
   WorkingMemoryRepository,
+  WorkingSetCandidateConsolidationWriteResult,
   WorkingSetCreateResult,
   WorkingSetEpisodePromotionWriteResult,
   WorkingSetListFilter,
@@ -57,6 +59,7 @@ export function createWorkingMemoryRepository(database: SqlDatabase): WorkingMem
     patchWorkingSetUsage: (input) => patchWorkingSetUsage(database, input),
     patchWorkingSetUsageAndUpdate: (input) => patchWorkingSetUsageAndUpdate(database, input),
     recordEpisodePromotion: (input) => recordEpisodePromotion(database, input),
+    recordCandidateConsolidation: (input) => recordCandidateConsolidation(database, input),
   };
 }
 
@@ -411,6 +414,52 @@ async function recordEpisodePromotion(database: SqlDatabase, input: RecordWorkin
     const workingSet = await requireWorkingSet(executor, current.id);
 
     return { workingSet };
+  });
+}
+
+/** Records one candidate consolidation pass without advancing revision. */
+async function recordCandidateConsolidation(
+  database: SqlDatabase,
+  input: RecordWorkingSetCandidateConsolidationInput,
+): Promise<WorkingSetCandidateConsolidationWriteResult> {
+  return database.withTransaction(async (transaction) => {
+    const executor = transaction as SqlDatabase;
+    const current = await getWorkingSet(executor, input.workingSetId);
+    if (!current) {
+      return { kind: "not_found" };
+    }
+
+    if (current.revision !== input.expectedRevision) {
+      return { kind: "revision_conflict", actualRevision: current.revision };
+    }
+
+    // Bookkeeping write: candidate promotion statuses change in the snapshot,
+    // but status and revision stay untouched. The pass is still audited with
+    // one appended ledger event.
+    await executor.execute({
+      sql: `
+        UPDATE working_sets
+        SET summary = ?,
+            snapshot_json = ?,
+            updated_at = ?
+        WHERE id = ?
+          AND revision = ?
+      `,
+      args: [toNullableString(input.snapshot.summary), serializeJson(input.snapshot), input.now, current.id, input.expectedRevision],
+    });
+    const event = buildEvent({
+      workingSetId: current.id,
+      sequence: await resolveNextWorkingEventSequence(executor, current.id),
+      eventType: "consolidated",
+      payload: input.auditEvent.payload,
+      actor: input.auditEvent.actor,
+      source: input.auditEvent.source,
+      now: input.now,
+    });
+    await insertWorkingEvent(executor, event);
+    const workingSet = await requireWorkingSet(executor, current.id);
+
+    return { workingSet, event };
   });
 }
 

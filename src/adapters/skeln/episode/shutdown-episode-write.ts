@@ -13,6 +13,8 @@ export interface SkelnSessionShutdownEpisodeWriteParams {
   event: SkelnSessionShutdownEvent;
   context: ExtensionContext;
   servicesPromise: ReturnType<typeof createAgenrSkelnServices>;
+  /** Closed session working set whose episode id should be recorded on success. */
+  workingSetId?: string;
   logger?: Pick<Console, "info" | "warn">;
 }
 
@@ -28,8 +30,10 @@ export function buildSkelnSessionShutdownEpisodeWork(params: SkelnSessionShutdow
   const target = resolveSkelnSessionEpisodeTarget(params.context);
   const shutdownWork =
     params.event.reason === "quit"
-      ? writeScopedSkelnShutdownEpisode(params.servicesPromise, target, params.logger).finally(() => closeSkelnServicesAfterShutdown(params.servicesPromise))
-      : writeScopedSkelnShutdownEpisode(params.servicesPromise, target, params.logger);
+      ? writeScopedSkelnShutdownEpisode(params.servicesPromise, target, params.workingSetId, params.logger).finally(() =>
+          closeSkelnServicesAfterShutdown(params.servicesPromise),
+        )
+      : writeScopedSkelnShutdownEpisode(params.servicesPromise, target, params.workingSetId, params.logger);
 
   return shutdownWork.catch((error: unknown) => {
     logSkelnShutdownEpisodeFailure(error, params.logger);
@@ -83,6 +87,7 @@ async function closeSkelnServicesAfterShutdown(servicesPromise: ReturnType<typeo
 async function writeScopedSkelnShutdownEpisode(
   servicesPromise: ReturnType<typeof createAgenrSkelnServices>,
   target: SkelnSessionEpisodeTarget,
+  workingSetId?: string,
   logger?: Pick<Console, "info" | "warn">,
 ): Promise<void> {
   const services = await servicesPromise;
@@ -92,7 +97,7 @@ async function writeScopedSkelnShutdownEpisode(
 
   await runGuardedPostSessionEpisodeCapture({
     services,
-    writeEpisode: () => writeSkelnShutdownEpisode({ target, services, logger }),
+    writeEpisode: () => writeSkelnShutdownEpisode({ target, services, ...(workingSetId ? { workingSetId } : {}), logger }),
     logger: logger ?? console,
     scope: "skeln shutdown",
   });

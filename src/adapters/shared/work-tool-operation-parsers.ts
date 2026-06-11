@@ -1,4 +1,5 @@
 import { WORKING_CANDIDATE_PROMOTION_STATUSES } from "../../app/working-memory/constants.js";
+import { DURABLE_KINDS, type DurableKind } from "../../core/types.js";
 import type {
   WorkingAssumptionNote,
   WorkingCandidate,
@@ -171,6 +172,15 @@ export function parseAssumptionNote(value: unknown, reader: MemoryToolParamReade
   };
 }
 
+/** Parses an optional suggested durable kind for semantic candidates. */
+function parseSuggestedKind(value: string): DurableKind {
+  if (DURABLE_KINDS.includes(value as DurableKind)) {
+    return value as DurableKind;
+  }
+
+  throw new Error(`Unsupported suggested durable kind "${value}".`);
+}
+
 /** Parses candidate provenance. */
 function parseCandidateProvenance(value: unknown, reader: MemoryToolParamReader): WorkingCandidate["provenance"] {
   const record = asRecord(value);
@@ -197,11 +207,13 @@ export function parseCandidate(value: unknown, reader: MemoryToolParamReader): W
   }
 
   if (kind === "semantic" || kind === "procedural") {
+    const suggestedKind = reader.readString(record, "suggestedKind");
     return {
       kind,
       subject: requiredString(record, "subject", reader),
       content: requiredString(record, "content", reader),
       ...optionalStringParam(record, "suggestedClaimKey", reader),
+      ...(suggestedKind ? { suggestedKind: parseSuggestedKind(suggestedKind) } : {}),
       provenance,
       promotionStatus,
     };

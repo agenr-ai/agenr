@@ -5,6 +5,7 @@ import { createDatabase } from "../db/client.js";
 import { createDreamPort } from "../db/dreaming-port.js";
 import { listActiveAbstainDirectives, listActiveSessionStartProactiveDirectives, listActiveTopicProactiveDirectives } from "../db/directives-repository.js";
 import { createMemoryRepository } from "../db/memory-repository.js";
+import { createProcedureProposalRepository } from "../db/procedure-proposal-repository.js";
 import { createSessionMemoryRepository } from "../db/session-memory-repository.js";
 import { createSessionStartRepository } from "../db/session-start-repository.js";
 import { createWorkingMemoryRepository } from "../db/working-memory-repository.js";
@@ -65,6 +66,7 @@ export async function createPluginMemoryRuntime(input: CreatePluginMemoryRuntime
     dreaming: createDreamPort(database),
     workingMemoryRepository: createWorkingMemoryRepository(database),
     sessionMemoryRepository,
+    procedureProposals: createProcedureProposalRepository(database),
     sessionStart: {
       repository: createSessionStartRepository(database),
       recall,

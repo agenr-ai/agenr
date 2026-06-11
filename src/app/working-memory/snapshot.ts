@@ -1,3 +1,4 @@
+import type { DurableKind } from "../../core/types.js";
 import type { WorkingBudgetLimitReason, WorkingCandidatePromotionStatus, WorkingContinuationPolicy } from "./constants.js";
 import { normalizeBoundedUnique, truncateUtf8ToMaxBytes, WORKING_SCRATCHPAD_MAX_BYTES, WORKING_SNAPSHOT_ARRAY_LIMITS } from "./limits.js";
 
@@ -167,6 +168,8 @@ export interface WorkingDurableCandidate {
   content: string;
   /** Optional suggested claim key for semantic promotion. */
   suggestedClaimKey?: string;
+  /** Optional suggested durable kind for semantic promotion; defaults to "fact". */
+  suggestedKind?: DurableKind;
   /** Event-level provenance for the candidate. */
   provenance: CandidateProvenance;
   /** Promotion lifecycle state. */

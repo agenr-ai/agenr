@@ -46,6 +46,10 @@ That means procedures now have both a dedicated read path and a live unified rea
 - `src/adapters/openclaw/tools/shared.ts` - structured procedure formatter for OpenClaw recall output
 - `src/app/evals/recall/` - unified eval seeding and assertions for procedure-aware recall cases
 - `src/cli/commands/ingest-procedures.ts` - `agenr ingest procedures [path]`
+- `src/adapters/db/schema/procedure-proposals.ts` - `procedure_proposals` table schema
+- `src/adapters/db/procedure-proposal-repository.ts` - libsql procedure-proposal persistence
+- `src/app/procedures/proposals/` - proposal repository port plus review service (draft rendering, apply, reject)
+- `src/cli/commands/procedures.ts` - `agenr procedures proposals` and `agenr procedures review`
 - `tests/core/procedures/normalization.test.ts` - core parse and normalization coverage
 - `tests/app/procedures/sync/service.test.ts` - sync planning and execution coverage
 - `tests/app/procedures/recall/service.test.ts` - dedicated procedure recall coverage
@@ -57,6 +61,8 @@ That means procedures now have both a dedicated read path and a live unified rea
 
 ```bash
 agenr ingest procedures [path] [--dry-run] [--verbose]
+agenr procedures proposals [--status open|applied|rejected|all] [--limit <count>] [--json]
+agenr procedures review <proposalId> --decision apply|reject --reason <text> [--key <procedureKey>] [--path <relative.yaml>] [--procedures <dir>] [--json]
 ```
 
 Current behavior:
@@ -250,6 +256,18 @@ If prune or delete semantics are needed later, they should arrive through an exp
 
 `--dry-run` stops before embeddings and before database writes. That makes it suitable for authoring and review loops without spending embedding budget.
 
+## Procedure Proposals
+
+Procedural candidates recorded in working memory do not write procedures directly. When a working set closes, the working-memory consolidation job turns each pending procedural candidate into one open row in the `procedure_proposals` table (see [`docs/WORKING-MEMORY.md`](./WORKING-MEMORY.md)). A fingerprint over the candidate keeps re-runs from creating duplicate proposals for the same working set.
+
+Proposals are reviewed through the CLI:
+
+- `agenr procedures proposals` lists proposals, defaulting to open ones.
+- `agenr procedures review <proposalId> --decision reject --reason ...` settles the proposal as `rejected` with the reviewer reason.
+- `agenr procedures review <proposalId> --decision apply --reason ...` renders a minimal valid draft YAML from the proposal (the candidate content becomes a single review-gated step with working-set provenance in `sources`), writes it into the procedures directory (default `proposed/<slug>.yaml`, overridable with `--key` and `--path`), runs the normal procedure sync, and settles the proposal as `applied` with the written path.
+
+Applied drafts are ordinary repo-authored YAML afterward: operators are expected to refine them, and future edits flow through the regular `agenr ingest procedures` sync. Reviewed proposals are terminal; a second review is blocked.
+
 ## Current Seed Corpus
 
 The seed procedures are:
@@ -273,7 +291,7 @@ Current non-goals:
 
 - no dedicated standalone CLI procedure recall command
 - no procedure-aware path in the current `agenr recall` CLI command
-- no automatic promotion from entries or episodes into procedures
+- no automatic promotion from entries or episodes into procedures; working-memory procedural candidates only become reviewable proposals, never silent writes
 - no procedure composition such as `use_procedure`
 - no deletion or prune semantics for missing files
 - no direct procedure execution engine

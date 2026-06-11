@@ -1,4 +1,5 @@
 import type { RuntimeCapabilityState } from "../../app/features/capabilities.js";
+import type { WorkingMemoryCloseSuccess } from "../../app/working-memory/results.js";
 import type { WorkingMemoryService } from "../../app/working-memory/service.js";
 import type { WorkingScope } from "../../app/working-memory/scope.js";
 import { formatErrorMessage } from "./errors.js";
@@ -50,6 +51,8 @@ export async function ensureHostSessionWorkingSet(
  * @param scope - Host-normalized working scope for the session.
  * @param shutdownReason - Host-provided shutdown reason label.
  * @param log - Optional logger; falls back to `console.warn` when omitted.
+ * @returns Close result when a set was closed, so hosts can run follow-up
+ *   bookkeeping such as candidate consolidation and episode-id recording.
  */
 export async function closeHostSessionWorkingSet(
   workingMemory: WorkingMemoryService,
@@ -57,11 +60,11 @@ export async function closeHostSessionWorkingSet(
   scope: WorkingScope,
   shutdownReason: string,
   log?: SessionWorkingSetLifecycleLogger,
-): Promise<void> {
+): Promise<WorkingMemoryCloseSuccess | undefined> {
   try {
     const gate = resolveWorkingContextGate(workingMemoryCapability);
     if (!gate.ok) {
-      return;
+      return undefined;
     }
 
     const reason = shutdownReason.trim() || "unknown";
@@ -78,8 +81,11 @@ export async function closeHostSessionWorkingSet(
     if (!result.ok && result.code !== "missing_active_set") {
       warnLifecycleFailure(`session working-set close failed: ${result.message}`, log);
     }
+
+    return result.ok && result.action === "close" ? result : undefined;
   } catch (error) {
     warnLifecycleFailure(`session working-set close failed: ${formatErrorMessage(error)}`, log);
+    return undefined;
   }
 }
 

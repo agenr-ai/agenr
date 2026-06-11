@@ -27,6 +27,7 @@ import {
   legacyTableReason,
   missingRequiredTableReason,
 } from "./schema/legacy-artifacts.js";
+import { PROCEDURE_PROPOSAL_SCHEMA_STATEMENTS } from "./schema/procedure-proposals.js";
 import { SESSION_MEMORY_SCHEMA_STATEMENTS } from "./schema/session-memory.js";
 import { WORKING_MEMORY_SCHEMA_STATEMENTS } from "./schema/working-memory.js";
 import { runImmediateTransaction } from "./transaction.js";
@@ -46,6 +47,7 @@ const SCHEMA_STATEMENTS = [
   ...DREAMING_SCHEMA_STATEMENTS,
   ...WORKING_MEMORY_SCHEMA_STATEMENTS,
   ...SESSION_MEMORY_SCHEMA_STATEMENTS,
+  ...PROCEDURE_PROPOSAL_SCHEMA_STATEMENTS,
 ] as const;
 
 export {

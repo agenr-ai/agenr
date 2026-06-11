@@ -2,10 +2,9 @@ import type { ExtensionContext } from "../skeln-types.js";
 
 import type { EpisodeActivityThreshold } from "../../../app/episode-ingest/activity-threshold.js";
 import { renderWorkingSnapshotDistillation } from "../../../app/working-memory/close-distillation.js";
-import { recordWorkingSetEpisodicPromotion } from "../../../app/working-memory/promotion.js";
-import type { WorkingMemoryRepository } from "../../../app/working-memory/repository.js";
 import type { WorkingMemoryResult } from "../../../app/working-memory/results.js";
 import { formatErrorMessage } from "../../shared/errors.js";
+import { recordWorkingSetEpisodePromotionOutcome } from "../../shared/working-set-episode-promotion.js";
 import type { AgenrSkelnServices } from "../runtime.js";
 import { resolveSkelnSessionEpisodeTarget, type SkelnSessionEpisodeTarget, writeSkelnBoundedSessionEpisode } from "./bounded-session-episode.js";
 
@@ -84,44 +83,11 @@ export async function writeSkelnGoalCloseEpisode(params: {
     return;
   }
 
-  await recordSkelnGoalCloseEpisodePromotion({
+  await recordWorkingSetEpisodePromotionOutcome({
     repository: params.services.workingMemoryRepository,
     workingSetId: params.workingSetId,
     episodeId: ingestResult.session.episodeId,
-    logger: params.logger,
+    actionLabel: "skeln goal close",
+    ...(params.logger ? { logger: params.logger } : {}),
   });
-}
-
-/**
- * Records the promotion outcome on the closed working set after a successful
- * episode write. Failures are logged, never thrown.
- */
-async function recordSkelnGoalCloseEpisodePromotion(params: {
-  repository: WorkingMemoryRepository | undefined;
-  workingSetId: string;
-  episodeId: string;
-  logger?: Pick<Console, "info" | "warn">;
-}): Promise<void> {
-  const logger = params.logger ?? console;
-  const logContext = `workingSet=${params.workingSetId} episode=${params.episodeId}`;
-  if (!params.repository) {
-    logger.info(`[agenr] skeln goal close promotion status not recorded for ${logContext} reason=no_working_memory_repository`);
-    return;
-  }
-
-  try {
-    const result = await recordWorkingSetEpisodicPromotion(params.repository, {
-      workingSetId: params.workingSetId,
-      episodeId: params.episodeId,
-      now: new Date().toISOString(),
-    });
-    if (!result.ok) {
-      logger.warn(`[agenr] skeln goal close promotion status not recorded for ${logContext} reason=${result.reason}`);
-      return;
-    }
-
-    logger.info(`[agenr] skeln goal close promotion recorded for ${logContext} changed=${result.changed}`);
-  } catch (error) {
-    logger.warn(`[agenr] skeln goal close promotion status not recorded for ${logContext} reason=${formatErrorMessage(error)}`);
-  }
 }

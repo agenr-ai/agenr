@@ -343,6 +343,7 @@ function createRecordingRepository(workingSet: WorkingSetRecord | null): {
         },
       };
     },
+    recordCandidateConsolidation: async () => ({ kind: "not_found" }),
   };
 
   return { repository, recordedInputs };

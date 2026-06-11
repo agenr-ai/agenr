@@ -4,6 +4,7 @@ import type { ClaimExtractionConfig } from "../../core/store/claim-extraction.js
 import type { BeforeTurnDeps } from "../before-turn/index.js";
 import type { DreamPort } from "../dreaming/ports.js";
 import type { MemoryRepository } from "../memory/ports.js";
+import type { ProcedureProposalRepository } from "../procedures/proposals/repository.js";
 import type { SessionMemoryRepository } from "../session-memory/index.js";
 import type { SessionStartDeps } from "../session-start/index.js";
 import type { WorkingMemoryRepository } from "../working-memory/index.js";
@@ -122,6 +123,7 @@ export interface PluginMemoryRuntimeServices {
   dreaming: DreamPort;
   workingMemoryRepository?: WorkingMemoryRepository;
   sessionMemoryRepository?: SessionMemoryRepository;
+  procedureProposals?: ProcedureProposalRepository;
   sessionStart: SessionStartDeps;
   beforeTurn: BeforeTurnDeps;
   embedding: EmbeddingPort;

@@ -13,6 +13,8 @@ export interface OpenClawSessionEndEpisodeWriteParams {
   event: AgenrOpenClawSessionEndEvent;
   ctx: AgenrOpenClawHookContext;
   servicesPromise: Promise<AgenrOpenClawServices>;
+  /** Closed session working set whose episode id should be recorded on success. */
+  workingSetId?: string;
   logger: PluginLogger;
 }
 
@@ -70,6 +72,7 @@ export async function runOpenClawSessionEndEpisodeCapture(params: OpenClawSessio
           ctx: params.ctx,
           target,
           services,
+          ...(params.workingSetId ? { workingSetId: params.workingSetId } : {}),
           logger: params.logger,
         }),
       logger: params.logger,

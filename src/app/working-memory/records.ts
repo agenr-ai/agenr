@@ -4,8 +4,11 @@ import type { WorkingSnapshot } from "./snapshot.js";
 
 /**
  * Lifecycle event types written outside typed mutation operations.
+ *
+ * `consolidated` is the audit event appended by the candidate consolidation
+ * job after it promotes or rejects pending candidates on a closed set.
  */
-const WORKING_LIFECYCLE_EVENT_TYPES = ["created", "closed", "abandoned"] as const;
+const WORKING_LIFECYCLE_EVENT_TYPES = ["created", "closed", "abandoned", "consolidated"] as const;
 
 export { WORKING_LIFECYCLE_EVENT_TYPES };
 

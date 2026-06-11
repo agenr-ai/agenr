@@ -50,8 +50,11 @@ const TRUSTED_HOST_MUTATION_SOURCES = ["goal_command", "lifecycle_hook", "consol
 
 /**
  * Candidate promotion states emitted by close and consolidation paths.
+ *
+ * `rejected` marks candidates the promotion pipeline refused (validation or
+ * store rejection); `dismissed` remains the manual model or user dismissal.
  */
-const WORKING_CANDIDATE_PROMOTION_STATUSES = ["pending", "promoted", "dismissed"] as const;
+const WORKING_CANDIDATE_PROMOTION_STATUSES = ["pending", "promoted", "rejected", "dismissed"] as const;
 
 /**
  * Host continuation policies stored on active working sets.

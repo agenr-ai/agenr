@@ -14,6 +14,7 @@ import type { WorkingContinuationPolicy } from "../../app/working-memory/constan
 import type { GoalContinuationResult } from "../../app/goal-continuation/service.js";
 import type { AgenrSkelnGoalContinuationCommandParams } from "./goal-continuation-command.js";
 import { workingMemoryResultToToolOutcome } from "../shared/work-tools.js";
+import { scheduleWorkingSetConsolidation } from "../shared/working-set-consolidation.js";
 import { scheduleSkelnGoalCloseEpisodePromotion } from "./episode/goal-close-episode.js";
 import type { createAgenrSkelnServices } from "./runtime.js";
 import { toWorkingScopeFromSkelnSession } from "./session/scope.js";
@@ -215,11 +216,19 @@ export async function executeAgenrSkelnWorkCommand(
   if (!result.ok) {
     return workingMemoryResultToToolOutcome(result);
   }
-  if (params.action === "close" && params.createEpisode && result.action === "close") {
-    scheduleSkelnGoalCloseEpisodePromotion({
-      context,
+  if (params.action === "close" && result.action === "close") {
+    if (params.createEpisode) {
+      scheduleSkelnGoalCloseEpisodePromotion({
+        context,
+        services,
+        closeResult: result,
+      });
+    }
+
+    scheduleWorkingSetConsolidation({
       services,
-      closeResult: result,
+      workingSetId: result.workingSet.id,
+      candidates: result.candidates,
     });
   }
   return workingMemoryResultToToolOutcome(result);

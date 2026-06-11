@@ -264,6 +264,7 @@ async function handleSkelnSessionShutdown(
   logger: AgenrSkelnLogger,
 ): Promise<void> {
   const scope = await resolveShutdownScope(resolveScope, context);
+  let closedWorkingSetId: string | undefined;
   if (scope) {
     try {
       await lifecycleIntakeTracker.track(
@@ -275,7 +276,8 @@ async function handleSkelnSessionShutdown(
       // Keep shutdown cleanup best-effort even when checkpoint intake fails.
     }
 
-    await closeSkelnSessionWorkingSet(servicesPromise, scope, event, logger);
+    const closeResult = await closeSkelnSessionWorkingSet(servicesPromise, scope, event, logger);
+    closedWorkingSetId = closeResult?.workingSet.id;
     compactionPromptTracker.clear(scope.sessionId, scope.sessionKey);
     try {
       await lifecycleIntakeTracker.clear(scope.sessionId, scope.sessionKey);
@@ -286,7 +288,13 @@ async function handleSkelnSessionShutdown(
 
   // Shutdown episode work uses a synchronous transcript snapshot, not the scope tracker.
   clearTrackedSkelnScope(scopeTracker, context);
-  await scheduleSkelnSessionShutdownEpisodeWrite({ event, context, servicesPromise, logger });
+  await scheduleSkelnSessionShutdownEpisodeWrite({
+    event,
+    context,
+    servicesPromise,
+    ...(closedWorkingSetId ? { workingSetId: closedWorkingSetId } : {}),
+    logger,
+  });
 }
 
 /** Resolves shutdown scope without blocking transcript snapshot cleanup on failure. */

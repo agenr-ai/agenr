@@ -1,8 +1,9 @@
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
 import { resolveAgentEffectiveModelPrimary, resolveDefaultAgentId } from "openclaw/plugin-sdk/agent-runtime";
-import { createSingleTranscriptDiscoveryPort } from "../../../app/episode-ingest/index.js";
+import { createSingleTranscriptDiscoveryPort, type EpisodeTranscriptIngestResult } from "../../../app/episode-ingest/index.js";
 import { HOST_SHUTDOWN_EPISODE_ACTIVITY_THRESHOLD } from "../../shared/shutdown-episode-threshold.js";
+import { recordWorkingSetEpisodePromotionOutcome } from "../../shared/working-set-episode-promotion.js";
 import { createDeadlineAwareEpisodeSummaryLlm } from "../../shared/deadline-aware-episode-summary-llm.js";
 import { embedEpisodeSummaryWithinBudget } from "../../shared/bounded-episode-embedding.js";
 import { EPISODE_SUMMARY_TIMEOUT_MS } from "../../shared/bounded-episode-summary.js";
@@ -30,6 +31,9 @@ export interface OpenClawEpisodeTarget {
 /**
  * Best-effort bounded write for the just-finished OpenClaw session at session end.
  *
+ * When a closed session working-set id is supplied, a successful write also
+ * records the emitted episode id on that set.
+ *
  * @param params - Hook context, session target snapshot, shared services, and logger.
  * @returns Promise that resolves after the episode attempt is complete or skipped.
  */
@@ -37,9 +41,10 @@ export async function writeOpenClawSessionEndEpisode(params: {
   ctx: AgenrOpenClawHookContext;
   target: OpenClawEpisodeTarget;
   services: AgenrOpenClawServices;
+  workingSetId?: string;
   logger: PluginLogger;
 }): Promise<void> {
-  await writeOpenClawSessionEpisode({
+  const ingestResult = await writeOpenClawSessionEpisode({
     ctx: params.ctx,
     target: params.target,
     services: params.services,
@@ -50,6 +55,17 @@ export async function writeOpenClawSessionEndEpisode(params: {
     shortCountField: "materialTurns",
     activityGate: "host-shutdown",
     embeddingSkipLogContext: `[agenr] session-end episode embedding skipped for ${formatSessionContext(params.ctx.sessionId, params.ctx.sessionKey)} file=${params.target.sessionFile}`,
+  });
+  if (!params.workingSetId || ingestResult?.kind !== "executed" || ingestResult.session.action === "failed" || !ingestResult.session.episodeId) {
+    return;
+  }
+
+  await recordWorkingSetEpisodePromotionOutcome({
+    repository: params.services.workingMemoryRepository,
+    workingSetId: params.workingSetId,
+    episodeId: ingestResult.session.episodeId,
+    actionLabel: "openclaw session-end",
+    logger: params.logger,
   });
 }
 
@@ -91,7 +107,7 @@ type OpenClawSessionEpisodeActivityGate = "host-shutdown" | "none";
  * Runs one bounded OpenClaw episode write for a resolved session target.
  *
  * @param params - Session target, labels, shared services, and logger.
- * @returns Promise that resolves after the bounded episode attempt finishes.
+ * @returns Ingest result when the bounded attempt completed, or undefined.
  */
 async function writeOpenClawSessionEpisode(params: {
   ctx: AgenrOpenClawHookContext;
@@ -104,7 +120,7 @@ async function writeOpenClawSessionEpisode(params: {
   shortCountField: "materialTurns";
   embeddingSkipLogContext: string;
   activityGate: OpenClawSessionEpisodeActivityGate;
-}): Promise<void> {
+}): Promise<EpisodeTranscriptIngestResult | undefined> {
   const sessionContext = formatSessionContext(params.ctx.sessionId, params.ctx.sessionKey);
   const writeStartedAtMs = Date.now();
   const target = params.target;
@@ -141,7 +157,7 @@ async function writeOpenClawSessionEpisode(params: {
     summaryDeadlineMs,
   );
 
-  await writeBoundedSingleTranscriptEpisode({
+  return writeBoundedSingleTranscriptEpisode({
     filePath: target.sessionFile,
     context: sessionContext,
     actionLabel: params.actionLabel,

@@ -228,5 +228,6 @@ function createPromotionRepository(
         },
       };
     },
+    recordCandidateConsolidation: async () => ({ kind: "not_found" }),
   };
 }

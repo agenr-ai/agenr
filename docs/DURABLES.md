@@ -6,6 +6,7 @@ The real store implementation is the shared core pipeline in `src/core/store/pip
 
 - durable memory ingest via `agenr ingest durables`
 - the OpenClaw `agenr_store` tool
+- working-memory consolidation, which promotes pending semantic candidates from closed working sets through `storeDurablesDetailed()` (see [`docs/WORKING-MEMORY.md`](./WORKING-MEMORY.md))
 
 The repo also contains claim-key scenarios that exercise the same pipeline, but those are a test/runtime seam, not the main user-facing store surface.
 
@@ -30,7 +31,7 @@ This document describes the code as it exists now.
 
 ## Important architectural nuance
 
-There is still no registered `store` CLI command. `src/cli/main.ts` registers `init`, `setup`, `ingest`, `recall`, `dream`, `trace`, `db`, and `scenarios`, while `registerStoreCommand(program)` remains commented out.
+There is still no registered `store` CLI command. `src/cli/main.ts` registers `init`, `setup`, `ingest`, `recall`, `dream`, `trace`, `db`, `scenarios`, `procedures`, and `web`, while `registerStoreCommand(program)` remains commented out.
 
 That means:
 
