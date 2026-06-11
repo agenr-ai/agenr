@@ -151,6 +151,25 @@ export interface WorkingSetUsagePatchResult {
 /** Repository response for trusted usage patches. */
 export type WorkingSetUsagePatchWriteResult = WorkingSetUsagePatchResult | WorkingSetWriteFailure;
 
+/** Input used to atomically apply a trusted usage patch followed by a semantic update. */
+export interface PatchWorkingSetUsageAndUpdateInput {
+  /** Usage patch that must commit in the same transaction as the semantic update. */
+  usagePatch: PatchWorkingSetUsageInput;
+  /** Semantic update that follows the usage patch on the same observed revision. */
+  update: UpdateWorkingSetInput;
+}
+
+/** Successful atomic usage-patch plus semantic-update response. */
+export interface WorkingSetUsagePatchAndUpdateResult {
+  /** Updated working set after both writes commit. */
+  workingSet: WorkingSetRecord;
+  /** Events written by the usage patch and semantic update, in commit order. */
+  events: WorkingEventRecord[];
+}
+
+/** Repository response for an atomic usage-patch plus semantic-update write. */
+export type WorkingSetUsagePatchAndUpdateWriteResult = WorkingSetUsagePatchAndUpdateResult | WorkingSetWriteFailure;
+
 /** Returns true when a repository create result is a failure. */
 export function isWorkingSetCreateFailure(result: WorkingSetCreateResult): result is WorkingSetCreateFailure {
   return "kind" in result;
@@ -220,6 +239,14 @@ export interface WorkingMemoryRepository {
    * @returns Updated row, optional audit event, or a stable write failure.
    */
   patchWorkingSetUsage(input: PatchWorkingSetUsageInput): Promise<WorkingSetUsagePatchWriteResult>;
+
+  /**
+   * Applies a trusted usage patch and following semantic update atomically.
+   *
+   * @param input - Usage patch plus semantic update to commit in one transaction.
+   * @returns Final row, committed events, or a stable write failure with no partial write.
+   */
+  patchWorkingSetUsageAndUpdate(input: PatchWorkingSetUsageAndUpdateInput): Promise<WorkingSetUsagePatchAndUpdateWriteResult>;
 }
 
 /** Builds a projection-safe scope filter from raw host facts. */

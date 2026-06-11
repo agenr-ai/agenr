@@ -10,16 +10,20 @@ import type { WorkingEventRecord, WorkingSetRecord } from "../../app/working-mem
 import type { ResolvedWorkingScope } from "../../app/working-memory/scope.js";
 import type { WorkingEventType } from "../../app/working-memory/events.js";
 import { normalizeBoundedLimit } from "../../app/working-memory/limits.js";
+import { isWorkingSetWriteFailure } from "../../app/working-memory/repository.js";
 import type {
   CreateWorkingSetInput,
   PatchWorkingSetUsageInput,
+  PatchWorkingSetUsageAndUpdateInput,
   UpdateWorkingSetInput,
   WorkingMemoryRepository,
   WorkingSetCreateResult,
   WorkingSetListFilter,
+  WorkingSetUsagePatchAndUpdateWriteResult,
   WorkingSetUsagePatchResult,
   WorkingSetUsagePatchWriteResult,
   WorkingSetWriteResult,
+  WorkingSetWriteFailure,
 } from "../../app/working-memory/repository.js";
 import type { SqlDatabase } from "./client.js";
 import type { SqlExecutor } from "./queries.js";
@@ -49,6 +53,7 @@ export function createWorkingMemoryRepository(database: SqlDatabase): WorkingMem
     createWorkingSet: (input) => createWorkingSet(database, input),
     updateWorkingSet: (input) => updateWorkingSet(database, input),
     patchWorkingSetUsage: (input) => patchWorkingSetUsage(database, input),
+    patchWorkingSetUsageAndUpdate: (input) => patchWorkingSetUsageAndUpdate(database, input),
   };
 }
 
@@ -212,129 +217,173 @@ async function createWorkingSet(database: SqlDatabase, input: CreateWorkingSetIn
 
 /** Applies one revision-guarded semantic update. */
 async function updateWorkingSet(database: SqlDatabase, input: UpdateWorkingSetInput): Promise<WorkingSetWriteResult> {
-  return database.withTransaction(async (transaction) => {
-    const executor = transaction as SqlDatabase;
-    const current = await getWorkingSet(executor, input.workingSetId);
-    if (!current) {
-      return { kind: "not_found" };
-    }
+  return database.withTransaction(async (transaction) => updateWorkingSetInTransaction(transaction as SqlDatabase, input));
+}
 
-    if (!canApplyWorkingSetUpdate(current.status, input.status)) {
-      return { kind: "terminal_status", status: current.status };
-    }
+/** Applies one revision-guarded semantic update within the caller's transaction. */
+async function updateWorkingSetInTransaction(executor: SqlExecutor, input: UpdateWorkingSetInput): Promise<WorkingSetWriteResult> {
+  const current = await getWorkingSet(executor, input.workingSetId);
+  if (!current) {
+    return { kind: "not_found" };
+  }
 
-    if (current.revision !== input.expectedRevision) {
-      return { kind: "revision_conflict", actualRevision: current.revision };
-    }
+  if (!canApplyWorkingSetUpdate(current.status, input.status)) {
+    return { kind: "terminal_status", status: current.status };
+  }
 
-    const nextRevision = current.revision + 1;
-    const nextEventSequence = await resolveNextWorkingEventSequence(executor, current.id);
-    const event = buildEvent({
-      workingSetId: current.id,
-      sequence: nextEventSequence,
-      eventType: input.eventType,
-      payload: input.payload,
-      actor: input.actor,
-      source: input.source,
-      now: input.now,
-    });
+  if (current.revision !== input.expectedRevision) {
+    return { kind: "revision_conflict", actualRevision: current.revision };
+  }
 
-    await executor.execute({
-      sql: `
+  const nextRevision = current.revision + 1;
+  const nextEventSequence = await resolveNextWorkingEventSequence(executor, current.id);
+  const event = buildEvent({
+    workingSetId: current.id,
+    sequence: nextEventSequence,
+    eventType: input.eventType,
+    payload: input.payload,
+    actor: input.actor,
+    source: input.source,
+    now: input.now,
+  });
+
+  await executor.execute({
+    sql: `
         UPDATE working_sets
         SET ${buildWorkingSetUpdateSetClause()}
         WHERE id = ?
           AND revision = ?
       `,
-      args: [
-        ...buildWorkingSetSnapshotUpdateArgs({
-          title: input.title,
-          objective: input.objective,
-          status: input.status,
-          snapshot: input.snapshot,
-          current,
-        }),
-        nextRevision,
-        input.now,
-        input.now,
-        toNullableString(input.closedAt ?? current.closedAt),
-        toNullableString(input.closeReason ?? current.closeReason),
-        toNullableString(input.episodeId ?? current.episodeId),
-        current.id,
-        input.expectedRevision,
-      ],
-    });
-    const workingSet = await requireWorkingSet(executor, current.id);
-    if (workingSet.revision !== nextRevision) {
-      return { kind: "revision_conflict", actualRevision: workingSet.revision };
-    }
-
-    await insertWorkingEvent(executor, event);
-
-    return { workingSet, event };
+    args: [
+      ...buildWorkingSetSnapshotUpdateArgs({
+        title: input.title,
+        objective: input.objective,
+        status: input.status,
+        snapshot: input.snapshot,
+        current,
+      }),
+      nextRevision,
+      input.now,
+      input.now,
+      toNullableString(input.closedAt ?? current.closedAt),
+      toNullableString(input.closeReason ?? current.closeReason),
+      toNullableString(input.episodeId ?? current.episodeId),
+      current.id,
+      input.expectedRevision,
+    ],
   });
+  const workingSet = await requireWorkingSet(executor, current.id);
+  if (workingSet.revision !== nextRevision) {
+    return { kind: "revision_conflict", actualRevision: workingSet.revision };
+  }
+
+  await insertWorkingEvent(executor, event);
+
+  return { workingSet, event };
 }
 
 /** Applies one trusted usage patch without advancing revision. */
 async function patchWorkingSetUsage(database: SqlDatabase, input: PatchWorkingSetUsageInput): Promise<WorkingSetUsagePatchWriteResult> {
-  return database.withTransaction(async (transaction) => {
-    const executor = transaction as SqlDatabase;
-    const current = await getWorkingSet(executor, input.workingSetId);
-    if (!current) {
-      return { kind: "not_found" };
-    }
+  return database.withTransaction(async (transaction) => patchWorkingSetUsageInTransaction(transaction as SqlDatabase, input));
+}
 
-    if (!canApplyWorkingSetUpdate(current.status, input.status)) {
-      return { kind: "terminal_status", status: current.status };
-    }
+/** Applies one trusted usage patch within the caller's transaction. */
+async function patchWorkingSetUsageInTransaction(executor: SqlExecutor, input: PatchWorkingSetUsageInput): Promise<WorkingSetUsagePatchWriteResult> {
+  const current = await getWorkingSet(executor, input.workingSetId);
+  if (!current) {
+    return { kind: "not_found" };
+  }
 
-    if (current.revision !== input.expectedRevision) {
-      return { kind: "revision_conflict", actualRevision: current.revision };
-    }
+  if (!canApplyWorkingSetUpdate(current.status, input.status)) {
+    return { kind: "terminal_status", status: current.status };
+  }
 
-    await executor.execute({
-      sql: `
+  if (current.revision !== input.expectedRevision) {
+    return { kind: "revision_conflict", actualRevision: current.revision };
+  }
+
+  await executor.execute({
+    sql: `
         UPDATE working_sets
         SET ${buildWorkingSetUsagePatchSetClause()}
         WHERE id = ?
           AND revision = ?
       `,
-      args: [
-        ...buildWorkingSetSnapshotUpdateArgs({
-          title: input.title,
-          objective: input.objective,
-          status: input.status,
-          snapshot: input.snapshot,
-          current,
-        }),
-        input.now,
-        input.now,
-        current.id,
-        input.expectedRevision,
-      ],
-    });
-    const workingSet = await requireWorkingSet(executor, current.id);
-    if (workingSet.revision !== input.expectedRevision) {
-      return { kind: "revision_conflict", actualRevision: workingSet.revision };
-    }
-
-    const result: WorkingSetUsagePatchResult = { workingSet };
-    if (input.auditEvent && current.status !== "budget_limited" && input.status === "budget_limited") {
-      const event = buildEvent({
-        workingSetId: current.id,
-        sequence: await resolveNextWorkingEventSequence(executor, current.id),
-        eventType: input.auditEvent.eventType,
-        payload: input.auditEvent.payload,
-        actor: input.auditEvent.actor,
-        source: input.auditEvent.source,
-        now: input.now,
-      });
-      await insertWorkingEvent(executor, event);
-      result.event = event;
-    }
-
-    return result;
+    args: [
+      ...buildWorkingSetSnapshotUpdateArgs({
+        title: input.title,
+        objective: input.objective,
+        status: input.status,
+        snapshot: input.snapshot,
+        current,
+      }),
+      input.now,
+      input.now,
+      current.id,
+      input.expectedRevision,
+    ],
   });
+  const workingSet = await requireWorkingSet(executor, current.id);
+  if (workingSet.revision !== input.expectedRevision) {
+    return { kind: "revision_conflict", actualRevision: workingSet.revision };
+  }
+
+  const result: WorkingSetUsagePatchResult = { workingSet };
+  if (input.auditEvent && current.status !== "budget_limited" && input.status === "budget_limited") {
+    const event = buildEvent({
+      workingSetId: current.id,
+      sequence: await resolveNextWorkingEventSequence(executor, current.id),
+      eventType: input.auditEvent.eventType,
+      payload: input.auditEvent.payload,
+      actor: input.auditEvent.actor,
+      source: input.auditEvent.source,
+      now: input.now,
+    });
+    await insertWorkingEvent(executor, event);
+    result.event = event;
+  }
+
+  return result;
+}
+
+/** Applies a usage patch and following semantic update in one transaction. */
+async function patchWorkingSetUsageAndUpdate(
+  database: SqlDatabase,
+  input: PatchWorkingSetUsageAndUpdateInput,
+): Promise<WorkingSetUsagePatchAndUpdateWriteResult> {
+  try {
+    return await database.withTransaction(async (transaction) => {
+      const executor = transaction as SqlDatabase;
+      const usagePatch = await patchWorkingSetUsageInTransaction(executor, input.usagePatch);
+      if (isWorkingSetWriteFailure(usagePatch)) {
+        return usagePatch;
+      }
+
+      const update = await updateWorkingSetInTransaction(executor, input.update);
+      if (isWorkingSetWriteFailure(update)) {
+        throw new AtomicWorkingSetWriteFailure(update);
+      }
+
+      return {
+        workingSet: update.workingSet,
+        events: [...(usagePatch.event ? [usagePatch.event] : []), update.event],
+      };
+    });
+  } catch (error) {
+    if (error instanceof AtomicWorkingSetWriteFailure) {
+      return error.failure;
+    }
+
+    throw error;
+  }
+}
+
+/** Sentinel error used to roll back an atomic write before returning a stable failure. */
+class AtomicWorkingSetWriteFailure extends Error {
+  /** Creates a rollback sentinel for a stable repository failure. */
+  public constructor(public readonly failure: WorkingSetWriteFailure) {
+    super(`Atomic working-set write failed: ${failure.kind}`);
+  }
 }
 
 /** Resolves the next append-only event sequence for one working set. */

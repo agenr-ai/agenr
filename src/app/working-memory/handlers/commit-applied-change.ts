@@ -2,7 +2,13 @@ import type { AgenrWorkMutationActor, AgenrWorkMutationSource, WorkingSetStatus 
 import type { AppliedWorkingOperation } from "../apply-operation.js";
 import type { AgenrWorkUpdateOperation } from "../mutations.js";
 import type { WorkingEventRecord, WorkingSetRecord } from "../records.js";
-import { isWorkingSetWriteFailure, type WorkingMemoryRepository, type WorkingSetWriteFailure } from "../repository.js";
+import {
+  isWorkingSetWriteFailure,
+  type PatchWorkingSetUsageInput,
+  type UpdateWorkingSetInput,
+  type WorkingMemoryRepository,
+  type WorkingSetWriteFailure,
+} from "../repository.js";
 
 /** Input used to persist one applied working-set change. */
 export interface CommitAppliedWorkingSetChangeInput {
@@ -52,6 +58,14 @@ export type AppliedWorkingSetCommitResult = AppliedWorkingSetUsagePatchCommit | 
 /** Repository commit response for one applied working-set change. */
 export type CommitAppliedWorkingSetChangeResult = AppliedWorkingSetCommitResult | WorkingSetWriteFailure;
 
+/** Repository inputs derived from one applied working-set change. */
+export interface AppliedWorkingSetRepositoryInputs {
+  /** Usage-patch input when the operation is trusted usage accounting. */
+  usagePatch?: PatchWorkingSetUsageInput;
+  /** Semantic-update input when the operation advances revision and writes an event. */
+  semanticUpdate?: UpdateWorkingSetInput;
+}
+
 /** Returns true when a commit result is a repository write failure. */
 export function isAppliedWorkingSetCommitFailure(result: CommitAppliedWorkingSetChangeResult): result is WorkingSetWriteFailure {
   return "kind" in result;
@@ -68,32 +82,9 @@ export async function commitAppliedWorkingSetChange(
   repository: WorkingMemoryRepository,
   input: CommitAppliedWorkingSetChangeInput,
 ): Promise<CommitAppliedWorkingSetChangeResult> {
-  if (input.operation.type === "account_usage") {
-    const writeResult = await repository.patchWorkingSetUsage({
-      workingSetId: input.workingSetId,
-      expectedRevision: input.expectedRevision,
-      status: input.applied.status,
-      snapshot: input.applied.snapshot,
-      title: input.applied.title,
-      objective: input.applied.objective,
-      auditEvent:
-        input.previousStatus !== "budget_limited" && input.applied.status === "budget_limited"
-          ? {
-              eventType: "account_usage",
-              payload: {
-                operation: input.operation,
-                updateReason: input.updateReason,
-                statusTransition: {
-                  from: input.previousStatus,
-                  to: "budget_limited",
-                },
-              },
-              actor: input.actor,
-              source: input.source,
-            }
-          : undefined,
-      now: input.now,
-    });
+  const repositoryInputs = buildCommitAppliedWorkingSetChangeInput(input);
+  if (repositoryInputs.usagePatch) {
+    const writeResult = await repository.patchWorkingSetUsage(repositoryInputs.usagePatch);
     if (isWorkingSetWriteFailure(writeResult)) {
       return writeResult;
     }
@@ -105,22 +96,11 @@ export async function commitAppliedWorkingSetChange(
     };
   }
 
-  const writeResult = await repository.updateWorkingSet({
-    workingSetId: input.workingSetId,
-    expectedRevision: input.expectedRevision,
-    eventType: input.operation.type,
-    payload: {
-      operation: input.operation,
-      updateReason: input.updateReason,
-    },
-    status: input.applied.status,
-    snapshot: input.applied.snapshot,
-    title: input.applied.title,
-    objective: input.applied.objective,
-    actor: input.actor,
-    source: input.source,
-    now: input.now,
-  });
+  if (!repositoryInputs.semanticUpdate) {
+    throw new Error(`Unsupported working-set commit operation: ${input.operation.type}`);
+  }
+
+  const writeResult = await repository.updateWorkingSet(repositoryInputs.semanticUpdate);
   if (isWorkingSetWriteFailure(writeResult)) {
     return writeResult;
   }
@@ -129,5 +109,62 @@ export async function commitAppliedWorkingSetChange(
     type: "semantic",
     workingSet: writeResult.workingSet,
     event: writeResult.event,
+  };
+}
+
+/**
+ * Builds repository-specific inputs for one applied working-set change.
+ *
+ * @param input - Applied operation facts and audit metadata.
+ * @returns Exactly one repository input for the operation kind.
+ */
+export function buildCommitAppliedWorkingSetChangeInput(input: CommitAppliedWorkingSetChangeInput): AppliedWorkingSetRepositoryInputs {
+  if (input.operation.type === "account_usage") {
+    return {
+      usagePatch: {
+        workingSetId: input.workingSetId,
+        expectedRevision: input.expectedRevision,
+        status: input.applied.status,
+        snapshot: input.applied.snapshot,
+        title: input.applied.title,
+        objective: input.applied.objective,
+        auditEvent:
+          input.previousStatus !== "budget_limited" && input.applied.status === "budget_limited"
+            ? {
+                eventType: "account_usage",
+                payload: {
+                  operation: input.operation,
+                  updateReason: input.updateReason,
+                  statusTransition: {
+                    from: input.previousStatus,
+                    to: "budget_limited",
+                  },
+                },
+                actor: input.actor,
+                source: input.source,
+              }
+            : undefined,
+        now: input.now,
+      },
+    };
+  }
+
+  return {
+    semanticUpdate: {
+      workingSetId: input.workingSetId,
+      expectedRevision: input.expectedRevision,
+      eventType: input.operation.type,
+      payload: {
+        operation: input.operation,
+        updateReason: input.updateReason,
+      },
+      status: input.applied.status,
+      snapshot: input.applied.snapshot,
+      title: input.applied.title,
+      objective: input.applied.objective,
+      actor: input.actor,
+      source: input.source,
+      now: input.now,
+    },
   };
 }

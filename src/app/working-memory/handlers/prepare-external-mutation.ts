@@ -1,9 +1,10 @@
 import { applyOperation } from "../apply-operation.js";
-import { commitAppliedWorkingSetChange, isAppliedWorkingSetCommitFailure } from "./commit-applied-change.js";
+import { buildCommitAppliedWorkingSetChangeInput, commitAppliedWorkingSetChange, isAppliedWorkingSetCommitFailure } from "./commit-applied-change.js";
 import { isGoalScopeKind, isMutableWorkingSetStatus, isTrustedHostMutationSource } from "../constants.js";
 import type { WorkingMemoryHandlerContext } from "../handler-context.js";
 import type { AgenrWorkUpdateOperation, PrepareExternalGoalMutationParams } from "../mutations.js";
 import type { WorkingEventRecord, WorkingSetRecord } from "../records.js";
+import { isWorkingSetWriteFailure } from "../repository.js";
 import { createFailure, writeFailureToResult, type WorkingMemoryResult } from "../results.js";
 import { selectWorkingSet } from "../select-working-set.js";
 
@@ -15,7 +16,14 @@ interface PrepareOperation {
   updateReason: string;
 }
 
-/** Handles progress accounting before trusted external goal mutations. */
+/**
+ * Handles progress accounting before trusted external goal mutations.
+ *
+ * When a request includes both usage accounting and a checkpoint, both writes
+ * are committed through one repository transaction. If the checkpoint write
+ * fails, the usage patch is rolled back and the final persisted working set is
+ * unchanged from the caller's selected revision.
+ */
 export async function handlePrepareExternalGoalMutation(
   params: PrepareExternalGoalMutationParams,
   ctx: WorkingMemoryHandlerContext,
@@ -70,11 +78,17 @@ export async function handlePrepareExternalGoalMutation(
 
   const events: WorkingEventRecord[] = [];
   let workingSet: WorkingSetRecord = selection.workingSet;
+  const operations = resolvePrepareOperations(params);
+
+  const atomicPrepare = await commitAtomicUsageAndCheckpointIfNeeded(workingSet, operations, params, ctx);
+  if (atomicPrepare) {
+    return atomicPrepare;
+  }
 
   // The active set is selected once, then each accounting operation is committed in
   // order against the threaded record. Usage patches preserve revision so a later
   // semantic checkpoint commit can reuse the same expectedRevision.
-  for (const { operation, updateReason } of resolvePrepareOperations(params)) {
+  for (const { operation, updateReason } of operations) {
     const applied = applyOperation(workingSet, operation, updateReason);
     if (!applied.ok) {
       return applied;
@@ -107,6 +121,79 @@ export async function handlePrepareExternalGoalMutation(
     prepared: true,
     workingSet,
     events,
+  };
+}
+
+/** Commits prepare usage and checkpoint writes in one transaction when both are present. */
+async function commitAtomicUsageAndCheckpointIfNeeded(
+  workingSet: WorkingSetRecord,
+  operations: PrepareOperation[],
+  params: PrepareExternalGoalMutationParams,
+  ctx: WorkingMemoryHandlerContext,
+): Promise<WorkingMemoryResult | undefined> {
+  const [usage, checkpoint] = operations;
+  if (operations.length !== 2 || usage?.operation.type !== "account_usage" || checkpoint?.operation.type !== "merge_checkpoint") {
+    return undefined;
+  }
+
+  const appliedUsage = applyOperation(workingSet, usage.operation, usage.updateReason);
+  if (!appliedUsage.ok) {
+    return appliedUsage;
+  }
+
+  const checkpointWorkingSet: WorkingSetRecord = {
+    ...workingSet,
+    status: appliedUsage.status,
+    snapshot: appliedUsage.snapshot,
+    ...(appliedUsage.title !== undefined ? { title: appliedUsage.title } : {}),
+    ...(appliedUsage.objective !== undefined ? { objective: appliedUsage.objective } : {}),
+  };
+  const appliedCheckpoint = applyOperation(checkpointWorkingSet, checkpoint.operation, checkpoint.updateReason);
+  if (!appliedCheckpoint.ok) {
+    return appliedCheckpoint;
+  }
+
+  const usageInput = buildCommitAppliedWorkingSetChangeInput({
+    workingSetId: workingSet.id,
+    expectedRevision: workingSet.revision,
+    operation: usage.operation,
+    previousStatus: workingSet.status,
+    updateReason: usage.updateReason,
+    applied: appliedUsage,
+    actor: params.actor,
+    source: params.source,
+    now: ctx.timestamp,
+  });
+  const checkpointInput = buildCommitAppliedWorkingSetChangeInput({
+    workingSetId: workingSet.id,
+    expectedRevision: workingSet.revision,
+    operation: checkpoint.operation,
+    previousStatus: appliedUsage.status,
+    updateReason: checkpoint.updateReason,
+    applied: appliedCheckpoint,
+    actor: params.actor,
+    source: params.source,
+    now: ctx.timestamp,
+  });
+
+  if (!usageInput.usagePatch || !checkpointInput.semanticUpdate) {
+    return undefined;
+  }
+
+  const writeResult = await ctx.repository.patchWorkingSetUsageAndUpdate({
+    usagePatch: usageInput.usagePatch,
+    update: checkpointInput.semanticUpdate,
+  });
+  if (isWorkingSetWriteFailure(writeResult)) {
+    return writeFailureToResult(workingSet.id, writeResult);
+  }
+
+  return {
+    ok: true,
+    action: "prepare_external_goal_mutation",
+    prepared: true,
+    workingSet: writeResult.workingSet,
+    events: writeResult.events,
   };
 }
 

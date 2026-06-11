@@ -83,5 +83,6 @@ export function createProjectionRepository(session: WorkingSetRecord, goals: Wor
     createWorkingSet: async () => ({ kind: "active_set_exists", scopeKey: "test" }),
     updateWorkingSet: async () => ({ kind: "not_found" }),
     patchWorkingSetUsage: async () => ({ kind: "not_found" }),
+    patchWorkingSetUsageAndUpdate: async () => ({ kind: "not_found" }),
   };
 }

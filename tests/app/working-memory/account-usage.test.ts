@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 
+import { createWorkingMemoryRepository } from "../../../src/adapters/db/working-memory-repository.js";
+import type { SqlDatabase } from "../../../src/adapters/db/client.js";
+import { createWorkingMemoryService } from "../../../src/app/working-memory/service.js";
 import { closeWorkingMemoryTestService, createWorkingMemoryTestService } from "./service-test-helpers.js";
 
 const TRUSTED_SCOPE = {
@@ -570,6 +573,81 @@ describe("account_usage control plane", () => {
     }
   });
 
+  it("rolls back prepare_external_goal_mutation usage when the checkpoint write fails", async () => {
+    const { database, dbPath, service } = await createWorkingMemoryTestService();
+
+    try {
+      const created = await service.run({
+        action: "create",
+        target: "goal",
+        scope: TRUSTED_SCOPE,
+        operation: {
+          type: "set_objective",
+          objective: "Prepare atomically before external mutation.",
+        },
+        updateReason: "Started goal.",
+        source: "goal_command",
+        initialBudget: {
+          tokenBudget: 10,
+        },
+      });
+      if (!created.ok || created.action !== "create") {
+        throw new Error("Expected create success.");
+      }
+
+      const failingRepository = createWorkingMemoryRepository(createCheckpointFailureDatabase(database));
+      const failingService = createWorkingMemoryService(
+        { workingMemory: true },
+        {
+          repository: failingRepository,
+          sourceLabel: "test",
+          now: () => new Date("2026-05-30T12:00:00.000Z"),
+        },
+      );
+
+      await expect(
+        failingService.prepareExternalGoalMutation({
+          mutationKind: "pause",
+          scope: TRUSTED_SCOPE,
+          usage: {
+            tokenDelta: 10,
+            recordedAt: "2026-05-30T12:10:00.000Z",
+          },
+          checkpoint: {
+            summary: "Checkpoint after usage.",
+            recordedAt: "2026-05-30T12:10:00.000Z",
+          },
+          source: "goal_command",
+        }),
+      ).rejects.toThrow("Simulated checkpoint event insert failure.");
+
+      const loaded = await service.run({
+        action: "get",
+        workingSetId: created.workingSet.id,
+        includeEvents: true,
+      });
+      if (!loaded.ok || loaded.action !== "get") {
+        throw new Error("Expected get success.");
+      }
+
+      expect(loaded.workingSet).toMatchObject({
+        revision: 1,
+        status: "active",
+        snapshot: {
+          budgets: {
+            tokenBudget: 10,
+          },
+        },
+      });
+      expect(loaded.workingSet.snapshot.budgets?.tokenUsed).toBeUndefined();
+      expect(loaded.workingSet.snapshot.budgets?.limitReason).toBeUndefined();
+      expect(loaded.workingSet.snapshot.checkpoint).toBeUndefined();
+      expect(loaded.events).toMatchObject([{ eventType: "created", sequence: 1 }]);
+    } finally {
+      await closeWorkingMemoryTestService(database, dbPath);
+    }
+  });
+
   it("refuses to prepare goal mutations against a session-scoped working set id", async () => {
     const { database, dbPath, service } = await createWorkingMemoryTestService();
 
@@ -611,3 +689,25 @@ describe("account_usage control plane", () => {
     }
   });
 });
+
+function createCheckpointFailureDatabase(database: SqlDatabase): SqlDatabase {
+  const failingDatabase = Object.create(database) as SqlDatabase;
+  failingDatabase.withTransaction = async (fn) =>
+    database.withTransaction(async (transaction) => fn(createCheckpointFailureTransaction(transaction as SqlDatabase)));
+  return failingDatabase;
+}
+
+function createCheckpointFailureTransaction(transaction: SqlDatabase): SqlDatabase {
+  const failingTransaction = Object.create(transaction) as SqlDatabase;
+  const execute: SqlDatabase["execute"] = (async (...executeArgs: Parameters<SqlDatabase["execute"]>) => {
+    const [statementOrSql, args] = executeArgs;
+    const statementArgs = typeof statementOrSql === "string" ? args : statementOrSql.args;
+    if (Array.isArray(statementArgs) && statementArgs[3] === "merge_checkpoint") {
+      throw new Error("Simulated checkpoint event insert failure.");
+    }
+
+    return transaction.execute(...executeArgs);
+  }) as SqlDatabase["execute"];
+  failingTransaction.execute = execute;
+  return failingTransaction;
+}

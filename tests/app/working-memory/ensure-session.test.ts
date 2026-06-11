@@ -107,5 +107,6 @@ function createEnsureRepository(options: { retryMatches: Awaited<ReturnType<Work
     createWorkingSet: async (): Promise<WorkingSetCreateResult> => ({ kind: "active_set_exists", scopeKey: "session:session-1" }),
     updateWorkingSet: async () => ({ kind: "not_found" }),
     patchWorkingSetUsage: async () => ({ kind: "not_found" }),
+    patchWorkingSetUsageAndUpdate: async () => ({ kind: "not_found" }),
   };
 }
