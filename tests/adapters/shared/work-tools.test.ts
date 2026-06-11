@@ -272,9 +272,6 @@ describe("runWorkMemoryTool", () => {
       run: async () => {
         throw new Error("model close should not reach the service");
       },
-      renderProjection: async () => {
-        throw new Error("not used");
-      },
     } as unknown as WorkingMemoryService;
 
     await expect(runWorkMemoryTool({ action: "close", expectedRevision: 1, closeReason: "done", source: "tool" }, service)).resolves.toEqual({
@@ -291,9 +288,6 @@ describe("runWorkMemoryTool", () => {
     const service = {
       run: async () => {
         throw new Error("model status should not reach the service");
-      },
-      renderProjection: async () => {
-        throw new Error("not used");
       },
     } as unknown as WorkingMemoryService;
 
@@ -329,9 +323,6 @@ describe("runWorkMemoryTool", () => {
         event: { sequence: 2, eventType: "closed" },
         candidates: [],
       }),
-      renderProjection: async () => {
-        throw new Error("not used");
-      },
     } as unknown as WorkingMemoryService;
 
     await expect(runWorkMemoryTool({ action: "close", expectedRevision: 1, closeReason: "done", source: "goal_command" }, service)).resolves.toMatchObject({

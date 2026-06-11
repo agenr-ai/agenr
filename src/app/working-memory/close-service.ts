@@ -33,7 +33,7 @@ export interface WorkingCloseSnapshotResult {
 }
 
 /**
- * Builds the deterministic final snapshot used by Phase 1 close.
+ * Builds the deterministic final snapshot used by working-set close.
  *
  * @param input - Current snapshot, close reason, and provenance facts.
  * @returns Final snapshot plus candidate payloads for review.

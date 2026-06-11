@@ -26,9 +26,3 @@ export interface WorkingCheckpointRefreshSkipped {
 
 /** Result returned from lifecycle working-checkpoint refresh. */
 export type WorkingCheckpointRefreshResult = WorkingCheckpointRefreshSuccess | WorkingCheckpointRefreshSkipped;
-
-/** Legacy alias retained for session-memory callers. @deprecated Use {@link WorkingCheckpointRefreshResult}. */
-export type SessionWorkingCheckpointRefreshResult = WorkingCheckpointRefreshResult;
-
-/** Legacy alias retained for session-memory callers. @deprecated Use {@link WorkingCheckpointRefreshResult}. */
-export type SessionCompactionWorkingCheckpointRefreshResult = WorkingCheckpointRefreshResult;

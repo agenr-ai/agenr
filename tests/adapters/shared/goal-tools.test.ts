@@ -151,9 +151,6 @@ describe("goal alias tools", () => {
       run: async () => {
         throw new Error("invalid status should not reach the service");
       },
-      renderProjection: async () => {
-        throw new Error("not used");
-      },
     } as unknown as WorkingMemoryService;
 
     await expect(runGoalAliasTool("update_goal", { status: "paused" }, { conversationKey: "session-1" }, READER, service)).resolves.toMatchObject({

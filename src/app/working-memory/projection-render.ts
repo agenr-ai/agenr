@@ -214,7 +214,6 @@ function renderWorkingSetSection(workingSet: WorkingSetRecord): string[] {
       },
     ),
     ...renderStringList("Blockers", snapshot.blockers),
-    ...renderStringList("Open questions", snapshot.openQuestions),
     ...renderCandidates(snapshot.candidates),
   ];
 }

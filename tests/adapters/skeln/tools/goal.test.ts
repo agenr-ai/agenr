@@ -70,7 +70,7 @@ function createServices(): AgenrSkelnServices {
         code: "missing_active_set",
         message: "No active working set matched the resolved scope.",
       })),
-      renderProjection: vi.fn(),
+      renderProjectionBundle: vi.fn(),
     },
   } as unknown as AgenrSkelnServices;
 }

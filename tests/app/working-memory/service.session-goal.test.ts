@@ -3,13 +3,13 @@ import { describe, expect, it } from "vitest";
 import { closeWorkingMemoryTestService, createWorkingMemoryTestService } from "./service-test-helpers.js";
 
 describe("createWorkingMemoryService session and goal layers", () => {
-  it("stores phase 5 continuation, budget, and external mutation prep state", async () => {
+  it("stores continuation, budget, and external mutation prep state", async () => {
     const { database, dbPath, service } = await createWorkingMemoryTestService();
 
     try {
       const scope = {
-        conversationKey: "session-phase-5",
-        sessionId: "session-phase-5",
+        conversationKey: "session-continuation",
+        sessionId: "session-continuation",
         cwd: "/tmp/project",
       };
       const created = await service.run({
@@ -45,7 +45,7 @@ describe("createWorkingMemoryService session and goal layers", () => {
         },
       });
       if (!created.ok || created.action !== "create") {
-        throw new Error("Expected phase 5 create success.");
+        throw new Error("Expected continuation create success.");
       }
 
       const configuredBudget = await service.run({

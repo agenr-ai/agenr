@@ -3,7 +3,7 @@ import type { AgenrWorkUpdateOperation } from "./mutations.js";
 /**
  * Lifecycle event types written outside typed mutation operations.
  */
-const WORKING_LIFECYCLE_EVENT_TYPES = ["created", "closed", "abandoned", "heartbeat", "lease_acquired", "lease_released"] as const;
+const WORKING_LIFECYCLE_EVENT_TYPES = ["created", "closed", "abandoned"] as const;
 
 export { WORKING_LIFECYCLE_EVENT_TYPES };
 

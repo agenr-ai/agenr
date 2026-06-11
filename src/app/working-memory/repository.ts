@@ -1,6 +1,6 @@
 import type { AgenrWorkMutationActor, AgenrWorkMutationSource, WorkingScopeKind, WorkingSetStatus } from "./constants.js";
 import type { WorkingEventType } from "./events.js";
-import type { ResolvedWorkingScope, WorkingScope } from "./scope.js";
+import type { ResolvedWorkingScope } from "./scope.js";
 import type { WorkingSnapshot } from "./snapshot.js";
 import type { WorkingEventRecord, WorkingSetRecord } from "./records.js";
 
@@ -180,7 +180,7 @@ export function isWorkingSetWriteFailure(result: WorkingSetWriteResult | Working
   return "kind" in result;
 }
 
-/** Persistence port for Phase 1 working-memory storage. */
+/** Persistence port for working-memory storage. */
 export interface WorkingMemoryRepository {
   /**
    * Loads one working set by id.
@@ -248,6 +248,3 @@ export interface WorkingMemoryRepository {
    */
   patchWorkingSetUsageAndUpdate(input: PatchWorkingSetUsageAndUpdateInput): Promise<WorkingSetUsagePatchAndUpdateWriteResult>;
 }
-
-/** Builds a projection-safe scope filter from raw host facts. */
-export type WorkingScopeInput = Partial<WorkingScope>;

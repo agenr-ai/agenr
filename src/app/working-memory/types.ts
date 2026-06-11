@@ -1,5 +1,5 @@
 /**
- * Phase 1 working-memory contracts.
+ * Working-memory contracts.
  */
 
 export * from "./constants.js";

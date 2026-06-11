@@ -134,7 +134,7 @@ function buildSessionScope(scope: Partial<WorkingScope>): WorkingScopeResolution
  * @param input - Raw scope facts.
  * @returns Scope with blank fields removed.
  */
-export function normalizeWorkingScope(input: Partial<WorkingScope> | undefined): Partial<WorkingScope> {
+function normalizeWorkingScope(input: Partial<WorkingScope> | undefined): Partial<WorkingScope> {
   const scope = input ?? {};
   return {
     ...normalizeField("sessionId", scope.sessionId),

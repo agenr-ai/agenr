@@ -595,9 +595,6 @@ function createServices(input: {
           byteLength: 37,
         },
       })),
-      renderProjection: vi.fn(async (request: string | { sourceRef: string }) => {
-        return renderTestWorkingProjection(request, input);
-      }),
       renderProjectionBundle: vi.fn(async (request: { sourceRef: string }) => {
         return renderTestWorkingProjection(request, input);
       }),

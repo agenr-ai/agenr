@@ -13,7 +13,7 @@ export function createStubAgenrHostMemorySurface(
   return {
     workingMemory: {
       run: vi.fn(),
-      renderProjection: vi.fn(),
+      renderProjectionBundle: vi.fn(),
     } as unknown as AgenrHostMemorySurface["workingMemory"],
     goalContinuation: {
       getGoal: vi.fn(),

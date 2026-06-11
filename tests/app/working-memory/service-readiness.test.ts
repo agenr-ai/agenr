@@ -12,10 +12,10 @@ describe("createWorkingMemoryService readiness", () => {
       message: "Working memory is disabled by the workingMemory feature flag.",
     });
 
-    await expect(service.renderProjection("phase0:test")).resolves.toMatchObject({
+    await expect(service.renderProjectionBundle({ sourceRef: "readiness:feature-disabled" })).resolves.toMatchObject({
       kind: "working_set",
       renderMode: "stub",
-      sourceRef: "phase0:test",
+      sourceRef: "readiness:feature-disabled",
       content: expect.stringContaining("Reason: feature_disabled"),
     });
   });
@@ -29,10 +29,10 @@ describe("createWorkingMemoryService readiness", () => {
       message: "Working memory is enabled, but no working-memory repository was wired into the runtime.",
     });
 
-    await expect(service.renderProjection("phase1:test")).resolves.toMatchObject({
+    await expect(service.renderProjectionBundle({ sourceRef: "readiness:misconfigured" })).resolves.toMatchObject({
       kind: "working_set",
       renderMode: "stub",
-      sourceRef: "phase1:test",
+      sourceRef: "readiness:misconfigured",
       content: expect.stringContaining("Reason: misconfigured"),
     });
   });

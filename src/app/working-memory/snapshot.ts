@@ -75,18 +75,6 @@ export interface WorkingAssumptionNote {
 }
 
 /**
- * External reference attached to a working set.
- */
-export interface WorkingReference {
-  /** Display label for the reference. */
-  label: string;
-  /** Optional URI or stable identifier. */
-  uri?: string;
-  /** Reference kind. */
-  kind?: "doc" | "issue" | "pr" | "url" | "entry" | "episode";
-}
-
-/**
  * Continuation state stored for future host-side schedulers.
  */
 export interface WorkingContinuationState {
@@ -200,8 +188,6 @@ export interface WorkingSnapshot {
   goalGeneration?: number;
   /** Current task objective. */
   objective?: string;
-  /** Success criteria for the task. */
-  successCriteria?: string[];
   /** Compact task-state summary. */
   summary?: string;
   /** Current ordered plan steps. */
@@ -222,12 +208,8 @@ export interface WorkingSnapshot {
   decisions?: WorkingDecisionNote[];
   /** Assumptions that may need validation. */
   assumptions?: WorkingAssumptionNote[];
-  /** Open questions that block or shape the task. */
-  openQuestions?: string[];
   /** Current blockers. */
   blockers?: string[];
-  /** External references used by the task. */
-  references?: WorkingReference[];
   /** Candidate memories emitted from the working set. */
   candidates?: WorkingCandidate[];
   /** Continuation state stored for the host scheduler. */

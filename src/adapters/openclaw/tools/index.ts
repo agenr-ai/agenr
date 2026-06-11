@@ -11,7 +11,7 @@ import { createAgenrWorkTool } from "./work.js";
 export { createAgenrFetchTool, createAgenrRecallTool, createAgenrStoreTool, createAgenrUpdateTool, createAgenrWorkTool };
 
 /**
- * Registers the Phase 1 agenr tools with the OpenClaw plugin API.
+ * Registers the agenr tools with the OpenClaw plugin API.
  *
  * @param api - OpenClaw plugin registration API.
  * @param servicesPromise - Shared agenr adapters reused for the process lifetime.

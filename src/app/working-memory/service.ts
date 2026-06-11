@@ -9,12 +9,7 @@ import { findUniqueCurrentWorkingSetForTarget } from "./find-current-set.js";
 import { createHostWorkingSetPolicy, goalWorkingSetsDisabledFailure, goalsEnabled, requiresExplicitGoalTarget } from "./host-working-set-policy.js";
 import type { WorkingMemoryHandlerContext } from "./handler-context.js";
 import { renderWithProjectionReadiness } from "./projection-readiness.js";
-import {
-  renderWorkingContextBundle,
-  renderWorkingContextSingleProjection,
-  type WorkingProjectionBundleRequest,
-  type WorkingProjectionSingleRequest,
-} from "./projection-bundle.js";
+import { renderWorkingContextBundle, type WorkingProjectionBundleRequest } from "./projection-bundle.js";
 import type { AgenrWorkParams, PrepareExternalGoalMutationParams } from "./mutations.js";
 import type { WorkingContextProjection } from "./projection.js";
 import type { WorkingMemoryRepository } from "./repository.js";
@@ -38,9 +33,6 @@ export type {
 } from "./results.js";
 
 export type { EnsureSessionWorkingSetResult } from "./ensure-session.js";
-
-/** Input accepted by projection rendering. */
-export type WorkingProjectionRequest = WorkingProjectionSingleRequest;
 
 export type { WorkingProjectionBundleRequest } from "./projection-bundle.js";
 
@@ -93,14 +85,6 @@ export interface WorkingMemoryService {
   prepareExternalGoalMutation(params: PrepareExternalGoalMutationParams): Promise<WorkingMemoryResult>;
 
   /**
-   * Builds a transient working-context projection for host adapters.
-   *
-   * @param input - Source reference or full projection request.
-   * @returns A full projection when an active set resolves, otherwise a conservative stub.
-   */
-  renderProjection(input: string | WorkingProjectionRequest): Promise<WorkingContextProjection>;
-
-  /**
    * Builds a transient projection containing session and optional goal sections.
    *
    * @param input - Scope and source reference for injection.
@@ -110,7 +94,7 @@ export interface WorkingMemoryService {
 }
 
 /**
- * Creates the Phase 1 working-memory service.
+ * Creates the working-memory service.
  *
  * @param featureFlags - Resolved runtime feature flags.
  * @param deps - Optional persistence and runtime dependencies.
@@ -198,12 +182,6 @@ export function createWorkingMemoryService(featureFlags: WorkingMemoryFeatureFla
       }
 
       return cloneForkableSnapshotFields(lookup.workingSet.snapshot);
-    },
-    async renderProjection(input) {
-      const request = typeof input === "string" ? { sourceRef: input } : input;
-      return renderWithProjectionReadiness(featureEnabled, repository, request.sourceRef, (readyRepository) =>
-        renderWorkingContextSingleProjection(readyRepository, policy, request),
-      );
     },
     async renderProjectionBundle(input) {
       return renderWithProjectionReadiness(featureEnabled, repository, input.sourceRef, (readyRepository) =>

@@ -6,13 +6,7 @@ import type { WorkingMemoryService } from "./service.js";
 import type { WorkingScope } from "./scope.js";
 import type { WorkingCheckpointRefreshResult, WorkingCheckpointRefreshSkipped } from "./lifecycle-checkpoint-types.js";
 
-export type {
-  SessionCompactionWorkingCheckpointRefreshResult,
-  SessionWorkingCheckpointRefreshResult,
-  WorkingCheckpointRefreshResult,
-  WorkingCheckpointRefreshSkipped,
-  WorkingCheckpointRefreshSuccess,
-} from "./lifecycle-checkpoint-types.js";
+export type { WorkingCheckpointRefreshResult, WorkingCheckpointRefreshSkipped, WorkingCheckpointRefreshSuccess } from "./lifecycle-checkpoint-types.js";
 
 /** Session compact event carrying a compaction checkpoint for working-memory refresh. */
 export type CompactionCheckpointRefreshEvent = SessionMemoryTriggerEvent & {

@@ -243,7 +243,6 @@ function createWorkingMemory(overrides: Partial<WorkingMemoryService> = {}): Wor
     ensureSessionWorkingSet: vi.fn(),
     readSessionSnapshotForFork: vi.fn(),
     prepareExternalGoalMutation: vi.fn(),
-    renderProjection: vi.fn(),
     renderProjectionBundle: vi.fn(),
     ...overrides,
   };

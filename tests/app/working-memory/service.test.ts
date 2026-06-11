@@ -18,8 +18,8 @@ describe("createWorkingMemoryService", () => {
         },
         operation: {
           type: "set_objective",
-          objective: "Implement Phase 1 working memory.",
-          title: "Working memory Phase 1",
+          objective: "Implement working memory.",
+          title: "Working memory implementation",
         },
         updateReason: "User set a goal.",
         actor: "user",
@@ -33,7 +33,7 @@ describe("createWorkingMemoryService", () => {
           revision: 1,
           status: "active",
           snapshot: {
-            objective: "Implement Phase 1 working memory.",
+            objective: "Implement working memory.",
             continuation: { policy: "manual" },
           },
         },
@@ -174,18 +174,11 @@ describe("createWorkingMemoryService", () => {
         },
       });
 
-      const projection = await service.renderProjection({
-        sourceRef: "test:before-turn",
-        scope: {
-          conversationKey: "session-1",
-          sessionId: "session-1",
-          cwd: "/tmp/project",
-        },
-      });
+      const projection = updateWithoutRevisionForGoalCommand.projection;
       expect(projection).toMatchObject({
         renderMode: "full",
         revision: 3,
-        sourceRef: "test:before-turn",
+        sourceRef: expect.stringContaining("agenr_work:update:"),
       });
       expect(projection.content).toContain("<agenr_work_context>");
       expect(projection.content).toContain("This is transient working memory");
@@ -209,14 +202,7 @@ describe("createWorkingMemoryService", () => {
         throw new Error("Expected decision update success.");
       }
 
-      const projectionWithDecision = await service.renderProjection({
-        sourceRef: "test:decision",
-        scope: {
-          conversationKey: "session-1",
-          sessionId: "session-1",
-          cwd: "/tmp/project",
-        },
-      });
+      const projectionWithDecision = withDecision.projection;
       expect(projectionWithDecision.content).toContain("Decisions:");
       expect(projectionWithDecision.content).toContain("Keep create and update as separate actions.");
 
@@ -294,19 +280,6 @@ describe("createWorkingMemoryService", () => {
           eventType: "abandoned",
         },
       });
-
-      const afterCloseProjection = await service.renderProjection({
-        sourceRef: "test:after-close",
-        scope: {
-          conversationKey: "session-1",
-          sessionId: "session-1",
-          cwd: "/tmp/project",
-        },
-      });
-      expect(afterCloseProjection).toMatchObject({
-        renderMode: "stub",
-        content: expect.stringContaining("Reason: missing_active_set"),
-      });
     } finally {
       await closeWorkingMemoryTestService(database, dbPath);
     }
@@ -361,7 +334,7 @@ describe("createWorkingMemoryService", () => {
       expect(lastFiles).toHaveLength(WORKING_SNAPSHOT_ARRAY_LIMITS.files);
       expect(lastFiles?.[0]?.path).toBe("src/generated/long-running-10.ts");
 
-      const projection = await service.renderProjection({
+      const projection = await service.renderProjectionBundle({
         sourceRef: "test:projection-budget",
         scope,
       });

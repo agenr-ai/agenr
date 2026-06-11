@@ -31,13 +31,6 @@ export function createDisabledWorkingMemoryService(): WorkingMemoryService {
     async readSessionSnapshotForFork(_scope): Promise<undefined> {
       return undefined;
     },
-    async renderProjection(input: string | { sourceRef: string }): Promise<WorkingContextProjection> {
-      const sourceRef = typeof input === "string" ? input : input.sourceRef;
-      return createWorkingContextStubProjection({
-        reason: "feature_disabled",
-        sourceRef,
-      });
-    },
     async renderProjectionBundle(input): Promise<WorkingContextProjection> {
       return createWorkingContextStubProjection({
         reason: "feature_disabled",

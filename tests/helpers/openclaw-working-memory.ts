@@ -49,7 +49,6 @@ export function createOpenClawWorkingMemoryHostSurface(
       readSessionSnapshotForFork: vi.fn(async () => undefined),
       prepareExternalGoalMutation: vi.fn(),
       ensureSessionWorkingSet: vi.fn(),
-      renderProjection: vi.fn(async (request: string | { sourceRef: string }) => renderOpenClawTestWorkingProjection(request, options)),
       renderProjectionBundle: vi.fn(async (request: { sourceRef: string }) => renderOpenClawTestWorkingProjection(request, options)),
     } as unknown as AgenrOpenClawServices["workingMemory"],
   };

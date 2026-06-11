@@ -4,10 +4,9 @@ import {
   type GoalBundleSectionDecision,
   type HostWorkingSetPolicy,
 } from "./host-working-set-policy.js";
-import type { AgenrWorkTarget } from "./mutations.js";
 import type { WorkingContextProjection } from "./projection.js";
 import { WORKING_CONTEXT_GOAL_SECTION_LABEL, WORKING_CONTEXT_SESSION_SECTION_LABEL } from "./projection-section-labels.js";
-import { createWorkingContextFullProjection, createWorkingContextMultiProjection } from "./projection-render.js";
+import { createWorkingContextMultiProjection } from "./projection-render.js";
 import type { WorkingMemoryRepository } from "./repository.js";
 import type { WorkingSetRecord } from "./records.js";
 import type { WorkingMemoryFailure } from "./results.js";
@@ -22,18 +21,6 @@ export interface WorkingProjectionBundleRequest {
   scope?: Partial<WorkingScope>;
   /** Pre-resolved session working set when the caller already loaded one. */
   sessionWorkingSet?: WorkingSetRecord;
-}
-
-/** Input used to render one selected working set into a projection. */
-export interface WorkingProjectionSingleRequest {
-  /** Stable source reference for the render decision. */
-  sourceRef: string;
-  /** Explicit working set id when known. */
-  workingSetId?: string;
-  /** Working-set target when multiple active set kinds can exist. */
-  target?: AgenrWorkTarget;
-  /** Raw scope facts used to find an active set. */
-  scope?: Partial<WorkingScope>;
 }
 
 /** Successful bundle render. */
@@ -76,30 +63,6 @@ export async function renderWorkingContextBundle(
   return {
     ok: true,
     projection: createWorkingContextMultiProjection(buildWorkingContextBundleSections(policy, session.workingSet, goal), input.sourceRef),
-  };
-}
-
-/**
- * Renders a working-context projection from one selected working set.
- *
- * @param repository - Working-memory persistence port.
- * @param policy - Host policy governing selection behavior.
- * @param input - Selection inputs and source reference.
- * @returns Rendered projection or a selection failure code.
- */
-export async function renderWorkingContextSingleProjection(
-  repository: WorkingMemoryRepository,
-  policy: HostWorkingSetPolicy,
-  input: WorkingProjectionSingleRequest,
-): Promise<WorkingProjectionBundleResult> {
-  const selection = await selectWorkingSet({ workingSetId: input.workingSetId, scope: input.scope, target: input.target }, repository, { policy });
-  if (!selection.ok) {
-    return { ok: false, code: selection.code };
-  }
-
-  return {
-    ok: true,
-    projection: createWorkingContextFullProjection(selection.workingSet, input.sourceRef),
   };
 }
 
