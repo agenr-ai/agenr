@@ -374,6 +374,7 @@ describe("createWorkingMemoryService", () => {
           status: "complete",
         },
         updateReason: "Goal completed.",
+        source: "goal_command",
       });
       expect(completed).toMatchObject({
         ok: true,
@@ -463,6 +464,88 @@ describe("createWorkingMemoryService", () => {
           closeReason: "User cleared completed goal without explicit revision.",
         },
       });
+    } finally {
+      await closeWorkingMemoryTestService(database, dbPath);
+    }
+  });
+
+  it("gates set_status to trusted host sources at the app layer", async () => {
+    const { database, dbPath, service } = await createWorkingMemoryTestService();
+
+    try {
+      const created = await service.run({
+        action: "create",
+        target: "goal",
+        scope: {
+          conversationKey: "session-status-gate",
+          sessionId: "session-status-gate",
+          cwd: "/tmp/project",
+        },
+        operation: {
+          type: "set_objective",
+          objective: "Prove status updates are host-only.",
+        },
+        updateReason: "User set a goal.",
+        source: "goal_command",
+      });
+      if (!created.ok || created.action !== "create") {
+        throw new Error("Expected create success.");
+      }
+
+      await expect(
+        service.run({
+          action: "update",
+          workingSetId: created.workingSet.id,
+          expectedRevision: created.workingSet.revision,
+          operation: {
+            type: "set_status",
+            status: "paused",
+          },
+          updateReason: "Attempted model status update.",
+          actor: "model",
+          source: "tool",
+        }),
+      ).resolves.toMatchObject({
+        ok: false,
+        code: "invalid_request",
+        message: "set_status is reserved for trusted host runtime paths.",
+      });
+
+      const trustedUpdates = [
+        { source: "goal_command", status: "paused" },
+        { source: "lifecycle_hook", status: "active" },
+        { source: "consolidation_job", status: "needs_review" },
+      ] as const;
+
+      let revision = created.workingSet.revision;
+      for (const update of trustedUpdates) {
+        const result = await service.run({
+          action: "update",
+          workingSetId: created.workingSet.id,
+          operation: {
+            type: "set_status",
+            status: update.status,
+          },
+          updateReason: `Trusted ${update.source} status update.`,
+          source: update.source,
+        });
+
+        expect(result).toMatchObject({
+          ok: true,
+          action: "update",
+          workingSet: {
+            revision: revision + 1,
+            status: update.status,
+          },
+          event: {
+            eventType: "set_status",
+          },
+        });
+        if (!result.ok || result.action !== "update") {
+          throw new Error("Expected trusted status update success.");
+        }
+        revision = result.workingSet.revision;
+      }
     } finally {
       await closeWorkingMemoryTestService(database, dbPath);
     }

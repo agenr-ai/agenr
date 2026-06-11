@@ -117,6 +117,10 @@ export function applyOperation(
         ...(operation.stopReason !== undefined ? { stopReason: operation.stopReason } : {}),
       });
       break;
+    default: {
+      const exhaustive: never = operation;
+      return exhaustive;
+    }
   }
 
   return {

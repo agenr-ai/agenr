@@ -3,9 +3,10 @@ import { commitAppliedWorkingSetChange, isAppliedWorkingSetCommitFailure } from 
 import { createToolSuccessProjection } from "../projection.js";
 import type { WorkingMemoryHandlerContext } from "../handler-context.js";
 import type { AgenrWorkParams } from "../mutations.js";
+import { isHostOnlyOperationType } from "../operations/manifest.js";
 import { createFailure, writeFailureToResult, type WorkingMemoryResult } from "../results.js";
 import { selectWorkingSet } from "../select-working-set.js";
-import { isMutableWorkingSetStatus, isTrustedHostMutationSource, isTrustedHostOnlyWorkingOperation } from "../constants.js";
+import { isMutableWorkingSetStatus, isTrustedHostMutationSource } from "../constants.js";
 import { normalizeRequiredString, resolveExpectedRevision } from "../validation.js";
 
 /** Handles typed update operations against an existing working set. */
@@ -15,7 +16,7 @@ export async function handleUpdate(params: AgenrWorkParams, ctx: WorkingMemoryHa
     return createFailure("invalid_request", "agenr_work update requires a typed operation.");
   }
 
-  if (isTrustedHostOnlyWorkingOperation(operation.type) && !isTrustedHostMutationSource(params.source)) {
+  if (isHostOnlyOperationType(operation.type) && !isTrustedHostMutationSource(params.source)) {
     return createFailure("invalid_request", `${operation.type} is reserved for trusted host runtime paths.`);
   }
 
