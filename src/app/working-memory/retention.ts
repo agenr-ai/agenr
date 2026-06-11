@@ -4,10 +4,12 @@ import type { WorkingMemoryRepository } from "./repository.js";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Default retention window for terminal working sets, in days. */
-export const DEFAULT_WORKING_SET_RETENTION_DAYS = 30;
+const DEFAULT_WORKING_SET_RETENTION_DAYS = 30;
 
 /** Default per-pass ceiling on terminal sets considered by one retention run. */
-export const DEFAULT_WORKING_SET_RETENTION_BATCH_LIMIT = 200;
+const DEFAULT_WORKING_SET_RETENTION_BATCH_LIMIT = 200;
+
+export { DEFAULT_WORKING_SET_RETENTION_BATCH_LIMIT, DEFAULT_WORKING_SET_RETENTION_DAYS };
 
 /** Ports required by the working-set retention reaper. */
 export interface WorkingSetRetentionDeps {

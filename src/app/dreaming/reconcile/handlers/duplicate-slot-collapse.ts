@@ -13,7 +13,9 @@ import { persistReconcileProposal } from "../helpers/reconcile-proposal.js";
 import type { ReconcilePassContext } from "../pass-context.js";
 
 /** Supersession kind recorded on rows collapsed off one exclusive slot. */
-export const DUPLICATE_SLOT_COLLAPSE_SUPERSESSION_KIND = "duplicate_collapse";
+const DUPLICATE_SLOT_COLLAPSE_SUPERSESSION_KIND = "duplicate_collapse";
+
+export { DUPLICATE_SLOT_COLLAPSE_SUPERSESSION_KIND };
 
 /** Stable proposal source for duplicate exclusive-slot collapse decisions. */
 const DUPLICATE_SLOT_COLLAPSE_SOURCE = "duplicate_slot_collapse";

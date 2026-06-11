@@ -168,6 +168,7 @@ async function executeAliasDecision(ctx: ReconcilePassContext, candidate: ClaimK
   }
 }
 
+/** Collects durable rewrites needed to converge keys onto the target claim key. */
 function collectAliasRewrites(ctx: ReconcilePassContext, candidate: ClaimKeyAliasCandidate, targetClaimKey: string): AliasRewrite[] {
   return candidate.durableIds.flatMap((durableId) => {
     const durable = ctx.workingSet.durablesById.get(durableId);
@@ -178,6 +179,7 @@ function collectAliasRewrites(ctx: ReconcilePassContext, candidate: ClaimKeyAlia
   });
 }
 
+/** Runs LLM adjudication when claim extraction is enabled and under the cost cap. */
 async function adjudicateIfAvailable(ctx: ReconcilePassContext, candidate: ClaimKeyAliasCandidate): Promise<ClaimKeyAliasAdjudication | null> {
   if (!ctx.extraction.claimExtractionConfig.enabled || typeof ctx.deps.createClaimExtractionLlm !== "function") {
     return null;
@@ -211,6 +213,7 @@ async function adjudicateIfAvailable(ctx: ReconcilePassContext, candidate: Claim
   }
 }
 
+/** Creates and tracks an LLM port for alias adjudication. */
 function createTrackedAliasAdjudicationLlm(ctx: ReconcilePassContext): ClaimExtractionPreviewLlm | null {
   const llm = ctx.deps.createClaimExtractionLlm ? ctx.deps.createClaimExtractionLlm() : null;
   if (llm && !ctx.extraction.claimExtractionLlms.includes(llm)) {
@@ -219,6 +222,7 @@ function createTrackedAliasAdjudicationLlm(ctx: ReconcilePassContext): ClaimExtr
   return llm;
 }
 
+/** Resolves the canonical claim key when auto-apply preconditions pass. */
 function resolveAutoApplyTarget(candidate: ClaimKeyAliasCandidate, adjudication: ClaimKeyAliasAdjudication | null): string | null {
   if (!candidate.deterministicAutoApplyEligible || !candidate.proposedClaimKey || !adjudication?.sameSlot) {
     return null;
@@ -236,6 +240,7 @@ function resolveAutoApplyTarget(candidate: ClaimKeyAliasCandidate, adjudication:
   return deterministicTarget.value.claimKey;
 }
 
+/** Persists a blocked alias convergence proposal for operator review. */
 async function persistAliasProposal(
   ctx: ReconcilePassContext,
   candidate: ClaimKeyAliasCandidate,
@@ -259,6 +264,7 @@ async function persistAliasProposal(
   });
 }
 
+/** Returns the human-readable reason auto-apply was blocked. */
 function resolveProposalBlocker(candidate: ClaimKeyAliasCandidate, adjudication: ClaimKeyAliasAdjudication | null): string {
   if (!candidate.deterministicAutoApplyEligible) {
     return candidate.unresolvedReason ?? "Deterministic alias candidate is not auto-apply eligible.";
@@ -275,6 +281,7 @@ function resolveProposalBlocker(candidate: ClaimKeyAliasCandidate, adjudication:
   return "LLM adjudication did not confirm the deterministic canonical key.";
 }
 
+/** Builds operator-facing rationale text for an alias proposal. */
 function buildAliasRationale(candidate: ClaimKeyAliasCandidate, adjudication: ClaimKeyAliasAdjudication | null, decision: string): string {
   return (
     `Deep dreaming found same-entity claim-key aliases under "${candidate.entityPrefix}" with keys ${candidate.claimKeys.join(", ")}. ` +

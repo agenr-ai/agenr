@@ -10,7 +10,9 @@ import type { ClaimKeySource, ClaimKeyStatus, Durable } from "./types.js";
 
 const ATTRIBUTE_ALIAS_MIN_CONFIDENCE = 0.72;
 /** Minimum deterministic confidence required before alias auto-apply may be considered. */
-export const CLAIM_KEY_ALIAS_AUTO_APPLY_THRESHOLD = 0.9;
+const CLAIM_KEY_ALIAS_AUTO_APPLY_THRESHOLD = 0.9;
+
+export { CLAIM_KEY_ALIAS_AUTO_APPLY_THRESHOLD };
 const ATTRIBUTE_ALIAS_MAX_KEYS_PER_ENTITY = 40;
 
 /** Persisted proposal sources for same-entity claim-key alias convergence. */
@@ -57,6 +59,7 @@ export interface ClaimKeyAliasCandidate {
   keyProfiles: ClaimKeyAliasKeyProfile[];
 }
 
+/** Aggregated durable evidence for one claim key within alias detection. */
 interface AliasProfile {
   claimKey: string;
   entity: string;
@@ -73,6 +76,7 @@ interface AliasProfile {
   latestCreatedAt: string;
 }
 
+/** Pairwise alias support edge between two claim-key profiles. */
 interface PairSupport {
   left: AliasProfile;
   right: AliasProfile;
@@ -80,6 +84,7 @@ interface PairSupport {
   evidence: ClaimKeyAliasEvidence[];
 }
 
+/** Overlap signals computed for one claim-key profile pair. */
 interface PairEvaluationContext {
   left: AliasProfile;
   right: AliasProfile;
@@ -90,6 +95,7 @@ interface PairEvaluationContext {
   sharedAttributeHead: boolean;
 }
 
+/** One scoring rule in the pairwise alias confidence model. */
 interface PairSignal {
   applies: (context: PairEvaluationContext) => boolean;
   score: number;
@@ -201,6 +207,7 @@ export function detectClaimKeyAliasCandidates(durables: Durable[]): ClaimKeyAlia
     .slice(0, 100);
 }
 
+/** Groups durable rows into per-claim-key alias profiles keyed by entity. */
 function buildAliasProfiles(durables: Durable[]): Map<string, AliasProfile[]> {
   const profilesByKey = new Map<string, AliasProfile>();
 
@@ -252,6 +259,7 @@ function buildAliasProfiles(durables: Durable[]): Map<string, AliasProfile[]> {
   return byEntity;
 }
 
+/** Returns an existing or newly created alias profile for one claim key. */
 function getOrCreateProfile(profilesByKey: Map<string, AliasProfile>, claimKey: string, entity: string, attribute: string): AliasProfile {
   const existing = profilesByKey.get(claimKey);
   if (existing) {
@@ -277,6 +285,7 @@ function getOrCreateProfile(profilesByKey: Map<string, AliasProfile>, claimKey: 
   return created;
 }
 
+/** Scores all profile pairs within an entity and returns qualifying support edges. */
 function buildPairSupport(profiles: AliasProfile[]): PairSupport[] {
   const support: PairSupport[] = [];
 
@@ -302,6 +311,7 @@ function buildPairSupport(profiles: AliasProfile[]): PairSupport[] {
   return support.sort((left, right) => right.confidence - left.confidence);
 }
 
+/** Scores one profile pair and returns support when confidence clears the threshold. */
 function evaluatePair(left: AliasProfile, right: AliasProfile): PairSupport | null {
   const context = buildPairEvaluationContext(left, right);
   const evidence: ClaimKeyAliasEvidence[] = [
@@ -328,6 +338,7 @@ function evaluatePair(left: AliasProfile, right: AliasProfile): PairSupport | nu
   return { left, right, confidence, evidence };
 }
 
+/** Precomputes overlap signals used by pairwise alias scoring. */
 function buildPairEvaluationContext(left: AliasProfile, right: AliasProfile): PairEvaluationContext {
   return {
     left,
@@ -380,6 +391,7 @@ function buildConnectedComponents(pairSupport: PairSupport[]): string[][] {
   return components;
 }
 
+/** Builds one alias candidate cluster from connected profiles and pair support. */
 function buildAliasCandidate(profiles: AliasProfile[], pairSupport: PairSupport[]): ClaimKeyAliasCandidate {
   const proposedProfile = chooseCanonicalProfile(profiles);
   const multipleTrustedOrManual = profiles.filter((profile) => profile.trustedOrManualCount > 0).length > 1;
@@ -412,6 +424,7 @@ function buildAliasCandidate(profiles: AliasProfile[], pairSupport: PairSupport[
   };
 }
 
+/** Picks the preferred canonical claim key from a profile cluster. */
 function chooseCanonicalProfile(profiles: AliasProfile[]): AliasProfile | null {
   return (
     [...profiles].sort((left, right) => {
@@ -432,6 +445,7 @@ function chooseCanonicalProfile(profiles: AliasProfile[]): AliasProfile | null {
   );
 }
 
+/** Explains why a cluster is not auto-apply eligible. */
 function buildUnresolvedReason(input: { multipleTrustedOrManual: boolean; sameType: boolean; hasProposedProfile: boolean; confidence: number }): string {
   if (!input.hasProposedProfile) {
     return "No canonical target claim key could be selected.";
@@ -448,6 +462,7 @@ function buildUnresolvedReason(input: { multipleTrustedOrManual: boolean; sameTy
   return "Alias cluster requires review.";
 }
 
+/** Returns whether two string sets contain the same values. */
 function setsEqual(left: Set<string>, right: Set<string>): boolean {
   if (left.size !== right.size) {
     return false;
@@ -460,10 +475,12 @@ function setsEqual(left: Set<string>, right: Set<string>): boolean {
   return true;
 }
 
+/** Returns whether claim-key status or source counts as trusted or manual. */
 function isTrustedOrManual(status: ClaimKeyStatus | undefined, source: ClaimKeySource | undefined): boolean {
   return status === "trusted" || source === "manual";
 }
 
+/** Removes duplicate evidence entries from one alias candidate. */
 function dedupeEvidence(evidence: ClaimKeyAliasEvidence[]): ClaimKeyAliasEvidence[] {
   const seen = new Set<string>();
   const deduped: ClaimKeyAliasEvidence[] = [];
@@ -477,6 +494,7 @@ function dedupeEvidence(evidence: ClaimKeyAliasEvidence[]): ClaimKeyAliasEvidenc
   return deduped;
 }
 
+/** Returns an existing or newly created string set in a map. */
 function getOrCreateSet(map: Map<string, Set<string>>, key: string): Set<string> {
   const existing = map.get(key);
   if (existing) {
@@ -487,6 +505,7 @@ function getOrCreateSet(map: Map<string, Set<string>>, key: string): Set<string>
   return created;
 }
 
+/** Deduplicates, trims, and lexicographically sorts string values. */
 function normalizeStrings(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter((value) => value.length > 0))].sort();
 }

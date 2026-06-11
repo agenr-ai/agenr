@@ -9,6 +9,7 @@ export interface ClaimKeyAliasAdjudication {
   rationale: string;
 }
 
+/** Raw LLM JSON shape returned before alias adjudication normalization. */
 interface RawAliasAdjudication {
   same_slot?: unknown;
   canonical_claim_key?: unknown;

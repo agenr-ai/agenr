@@ -23,7 +23,9 @@ export interface DuplicateSlotCollapseReviewDeps extends DreamProposalReviewDeps
 }
 
 /** Proposal issue kind whose apply path performs content-level supersession. */
-export const DUPLICATE_SLOT_COLLAPSE_ISSUE_KIND = "duplicate_slot_collapse";
+const DUPLICATE_SLOT_COLLAPSE_ISSUE_KIND = "duplicate_slot_collapse";
+
+export { DUPLICATE_SLOT_COLLAPSE_ISSUE_KIND };
 
 /**
  * Loads the active durables still eligible for one proposal apply path.

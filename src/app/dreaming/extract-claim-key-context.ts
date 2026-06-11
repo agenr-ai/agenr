@@ -4,7 +4,9 @@ import { normalizeClaimKey, normalizeClaimKeySegment } from "../../core/claim-ke
 import type { DreamPort } from "./ports.js";
 
 /** Maximum active keyed durables loaded for one extract classification lookup. */
-export const CLAIM_KEY_CLASSIFICATION_CONTEXT_LIMIT = 16;
+const CLAIM_KEY_CLASSIFICATION_CONTEXT_LIMIT = 16;
+
+export { CLAIM_KEY_CLASSIFICATION_CONTEXT_LIMIT };
 
 const MIN_ATTRIBUTE_OVERLAP_TOKENS = 2;
 const MIN_CONTENT_OVERLAP_TOKENS = 4;
