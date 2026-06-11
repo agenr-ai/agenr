@@ -119,7 +119,10 @@ describe("createWorkingMemoryService session and goal layers", () => {
             },
           },
         },
-        events: [{ eventType: "merge_checkpoint", sequence: 3 }],
+        events: [
+          { eventType: "account_usage", sequence: 3 },
+          { eventType: "merge_checkpoint", sequence: 4 },
+        ],
       });
 
       await expect(

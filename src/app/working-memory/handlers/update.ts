@@ -51,6 +51,7 @@ export async function handleUpdate(params: AgenrWorkParams, ctx: WorkingMemoryHa
     workingSetId: selection.workingSet.id,
     expectedRevision: expectedRevision.value,
     operation,
+    previousStatus: selection.workingSet.status,
     updateReason: updateReason.value,
     applied,
     actor: params.actor,
@@ -65,7 +66,7 @@ export async function handleUpdate(params: AgenrWorkParams, ctx: WorkingMemoryHa
     ok: true,
     action: "update",
     workingSet: writeResult.workingSet,
-    ...(writeResult.type === "semantic" ? { event: writeResult.event } : {}),
+    ...(writeResult.event ? { event: writeResult.event } : {}),
     projection: createToolSuccessProjection(writeResult.workingSet, "update", ctx.timestamp),
   };
 }

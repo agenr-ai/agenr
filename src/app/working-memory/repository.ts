@@ -122,14 +122,30 @@ export interface PatchWorkingSetUsageInput {
   title?: string;
   /** Optional objective mirror update. */
   objective?: string;
+  /** Optional event to append when this usage patch causes a status transition. */
+  auditEvent?: PatchWorkingSetUsageAuditEvent;
   /** Timestamp to use for row updates. */
   now: string;
+}
+
+/** Optional audit event emitted by trusted usage accounting. */
+export interface PatchWorkingSetUsageAuditEvent {
+  /** Event type to append. */
+  eventType: WorkingEventType;
+  /** JSON-serializable event payload. */
+  payload: unknown;
+  /** Actor that initiated the mutation. */
+  actor?: AgenrWorkMutationActor;
+  /** Source surface that emitted the mutation. */
+  source?: AgenrWorkMutationSource;
 }
 
 /** Successful usage patch response from the repository. */
 export interface WorkingSetUsagePatchResult {
   /** Updated working set after the patch is committed. */
   workingSet: WorkingSetRecord;
+  /** Audit event written when a usage patch caused a semantic status transition. */
+  event?: WorkingEventRecord;
 }
 
 /** Repository response for trusted usage patches. */
@@ -198,10 +214,10 @@ export interface WorkingMemoryRepository {
   updateWorkingSet(input: UpdateWorkingSetInput): Promise<WorkingSetWriteResult>;
 
   /**
-   * Applies one trusted usage patch without advancing revision or appending events.
+   * Applies one trusted usage patch without advancing revision.
    *
    * @param input - Next snapshot and status guarded by expectedRevision compare-and-swap.
-   * @returns Updated row or a stable write failure.
+   * @returns Updated row, optional audit event, or a stable write failure.
    */
   patchWorkingSetUsage(input: PatchWorkingSetUsageInput): Promise<WorkingSetUsagePatchWriteResult>;
 }

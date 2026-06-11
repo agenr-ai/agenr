@@ -99,7 +99,7 @@ export function applyOperation(
         return budget;
       }
 
-      const limited = applyBudgetLimitedStatus(status, budget.value, updateReason);
+      const limited = applyConfiguredBudgetStatus(status, budget.value, updateReason);
       snapshot.budgets = limited.budgets;
       status = limited.status;
       break;
@@ -136,6 +136,38 @@ export function applyOperation(
     status,
     title,
     objective,
+  };
+}
+
+/** Returns updated budget state and status after a trusted host budget configuration. */
+function applyConfiguredBudgetStatus(
+  currentStatus: WorkingSetStatus,
+  budget: WorkingBudgetState | undefined,
+  limitedAt: string,
+): { status: WorkingSetStatus; budgets: WorkingBudgetState | undefined } {
+  const limitReason = resolveBudgetLimitReason(budget);
+  if (limitReason && budget) {
+    return {
+      status: "budget_limited",
+      budgets: pruneBudget({
+        ...budget,
+        limitReason,
+        limitedAt: budget.limitedAt ?? limitedAt,
+      }),
+    };
+  }
+
+  if (!budget) {
+    return { status: currentStatus === "budget_limited" ? "active" : currentStatus, budgets: undefined };
+  }
+
+  return {
+    status: currentStatus === "budget_limited" ? "active" : currentStatus,
+    budgets: pruneBudget({
+      ...budget,
+      limitReason: undefined,
+      limitedAt: undefined,
+    }),
   };
 }
 

@@ -17,6 +17,7 @@ import type {
   WorkingMemoryRepository,
   WorkingSetCreateResult,
   WorkingSetListFilter,
+  WorkingSetUsagePatchResult,
   WorkingSetUsagePatchWriteResult,
   WorkingSetWriteResult,
 } from "../../app/working-memory/repository.js";
@@ -227,9 +228,10 @@ async function updateWorkingSet(database: SqlDatabase, input: UpdateWorkingSetIn
     }
 
     const nextRevision = current.revision + 1;
+    const nextEventSequence = await resolveNextWorkingEventSequence(executor, current.id);
     const event = buildEvent({
       workingSetId: current.id,
-      sequence: nextRevision,
+      sequence: nextEventSequence,
       eventType: input.eventType,
       payload: input.payload,
       actor: input.actor,
@@ -273,7 +275,7 @@ async function updateWorkingSet(database: SqlDatabase, input: UpdateWorkingSetIn
   });
 }
 
-/** Applies one trusted usage patch without advancing revision or appending events. */
+/** Applies one trusted usage patch without advancing revision. */
 async function patchWorkingSetUsage(database: SqlDatabase, input: PatchWorkingSetUsageInput): Promise<WorkingSetUsagePatchWriteResult> {
   return database.withTransaction(async (transaction) => {
     const executor = transaction as SqlDatabase;
@@ -316,8 +318,48 @@ async function patchWorkingSetUsage(database: SqlDatabase, input: PatchWorkingSe
       return { kind: "revision_conflict", actualRevision: workingSet.revision };
     }
 
-    return { workingSet };
+    const result: WorkingSetUsagePatchResult = { workingSet };
+    if (input.auditEvent && current.status !== "budget_limited" && input.status === "budget_limited") {
+      const event = buildEvent({
+        workingSetId: current.id,
+        sequence: await resolveNextWorkingEventSequence(executor, current.id),
+        eventType: input.auditEvent.eventType,
+        payload: input.auditEvent.payload,
+        actor: input.auditEvent.actor,
+        source: input.auditEvent.source,
+        now: input.now,
+      });
+      await insertWorkingEvent(executor, event);
+      result.event = event;
+    }
+
+    return result;
   });
+}
+
+/** Resolves the next append-only event sequence for one working set. */
+async function resolveNextWorkingEventSequence(executor: SqlExecutor, workingSetId: string): Promise<number> {
+  const result = await executor.execute({
+    sql: `
+      SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence
+      FROM working_events
+      WHERE working_set_id = ?
+    `,
+    args: [workingSetId],
+  });
+
+  const value = result.rows[0]?.next_sequence;
+  if (typeof value === "number") {
+    return value;
+  }
+  if (typeof value === "bigint") {
+    return Number(value);
+  }
+  if (typeof value === "string") {
+    return Number.parseInt(value, 10);
+  }
+
+  throw new Error(`Could not resolve next working-event sequence for working set ${workingSetId}.`);
 }
 
 /** Inserts one event row. */

@@ -77,7 +77,7 @@ export interface WorkingMemoryUpdateSuccess {
   action: "update";
   /** Updated working set. */
   workingSet: WorkingSetRecord;
-  /** Event committed for semantic mutations; omitted for trusted usage patches. */
+  /** Event committed for semantic mutations or audited trusted usage transitions. */
   event?: WorkingEventRecord;
   /** Full transient projection after the mutation. */
   projection: WorkingContextProjection;

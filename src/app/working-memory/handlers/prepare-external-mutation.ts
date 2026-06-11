@@ -84,6 +84,7 @@ export async function handlePrepareExternalGoalMutation(
       workingSetId: workingSet.id,
       expectedRevision: workingSet.revision,
       operation,
+      previousStatus: workingSet.status,
       updateReason,
       applied,
       actor: params.actor,
@@ -95,7 +96,7 @@ export async function handlePrepareExternalGoalMutation(
     }
 
     workingSet = writeResult.workingSet;
-    if (writeResult.type === "semantic") {
+    if (writeResult.event) {
       events.push(writeResult.event);
     }
   }

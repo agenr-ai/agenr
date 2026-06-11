@@ -91,8 +91,17 @@ describe("account_usage control plane", () => {
           revision: 1,
           status: "budget_limited",
         },
+        event: {
+          sequence: 2,
+          eventType: "account_usage",
+          payload: {
+            statusTransition: {
+              from: "active",
+              to: "budget_limited",
+            },
+          },
+        },
       });
-      expect(limited.ok && limited.action === "update" ? limited.event : undefined).toBeUndefined();
 
       const events = await service.run({
         action: "get",
@@ -102,7 +111,112 @@ describe("account_usage control plane", () => {
       if (!events.ok || events.action !== "get") {
         throw new Error("Expected get success.");
       }
-      expect(events.events).toEqual([expect.objectContaining({ sequence: 1, eventType: "created" })]);
+      expect(events.events).toEqual([
+        expect.objectContaining({ sequence: 1, eventType: "created" }),
+        expect.objectContaining({
+          sequence: 2,
+          eventType: "account_usage",
+          payload: expect.objectContaining({
+            updateReason: "Cross budget limit.",
+            statusTransition: {
+              from: "active",
+              to: "budget_limited",
+            },
+          }),
+        }),
+      ]);
+    } finally {
+      await closeWorkingMemoryTestService(database, dbPath);
+    }
+  });
+
+  it("configure_budget recovers a budget-limited set when raised limits no longer bind", async () => {
+    const { database, dbPath, service } = await createWorkingMemoryTestService();
+
+    try {
+      const created = await service.run({
+        action: "create",
+        target: "goal",
+        scope: TRUSTED_SCOPE,
+        operation: {
+          type: "set_objective",
+          objective: "Recover from a budget limit.",
+        },
+        updateReason: "Started goal.",
+        source: "goal_command",
+        initialBudget: {
+          tokenBudget: 10,
+        },
+      });
+      if (!created.ok || created.action !== "create") {
+        throw new Error("Expected create success.");
+      }
+
+      const limited = await service.run({
+        action: "update",
+        workingSetId: created.workingSet.id,
+        expectedRevision: created.workingSet.revision,
+        operation: {
+          type: "account_usage",
+          usage: {
+            tokenDelta: 10,
+            recordedAt: "2026-05-30T12:00:00.000Z",
+          },
+        },
+        updateReason: "Reached the token budget.",
+        source: "lifecycle_hook",
+      });
+      expect(limited).toMatchObject({
+        ok: true,
+        action: "update",
+        workingSet: {
+          revision: 1,
+          status: "budget_limited",
+          snapshot: {
+            budgets: {
+              tokenBudget: 10,
+              tokenUsed: 10,
+              limitReason: "token",
+              limitedAt: "2026-05-30T12:00:00.000Z",
+            },
+          },
+        },
+        event: { sequence: 2, eventType: "account_usage" },
+      });
+
+      const recovered = await service.run({
+        action: "update",
+        workingSetId: created.workingSet.id,
+        expectedRevision: 1,
+        operation: {
+          type: "configure_budget",
+          budget: {
+            tokenBudget: 20,
+          },
+        },
+        updateReason: "Raised the token budget.",
+        source: "goal_command",
+      });
+      expect(recovered).toMatchObject({
+        ok: true,
+        action: "update",
+        workingSet: {
+          revision: 2,
+          status: "active",
+          snapshot: {
+            budgets: {
+              tokenBudget: 20,
+              tokenUsed: 10,
+            },
+          },
+        },
+        event: { sequence: 3, eventType: "configure_budget" },
+      });
+      if (!recovered.ok || recovered.action !== "update") {
+        throw new Error("Expected configure_budget recovery success.");
+      }
+      expect(recovered.workingSet.snapshot.budgets).not.toHaveProperty("limitReason");
+      expect(recovered.workingSet.snapshot.budgets).not.toHaveProperty("limitedAt");
     } finally {
       await closeWorkingMemoryTestService(database, dbPath);
     }
@@ -187,7 +301,7 @@ describe("account_usage control plane", () => {
     }
   });
 
-  it("keeps revision aligned with event sequence across mixed usage and semantic writes", async () => {
+  it("keeps revision stable across mixed usage while event sequence remains append-only", async () => {
     const { database, dbPath, service } = await createWorkingMemoryTestService();
 
     try {
@@ -309,7 +423,7 @@ describe("account_usage control plane", () => {
         expect.objectContaining({ sequence: 2, eventType: "set_objective" }),
         expect.objectContaining({ sequence: 3, eventType: "configure_budget" }),
       ]);
-      expect(loaded.events?.every((event) => event.sequence <= loaded.workingSet.revision)).toBe(true);
+      expect(loaded.events?.every((event, index) => event.sequence === index + 1)).toBe(true);
     } finally {
       await closeWorkingMemoryTestService(database, dbPath);
     }
@@ -446,7 +560,10 @@ describe("account_usage control plane", () => {
             },
           },
         },
-        events: [{ eventType: "merge_checkpoint", sequence: 2 }],
+        events: [
+          { eventType: "account_usage", sequence: 2 },
+          { eventType: "merge_checkpoint", sequence: 3 },
+        ],
       });
     } finally {
       await closeWorkingMemoryTestService(database, dbPath);

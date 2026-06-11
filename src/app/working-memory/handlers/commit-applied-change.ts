@@ -1,4 +1,4 @@
-import type { AgenrWorkMutationActor, AgenrWorkMutationSource } from "../constants.js";
+import type { AgenrWorkMutationActor, AgenrWorkMutationSource, WorkingSetStatus } from "../constants.js";
 import type { AppliedWorkingOperation } from "../apply-operation.js";
 import type { AgenrWorkUpdateOperation } from "../mutations.js";
 import type { WorkingEventRecord, WorkingSetRecord } from "../records.js";
@@ -12,6 +12,8 @@ export interface CommitAppliedWorkingSetChangeInput {
   expectedRevision: number;
   /** Typed operation that produced the applied snapshot. */
   operation: AgenrWorkUpdateOperation;
+  /** Status observed before applying the operation. */
+  previousStatus: WorkingSetStatus;
   /** Audit reason stored with semantic mutations. */
   updateReason: string;
   /** Applied snapshot and row mirrors. */
@@ -30,6 +32,8 @@ export interface AppliedWorkingSetUsagePatchCommit {
   type: "usage_patch";
   /** Updated working set after the patch is committed. */
   workingSet: WorkingSetRecord;
+  /** Audit event written when the usage patch caused a status transition. */
+  event?: WorkingEventRecord;
 }
 
 /** Successful semantic mutation commit. */
@@ -72,6 +76,22 @@ export async function commitAppliedWorkingSetChange(
       snapshot: input.applied.snapshot,
       title: input.applied.title,
       objective: input.applied.objective,
+      auditEvent:
+        input.previousStatus !== "budget_limited" && input.applied.status === "budget_limited"
+          ? {
+              eventType: "account_usage",
+              payload: {
+                operation: input.operation,
+                updateReason: input.updateReason,
+                statusTransition: {
+                  from: input.previousStatus,
+                  to: "budget_limited",
+                },
+              },
+              actor: input.actor,
+              source: input.source,
+            }
+          : undefined,
       now: input.now,
     });
     if (isWorkingSetWriteFailure(writeResult)) {
@@ -81,6 +101,7 @@ export async function commitAppliedWorkingSetChange(
     return {
       type: "usage_patch",
       workingSet: writeResult.workingSet,
+      ...(writeResult.event ? { event: writeResult.event } : {}),
     };
   }
 

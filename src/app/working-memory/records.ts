@@ -65,7 +65,7 @@ export interface WorkingEventRecord {
   id: string;
   /** Owning working-set id. */
   workingSetId: string;
-  /** Monotonic sequence within the working set, aligned with revision on semantic writes. */
+  /** Monotonic sequence within the working-set event ledger. */
   sequence: number;
   /** Closed event type union. */
   eventType: WorkingEventType;
