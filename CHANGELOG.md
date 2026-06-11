@@ -2,6 +2,42 @@
 
 ## [Unreleased]
 
+## [2026.6.7] - 2026-06-11
+
+Working-memory lifecycle, dreaming cleanup, and proposal-settlement release.
+
+### Added
+
+- **Session-first working memory.** Added shared session working-set selection, projection, mutation, consolidation, retention, and close-distillation services with expanded OpenClaw and Skeln lifecycle coverage.
+- **Goal-continuation seam.** Added typed goal-continuation host contracts, Skeln command wiring, and atomic external goal preparation for session-backed working sets.
+- **Procedure proposal operations.** Added proposal repository and service support for manual review, repair, settlement, CLI access, and web API validation.
+
+### Changed
+
+- **Working-memory module layout** now consolidates handlers and shared lifecycle logic behind focused app services, adapters, and repository contracts.
+- **Dreaming maintenance** now includes duplicate-slot collapse handling, reaping support, stricter stale-candidate policy, synthesized-episode tracking, and richer run progress metadata.
+- **Recall and store quality** now include as-of validity improvements, trace diagnostics, bounded snapshot growth, and stronger claim-key extraction context.
+
+### Fixed
+
+- **Working-set recovery and retention** now handle budget-limited recovery, open-set preservation, candidate promotion, closed-set garbage collection, and proposal evidence retention.
+- **Goal preparation** now rejects invalid session-scoped mutation targets before partial state changes.
+- **Episode mining** now tracks synthesized episodes so dreaming does not re-mine old sessions.
+
+### Validation
+
+Changes since last push to `origin/master`:
+
+- Add session-first working-memory services for selection, projection, mutation, promotion, consolidation, close distillation, and retention
+- Add typed goal-continuation host contracts and Skeln command wiring
+- Add procedure proposal repository, service, CLI, web API, and manual settlement flows
+- Add duplicate-slot collapse dreaming reconciliation and reap-stage coverage
+- Track synthesized episodes so dreaming does not re-mine old sessions
+- Harden working-set recovery, atomic goal preparation, snapshot growth limits, and operation handling
+- Preserve proposal evidence during retention and allow manual repair of claim-key proposals
+- Document the working-memory subsystem and update OpenClaw, Skeln, dreaming, durable, recall, procedure, and episode docs
+- Keep `pnpm check` green before release
+
 ## [2026.6.5] - 2026-06-08
 
 Web console, dreaming alias audit, and proposal review hardening release.
