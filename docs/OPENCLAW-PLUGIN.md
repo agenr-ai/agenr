@@ -391,6 +391,8 @@ Current behavior mirrors the Skeln adapter's session working-set surface:
 - ensures the session working set at `session_start` through the shared `ensureSessionWorkingSet` app path
 - injects rendered `<agenr_work_context>` through `before_prompt_build` on every eligible turn when projection rendering succeeds
 
+Working-memory snapshot growth is bounded by `src/app/working-memory/limits.ts`: `scratchpad` is capped at 8 KiB, `files`, `commands`, `decisions`, `assumptions`, and `candidates` each retain the newest 50 unique entries, and identical append entries are deduplicated before oldest-entry eviction. Rendered `<agenr_work_context>` content is capped at 32 KiB and includes a visible truncation marker when the renderer elides content.
+
 OpenClaw does not expose Skeln-style `transientMessages`, so working context is merged into `prependContext` alongside durable recall injection.
 
 ### Shared target-resolution rules

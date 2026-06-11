@@ -344,6 +344,8 @@ interface WorkingContextProjection {
 }
 ```
 
+Working-memory snapshot growth is bounded by `src/app/working-memory/limits.ts`: `scratchpad` is capped at 8 KiB, `files`, `commands`, `decisions`, `assumptions`, and `candidates` each retain the newest 50 unique entries, and identical append entries are deduplicated before oldest-entry eviction. Rendered `<agenr_work_context>` content is capped at 32 KiB and includes a visible truncation marker when the renderer elides content.
+
 Skeln must not append the rendered projection to persisted session messages. If Skeln persists an audit record, it should persist only a compact pointer:
 
 ```ts

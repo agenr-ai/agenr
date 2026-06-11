@@ -1,14 +1,8 @@
+import { truncateUtf8ToMaxBytes, utf8ByteLength, WORKING_CONTEXT_PROJECTION_MAX_BYTES } from "./limits.js";
 import type { WorkingContextProjection } from "./projection.js";
 import { WORKING_CONTEXT_SESSION_SECTION_LABEL } from "./projection-section-labels.js";
 import type { WorkingSetRecord } from "./records.js";
 import type { WorkingCandidate, WorkingNextAction } from "./snapshot.js";
-
-const UTF8_BYTE_LENGTH = new TextEncoder();
-
-/** Returns the UTF-8 byte length of one string. */
-function byteLength(content: string): number {
-  return UTF8_BYTE_LENGTH.encode(content).length;
-}
 
 /**
  * Reasons a working-context projection can be reduced to a stub.
@@ -51,7 +45,7 @@ export function createWorkingContextStubProjection(input: WorkingContextStubProj
     ...(input.workingSetId ? { workingSetId: input.workingSetId } : {}),
     ...(input.revision !== undefined ? { revision: input.revision } : {}),
     sourceRef: input.sourceRef,
-    byteLength: byteLength(content),
+    byteLength: utf8ByteLength(content),
   };
 }
 
@@ -117,7 +111,7 @@ function createWorkingContextProjectionFromSections(sections: WorkingContextProj
     ...renderWorkingContextRules(),
     "</agenr_work_context>",
   ];
-  const content = lines.join("\n");
+  const content = enforceProjectionBudget(lines.join("\n"));
 
   return {
     kind: "working_set",
@@ -125,8 +119,20 @@ function createWorkingContextProjectionFromSections(sections: WorkingContextProj
     content,
     ...auditProvenance,
     sourceRef,
-    byteLength: byteLength(content),
+    byteLength: utf8ByteLength(content),
   };
+}
+
+/** Enforces the rendered working-context projection byte budget with a model-visible marker. */
+function enforceProjectionBudget(content: string): string {
+  if (utf8ByteLength(content) <= WORKING_CONTEXT_PROJECTION_MAX_BYTES) {
+    return content;
+  }
+
+  const contentWithoutClosingTag = content.replace(/\n<\/agenr_work_context>$/u, "");
+  const marker = `\n[agenr_work_context truncated: exceeded ${WORKING_CONTEXT_PROJECTION_MAX_BYTES} UTF-8 byte projection budget.]\n</agenr_work_context>`;
+  const prefixBudget = WORKING_CONTEXT_PROJECTION_MAX_BYTES - utf8ByteLength(marker);
+  return `${truncateUtf8ToMaxBytes(contentWithoutClosingTag, prefixBudget)}${marker}`;
 }
 
 /** Resolves audit provenance from bundle sections, preferring the session working set. */

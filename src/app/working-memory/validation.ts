@@ -1,4 +1,5 @@
 import { isTrustedHostMutationSource, type AgenrWorkMutationSource, type TrustedHostMutationSource } from "./constants.js";
+import { utf8ByteLength, WORKING_SCRATCHPAD_MAX_BYTES } from "./limits.js";
 import type { WorkingBudgetState, WorkingUsageDelta } from "./snapshot.js";
 import { createFailure, type WorkingMemoryFailure } from "./results.js";
 
@@ -73,6 +74,19 @@ export function validateWorkingBudgetState(budget: WorkingBudgetState): { ok: tr
     if (value !== undefined && (!Number.isFinite(value) || value < 0)) {
       return createFailure("invalid_request", `${key} must be a non-negative finite number.`);
     }
+  }
+
+  return { ok: true };
+}
+
+/** Validates freeform scratchpad content before storage. */
+export function validateWorkingScratchpad(scratchpad: string): { ok: true } | WorkingMemoryFailure {
+  const byteLength = utf8ByteLength(scratchpad);
+  if (byteLength > WORKING_SCRATCHPAD_MAX_BYTES) {
+    return createFailure("invalid_request", `scratchpad must be at most ${WORKING_SCRATCHPAD_MAX_BYTES} UTF-8 bytes.`, {
+      byteLength,
+      maxBytes: WORKING_SCRATCHPAD_MAX_BYTES,
+    });
   }
 
   return { ok: true };

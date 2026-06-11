@@ -1,3 +1,4 @@
+import { normalizeBoundedUnique, truncateUtf8ToMaxBytes, WORKING_SCRATCHPAD_MAX_BYTES, WORKING_SNAPSHOT_ARRAY_LIMITS } from "./limits.js";
 import { FORKABLE_SNAPSHOT_FIELD_KEYS, type WorkingSnapshot } from "./snapshot.js";
 
 /** Snapshot field keys copied when seeding a new goal from a session set. */
@@ -17,11 +18,11 @@ const FORKABLE_FIELD_CLONERS: {
     ...(value.nextActions ? { nextActions: [...value.nextActions] } : {}),
     ...(value.blockers ? { blockers: [...value.blockers] } : {}),
   }),
-  scratchpad: (value) => value,
-  files: (value) => value.map((file) => ({ ...file })),
-  commands: (value) => value.map((command) => ({ ...command })),
-  decisions: (value) => value.map((decision) => ({ ...decision })),
-  assumptions: (value) => value.map((assumption) => ({ ...assumption })),
+  scratchpad: (value) => truncateUtf8ToMaxBytes(value, WORKING_SCRATCHPAD_MAX_BYTES),
+  files: (value) => (normalizeBoundedUnique(value, WORKING_SNAPSHOT_ARRAY_LIMITS.files) ?? []).map((file) => ({ ...file })),
+  commands: (value) => (normalizeBoundedUnique(value, WORKING_SNAPSHOT_ARRAY_LIMITS.commands) ?? []).map((command) => ({ ...command })),
+  decisions: (value) => (normalizeBoundedUnique(value, WORKING_SNAPSHOT_ARRAY_LIMITS.decisions) ?? []).map((decision) => ({ ...decision })),
+  assumptions: (value) => (normalizeBoundedUnique(value, WORKING_SNAPSHOT_ARRAY_LIMITS.assumptions) ?? []).map((assumption) => ({ ...assumption })),
 };
 
 /**

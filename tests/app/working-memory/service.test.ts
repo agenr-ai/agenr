@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { WORKING_CONTEXT_PROJECTION_MAX_BYTES, WORKING_SNAPSHOT_ARRAY_LIMITS } from "../../../src/app/working-memory/limits.js";
 import { closeWorkingMemoryTestService, createWorkingMemoryTestService } from "./service-test-helpers.js";
 
 describe("createWorkingMemoryService", () => {
@@ -306,6 +307,69 @@ describe("createWorkingMemoryService", () => {
         renderMode: "stub",
         content: expect.stringContaining("Reason: missing_active_set"),
       });
+    } finally {
+      await closeWorkingMemoryTestService(database, dbPath);
+    }
+  });
+
+  it("keeps a long-running session projection under the byte cap with a visible truncation marker", async () => {
+    const { database, dbPath, service } = await createWorkingMemoryTestService();
+
+    try {
+      const scope = {
+        conversationKey: "projection-budget",
+        sessionId: "projection-budget",
+        cwd: "/tmp/project",
+      };
+      const ensured = await service.ensureSessionWorkingSet({
+        scope: {
+          ...scope,
+        },
+        actor: "runtime",
+        source: "lifecycle_hook",
+      });
+      if (!ensured.ok) {
+        throw new Error("Expected session ensure success.");
+      }
+
+      let revision = ensured.workingSet.revision;
+      let lastFiles = ensured.workingSet.snapshot.files;
+      for (let index = 0; index < WORKING_SNAPSHOT_ARRAY_LIMITS.files + 10; index += 1) {
+        const updated = await service.run({
+          action: "update",
+          workingSetId: ensured.workingSet.id,
+          expectedRevision: revision,
+          operation: {
+            type: "add_file_note",
+            file: {
+              path: `src/generated/long-running-${index}.ts`,
+              note: "x".repeat(2000),
+            },
+          },
+          updateReason: `Recorded generated note ${index}.`,
+          actor: "model",
+          source: "tool",
+        });
+        if (!updated.ok || updated.action !== "update") {
+          throw new Error("Expected update success.");
+        }
+
+        revision = updated.workingSet.revision;
+        lastFiles = updated.workingSet.snapshot.files;
+      }
+
+      expect(lastFiles).toHaveLength(WORKING_SNAPSHOT_ARRAY_LIMITS.files);
+      expect(lastFiles?.[0]?.path).toBe("src/generated/long-running-10.ts");
+
+      const projection = await service.renderProjection({
+        sourceRef: "test:projection-budget",
+        scope,
+      });
+
+      expect(projection.renderMode).toBe("full");
+      expect(projection.byteLength).toBeLessThanOrEqual(WORKING_CONTEXT_PROJECTION_MAX_BYTES);
+      expect(projection.content).toContain("agenr_work_context truncated");
+      expect(projection.content.endsWith("</agenr_work_context>")).toBe(true);
     } finally {
       await closeWorkingMemoryTestService(database, dbPath);
     }

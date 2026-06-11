@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { applyOperation } from "../../../src/app/working-memory/apply-operation.js";
+import { WORKING_SCRATCHPAD_MAX_BYTES, WORKING_SNAPSHOT_ARRAY_LIMITS } from "../../../src/app/working-memory/limits.js";
 import type { AgenrWorkUpdateOperation } from "../../../src/app/working-memory/mutations.js";
 import type { WorkingSetRecord } from "../../../src/app/working-memory/records.js";
 
@@ -138,6 +139,106 @@ describe("applyOperation", () => {
         observedAt: "2026-06-11T10:00:00.000Z",
       },
     ]);
+  });
+
+  it("dedups identical file notes instead of appending duplicates", () => {
+    const file = {
+      path: "src/app/working-memory/apply-operation.ts",
+      note: "Switch must stay exhaustive.",
+      observedAt: "2026-06-11T10:00:00.000Z",
+    };
+    const result = applyOperation(
+      createRecord({
+        files: [file],
+      }),
+      {
+        type: "add_file_note",
+        file,
+      },
+      "Recorded duplicate file.",
+    );
+
+    expectApplied(result);
+    expect(result.snapshot.files).toEqual([file]);
+  });
+
+  it("evicts the oldest file notes after the documented snapshot-array limit", () => {
+    const existing = Array.from({ length: WORKING_SNAPSHOT_ARRAY_LIMITS.files }, (_, index) => ({
+      path: `src/example-${index}.ts`,
+      note: `Observed ${index}.`,
+    }));
+    const newest = {
+      path: "src/newest.ts",
+      note: "Newest observation.",
+    };
+    const result = applyOperation(
+      createRecord({
+        files: existing,
+      }),
+      {
+        type: "add_file_note",
+        file: newest,
+      },
+      "Recorded newest file.",
+    );
+
+    expectApplied(result);
+    expect(result.snapshot.files).toHaveLength(WORKING_SNAPSHOT_ARRAY_LIMITS.files);
+    expect(result.snapshot.files?.[0]).toEqual(existing[1]);
+    expect(result.snapshot.files?.at(-1)).toEqual(newest);
+  });
+
+  it("evicts the oldest candidate notes after the documented snapshot-array limit", () => {
+    const existing = Array.from({ length: WORKING_SNAPSHOT_ARRAY_LIMITS.candidates }, (_, index) => ({
+      kind: "semantic" as const,
+      subject: `Candidate ${index}`,
+      content: `Candidate content ${index}.`,
+      provenance: { evidenceEventSequences: [index + 1] },
+      promotionStatus: "pending" as const,
+    }));
+    const newest = {
+      kind: "procedural" as const,
+      subject: "Newest candidate",
+      content: "Newest candidate content.",
+      provenance: { evidenceEventSequences: [101] },
+      promotionStatus: "pending" as const,
+    };
+    const result = applyOperation(
+      createRecord({
+        candidates: existing,
+      }),
+      {
+        type: "add_candidate",
+        candidate: newest,
+      },
+      "Recorded newest candidate.",
+    );
+
+    expectApplied(result);
+    expect(result.snapshot.candidates).toHaveLength(WORKING_SNAPSHOT_ARRAY_LIMITS.candidates);
+    expect(result.snapshot.candidates?.[0]).toEqual(existing[1]);
+    expect(result.snapshot.candidates?.at(-1)).toEqual(newest);
+  });
+
+  it("rejects scratchpads beyond the documented byte limit", () => {
+    const result = applyOperation(
+      createRecord(),
+      {
+        type: "set_scratchpad",
+        scratchpad: "x".repeat(WORKING_SCRATCHPAD_MAX_BYTES + 1),
+      },
+      "Recorded oversized scratchpad.",
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: "invalid_request",
+      message: `scratchpad must be at most ${WORKING_SCRATCHPAD_MAX_BYTES} UTF-8 bytes.`,
+      details: {
+        byteLength: WORKING_SCRATCHPAD_MAX_BYTES + 1,
+        maxBytes: WORKING_SCRATCHPAD_MAX_BYTES,
+      },
+    });
   });
 
   it("rejects close-managed statuses on the update path", () => {

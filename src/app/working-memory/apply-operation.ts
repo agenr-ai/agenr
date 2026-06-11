@@ -1,11 +1,12 @@
 import { nextGoalGenerationAfterObjectiveChange } from "./goal-generation.js";
+import { appendBoundedUnique, WORKING_SNAPSHOT_ARRAY_LIMITS } from "./limits.js";
 import type { AgenrWorkUpdateOperation } from "./mutations.js";
 import type { WorkingSetRecord } from "./records.js";
 import { createFailure, type WorkingMemoryFailure } from "./results.js";
 import type { WorkingBudgetLimitReason, WorkingSetStatus } from "./constants.js";
 import { isCloseManagedStatus } from "./constants.js";
 import type { WorkingBudgetState, WorkingNextAction, WorkingSnapshot, WorkingUsageDelta } from "./snapshot.js";
-import { validateWorkingBudgetState, validateWorkingUsageDelta } from "./validation.js";
+import { validateWorkingBudgetState, validateWorkingScratchpad, validateWorkingUsageDelta } from "./validation.js";
 
 /** Result of applying one typed operation to a working-set snapshot. */
 export interface AppliedWorkingOperation {
@@ -59,20 +60,26 @@ export function applyOperation(
         snapshot.blockers = operation.checkpoint.blockers;
       }
       break;
-    case "set_scratchpad":
+    case "set_scratchpad": {
+      const validation = validateWorkingScratchpad(operation.scratchpad);
+      if (!validation.ok) {
+        return validation;
+      }
+
       snapshot.scratchpad = operation.scratchpad;
       break;
+    }
     case "add_file_note":
-      snapshot.files = [...(snapshot.files ?? []), operation.file];
+      snapshot.files = appendBoundedUnique(snapshot.files, operation.file, WORKING_SNAPSHOT_ARRAY_LIMITS.files);
       break;
     case "add_command_note":
-      snapshot.commands = [...(snapshot.commands ?? []), operation.command];
+      snapshot.commands = appendBoundedUnique(snapshot.commands, operation.command, WORKING_SNAPSHOT_ARRAY_LIMITS.commands);
       break;
     case "record_decision":
-      snapshot.decisions = [...(snapshot.decisions ?? []), operation.decision];
+      snapshot.decisions = appendBoundedUnique(snapshot.decisions, operation.decision, WORKING_SNAPSHOT_ARRAY_LIMITS.decisions);
       break;
     case "record_assumption":
-      snapshot.assumptions = [...(snapshot.assumptions ?? []), operation.assumption];
+      snapshot.assumptions = appendBoundedUnique(snapshot.assumptions, operation.assumption, WORKING_SNAPSHOT_ARRAY_LIMITS.assumptions);
       break;
     case "set_next_actions":
       snapshot.nextActions = operation.nextActions;
@@ -84,7 +91,7 @@ export function applyOperation(
       status = operation.status;
       break;
     case "add_candidate":
-      snapshot.candidates = [...(snapshot.candidates ?? []), operation.candidate];
+      snapshot.candidates = appendBoundedUnique(snapshot.candidates, operation.candidate, WORKING_SNAPSHOT_ARRAY_LIMITS.candidates);
       break;
     case "configure_budget": {
       const budget = mergeBudgetState(snapshot.budgets, operation.budget);
