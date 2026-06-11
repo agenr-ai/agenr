@@ -22,7 +22,7 @@ export interface WorkingCheckpointRefreshSkipped {
   /** Failure or skip discriminator. */
   ok: false;
   /** Stable reason for the skipped refresh. */
-  reason: "not_applicable" | "missing_scope" | "missing_summary" | "no_active_working_set" | "working_memory_unavailable";
+  reason: "not_applicable" | "missing_scope" | "no_active_working_set" | "working_memory_unavailable";
   /** Working-memory error code when the working service rejected the update. */
   code?: WorkingMemoryErrorCode;
   /** Human-readable status for diagnostics. */
