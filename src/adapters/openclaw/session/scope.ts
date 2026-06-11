@@ -1,6 +1,8 @@
 import type { WorkingScope } from "../../../app/working-memory/scope.js";
 import type { AgenrOpenClawHookContext } from "../types.js";
 
+const UNKNOWN_OPENCLAW_SESSION_ID = "unknown";
+
 /** Hook context fields required to resolve an OpenClaw session scope. */
 export type OpenClawSessionScopeContext = Pick<AgenrOpenClawHookContext, "sessionId" | "sessionKey" | "workspaceDir" | "agentId">;
 
@@ -29,7 +31,7 @@ export interface AgenrOpenClawSessionScope {
  * @returns Scope facts used by session-memory trigger builders.
  */
 export function resolveOpenClawSessionScope(ctx: OpenClawSessionScopeContext): AgenrOpenClawSessionScope {
-  const sessionId = normalizeScopeField(ctx.sessionId) ?? normalizeScopeField(ctx.sessionKey) ?? "unknown";
+  const sessionId = normalizeScopeField(ctx.sessionId) ?? normalizeScopeField(ctx.sessionKey) ?? UNKNOWN_OPENCLAW_SESSION_ID;
   const sessionKey = normalizeScopeField(ctx.sessionKey) ?? sessionId;
 
   return {
@@ -39,6 +41,26 @@ export function resolveOpenClawSessionScope(ctx: OpenClawSessionScopeContext): A
     ...(ctx.workspaceDir ? { workspaceDir: ctx.workspaceDir } : {}),
     ...(ctx.agentId ? { agentId: ctx.agentId, project: ctx.agentId } : {}),
   };
+}
+
+/**
+ * Reports whether scope resolution fell back to the unsafe unknown session id.
+ *
+ * @param scope - Resolved OpenClaw session scope.
+ * @returns Whether the scope lacks host-provided session identity.
+ */
+export function isUnknownOpenClawSessionScope(scope: AgenrOpenClawSessionScope): boolean {
+  return scope.sessionId === UNKNOWN_OPENCLAW_SESSION_ID && scope.sessionKey === UNKNOWN_OPENCLAW_SESSION_ID;
+}
+
+/**
+ * Builds the diagnostic used when OpenClaw lacks a collision-safe session id.
+ *
+ * @param action - Human-readable action being refused.
+ * @returns Clear warning or error message for host diagnostics.
+ */
+export function formatUnknownOpenClawSessionScopeMessage(action: string): string {
+  return `OpenClaw session identity is unavailable; refusing to ${action} because the "${UNKNOWN_OPENCLAW_SESSION_ID}" fallback could collide across sessions.`;
 }
 
 /**

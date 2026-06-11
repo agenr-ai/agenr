@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createDatabase } from "../../../../src/adapters/db/client.js";
 import { createWorkingMemoryRepository } from "../../../../src/adapters/db/working-memory-repository.js";
@@ -92,5 +92,44 @@ describe("createAgenrWorkTool", () => {
       await closeTestDatabase(database);
       await removeTestPath(dbPath);
     }
+  });
+
+  it("refuses to run when OpenClaw scope falls back to unknown identity", async () => {
+    const workingMemory = {
+      run: vi.fn(),
+    };
+    const servicesPromise = Promise.resolve({
+      ...createStubAgenrHostMemorySurface({ workingMemory }),
+      workingMemory,
+      capabilities: resolveRuntimeCapabilities(
+        {
+          workingMemory: true,
+          sessionTreeLineage: false,
+          sessionTreeCompaction: false,
+          goalContinuation: false,
+        },
+        { workingMemoryRepository: {} as never },
+      ),
+    });
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const tool = createAgenrWorkTool({}, servicesPromise, logger);
+
+    const result = await tool.execute("tool-1", { action: "get" });
+
+    expect(workingMemory.run).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      '[agenr] tool=agenr_work session=unknown failed: OpenClaw session identity is unavailable; refusing to mutate a session working set because the "unknown" fallback could collide across sessions.',
+    );
+    expect(result.details).toMatchObject({
+      status: "failed",
+    });
+    expect(result.content[0]).toMatchObject({
+      type: "text",
+      text: 'OpenClaw session identity is unavailable; refusing to mutate a session working set because the "unknown" fallback could collide across sessions.',
+    });
   });
 });

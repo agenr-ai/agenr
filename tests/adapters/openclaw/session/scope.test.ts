@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  formatUnknownOpenClawSessionScopeMessage,
+  isUnknownOpenClawSessionScope,
   resolveOpenClawSessionScope,
   toOpenClawSessionScopeContext,
   toWorkingScopeFromOpenClawSession,
@@ -35,6 +37,20 @@ describe("resolveOpenClawSessionScope", () => {
       sessionKey: "agent:main:webchat:test",
       conversationKey: "agent:main:webchat:test",
     });
+  });
+
+  it("marks the unknown fallback when no session identity is available", () => {
+    const scope = resolveOpenClawSessionScope({});
+
+    expect(scope).toEqual({
+      sessionId: "unknown",
+      sessionKey: "unknown",
+      conversationKey: "unknown",
+    });
+    expect(isUnknownOpenClawSessionScope(scope)).toBe(true);
+    expect(formatUnknownOpenClawSessionScopeMessage("ensure a session working set")).toBe(
+      'OpenClaw session identity is unavailable; refusing to ensure a session working set because the "unknown" fallback could collide across sessions.',
+    );
   });
 });
 

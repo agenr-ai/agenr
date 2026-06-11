@@ -1,6 +1,12 @@
 import { resolveWorkingContextProjection } from "../../shared/injection/working-context-projection.js";
 import type { WorkingContextAuditPointer } from "../../../app/working-memory/projection.js";
-import { resolveOpenClawSessionScope, toWorkingScopeFromOpenClawSession, type OpenClawSessionScopeContext } from "../session/scope.js";
+import {
+  formatUnknownOpenClawSessionScopeMessage,
+  isUnknownOpenClawSessionScope,
+  resolveOpenClawSessionScope,
+  toWorkingScopeFromOpenClawSession,
+  type OpenClawSessionScopeContext,
+} from "../session/scope.js";
 import type { AgenrOpenClawServices } from "../types.js";
 
 /** Resolved working-context injection for one OpenClaw prompt build. */
@@ -30,6 +36,11 @@ export async function resolveOpenClawWorkingContextInjection(
   log?: { warn: (message: string) => void; debug?: (message: string) => void },
 ): Promise<OpenClawWorkingContextInjection> {
   const scope = resolveOpenClawSessionScope(ctx);
+  if (isUnknownOpenClawSessionScope(scope)) {
+    log?.warn(`[agenr] ${formatUnknownOpenClawSessionScopeMessage("inject working context")}`);
+    return {};
+  }
+
   const outcome = await resolveWorkingContextProjection(
     {
       workingMemory: services.workingMemory,

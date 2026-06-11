@@ -68,7 +68,11 @@ export async function ensureSessionWorkingSet(
 
   if (isWorkingSetCreateFailure(created)) {
     const retry = await lookupCurrentWorkingSetsForTarget(input.scope, repository, "session");
-    if (retry.ok && retry.matches.length === 1) {
+    if (!retry.ok) {
+      return retry;
+    }
+
+    if (retry.matches.length === 1) {
       return {
         ok: true,
         workingSet: retry.matches[0],
@@ -76,8 +80,9 @@ export async function ensureSessionWorkingSet(
       };
     }
 
-    return createFailure("active_set_exists", "A session working set already exists for this scope.", {
+    return createFailure("ambiguous_scope", "Session working-set create conflicted, but retry lookup did not find exactly one active set.", {
       scopeKey: created.scopeKey,
+      matchCount: retry.matches.length,
     });
   }
 

@@ -2,7 +2,13 @@ import type { SessionWorkingSetLifecycleLogger } from "../../shared/session-work
 import { closeHostSessionWorkingSet, ensureHostSessionWorkingSet } from "../../shared/session-working-set-lifecycle.js";
 import type { AgenrOpenClawServices } from "../types.js";
 import type { AgenrOpenClawSessionEndEvent } from "../types.js";
-import { resolveOpenClawSessionScope, toWorkingScopeFromOpenClawSession, type OpenClawSessionScopeContext } from "./scope.js";
+import {
+  formatUnknownOpenClawSessionScopeMessage,
+  isUnknownOpenClawSessionScope,
+  resolveOpenClawSessionScope,
+  toWorkingScopeFromOpenClawSession,
+  type OpenClawSessionScopeContext,
+} from "./scope.js";
 
 /**
  * Ensures the independent session working set exists at OpenClaw session start.
@@ -16,8 +22,13 @@ export async function ensureOpenClawSessionWorkingSet(
   ctx: OpenClawSessionScopeContext,
   log?: SessionWorkingSetLifecycleLogger,
 ): Promise<void> {
-  const services = await servicesPromise;
   const scope = resolveOpenClawSessionScope(ctx);
+  if (isUnknownOpenClawSessionScope(scope)) {
+    warnUnknownOpenClawScope("ensure a session working set", log);
+    return;
+  }
+
+  const services = await servicesPromise;
   await ensureHostSessionWorkingSet(services.workingMemory, services.capabilities.workingMemory, toWorkingScopeFromOpenClawSession(scope), log);
 }
 
@@ -35,8 +46,13 @@ export async function closeOpenClawSessionWorkingSet(
   event: Pick<AgenrOpenClawSessionEndEvent, "reason">,
   log?: SessionWorkingSetLifecycleLogger,
 ): Promise<void> {
-  const services = await servicesPromise;
   const scope = resolveOpenClawSessionScope(ctx);
+  if (isUnknownOpenClawSessionScope(scope)) {
+    warnUnknownOpenClawScope("close a session working set", log);
+    return;
+  }
+
+  const services = await servicesPromise;
   await closeHostSessionWorkingSet(
     services.workingMemory,
     services.capabilities.workingMemory,
@@ -44,4 +60,15 @@ export async function closeOpenClawSessionWorkingSet(
     event.reason ?? "unknown",
     log,
   );
+}
+
+/** Emits the shared unknown-scope diagnostic for OpenClaw lifecycle hooks. */
+function warnUnknownOpenClawScope(action: string, log?: SessionWorkingSetLifecycleLogger): void {
+  const message = `[agenr] ${formatUnknownOpenClawSessionScopeMessage(action)}`;
+  if (log) {
+    log.warn(message);
+    return;
+  }
+
+  console.warn(message);
 }

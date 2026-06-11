@@ -83,6 +83,32 @@ describe("openclaw session working-set lifecycle", () => {
     expect(logger.warn).toHaveBeenCalledWith("[agenr] session working-set ensure failed: ensure failed in test");
   });
 
+  it("refuses to ensure when OpenClaw scope falls back to unknown identity", async () => {
+    const ensureSessionWorkingSet = vi.fn(async () => ({ ok: true as const }));
+    const logger = { warn: vi.fn() };
+    const services = createLifecycleServices({ workingMemory: true, ensureSessionWorkingSet });
+
+    await ensureOpenClawSessionWorkingSet(Promise.resolve(services), {}, logger);
+
+    expect(ensureSessionWorkingSet).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      '[agenr] OpenClaw session identity is unavailable; refusing to ensure a session working set because the "unknown" fallback could collide across sessions.',
+    );
+  });
+
+  it("refuses to close when OpenClaw scope falls back to unknown identity", async () => {
+    const run = vi.fn(async () => ({ ok: true as const, action: "close" as const }));
+    const logger = { warn: vi.fn() };
+    const services = createLifecycleServices({ workingMemory: true, run });
+
+    await closeOpenClawSessionWorkingSet(Promise.resolve(services), {}, { reason: "reset" }, logger);
+
+    expect(run).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      '[agenr] OpenClaw session identity is unavailable; refusing to close a session working set because the "unknown" fallback could collide across sessions.',
+    );
+  });
+
   it("ignores missing_active_set close failures", async () => {
     const run = vi.fn(async () => ({
       ok: false as const,

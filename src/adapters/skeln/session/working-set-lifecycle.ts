@@ -1,4 +1,5 @@
 import { closeHostSessionWorkingSet, ensureHostSessionWorkingSet } from "../../shared/session-working-set-lifecycle.js";
+import type { SessionWorkingSetLifecycleLogger } from "../../shared/session-working-set-lifecycle.js";
 import type { createAgenrSkelnServices } from "../runtime.js";
 import { toWorkingScopeFromSkelnSession } from "./scope.js";
 import type { SkelnSessionShutdownEvent } from "../hooks/session-memory.js";
@@ -9,10 +10,15 @@ import type { AgenrSkelnSessionScope } from "../types.js";
  *
  * @param servicesPromise - Lazily initialized Skeln services.
  * @param scope - Resolved session scope for the start event.
+ * @param log - Optional host logger for non-fatal lifecycle failures.
  */
-export async function ensureSkelnSessionWorkingSet(servicesPromise: ReturnType<typeof createAgenrSkelnServices>, scope: AgenrSkelnSessionScope): Promise<void> {
+export async function ensureSkelnSessionWorkingSet(
+  servicesPromise: ReturnType<typeof createAgenrSkelnServices>,
+  scope: AgenrSkelnSessionScope,
+  log?: SessionWorkingSetLifecycleLogger,
+): Promise<void> {
   const services = await servicesPromise;
-  await ensureHostSessionWorkingSet(services.workingMemory, services.capabilities.workingMemory, toWorkingScopeFromSkelnSession(scope));
+  await ensureHostSessionWorkingSet(services.workingMemory, services.capabilities.workingMemory, toWorkingScopeFromSkelnSession(scope), log);
 }
 
 /**
@@ -21,11 +27,13 @@ export async function ensureSkelnSessionWorkingSet(servicesPromise: ReturnType<t
  * @param servicesPromise - Lazily initialized Skeln services.
  * @param scope - Resolved session scope for the shutdown event.
  * @param event - Session shutdown event from Skeln.
+ * @param log - Optional host logger for non-fatal lifecycle failures.
  */
 export async function closeSkelnSessionWorkingSet(
   servicesPromise: ReturnType<typeof createAgenrSkelnServices>,
   scope: AgenrSkelnSessionScope,
   event: SkelnSessionShutdownEvent,
+  log?: SessionWorkingSetLifecycleLogger,
 ): Promise<void> {
   const services = await servicesPromise;
   await closeHostSessionWorkingSet(
@@ -33,5 +41,6 @@ export async function closeSkelnSessionWorkingSet(
     services.capabilities.workingMemory,
     toWorkingScopeFromSkelnSession(scope),
     event.reason ?? "unknown",
+    log,
   );
 }

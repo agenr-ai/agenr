@@ -2,7 +2,12 @@ import type { AnyAgentTool } from "openclaw/plugin-sdk/agent-runtime";
 import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sdk/core";
 
 import { parseWorkToolParams, runWorkMemoryTool, WORK_TOOL_PARAMETERS } from "../../shared/work-tools.js";
-import { resolveOpenClawSessionScope, toWorkingScopeFromOpenClawSession } from "../session/scope.js";
+import {
+  formatUnknownOpenClawSessionScopeMessage,
+  isUnknownOpenClawSessionScope,
+  resolveOpenClawSessionScope,
+  toWorkingScopeFromOpenClawSession,
+} from "../session/scope.js";
 import type { AgenrOpenClawServices } from "../types.js";
 import { OPENCLAW_PARAM_READER, logToolCall, logToolFailure, toOpenClawToolResult, toolFailureResult } from "./shared.js";
 
@@ -34,14 +39,17 @@ export function createAgenrWorkTool(ctx: OpenClawPluginToolContext, servicesProm
     parameters: WORK_TOOL_PARAMETERS,
     async execute(_toolCallId, rawParams) {
       try {
-        const defaultScope = toWorkingScopeFromOpenClawSession(
-          resolveOpenClawSessionScope({
-            ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
-            ...(ctx.sessionKey ? { sessionKey: ctx.sessionKey } : {}),
-            ...(ctx.workspaceDir ? { workspaceDir: ctx.workspaceDir } : {}),
-            ...(ctx.agentId ? { agentId: ctx.agentId } : {}),
-          }),
-        );
+        const sessionScope = resolveOpenClawSessionScope({
+          ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
+          ...(ctx.sessionKey ? { sessionKey: ctx.sessionKey } : {}),
+          ...(ctx.workspaceDir ? { workspaceDir: ctx.workspaceDir } : {}),
+          ...(ctx.agentId ? { agentId: ctx.agentId } : {}),
+        });
+        if (isUnknownOpenClawSessionScope(sessionScope)) {
+          throw new Error(formatUnknownOpenClawSessionScopeMessage("mutate a session working set"));
+        }
+
+        const defaultScope = toWorkingScopeFromOpenClawSession(sessionScope);
         const params = parseWorkToolParams(rawParams, defaultScope, OPENCLAW_PARAM_READER);
         logToolCall(logger, "agenr_work", ctx, `work action=${params.action}`, { action: params.action, target: params.target });
 

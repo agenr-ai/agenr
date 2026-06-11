@@ -3,6 +3,9 @@ import type { ExtensionContext } from "./skeln-types.js";
 import type { AgenrFeatureFlagConfig } from "../../app/features/types.js";
 import type { PluginInjectionMemoryPolicyConfig } from "../../app/plugin-runtime/types.js";
 
+/** Logger surface accepted by the Skeln adapter for non-fatal diagnostics. */
+export type AgenrSkelnLogger = Pick<Console, "error" | "info" | "warn">;
+
 /**
  * Skeln-native scope facts gathered by the host extension and passed into the
  * agenr adapter for recall, store provenance, and session-start routing.
@@ -44,6 +47,8 @@ export interface RegisterAgenrSkelnMemoryOptions {
    * the adapter derives cwd and sessionKey from the active extension context.
    */
   getHostContext?: (context: ExtensionContext) => Partial<SkelnHostContext> | Promise<Partial<SkelnHostContext>>;
+  /** Optional logger used for adapter lifecycle warnings and startup errors. */
+  logger?: AgenrSkelnLogger;
 }
 
 /**
