@@ -487,7 +487,11 @@ The Skeln integration is the front edge of the Working Memory PRD seam:
 - `src/app/skeln/runtime.ts` composes working-set repositories, `agenr_work`, and goal aliases
 - `before_agent_start` is the hook used for transient working-context injection
 
-Autonomous idle continuation is still host-owned future work. Agenr persists the goal state, budgets, and runtime metadata that Skeln's loop will consume.
+Autonomous idle continuation is host-owned and is committed work, not speculative wiring (issue #22, Option B). Agenr persists the goal state, budgets, and runtime metadata that Skeln's loop will consume, and `GoalContinuationService` in `src/app/goal-continuation/service.ts` is the seam that routes continuation commands to the host:
+
+- the `features.goalContinuation` flag plus a registered `GoalContinuationHostPort` resolve the `goalContinuation` capability; flag on without a port reports `misconfigured` and the service fails closed
+- `src/app/skeln/runtime.ts` currently passes no host port; wiring a real Skeln-registered port and replacing the placeholder freeform `runCommand({ command })` payload with a typed continuation command contract is tracked in issue #29
+- Skeln keeps ownership of the runtime loop: it schedules and executes continuation turns, accounts usage through trusted work commands, and calls `prepare_external_goal_mutation` before external `/goal` mutations
 
 ## Current test coverage
 
