@@ -6,7 +6,7 @@
  */
 
 /** Ordered list of procedure-proposal review statuses. */
-const PROCEDURE_PROPOSAL_STATUSES = ["open", "applied", "rejected"] as const;
+const PROCEDURE_PROPOSAL_STATUSES = ["open", "applying", "applied", "rejected"] as const;
 
 export { PROCEDURE_PROPOSAL_STATUSES };
 
@@ -73,6 +73,30 @@ export interface ReviewProcedureProposalInput {
   now: string;
 }
 
+/** Input used to claim one open proposal for external apply side effects. */
+export interface ClaimProcedureProposalApplyInput {
+  /** Proposal id to claim. */
+  proposalId: string;
+}
+
+/** Input used to finalize one claimed proposal after external apply succeeds. */
+export interface CompleteProcedureProposalApplyInput {
+  /** Proposal id to finalize. */
+  proposalId: string;
+  /** Required reviewer reason. */
+  reason: string;
+  /** Relative procedure YAML path written by the apply step. */
+  appliedProcedurePath: string;
+  /** Timestamp to use for the review write. */
+  now: string;
+}
+
+/** Input used to release a failed apply claim back to open review. */
+export interface ReleaseProcedureProposalApplyInput {
+  /** Proposal id to release. */
+  proposalId: string;
+}
+
 /** Failure returned when a proposal review cannot apply. */
 export type ProcedureProposalReviewFailure = { kind: "not_found" } | { kind: "already_reviewed"; status: ProcedureProposalStatus };
 
@@ -120,12 +144,43 @@ export interface ProcedureProposalRepository {
   findProposalByFingerprint(workingSetId: string, candidateFingerprint: string): Promise<ProcedureProposalRecord | null>;
 
   /**
+   * Lists working-set ids that still have open procedure proposals.
+   *
+   * @param workingSetIds - Candidate working-set ids to check.
+   * @returns Matching ids that should block retention reaping.
+   */
+  listOpenProposalWorkingSetIds(workingSetIds: string[]): Promise<Set<string>>;
+
+  /**
    * Persists one open proposal.
    *
    * @param input - Proposal content and provenance.
    * @returns Persisted proposal row.
    */
   createProposal(input: CreateProcedureProposalInput): Promise<ProcedureProposalRecord>;
+
+  /**
+   * Claims one open proposal for external apply side effects.
+   *
+   * @param input - Proposal id and claim timestamp.
+   * @returns Claimed proposal, or a stable review failure.
+   */
+  claimApply(input: ClaimProcedureProposalApplyInput): Promise<ProcedureProposalReviewResult>;
+
+  /**
+   * Finalizes one claimed proposal after external apply side effects succeed.
+   *
+   * @param input - Proposal id, reason, applied path, and timestamp.
+   * @returns Applied proposal, or a stable review failure.
+   */
+  completeApply(input: CompleteProcedureProposalApplyInput): Promise<ProcedureProposalReviewResult>;
+
+  /**
+   * Releases a failed apply claim so the proposal can be retried.
+   *
+   * @param input - Proposal id to release.
+   */
+  releaseApply(input: ReleaseProcedureProposalApplyInput): Promise<void>;
 
   /**
    * Settles one open proposal with a terminal review decision.

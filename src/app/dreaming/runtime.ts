@@ -1,5 +1,6 @@
 import { createDatabase } from "../../adapters/db/client.js";
 import { createDreamPort } from "../../adapters/db/dreaming-port.js";
+import { createProcedureProposalRepository } from "../../adapters/db/procedure-proposal-repository.js";
 import { createWorkingMemoryRepository } from "../../adapters/db/working-memory-repository.js";
 import { createEmbeddingClient, createLazyEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
 import { createLlmClient, resolveLlmCredentials, resolveModel } from "../../adapters/llm.js";
@@ -47,6 +48,7 @@ export async function runDreamRuntime(input: DreamRuntimeOptions): Promise<Dream
     return await runDream(input, {
       port: createDreamPort(database),
       workingMemory: createWorkingMemoryRepository(database),
+      procedureProposals: createProcedureProposalRepository(database),
       dbPath: runtime.dbPath,
       config: runtime.config,
       createExtractLlm,

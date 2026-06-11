@@ -95,6 +95,19 @@ describe("procedure proposal review service", () => {
     expect(result).toEqual({ ok: false, failure: { kind: "already_reviewed", status: "rejected" } });
   });
 
+  it("releases the apply claim when the procedure write fails", async () => {
+    const proposal = await repository.createProposal(buildCreateInput());
+
+    await expect(
+      applyProcedureProposal(
+        { repository, embedding: createStubEmbedding(), proceduresDir, dbPath },
+        { proposalId: proposal.id, reason: "Looks right.", relativePath: "../escape.yaml", now: NOW },
+      ),
+    ).rejects.toThrow(/within the configured procedures directory/u);
+
+    await expect(repository.getProposal(proposal.id)).resolves.toMatchObject({ status: "open" });
+  });
+
   it("rejects one open proposal with a reviewer reason", async () => {
     const proposal = await repository.createProposal(buildCreateInput());
 

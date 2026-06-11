@@ -37,6 +37,7 @@ import { runDreamScan } from "./scan.js";
 import { runTemporalizeStage } from "./temporalize.js";
 import type { WorkingMemoryRepository } from "../working-memory/repository.js";
 import { runWorkingSetRetention } from "../working-memory/retention.js";
+import type { ProcedureProposalRepository } from "../procedures/proposals/repository.js";
 
 /**
  * CLI and runtime options accepted by one dreaming run.
@@ -88,6 +89,8 @@ export interface DreamWorkflowDeps {
   embedding?: EmbeddingPort;
   /** Working-memory repository used by the reap stage; the stage is skipped when absent. */
   workingMemory?: WorkingMemoryRepository;
+  /** Procedure-proposal repository used by the reap stage to preserve open review evidence. */
+  procedureProposals?: ProcedureProposalRepository;
   now?: () => Date;
   backupDb?: (dbPath: string) => Promise<string>;
   reportProgress?: DreamProgressReporter;
@@ -339,7 +342,10 @@ async function executeDreamRun(options: DreamRunOptions, deps: DreamWorkflowDeps
     if (stagePlan.runReap) {
       if (deps.workingMemory) {
         const retentionDays = resolveReapStageConfig(deps.config).workingSetRetentionDays;
-        const retention = await runWorkingSetRetention({ workingMemory: deps.workingMemory }, { now, retentionDays, apply: options.apply });
+        const retention = await runWorkingSetRetention(
+          { workingMemory: deps.workingMemory, ...(deps.procedureProposals ? { procedureProposals: deps.procedureProposals } : {}) },
+          { now, retentionDays, apply: options.apply },
+        );
         if (options.apply) {
           for (const decision of retention.decisions) {
             if (decision.outcome !== "reaped") {
@@ -367,13 +373,17 @@ async function executeDreamRun(options: DreamRunOptions, deps: DreamWorkflowDeps
           setsReaped: retention.setsReaped,
           eventsReaped: retention.eventsReaped,
           setsSkippedPendingCandidates: retention.setsSkippedPendingCandidates,
+          setsSkippedOpenProcedureProposals: retention.setsSkippedOpenProcedureProposals,
           retentionDays,
           dryRun: retention.dryRun,
         };
         actionsTaken += options.apply ? retention.setsReaped : 0;
-        actionsSkipped += retention.setsSkippedPendingCandidates + (options.apply ? 0 : retention.setsReaped);
+        actionsSkipped += retention.setsSkippedPendingCandidates + retention.setsSkippedOpenProcedureProposals + (options.apply ? 0 : retention.setsReaped);
         if (retention.setsSkippedPendingCandidates > 0) {
           observations.push(`Reap preserved ${retention.setsSkippedPendingCandidates} terminal working set(s) with candidates still pending promotion.`);
+        }
+        if (retention.setsSkippedOpenProcedureProposals > 0) {
+          observations.push(`Reap preserved ${retention.setsSkippedOpenProcedureProposals} terminal working set(s) referenced by open procedure proposals.`);
         }
       } else {
         stagesSkipped.push({ stage: "reap", reason: "working_memory_unavailable" });

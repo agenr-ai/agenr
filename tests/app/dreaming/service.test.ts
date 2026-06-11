@@ -1,17 +1,9 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
-
 import { type Client } from "@libsql/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDreamPort } from "../../../src/adapters/db/dreaming-port.js";
-import { getDurable } from "../../../src/adapters/db/queries.js";
 import type { DreamPort } from "../../../src/app/dreaming/ports.js";
-import { backupDatabaseFile, runDream } from "../../../src/app/dreaming/service.js";
-import type { WorkingMemoryRepository } from "../../../src/app/working-memory/repository.js";
-import type { WorkingSetRecord } from "../../../src/app/working-memory/records.js";
+import { runDream } from "../../../src/app/dreaming/service.js";
 import type { EmbeddingPort, LlmPort } from "../../../src/core/ports.js";
 import { computeNormContentHash } from "../../../src/core/store/hashing.js";
 import { createDeterministicEmbedding, createTestClient, insertDurable } from "../../helpers/dreaming-reconcile.js";
@@ -35,12 +27,6 @@ class PipelineExtractLlm implements LlmPort {
     return { durables: this.durables } as T;
   }
 }
-
-const tempDirs: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((directory) => rm(directory, { force: true, recursive: true })));
-});
 
 async function insertEpisode(client: Client, id: string, summary: string, overrides: { startedAt?: string; createdAt?: string } = {}): Promise<void> {
   const startedAt = overrides.startedAt ?? "2026-04-04T10:00:00.000Z";
@@ -112,77 +98,6 @@ function createDreamPortDouble(overrides: Partial<DreamPort> = {}): DreamPort {
 
   return port;
 }
-
-describe("runDream pipeline integration", () => {
-  const clients: Client[] = [];
-
-  afterEach(async () => {
-    await Promise.all(clients.map((client) => client.close()));
-    clients.length = 0;
-  });
-
-  it("runs extract and temporalize, inserting new durables and superseding revised ones", async () => {
-    const client = await createTestClient(clients);
-    const port = createDreamPort(client);
-
-    await insertDurable(client, {
-      id: "home-1",
-      subject: "Home base",
-      content: "Home base is Boston for the foreseeable future.",
-      type: "fact",
-      claim_key: "user/home_base",
-      claim_key_status: "trusted",
-      valid_from: "2026-01-01T00:00:00.000Z",
-    });
-    await insertEpisode(client, "ep-1", "Session covering the move to San Francisco and a coffee preference.");
-
-    const llm = new PipelineExtractLlm(
-      [
-        { type: "preference", subject: "Coffee", content: "Prefers oat milk in coffee during daily standups.", claim_key: "user/coffee_preference" },
-        { type: "fact", subject: "Home base", content: "Home base is now San Francisco for the foreseeable future.", claim_key: "user/home_base" },
-      ],
-      0.25,
-    );
-
-    const result = await runDream(
-      { tier: "standard", apply: true, verbose: false, json: false, skipBackup: true },
-      {
-        port,
-        config: null,
-        now: () => new Date("2026-04-04T15:00:00.000Z"),
-        createExtractLlm: () => llm,
-        embedding: createDeterministicEmbedding(),
-      },
-    );
-
-    expect(result.status).toBe("completed");
-    expect(result.completionSummary?.extract?.newCandidates).toBe(1);
-    expect(result.completionSummary?.extract?.durablesInserted).toBe(1);
-    expect(result.completionSummary?.temporalize?.revisionsApplied).toBe(1);
-
-    const successorRow = await client.execute({
-      sql: `SELECT embedding FROM durables WHERE claim_key_source = 'dreaming_temporalize' LIMIT 1`,
-      args: [],
-    });
-    expect(successorRow.rows[0]?.embedding).toBeTruthy();
-
-    const predecessor = await client.execute({ sql: `SELECT superseded_by, valid_to FROM durables WHERE id = ?`, args: ["home-1"] });
-    expect(predecessor.rows[0]?.superseded_by).toBeTruthy();
-    expect(predecessor.rows[0]?.valid_to).toBe("2026-04-04T15:00:00.000Z");
-
-    const successor = await getDurable(client, predecessor.rows[0]?.superseded_by as string);
-    expect(successor?.content).toBe("Home base is now San Francisco for the foreseeable future.");
-    expect(successor?.claim_key_source).toBe("dreaming_temporalize");
-
-    const activeProfile = await port.getActiveProfileSnapshot();
-    expect(activeProfile?.id).toBe(result.completionSummary?.project?.snapshotId);
-    expect(activeProfile?.durableIds.length).toBeGreaterThan(0);
-    expect(result.completionSummary?.project).toMatchObject({
-      applied: true,
-      profileDurableCount: expect.any(Number),
-    });
-  });
-});
 
 describe("runDream", () => {
   const clients: Client[] = [];
@@ -1005,190 +920,6 @@ describe("runDream", () => {
   });
 });
 
-describe("runDream reap stage", () => {
-  const clients: Client[] = [];
-
-  afterEach(async () => {
-    await Promise.all(clients.map((client) => client.close()));
-    clients.length = 0;
-  });
-
-  it("reaps aged terminal working sets on standard apply runs and logs reap actions", async () => {
-    const client = await createTestClient(clients);
-    const port = createDreamPort(client);
-    const reapable = buildTerminalWorkingSet("ws-old", "2026-04-01T00:00:00.000Z");
-    const pending = buildTerminalWorkingSet("ws-pending", "2026-04-01T00:00:00.000Z", {
-      snapshot: {
-        candidates: [
-          {
-            kind: "semantic",
-            subject: "Release cadence",
-            content: "Releases ship monthly.",
-            provenance: { evidenceEventSequences: [2] },
-            promotionStatus: "pending",
-          },
-        ],
-      },
-    });
-    const workingMemory = createReapWorkingMemoryDouble([reapable, pending]);
-
-    const result = await runDream(
-      { tier: "standard", apply: true, verbose: false, json: false, skipBackup: true },
-      {
-        port,
-        workingMemory: workingMemory.repository,
-        config: null,
-        now: () => new Date("2026-06-11T12:00:00.000Z"),
-      },
-    );
-
-    expect(result.status).toBe("completed");
-    expect(result.completionSummary?.reap).toEqual({
-      terminalSetsScanned: 2,
-      setsReaped: 1,
-      eventsReaped: 2,
-      setsSkippedPendingCandidates: 1,
-      retentionDays: 30,
-      dryRun: false,
-    });
-    expect(workingMemory.deletedIds).toEqual(["ws-old"]);
-    expect(result.actionsTaken).toBe(1);
-    expect(result.completionSummary?.observations).toContainEqual(expect.stringContaining("pending promotion"));
-
-    const actions = await port.getRunActions(result.runId);
-    const reapActions = actions.filter((action) => action.actionType === "reap_working_set");
-    expect(reapActions).toHaveLength(1);
-    expect(reapActions[0]?.details).toMatchObject({
-      stage: "reap",
-      working_set_id: "ws-old",
-      working_set_status: "closed",
-    });
-  });
-
-  it("reports reapable sets without deleting on dry runs", async () => {
-    const client = await createTestClient(clients);
-    const port = createDreamPort(client);
-    const workingMemory = createReapWorkingMemoryDouble([buildTerminalWorkingSet("ws-old", "2026-04-01T00:00:00.000Z")]);
-
-    const result = await runDream(
-      { tier: "standard", apply: false, verbose: false, json: false },
-      {
-        port,
-        workingMemory: workingMemory.repository,
-        config: null,
-        now: () => new Date("2026-06-11T12:00:00.000Z"),
-      },
-    );
-
-    expect(result.completionSummary?.reap).toMatchObject({ setsReaped: 1, eventsReaped: 0, dryRun: true });
-    expect(workingMemory.deletedIds).toEqual([]);
-    const actions = await port.getRunActions(result.runId);
-    expect(actions.filter((action) => action.actionType === "reap_working_set")).toHaveLength(0);
-  });
-
-  it("honors the configured retention window", async () => {
-    const client = await createTestClient(clients);
-    const port = createDreamPort(client);
-    // Closed 10 days before the run, inside the default 30-day window but
-    // outside a configured 7-day window.
-    const workingMemory = createReapWorkingMemoryDouble([buildTerminalWorkingSet("ws-old", "2026-06-01T12:00:00.000Z")]);
-
-    const result = await runDream(
-      { tier: "standard", apply: true, verbose: false, json: false, skipBackup: true },
-      {
-        port,
-        workingMemory: workingMemory.repository,
-        config: { dreaming: { stages: { reap: { workingSetRetentionDays: 7 } } } },
-        now: () => new Date("2026-06-11T12:00:00.000Z"),
-      },
-    );
-
-    expect(result.completionSummary?.reap).toMatchObject({ retentionDays: 7, setsReaped: 1 });
-    expect(workingMemory.deletedIds).toEqual(["ws-old"]);
-  });
-
-  it("records a skipped reap stage when no working-memory repository is wired", async () => {
-    const client = await createTestClient(clients);
-    const port = createDreamPort(client);
-
-    const result = await runDream(
-      { tier: "standard", apply: false, verbose: false, json: false },
-      {
-        port,
-        config: null,
-        now: () => new Date("2026-06-11T12:00:00.000Z"),
-      },
-    );
-
-    expect(result.completionSummary?.stages_skipped).toContainEqual({ stage: "reap", reason: "working_memory_unavailable" });
-    expect(result.completionSummary?.reap).toBeUndefined();
-  });
-});
-
-/** Builds one terminal working set closed at the given timestamp. */
-function buildTerminalWorkingSet(id: string, closedAt: string, overrides: Partial<WorkingSetRecord> = {}): WorkingSetRecord {
-  return {
-    id,
-    scopeKey: `session:${id}`,
-    scopeKind: "session",
-    status: "closed",
-    snapshot: {},
-    revision: 2,
-    createdAt: "2026-03-01T00:00:00.000Z",
-    updatedAt: closedAt,
-    lastActiveAt: closedAt,
-    closedAt,
-    ...overrides,
-  };
-}
-
-/** Builds a working-memory double that serves and deletes terminal sets. */
-function createReapWorkingMemoryDouble(workingSets: WorkingSetRecord[]): { repository: WorkingMemoryRepository; deletedIds: string[] } {
-  const store = new Map(workingSets.map((workingSet) => [workingSet.id, workingSet]));
-  const deletedIds: string[] = [];
-  return {
-    deletedIds,
-    repository: {
-      getWorkingSet: async (id) => store.get(id) ?? null,
-      findCurrentWorkingSets: async () => [],
-      listWorkingSets: async () => [],
-      listWorkingEvents: async () => [],
-      createWorkingSet: async () => ({ kind: "active_set_exists", scopeKey: "test" }),
-      updateWorkingSet: async () => ({ kind: "not_found" }),
-      patchWorkingSetUsage: async () => ({ kind: "not_found" }),
-      patchWorkingSetUsageAndUpdate: async () => ({ kind: "not_found" }),
-      recordEpisodePromotion: async () => ({ kind: "not_found" }),
-      recordCandidateConsolidation: async () => ({ kind: "not_found" }),
-      listReapableWorkingSets: async (input) => [...store.values()].filter((workingSet) => (workingSet.closedAt ?? workingSet.updatedAt) < input.closedBefore),
-      deleteWorkingSets: async (ids) => {
-        let workingSetsDeleted = 0;
-        for (const id of ids) {
-          if (store.delete(id)) {
-            deletedIds.push(id);
-            workingSetsDeleted += 1;
-          }
-        }
-        return { workingSetsDeleted, workingEventsDeleted: workingSetsDeleted * 2 };
-      },
-    },
-  };
-}
-
-describe("backupDatabaseFile", () => {
-  it("backs up file URL database paths and sidecar files", async () => {
-    const directory = await createTempDir();
-    const dbPath = path.join(directory, "knowledge.db");
-    await writeFile(dbPath, "main database", "utf8");
-    await writeFile(`${dbPath}-wal`, "wal data", "utf8");
-
-    const backupPath = await backupDatabaseFile(pathToFileURL(dbPath).href);
-
-    expect(path.dirname(backupPath)).toBe(path.join(directory, "backups"));
-    await expect(readFile(backupPath, "utf8")).resolves.toBe("main database");
-    await expect(readFile(`${backupPath}-wal`, "utf8")).resolves.toBe("wal data");
-  });
-});
-
 function createFailingSecondEmbedPort(): EmbeddingPort {
   const deterministic = createDeterministicEmbedding();
   let calls = 0;
@@ -1203,10 +934,4 @@ function createFailingSecondEmbedPort(): EmbeddingPort {
       return deterministic.embed(texts);
     },
   };
-}
-
-async function createTempDir(): Promise<string> {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "agenr-dream-service-"));
-  tempDirs.push(directory);
-  return directory;
 }

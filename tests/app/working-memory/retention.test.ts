@@ -70,6 +70,7 @@ describe("runWorkingSetRetention", () => {
     expect(result.setsReaped).toBe(2);
     expect(result.eventsReaped).toBe(4);
     expect(result.setsSkippedPendingCandidates).toBe(0);
+    expect(result.setsSkippedOpenProcedureProposals).toBe(0);
     expect(result.dryRun).toBe(false);
     expect(store.has("ws-old")).toBe(false);
     expect(store.has("ws-abandoned")).toBe(false);
@@ -119,12 +120,51 @@ describe("runWorkingSetRetention", () => {
 
     expect(result.setsReaped).toBe(1);
     expect(result.setsSkippedPendingCandidates).toBe(1);
+    expect(result.setsSkippedOpenProcedureProposals).toBe(0);
     expect(result.decisions).toEqual([
       { workingSetId: "ws-pending", status: "closed", closedAt: "2026-04-01T00:00:00.000Z", outcome: "skipped_pending_candidates" },
       { workingSetId: "ws-settled", status: "closed", closedAt: "2026-04-01T00:00:00.000Z", outcome: "reaped" },
     ]);
     expect(store.has("ws-pending")).toBe(true);
     expect(store.has("ws-settled")).toBe(false);
+  });
+
+  it("preserves settled candidate evidence while an open procedure proposal references the working set", async () => {
+    const settledSet = closedWorkingSet("ws-settled", "2026-04-01T00:00:00.000Z", {
+      snapshot: {
+        candidates: [
+          {
+            kind: "procedural",
+            subject: "Release procedure",
+            content: "Release with pnpm check and package publish.",
+            provenance: { evidenceEventSequences: [2, 4] },
+            promotionStatus: "promoted",
+          },
+        ],
+      },
+    });
+    const reapableSet = closedWorkingSet("ws-reapable", "2026-04-01T00:00:00.000Z");
+    const { repository, store } = createRetentionRepository([settledSet, reapableSet]);
+
+    const result = await runWorkingSetRetention(
+      {
+        workingMemory: repository,
+        procedureProposals: {
+          listOpenProposalWorkingSetIds: async (workingSetIds) => new Set(workingSetIds.filter((id) => id === "ws-settled")),
+        },
+      },
+      { now: NOW, retentionDays: 30, apply: true },
+    );
+
+    expect(result.setsReaped).toBe(1);
+    expect(result.setsSkippedPendingCandidates).toBe(0);
+    expect(result.setsSkippedOpenProcedureProposals).toBe(1);
+    expect(result.decisions).toEqual([
+      { workingSetId: "ws-settled", status: "closed", closedAt: "2026-04-01T00:00:00.000Z", outcome: "skipped_open_procedure_proposal" },
+      { workingSetId: "ws-reapable", status: "closed", closedAt: "2026-04-01T00:00:00.000Z", outcome: "reaped" },
+    ]);
+    expect(store.has("ws-settled")).toBe(true);
+    expect(store.has("ws-reapable")).toBe(false);
   });
 
   it("reports deletable sets without deleting on dry runs", async () => {

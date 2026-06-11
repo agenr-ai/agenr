@@ -262,6 +262,8 @@ export interface DreamReapSummary {
   eventsReaped: number;
   /** Working sets preserved because candidates are still pending promotion. */
   setsSkippedPendingCandidates: number;
+  /** Working sets preserved because open procedure proposals still need event evidence. */
+  setsSkippedOpenProcedureProposals: number;
   /** Retention window in days applied by the run. */
   retentionDays: number;
   dryRun: boolean;

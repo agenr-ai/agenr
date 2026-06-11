@@ -51,6 +51,25 @@ describe("procedure proposal repository", () => {
     expect(all).toHaveLength(2);
   });
 
+  it("lists working sets with open or applying proposals for retention guards", async () => {
+    const open = await repository.createProposal(buildCreateInput({ workingSetId: "ws-open", candidateFingerprint: "fp-open" }));
+    const applying = await repository.createProposal(buildCreateInput({ workingSetId: "ws-applying", candidateFingerprint: "fp-applying" }));
+    const applied = await repository.createProposal(buildCreateInput({ workingSetId: "ws-applied", candidateFingerprint: "fp-applied" }));
+
+    await repository.claimApply({ proposalId: applying.id });
+    await repository.claimApply({ proposalId: applied.id });
+    await repository.completeApply({
+      proposalId: applied.id,
+      reason: "Looks right.",
+      appliedProcedurePath: "proposed/applied.yaml",
+      now: NOW,
+    });
+
+    await expect(repository.listOpenProposalWorkingSetIds(["ws-open", "ws-applying", "ws-applied", "ws-missing"])).resolves.toEqual(
+      new Set([open.workingSetId, applying.workingSetId]),
+    );
+  });
+
   it("settles one open proposal and blocks a second review", async () => {
     const created = await repository.createProposal(buildCreateInput());
 
@@ -74,6 +93,41 @@ describe("procedure proposal repository", () => {
       kind: "already_reviewed",
       status: "applied",
     });
+  });
+
+  it("claims, finalizes, and releases apply attempts", async () => {
+    const first = await repository.createProposal(buildCreateInput({ candidateFingerprint: "apply-claim-1" }));
+
+    const claimed = await repository.claimApply({ proposalId: first.id });
+    if ("kind" in claimed) {
+      throw new Error(`expected claimed proposal, got ${claimed.kind}`);
+    }
+    expect(claimed.proposal.status).toBe("applying");
+
+    await expect(repository.reviewProposal({ proposalId: first.id, decision: "rejected", reason: "No.", now: NOW })).resolves.toEqual({
+      kind: "already_reviewed",
+      status: "applying",
+    });
+
+    await repository.releaseApply({ proposalId: first.id });
+    await expect(repository.getProposal(first.id)).resolves.toMatchObject({ status: "open" });
+
+    const secondClaim = await repository.claimApply({ proposalId: first.id });
+    if ("kind" in secondClaim) {
+      throw new Error(`expected second claim, got ${secondClaim.kind}`);
+    }
+    const applied = await repository.completeApply({
+      proposalId: first.id,
+      reason: "Looks right.",
+      appliedProcedurePath: "proposed/release.yaml",
+      now: NOW,
+    });
+    if ("kind" in applied) {
+      throw new Error(`expected applied proposal, got ${applied.kind}`);
+    }
+
+    expect(applied.proposal.status).toBe("applied");
+    expect(applied.proposal.appliedProcedurePath).toBe("proposed/release.yaml");
   });
 
   it("returns not_found for unknown proposals", async () => {

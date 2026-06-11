@@ -22,6 +22,7 @@ const DREAM_COMPLETION_SUMMARY_KEYS = new Set<string>([
   "temporalize",
   "project",
   "prune",
+  "reap",
   "efficiency",
 ]);
 const DREAM_SCAN_KEYS = new Set<string>([
@@ -44,6 +45,15 @@ const DREAM_EXTRACT_KEYS = new Set<string>([
 const DREAM_TEMPORALIZE_KEYS = new Set<string>(["revisionsIdentified", "revisionsApplied", "revisionsSkipped"]);
 const DREAM_PROJECT_KEYS = new Set<string>(["profileDurableCount", "directiveCount", "snapshotId", "applied"]);
 const DREAM_PRUNE_KEYS = new Set<string>(["durablesScanned", "candidatesIdentified", "candidatesProtected", "candidatesRetirable", "durablesStaled", "dryRun"]);
+const DREAM_REAP_KEYS = new Set<string>([
+  "terminalSetsScanned",
+  "setsReaped",
+  "eventsReaped",
+  "setsSkippedPendingCandidates",
+  "setsSkippedOpenProcedureProposals",
+  "retentionDays",
+  "dryRun",
+]);
 const DREAM_EFFICIENCY_KEYS = new Set<string>([
   "evidenceItemsRead",
   "synthesizedDurableMutations",
@@ -87,6 +97,7 @@ export function parseDreamCompletionSummary(value: unknown, path: string, issues
     ...(parseDreamTemporalizeSummary(summary.temporalize, `${path}.temporalize`, issues) ?? {}),
     ...(project ? { project } : {}),
     ...(parseDreamPruneSummary(summary.prune, `${path}.prune`, issues) ?? {}),
+    ...(parseDreamReapSummary(summary.reap, `${path}.reap`, issues) ?? {}),
     ...(parseDreamEfficiencySummary(summary.efficiency, `${path}.efficiency`, issues) ?? {}),
   };
 }
@@ -230,6 +241,33 @@ function parseDreamPruneSummary(value: unknown, path: string, issues: Validation
       candidatesRetirable: parseRequiredNonNegativeInteger(prune.candidatesRetirable, `${path}.candidatesRetirable`, issues) ?? 0,
       durablesStaled: parseRequiredNonNegativeInteger(prune.durablesStaled, `${path}.durablesStaled`, issues) ?? 0,
       dryRun: parseRequiredBoolean(prune.dryRun, `${path}.dryRun`, issues) ?? false,
+    },
+  };
+}
+
+/** Parses optional working-set retention counters. */
+function parseDreamReapSummary(value: unknown, path: string, issues: ValidationIssue[]): Pick<DreamCompletionSummary, "reap"> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const reap = parseObject(value, path, issues);
+  if (reap === undefined) {
+    return undefined;
+  }
+
+  pushUnexpectedFields(reap, DREAM_REAP_KEYS, path, issues);
+
+  return {
+    reap: {
+      terminalSetsScanned: parseRequiredNonNegativeInteger(reap.terminalSetsScanned, `${path}.terminalSetsScanned`, issues) ?? 0,
+      setsReaped: parseRequiredNonNegativeInteger(reap.setsReaped, `${path}.setsReaped`, issues) ?? 0,
+      eventsReaped: parseRequiredNonNegativeInteger(reap.eventsReaped, `${path}.eventsReaped`, issues) ?? 0,
+      setsSkippedPendingCandidates: parseRequiredNonNegativeInteger(reap.setsSkippedPendingCandidates, `${path}.setsSkippedPendingCandidates`, issues) ?? 0,
+      setsSkippedOpenProcedureProposals:
+        parseRequiredNonNegativeInteger(reap.setsSkippedOpenProcedureProposals, `${path}.setsSkippedOpenProcedureProposals`, issues) ?? 0,
+      retentionDays: parseRequiredNonNegativeNumber(reap.retentionDays, `${path}.retentionDays`, issues) ?? 0,
+      dryRun: parseRequiredBoolean(reap.dryRun, `${path}.dryRun`, issues) ?? false,
     },
   };
 }

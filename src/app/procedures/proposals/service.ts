@@ -115,35 +115,38 @@ export async function applyProcedureProposal(
   deps: ApplyProcedureProposalDeps,
   input: { proposalId: string; reason: string; procedureKey?: string; relativePath?: string; now: string },
 ): Promise<ApplyProcedureProposalResult> {
-  const proposal = await deps.repository.getProposal(input.proposalId);
-  if (!proposal) {
-    return { ok: false, failure: { kind: "not_found" } };
+  const claim = await deps.repository.claimApply({ proposalId: input.proposalId });
+  if (isProcedureProposalReviewFailure(claim)) {
+    return { ok: false, failure: claim };
   }
 
-  if (proposal.status !== "open") {
-    return { ok: false, failure: { kind: "already_reviewed", status: proposal.status } };
-  }
-
+  const proposal = claim.proposal;
   const draft = renderProcedureProposalDraft(proposal, {
     ...(input.procedureKey ? { procedureKey: input.procedureKey } : {}),
     ...(input.relativePath ? { relativePath: input.relativePath } : {}),
   });
   const validation = validateProcedureContent(draft.content, draft.relativePath);
   if (!validation.valid) {
+    await deps.repository.releaseApply({ proposalId: proposal.id });
     return { ok: false, failure: { kind: "invalid_draft", message: validation.error ?? "Draft procedure failed validation." } };
   }
 
-  const save = await saveProcedureDocument({
-    proceduresDir: deps.proceduresDir,
-    relativePath: draft.relativePath,
-    content: draft.content,
-    dbPath: deps.dbPath,
-    embedding: deps.embedding,
-  });
+  let save: ProcedureSaveResult;
+  try {
+    save = await saveProcedureDocument({
+      proceduresDir: deps.proceduresDir,
+      relativePath: draft.relativePath,
+      content: draft.content,
+      dbPath: deps.dbPath,
+      embedding: deps.embedding,
+    });
+  } catch (error) {
+    await deps.repository.releaseApply({ proposalId: proposal.id });
+    throw error;
+  }
 
-  const review = await deps.repository.reviewProposal({
+  const review = await deps.repository.completeApply({
     proposalId: proposal.id,
-    decision: "applied",
     reason: input.reason,
     appliedProcedurePath: draft.relativePath,
     now: input.now,

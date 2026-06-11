@@ -15,6 +15,16 @@ export { DEFAULT_WORKING_SET_RETENTION_BATCH_LIMIT, DEFAULT_WORKING_SET_RETENTIO
 export interface WorkingSetRetentionDeps {
   /** Working-memory persistence port. */
   workingMemory: WorkingMemoryRepository;
+  /** Optional proposal lookup used to preserve open procedural review evidence. */
+  procedureProposals?: {
+    /**
+     * Lists working-set ids that are still referenced by open procedure proposals.
+     *
+     * @param workingSetIds - Candidate terminal working-set ids.
+     * @returns Working-set ids that should not be reaped yet.
+     */
+    listOpenProposalWorkingSetIds(workingSetIds: string[]): Promise<Set<string>>;
+  };
 }
 
 /** Options accepted by one working-set retention pass. */
@@ -38,7 +48,7 @@ export interface WorkingSetReapDecision {
   /** Close timestamp used for the retention comparison. */
   closedAt: string;
   /** Reap outcome for the set. */
-  outcome: "reaped" | "skipped_pending_candidates";
+  outcome: "reaped" | "skipped_pending_candidates" | "skipped_open_procedure_proposal";
 }
 
 /** Result of one working-set retention pass. */
@@ -53,6 +63,8 @@ export interface RunWorkingSetRetentionResult {
   eventsReaped: number;
   /** Sets preserved because candidates are still pending promotion. */
   setsSkippedPendingCandidates: number;
+  /** Sets preserved because open procedure proposals still need their event evidence. */
+  setsSkippedOpenProcedureProposals: number;
   /** Per-set decisions in scan order. */
   decisions: WorkingSetReapDecision[];
   /** True when no rows were deleted. */
@@ -84,11 +96,15 @@ export async function runWorkingSetRetention(deps: WorkingSetRetentionDeps, opti
     limit: options.batchLimit ?? DEFAULT_WORKING_SET_RETENTION_BATCH_LIMIT,
   });
 
+  const proposalBlockedIds = await listOpenProcedureProposalWorkingSetIds(
+    deps,
+    candidates.map((workingSet) => workingSet.id),
+  );
   const decisions: WorkingSetReapDecision[] = candidates.map((workingSet) => ({
     workingSetId: workingSet.id,
     status: workingSet.status,
     closedAt: workingSet.closedAt ?? workingSet.updatedAt,
-    outcome: hasPendingCandidates(workingSet) ? "skipped_pending_candidates" : "reaped",
+    outcome: resolveReapOutcome(workingSet, proposalBlockedIds),
   }));
   const reapableIds = decisions.filter((decision) => decision.outcome === "reaped").map((decision) => decision.workingSetId);
 
@@ -106,10 +122,33 @@ export async function runWorkingSetRetention(deps: WorkingSetRetentionDeps, opti
     terminalSetsScanned: candidates.length,
     setsReaped,
     eventsReaped,
-    setsSkippedPendingCandidates: decisions.length - reapableIds.length,
+    setsSkippedPendingCandidates: decisions.filter((decision) => decision.outcome === "skipped_pending_candidates").length,
+    setsSkippedOpenProcedureProposals: decisions.filter((decision) => decision.outcome === "skipped_open_procedure_proposal").length,
     decisions,
     dryRun: !options.apply,
   };
+}
+
+/** Resolves the per-set retention decision. */
+function resolveReapOutcome(workingSet: WorkingSetRecord, proposalBlockedIds: Set<string>): WorkingSetReapDecision["outcome"] {
+  if (hasPendingCandidates(workingSet)) {
+    return "skipped_pending_candidates";
+  }
+
+  if (proposalBlockedIds.has(workingSet.id)) {
+    return "skipped_open_procedure_proposal";
+  }
+
+  return "reaped";
+}
+
+/** Loads open procedure-proposal blockers when the optional port is wired. */
+async function listOpenProcedureProposalWorkingSetIds(deps: WorkingSetRetentionDeps, workingSetIds: string[]): Promise<Set<string>> {
+  if (!deps.procedureProposals || workingSetIds.length === 0) {
+    return new Set();
+  }
+
+  return deps.procedureProposals.listOpenProposalWorkingSetIds(workingSetIds);
 }
 
 /** Returns true when any snapshot candidate is still pending promotion. */

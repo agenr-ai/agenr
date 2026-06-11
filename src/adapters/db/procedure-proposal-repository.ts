@@ -3,11 +3,14 @@ import { randomUUID } from "node:crypto";
 import {
   PROCEDURE_PROPOSAL_STATUSES,
   type CreateProcedureProposalInput,
+  type ClaimProcedureProposalApplyInput,
+  type CompleteProcedureProposalApplyInput,
   type ProcedureProposalListFilter,
   type ProcedureProposalRecord,
   type ProcedureProposalRepository,
   type ProcedureProposalReviewResult,
   type ProcedureProposalStatus,
+  type ReleaseProcedureProposalApplyInput,
   type ReviewProcedureProposalInput,
 } from "../../app/procedures/proposals/repository.js";
 import { normalizeBoundedLimit } from "../../app/working-memory/limits.js";
@@ -40,7 +43,11 @@ export function createProcedureProposalRepository(database: SqlDatabase): Proced
     getProposal: (id) => getProposal(database, id),
     listProposals: (filter) => listProposals(database, filter),
     findProposalByFingerprint: (workingSetId, candidateFingerprint) => findProposalByFingerprint(database, workingSetId, candidateFingerprint),
+    listOpenProposalWorkingSetIds: (workingSetIds) => listOpenProposalWorkingSetIds(database, workingSetIds),
     createProposal: (input) => createProposal(database, input),
+    claimApply: (input) => claimApply(database, input),
+    completeApply: (input) => completeApply(database, input),
+    releaseApply: (input) => releaseApply(database, input),
     reviewProposal: (input) => reviewProposal(database, input),
   };
 }
@@ -106,6 +113,26 @@ async function findProposalByFingerprint(executor: SqlExecutor, workingSetId: st
   return row ? mapProposalRow(row) : null;
 }
 
+/** Lists candidate working-set ids that still have open procedure proposals. */
+async function listOpenProposalWorkingSetIds(executor: SqlExecutor, workingSetIds: string[]): Promise<Set<string>> {
+  const normalizedIds = [...new Set(workingSetIds.map((id) => id.trim()).filter((id) => id.length > 0))];
+  if (normalizedIds.length === 0) {
+    return new Set();
+  }
+
+  const result = await executor.execute({
+    sql: `
+      SELECT DISTINCT working_set_id
+      FROM procedure_proposals
+      WHERE status IN ('open', 'applying')
+        AND working_set_id IN (${normalizedIds.map(() => "?").join(", ")})
+    `,
+    args: normalizedIds,
+  });
+
+  return new Set(result.rows.flatMap((row) => (typeof row.working_set_id === "string" ? [row.working_set_id] : [])));
+}
+
 /** Persists one open proposal. */
 async function createProposal(executor: SqlExecutor, input: CreateProcedureProposalInput): Promise<ProcedureProposalRecord> {
   const id = randomUUID();
@@ -142,6 +169,86 @@ async function createProposal(executor: SqlExecutor, input: CreateProcedurePropo
   }
 
   return created;
+}
+
+/** Claims one open proposal before external apply side effects run. */
+async function claimApply(database: SqlDatabase, input: ClaimProcedureProposalApplyInput): Promise<ProcedureProposalReviewResult> {
+  return database.withTransaction(async (transaction) => {
+    const executor = transaction as SqlDatabase;
+    const current = await getProposal(executor, input.proposalId);
+    if (!current) {
+      return { kind: "not_found" };
+    }
+
+    if (current.status !== "open") {
+      return { kind: "already_reviewed", status: current.status };
+    }
+
+    await executor.execute({
+      sql: `
+        UPDATE procedure_proposals
+        SET status = 'applying'
+        WHERE id = ?
+          AND status = 'open'
+      `,
+      args: [current.id],
+    });
+
+    const updated = await getProposal(executor, current.id);
+    if (!updated) {
+      throw new Error(`Procedure proposal ${current.id} was not found after apply claim.`);
+    }
+
+    return { proposal: updated };
+  });
+}
+
+/** Finalizes one claimed proposal after external apply side effects succeed. */
+async function completeApply(database: SqlDatabase, input: CompleteProcedureProposalApplyInput): Promise<ProcedureProposalReviewResult> {
+  return database.withTransaction(async (transaction) => {
+    const executor = transaction as SqlDatabase;
+    const current = await getProposal(executor, input.proposalId);
+    if (!current) {
+      return { kind: "not_found" };
+    }
+
+    if (current.status !== "applying") {
+      return { kind: "already_reviewed", status: current.status };
+    }
+
+    await executor.execute({
+      sql: `
+        UPDATE procedure_proposals
+        SET status = 'applied',
+            review_reason = ?,
+            reviewed_at = ?,
+            applied_procedure_path = ?
+        WHERE id = ?
+          AND status = 'applying'
+      `,
+      args: [input.reason, input.now, input.appliedProcedurePath, current.id],
+    });
+
+    const updated = await getProposal(executor, current.id);
+    if (!updated) {
+      throw new Error(`Procedure proposal ${current.id} was not found after apply finalize.`);
+    }
+
+    return { proposal: updated };
+  });
+}
+
+/** Releases a failed apply claim back to open review. */
+async function releaseApply(database: SqlDatabase, input: ReleaseProcedureProposalApplyInput): Promise<void> {
+  await database.execute({
+    sql: `
+      UPDATE procedure_proposals
+      SET status = 'open'
+      WHERE id = ?
+        AND status = 'applying'
+    `,
+    args: [input.proposalId],
+  });
 }
 
 /** Settles one open proposal with a terminal review decision. */

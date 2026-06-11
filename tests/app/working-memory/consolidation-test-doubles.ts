@@ -116,7 +116,16 @@ export function createInMemoryProposalRepository(): { repository: ProcedurePropo
       listProposals: async () => [...records],
       findProposalByFingerprint: async (workingSetId, fingerprint) =>
         records.find((record) => record.workingSetId === workingSetId && record.candidateFingerprint === fingerprint) ?? null,
+      listOpenProposalWorkingSetIds: async (workingSetIds) =>
+        new Set(
+          records
+            .filter((record) => (record.status === "open" || record.status === "applying") && workingSetIds.includes(record.workingSetId))
+            .map((record) => record.workingSetId),
+        ),
       createProposal,
+      claimApply: async () => ({ kind: "not_found" }),
+      completeApply: async () => ({ kind: "not_found" }),
+      releaseApply: async () => undefined,
       reviewProposal: async () => ({ kind: "not_found" }),
     },
   };
