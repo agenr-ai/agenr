@@ -542,6 +542,55 @@ describe("ingestEpisodeTranscript", () => {
     );
   });
 
+  it("passes curated task state to summary generation alongside the rendered transcript", async () => {
+    const filePath = "/tmp/goal-close.jsonl";
+    const curatedTaskState = "Objective: Ship the goal.\nDecisions:\n- Keep the seam narrow.";
+    const seenUserMessages: string[] = [];
+    const createSummaryLlm = (): EpisodeIngestLlmPort => {
+      const inner = new MockSummaryLlm({ response: buildSummaryJson("Goal close summary.") });
+      return {
+        metadata: inner.metadata,
+        complete: async (systemPrompt, userMessage) => {
+          seenUserMessages.push(userMessage);
+          return inner.complete(systemPrompt, userMessage);
+        },
+        completeJson: inner.completeJson.bind(inner),
+      };
+    };
+
+    const result = await ingestEpisodeTranscript(
+      filePath,
+      createPorts({
+        episodes: new MockEpisodeDatabase(
+          {},
+          {
+            upsertHandler: async (input) => createUpsertResult(input, "inserted", "episode-goal-close"),
+          },
+        ),
+        transcript: new MockTranscriptPort({
+          [filePath]: buildTranscript({
+            sessionId: "goal-close-session",
+            endedAt: "2026-03-30T09:58:00.000Z",
+          }),
+        }),
+        createSummaryLlm,
+      }),
+      {
+        source: "skeln",
+        genVersion: "skeln-goal-close-episodic-v1",
+        now: new Date("2026-03-30T10:00:00.000Z"),
+        skipActiveSessionCheck: true,
+        curatedTaskState,
+      },
+    );
+
+    expect(result.kind).toBe("executed");
+    expect(seenUserMessages).toHaveLength(1);
+    expect(seenUserMessages[0]).toContain("Curated task state recorded during the session.");
+    expect(seenUserMessages[0]).toContain(curatedTaskState);
+    expect(seenUserMessages[0]).toContain("Transcript:");
+  });
+
   it("returns below_activity_threshold when configured activity gates reject the transcript", async () => {
     const filePath = "/tmp/low-activity.jsonl";
     const createSummaryLlm = vi.fn(() => new MockSummaryLlm({ response: buildSummaryJson("Should not run.") }));

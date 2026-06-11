@@ -8,6 +8,7 @@ Current production behavior covers OpenClaw and Skeln sessions:
 
 - the OpenClaw plugin writes just-finished session episodes on `session_end`
 - the Skeln plugin can write bounded shutdown episodes when `sessionTreeLineage` is enabled and activity thresholds pass
+- the Skeln plugin can write a goal-close episode when `/goal clear` emits a pending episodic working-set candidate
 - the `agenr ingest episodes` CLI backfills or regenerates episodes from OpenClaw transcript files
 - unified recall can query episodes directly or alongside durable entries
 
@@ -49,7 +50,7 @@ Episode recall and embedding backfill operate on active episodes only, meaning r
 
 ## How Episodes Are Generated
 
-Episodes are generated through three current paths.
+Episodes are generated through four current paths.
 
 ### 1. Automatic session-end write (OpenClaw)
 
@@ -88,7 +89,21 @@ The shutdown writer is bounded and conservative:
 - it embeds the summary only when embeddings are available and enough timeout budget remains
 - it logs skipped, invalid, failed, timed-out, written, updated, or unchanged outcomes
 
-### 3. CLI backfill and regeneration
+### 3. Skeln goal-close promotion write
+
+When a Skeln goal working set is closed through `/goal clear` with episode creation requested, close records a pending episodic candidate on the closed set. The adapter then schedules a best-effort goal-close episode write through the same shared `app/episode-ingest` workflow.
+
+The write distills the closing working-set snapshot - objective, status summary, final checkpoint, plan state, completed steps, next actions, decisions, assumptions, and blockers - and feeds that curated task state to summary generation alongside the session transcript. The curated distillation is bounded to 4 KiB and is treated as the highest-signal input; the transcript supplies supporting narrative detail. Transcript identity (`transcriptHash`) is unaffected by the distillation.
+
+Provenance and bookkeeping:
+
+- the episode `sourceRef` is `<sessionFile>#working_set:<workingSetId>`, retaining working-set provenance
+- on a successful write, the pending episodic candidate on the closed set is flipped to `promoted` and the emitted episode id is recorded on the working-set row (`episodeId`), without advancing the set's revision
+- promotion bookkeeping failures are logged and never block or fail the episode write
+
+The goal-close writer shares the bounded shutdown-write guarantees: a 45 second write timeout, best-effort embedding within the remaining budget, and logged skip, failure, and timeout outcomes. It uses a lower activity gate than shutdown writes: at least 2 material turns with no minimum duration.
+
+### 4. CLI backfill and regeneration
 
 The CLI repair and backfill path is:
 

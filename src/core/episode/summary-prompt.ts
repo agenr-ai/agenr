@@ -50,12 +50,23 @@ export { EPISODE_SUMMARY_SYSTEM_PROMPT };
  * Builds the user prompt for one episodic summary generation call.
  *
  * @param transcript - Cleaned transcript text rendered for the summarizer.
+ * @param curatedTaskState - Optional curated task-state distillation recorded
+ *   during the session, treated as high-signal input alongside the transcript.
  * @returns Prompt text sent to the model.
  */
-export function buildEpisodeSummaryPrompt(transcript: string): string {
+export function buildEpisodeSummaryPrompt(transcript: string, curatedTaskState?: string): string {
+  const curated = curatedTaskState?.trim();
   return [
     "Produce a historical episodic summary for this completed session.",
     "Describe what was discussed, decided, or accomplished during this transcript window.",
+    ...(curated
+      ? [
+          "",
+          "Curated task state recorded during the session.",
+          "This is the highest-signal input: prefer it for the objective, decisions, assumptions, and final outcome, and use the transcript for supporting narrative detail.",
+          curated,
+        ]
+      : []),
     "",
     "Transcript:",
     transcript,

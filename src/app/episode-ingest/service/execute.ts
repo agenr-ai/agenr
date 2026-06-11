@@ -68,6 +68,7 @@ export async function ingestEpisodeTranscript(
     {
       source: options.source ?? DEFAULT_EPISODE_SOURCE,
       genVersion: options.genVersion,
+      ...(options.curatedTaskState !== undefined ? { curatedTaskState: options.curatedTaskState } : {}),
     },
     async <T>(task: () => Promise<T>) => task(),
   );
@@ -202,7 +203,7 @@ async function executeEpisodeCandidate(
 
   const llm = createSummaryLlm();
   try {
-    const structured = await generateEpisodeSummary(candidate.renderedTranscript, llm);
+    const structured = await generateEpisodeSummary(candidate.renderedTranscript, llm, writeOptions.curatedTaskState);
     if (!structured) {
       return {
         action: "failed",
@@ -268,6 +269,8 @@ interface EpisodeCandidateWriteOptions {
   source: EpisodeSource;
   /** Generator version persisted with the row. */
   genVersion: string;
+  /** Optional curated task-state distillation passed to summary generation. */
+  curatedTaskState?: string;
 }
 
 /**

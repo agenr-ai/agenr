@@ -15,9 +15,11 @@ import type {
   CreateWorkingSetInput,
   PatchWorkingSetUsageInput,
   PatchWorkingSetUsageAndUpdateInput,
+  RecordWorkingSetEpisodePromotionInput,
   UpdateWorkingSetInput,
   WorkingMemoryRepository,
   WorkingSetCreateResult,
+  WorkingSetEpisodePromotionWriteResult,
   WorkingSetListFilter,
   WorkingSetUsagePatchAndUpdateWriteResult,
   WorkingSetUsagePatchResult,
@@ -54,6 +56,7 @@ export function createWorkingMemoryRepository(database: SqlDatabase): WorkingMem
     updateWorkingSet: (input) => updateWorkingSet(database, input),
     patchWorkingSetUsage: (input) => patchWorkingSetUsage(database, input),
     patchWorkingSetUsageAndUpdate: (input) => patchWorkingSetUsageAndUpdate(database, input),
+    recordEpisodePromotion: (input) => recordEpisodePromotion(database, input),
   };
 }
 
@@ -376,6 +379,39 @@ async function patchWorkingSetUsageAndUpdate(
 
     throw error;
   }
+}
+
+/** Records one emitted episode on a working set without advancing revision. */
+async function recordEpisodePromotion(database: SqlDatabase, input: RecordWorkingSetEpisodePromotionInput): Promise<WorkingSetEpisodePromotionWriteResult> {
+  return database.withTransaction(async (transaction) => {
+    const executor = transaction as SqlDatabase;
+    const current = await getWorkingSet(executor, input.workingSetId);
+    if (!current) {
+      return { kind: "not_found" };
+    }
+
+    if (current.revision !== input.expectedRevision) {
+      return { kind: "revision_conflict", actualRevision: current.revision };
+    }
+
+    // Bookkeeping write: snapshot promotion flags and the emitted episode id
+    // change, but status, revision, and the event ledger stay untouched.
+    await executor.execute({
+      sql: `
+        UPDATE working_sets
+        SET summary = ?,
+            snapshot_json = ?,
+            episode_id = ?,
+            updated_at = ?
+        WHERE id = ?
+          AND revision = ?
+      `,
+      args: [toNullableString(input.snapshot.summary), serializeJson(input.snapshot), input.episodeId, input.now, current.id, input.expectedRevision],
+    });
+    const workingSet = await requireWorkingSet(executor, current.id);
+
+    return { workingSet };
+  });
 }
 
 /** Sentinel error used to roll back an atomic write before returning a stable failure. */

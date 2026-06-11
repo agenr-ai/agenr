@@ -1,7 +1,7 @@
 import type { ExtensionContext } from "../skeln-types.js";
 
 import type { EpisodeActivityThreshold } from "../../../app/episode-ingest/activity-threshold.js";
-import { createSingleTranscriptDiscoveryPort } from "../../../app/episode-ingest/index.js";
+import { createSingleTranscriptDiscoveryPort, type EpisodeTranscriptIngestResult } from "../../../app/episode-ingest/index.js";
 import { createAgenrEpisodeSummaryLlm } from "../../shared/agenr-episode-summary-llm.js";
 import { embedEpisodeSummaryWithinBudget } from "../../shared/bounded-episode-embedding.js";
 import { writeBoundedSingleTranscriptEpisode } from "../../shared/bounded-episode-write.js";
@@ -25,6 +25,8 @@ export interface WriteSkelnBoundedSessionEpisodeParams {
   activityThreshold?: EpisodeActivityThreshold;
   /** Optional provenance session id override for upsert identity. */
   sourceSessionId?: string;
+  /** Optional curated task-state distillation passed to summary generation. */
+  curatedTaskState?: string;
   /** Builds the provenance source reference from the resolved session file path. */
   buildSourceRef: (sessionFile: string) => string;
   /** Structured context string passed to bounded ingest logging. */
@@ -58,9 +60,10 @@ export function resolveSkelnSessionEpisodeTarget(context: ExtensionContext): Ske
  * Best-effort bounded episode write for one Skeln session transcript file.
  *
  * @param params - Session target snapshot, services, and episode-write configuration.
- * @returns Promise that resolves after the attempt is complete or skipped.
+ * @returns Ingest result when the attempt completed within the timeout, or
+ *   undefined when it was skipped, timed out, or failed unexpectedly.
  */
-export async function writeSkelnBoundedSessionEpisode(params: WriteSkelnBoundedSessionEpisodeParams): Promise<void> {
+export async function writeSkelnBoundedSessionEpisode(params: WriteSkelnBoundedSessionEpisodeParams): Promise<EpisodeTranscriptIngestResult | undefined> {
   const logger = params.logger ?? console;
   const sessionFile = params.target.sessionFile;
   const sessionId = params.target.sessionId;
@@ -68,7 +71,7 @@ export async function writeSkelnBoundedSessionEpisode(params: WriteSkelnBoundedS
 
   if (!sessionFile) {
     logger.info(`[agenr] ${params.actionLabel} skipped for ${params.skipDetails} reason=no_session_file`);
-    return;
+    return undefined;
   }
 
   const episodeModel = resolveModel(params.services.agenrConfig, "episode");
@@ -78,7 +81,7 @@ export async function writeSkelnBoundedSessionEpisode(params: WriteSkelnBoundedS
     summaryDeadlineMs,
   );
 
-  await writeBoundedSingleTranscriptEpisode({
+  return writeBoundedSingleTranscriptEpisode({
     filePath: sessionFile,
     context: params.logContext,
     actionLabel: params.actionLabel,
@@ -104,6 +107,7 @@ export async function writeSkelnBoundedSessionEpisode(params: WriteSkelnBoundedS
       genVersion: params.genVersion,
       skipActiveSessionCheck: true,
       ...(params.activityThreshold ? { activityThreshold: params.activityThreshold } : {}),
+      ...(params.curatedTaskState !== undefined ? { curatedTaskState: params.curatedTaskState } : {}),
       candidateOverrides: {
         sessionId: params.sourceSessionId ?? sessionId,
         sourceRef: params.buildSourceRef(sessionFile),

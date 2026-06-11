@@ -169,13 +169,38 @@ export interface WorkingSetUsagePatchAndUpdateResult {
 /** Repository response for an atomic usage-patch plus semantic-update write. */
 export type WorkingSetUsagePatchAndUpdateWriteResult = WorkingSetUsagePatchAndUpdateResult | WorkingSetWriteFailure;
 
+/** Input used to record one emitted episode on a close-managed working set. */
+export interface RecordWorkingSetEpisodePromotionInput {
+  /** Working-set id to annotate. */
+  workingSetId: string;
+  /** Revision observed by the caller; must match the stored row without incrementing. */
+  expectedRevision: number;
+  /** Next snapshot payload with promotion statuses already flipped. */
+  snapshot: WorkingSnapshot;
+  /** Episode id emitted from the set. */
+  episodeId: string;
+  /** Timestamp to use for row updates. */
+  now: string;
+}
+
+/** Successful episode-promotion bookkeeping response. */
+export interface WorkingSetEpisodePromotionResult {
+  /** Updated working set after the bookkeeping write commits. */
+  workingSet: WorkingSetRecord;
+}
+
+/** Repository response for episode-promotion bookkeeping writes. */
+export type WorkingSetEpisodePromotionWriteResult = WorkingSetEpisodePromotionResult | WorkingSetWriteFailure;
+
 /** Returns true when a repository create result is a failure. */
 export function isWorkingSetCreateFailure(result: WorkingSetCreateResult): result is WorkingSetCreateFailure {
   return "kind" in result;
 }
 
 /** Returns true when a repository write result is a failure. */
-export function isWorkingSetWriteFailure(result: WorkingSetWriteResult | WorkingSetUsagePatchWriteResult): result is WorkingSetWriteFailure {
+export function isWorkingSetWriteFailure(
+  result: WorkingSetWriteResult | WorkingSetUsagePatchWriteResult | WorkingSetEpisodePromotionWriteResult,
+): result is WorkingSetWriteFailure {
   return "kind" in result;
 }
 
@@ -246,4 +271,14 @@ export interface WorkingMemoryRepository {
    * @returns Final row, committed events, or a stable write failure with no partial write.
    */
   patchWorkingSetUsageAndUpdate(input: PatchWorkingSetUsageAndUpdateInput): Promise<WorkingSetUsagePatchAndUpdateWriteResult>;
+
+  /**
+   * Records one emitted episode on a close-managed working set without
+   * advancing revision. Used after candidate promotion succeeds in the
+   * owning subsystem.
+   *
+   * @param input - Flipped snapshot, episode id, and expected revision.
+   * @returns Updated row, or a stable write failure.
+   */
+  recordEpisodePromotion(input: RecordWorkingSetEpisodePromotionInput): Promise<WorkingSetEpisodePromotionWriteResult>;
 }

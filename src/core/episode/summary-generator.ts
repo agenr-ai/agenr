@@ -7,9 +7,11 @@ import { buildEpisodeSummaryPrompt, EPISODE_SUMMARY_SYSTEM_PROMPT, parseEpisodeS
  *
  * @param transcript - Rendered transcript text for the completed session.
  * @param llm - Model client used to generate the summary.
+ * @param curatedTaskState - Optional curated task-state distillation passed to
+ *   the summarizer alongside the transcript.
  * @returns Structured summary output, or null when the model response cannot be parsed.
  */
-export async function generateEpisodeSummary(transcript: string, llm: LlmPort): Promise<EpisodeSummaryOutput | null> {
-  const response = await llm.complete(EPISODE_SUMMARY_SYSTEM_PROMPT, buildEpisodeSummaryPrompt(transcript));
+export async function generateEpisodeSummary(transcript: string, llm: LlmPort, curatedTaskState?: string): Promise<EpisodeSummaryOutput | null> {
+  const response = await llm.complete(EPISODE_SUMMARY_SYSTEM_PROMPT, buildEpisodeSummaryPrompt(transcript, curatedTaskState));
   return parseEpisodeSummaryResponse(response);
 }

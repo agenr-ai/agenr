@@ -55,6 +55,21 @@ describe("parseEpisodeSummaryResponse", () => {
   });
 });
 
+describe("buildEpisodeSummaryPrompt", () => {
+  it("includes the curated task-state section when provided", () => {
+    const prompt = buildEpisodeSummaryPrompt("User: Ship it.", "Objective: Ship it.\nDecisions:\n- Use the seam.");
+
+    expect(prompt).toContain("Curated task state recorded during the session.");
+    expect(prompt).toContain("Objective: Ship it.\nDecisions:\n- Use the seam.");
+    expect(prompt.indexOf("Curated task state")).toBeLessThan(prompt.indexOf("Transcript:"));
+  });
+
+  it("omits the curated section when the curated state is missing or blank", () => {
+    expect(buildEpisodeSummaryPrompt("User: Ship it.")).not.toContain("Curated task state");
+    expect(buildEpisodeSummaryPrompt("User: Ship it.", "   ")).not.toContain("Curated task state");
+  });
+});
+
 describe("generateEpisodeSummary", () => {
   it("uses the shared prompt builder and parses the model response", async () => {
     const complete = vi.fn(async () =>
@@ -82,5 +97,26 @@ describe("generateEpisodeSummary", () => {
       project: "agenr",
     });
     expect(complete).toHaveBeenCalledWith(EPISODE_SUMMARY_SYSTEM_PROMPT, buildEpisodeSummaryPrompt(transcript));
+  });
+
+  it("forwards curated task state into the prompt", async () => {
+    const complete = vi.fn(async () =>
+      JSON.stringify({
+        summary: "The session closed a goal working set and the curated task state captured the objective, decisions, and final checkpoint for the episode.",
+        tags: ["episodes", "goal-close"],
+        activityLevel: "substantial",
+        project: null,
+      }),
+    );
+    const llm: LlmPort = {
+      complete,
+      completeJson: async <T>(): Promise<T> => ({}) as T,
+    };
+
+    const transcript = "User: Close the goal.\nAssistant: Done.";
+    const curatedTaskState = "Objective: Close the goal.\nFinal checkpoint: Done.";
+    await generateEpisodeSummary(transcript, llm, curatedTaskState);
+
+    expect(complete).toHaveBeenCalledWith(EPISODE_SUMMARY_SYSTEM_PROMPT, buildEpisodeSummaryPrompt(transcript, curatedTaskState));
   });
 });

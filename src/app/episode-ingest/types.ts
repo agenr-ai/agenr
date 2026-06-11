@@ -274,6 +274,11 @@ export interface IngestEpisodeTranscriptOptions {
    * Optional minimum activity gate applied after generic short-session checks.
    */
   activityThreshold?: EpisodeActivityThreshold;
+  /**
+   * Optional curated task-state distillation passed to summary generation
+   * alongside the rendered transcript. Does not affect transcript identity.
+   */
+  curatedTaskState?: string;
 }
 
 /**

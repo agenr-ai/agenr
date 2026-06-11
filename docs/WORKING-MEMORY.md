@@ -207,6 +207,8 @@ Candidate status is `pending`, `promoted`, or `dismissed`.
 
 The working-memory subsystem only records candidates and their provenance. Promotion into `episodes`, `durables`, or `procedures` must go through the owning subsystem path so validation, claim-key policy, procedure normalization, embeddings, and audit behavior remain centralized.
 
+One episodic promotion path is wired in production today. When a Skeln goal close emits a pending episodic candidate, the adapter writes a goal-close episode through the episode subsystem, feeding a bounded distillation of the closing snapshot (objective, final checkpoint, plan state, decisions, assumptions, blockers) to summary generation alongside the transcript. On success, `recordWorkingSetEpisodicPromotion` flips the pending episodic candidates on the closed set to `promoted` and records the emitted episode id on the row's `episodeId` column. This bookkeeping write requires a close-managed status, does not advance the revision, and does not append ledger events. See [`docs/EPISODES.md`](./EPISODES.md) for the episode-side behavior.
+
 ## Feature Flags and Capabilities
 
 `features.workingMemory` enables the working-set ledger, `agenr_work`, trusted host work commands, and transient projection rendering. Runtime capability checks still fail closed when the feature is enabled but repositories are missing or runtime composition is unavailable.

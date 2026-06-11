@@ -1,6 +1,9 @@
 import type { ExtensionContext } from "../skeln-types.js";
 
 import type { EpisodeActivityThreshold } from "../../../app/episode-ingest/activity-threshold.js";
+import { renderWorkingSnapshotDistillation } from "../../../app/working-memory/close-distillation.js";
+import { recordWorkingSetEpisodicPromotion } from "../../../app/working-memory/promotion.js";
+import type { WorkingMemoryRepository } from "../../../app/working-memory/repository.js";
 import type { WorkingMemoryResult } from "../../../app/working-memory/results.js";
 import { formatErrorMessage } from "../../shared/errors.js";
 import type { AgenrSkelnServices } from "../runtime.js";
@@ -31,11 +34,13 @@ export function scheduleSkelnGoalCloseEpisodePromotion(params: {
   }
 
   const target = resolveSkelnSessionEpisodeTarget(params.context);
+  const curatedTaskState = renderWorkingSnapshotDistillation(params.closeResult.workingSet.snapshot);
 
   void writeSkelnGoalCloseEpisode({
     target,
     services: params.services,
     workingSetId: params.closeResult.workingSet.id,
+    ...(curatedTaskState !== undefined ? { curatedTaskState } : {}),
     logger: params.logger,
   }).catch((error: unknown) => {
     const logger = params.logger ?? console;
@@ -46,24 +51,77 @@ export function scheduleSkelnGoalCloseEpisodePromotion(params: {
 /**
  * Best-effort bounded Skeln episode write triggered by `/goal clear`.
  *
- * @param params - Session target snapshot, shared services, and closed working-set id.
+ * The closing working-set distillation is fed to summary generation alongside
+ * the session transcript. When the episode write completes, the pending
+ * episodic candidate on the closed set is flipped to `promoted` and the
+ * emitted episode id is recorded.
+ *
+ * @param params - Session target snapshot, shared services, closed working-set
+ *   id, and optional curated task-state distillation.
  * @returns Promise that resolves after the promotion attempt is complete or skipped.
  */
 export async function writeSkelnGoalCloseEpisode(params: {
   target: SkelnSessionEpisodeTarget;
   services: AgenrSkelnServices;
   workingSetId: string;
+  curatedTaskState?: string;
   logger?: Pick<Console, "info" | "warn">;
 }): Promise<void> {
-  await writeSkelnBoundedSessionEpisode({
+  const ingestResult = await writeSkelnBoundedSessionEpisode({
     target: params.target,
     services: params.services,
     logger: params.logger,
     actionLabel: "skeln goal close episode promotion",
     genVersion: SKELN_GOAL_CLOSE_EPISODE_GENERATOR_VERSION,
     activityThreshold: SKELN_GOAL_CLOSE_EPISODE_ACTIVITY_THRESHOLD,
+    ...(params.curatedTaskState !== undefined ? { curatedTaskState: params.curatedTaskState } : {}),
     buildSourceRef: (sessionFile) => `${sessionFile}#working_set:${params.workingSetId}`,
     logContext: `session=${params.target.sessionId} workingSet=${params.workingSetId}`,
     skipDetails: `session=${params.target.sessionId} workingSet=${params.workingSetId}`,
   });
+
+  if (ingestResult?.kind !== "executed" || ingestResult.session.action === "failed" || !ingestResult.session.episodeId) {
+    return;
+  }
+
+  await recordSkelnGoalCloseEpisodePromotion({
+    repository: params.services.workingMemoryRepository,
+    workingSetId: params.workingSetId,
+    episodeId: ingestResult.session.episodeId,
+    logger: params.logger,
+  });
+}
+
+/**
+ * Records the promotion outcome on the closed working set after a successful
+ * episode write. Failures are logged, never thrown.
+ */
+async function recordSkelnGoalCloseEpisodePromotion(params: {
+  repository: WorkingMemoryRepository | undefined;
+  workingSetId: string;
+  episodeId: string;
+  logger?: Pick<Console, "info" | "warn">;
+}): Promise<void> {
+  const logger = params.logger ?? console;
+  const logContext = `workingSet=${params.workingSetId} episode=${params.episodeId}`;
+  if (!params.repository) {
+    logger.info(`[agenr] skeln goal close promotion status not recorded for ${logContext} reason=no_working_memory_repository`);
+    return;
+  }
+
+  try {
+    const result = await recordWorkingSetEpisodicPromotion(params.repository, {
+      workingSetId: params.workingSetId,
+      episodeId: params.episodeId,
+      now: new Date().toISOString(),
+    });
+    if (!result.ok) {
+      logger.warn(`[agenr] skeln goal close promotion status not recorded for ${logContext} reason=${result.reason}`);
+      return;
+    }
+
+    logger.info(`[agenr] skeln goal close promotion recorded for ${logContext} changed=${result.changed}`);
+  } catch (error) {
+    logger.warn(`[agenr] skeln goal close promotion status not recorded for ${logContext} reason=${formatErrorMessage(error)}`);
+  }
 }
