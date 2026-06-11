@@ -20,6 +20,7 @@ The OpenClaw plugin is a translator around agenr's existing core and app workflo
 - reuses the OpenClaw transcript parser for episode ingestion
 
 The adapter is intentionally not a second memory brain. Durable memory, recall ranking, episode ingest, and claim-key lifecycle still live in agenr core and app layers.
+Shared working-memory semantics live in [`docs/WORKING-MEMORY.md`](./WORKING-MEMORY.md); this document only covers OpenClaw-specific wiring.
 
 ## Code map
 
@@ -381,7 +382,7 @@ Use `agenr trace` for provenance, claim-family lineage, dreaming audit history, 
 
 ### `agenr_work`
 
-`agenr_work` is always registered as the model-facing working-memory tool. Runtime behavior is gated by `features.workingMemory` in agenr config: when disabled, working-set mutations and `<agenr_work_context>` injection are skipped.
+`agenr_work` is always registered as the model-facing working-memory tool. Runtime behavior is gated by `features.workingMemory` in agenr config: when disabled, working-set mutations and `<agenr_work_context>` injection are skipped. Shared working-set scope, snapshot, revision, operation, projection, and candidate promotion semantics are owned by [`docs/WORKING-MEMORY.md`](./WORKING-MEMORY.md).
 
 Current behavior mirrors the Skeln adapter's session working-set surface:
 
@@ -390,8 +391,6 @@ Current behavior mirrors the Skeln adapter's session working-set surface:
 - blocks model-facing `close` and trusted host-only mutations; OpenClaw lifecycle hooks own session working-set close at `session_end`
 - ensures the session working set at `session_start` through the shared `ensureSessionWorkingSet` app path
 - injects rendered `<agenr_work_context>` through `before_prompt_build` on every eligible turn when projection rendering succeeds
-
-Working-memory snapshot growth is bounded by `src/app/working-memory/limits.ts`: `scratchpad` is capped at 8 KiB, `files`, `commands`, `decisions`, `assumptions`, and `candidates` each retain the newest 50 unique entries, and identical append entries are deduplicated before oldest-entry eviction. Rendered `<agenr_work_context>` content is capped at 32 KiB and includes a visible truncation marker when the renderer elides content.
 
 OpenClaw does not expose Skeln-style `transientMessages`, so working context is merged into `prependContext` alongside durable recall injection.
 

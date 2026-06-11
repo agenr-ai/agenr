@@ -36,6 +36,7 @@ Shared behavior:
 
 - the same libSQL knowledge database and agenr config resolution rules
 - the same unified recall, store pipeline, and claim-key update semantics
+- the same working-memory service, repository, mutation contract, projection renderer, and candidate promotion seam described in [`docs/WORKING-MEMORY.md`](./WORKING-MEMORY.md)
 - the same host-neutral session-start and before-turn app services
 - shared tool schemas, parsers, and runners in `src/adapters/shared/memory-tools.ts`
 - shared injection formatting in `src/adapters/shared/injection/`
@@ -324,55 +325,22 @@ Configured thresholds and caps from `memoryPolicy.beforeTurn` override the defau
 
 Injection messages are real `@earendil-works/pi-agent-core` `AgentMessage` objects. Skeln persists them and adds them to model context as non-user background text.
 
-### Phase 0 working-context contract
+### Working-context contract
 
-Working memory uses a separate transient context contract from the durable session-start and before-turn recall path above.
+Working memory uses a separate transient context contract from the durable session-start and before-turn recall path above. Shared working-set semantics, scope resolution, projection shape, snapshot limits, lifecycle, and promotion behavior are owned by [`docs/WORKING-MEMORY.md`](./WORKING-MEMORY.md).
 
-Phase 0 chooses Skeln's non-persistent `context` provider path for future `<agenr_work_context>` delivery. Skeln may expose this as a `context` lifecycle event or provider-context transform. If Skeln later offers equivalent `before_agent_start` context fields, they must be explicitly non-persistent, such as `transientMessages` or `contextMessages` with `persist: false`.
+Skeln injects rendered `<agenr_work_context>` through non-persistent `transientMessages`. It must not append the rendered projection to persisted session messages. If Skeln persists an audit record, it should persist only the compact audit pointer described in the working-memory doc.
 
-Agenr will return this projection shape:
+The working-memory scope contract uses host-neutral `conversationKey` when the host has a cross-session conversation identity. Skeln is not required to supply `threadId`; `hostThreadId` is compatibility-only when a host actually names that field.
 
-```ts
-interface WorkingContextProjection {
-  kind: "working_set";
-  renderMode: "stub" | "full";
-  content: string;
-  workingSetId?: string;
-  revision?: number;
-  sourceRef: string;
-  byteLength: number;
-}
-```
-
-Working-memory snapshot growth is bounded by `src/app/working-memory/limits.ts`: `scratchpad` is capped at 8 KiB, `files`, `commands`, `decisions`, `assumptions`, and `candidates` each retain the newest 50 unique entries, and identical append entries are deduplicated before oldest-entry eviction. Rendered `<agenr_work_context>` content is capped at 32 KiB and includes a visible truncation marker when the renderer elides content.
-
-Skeln must not append the rendered projection to persisted session messages. If Skeln persists an audit record, it should persist only a compact pointer:
-
-```ts
-interface WorkingContextAuditPointer {
-  source: "agenr_work";
-  workingSetId: string;
-  revision: number;
-  sourceRef: string;
-  bytes: number;
-  summary?: string;
-}
-```
-
-That audit pointer is not live replay text. Compaction, branch summarization, and episode mining must exclude rendered `<agenr_work_context>` by default. The current hidden-message durable recall path may stay as-is until it is intentionally redesigned, but volatile working context may not use that persisted path.
-
-The working-memory scope contract uses host-neutral `conversationKey` or `runtimeThreadKey` when the host has a cross-session conversation identity. Skeln is not required to supply `threadId`; `hostThreadId` is compatibility-only when a host actually names that field.
-
-Phase 0 defines four agenr config feature flags. `features.sessionTreeCompaction` defaults to on; the other three default to off:
+The related agenr config feature flags are:
 
 - `features.workingMemory`
 - `features.sessionTreeLineage`
 - `features.sessionTreeCompaction`
 - `features.goalContinuation`
 
-Persisted config only records overrides: most flags are written when explicitly enabled, while `sessionTreeCompaction: false` is written when compaction intake should be disabled.
-
-`features.workingMemory` enables the v11 ledger, `agenr_work`, trusted Skeln work commands, transient working-context injection, and `/goal` aliases. `features.sessionTreeLineage` enables v12 lineage intake for lifecycle events such as resume, fork, clone, and subagent spawn. `features.sessionTreeCompaction` enables v12 checkpoint artifact intake.
+Persisted config only records overrides: most flags are written when explicitly enabled, while `sessionTreeCompaction: false` is written when compaction intake should be disabled. `features.workingMemory` enables the v11 ledger, `agenr_work`, trusted Skeln work commands, transient working-context injection, and `/goal` aliases. `features.sessionTreeLineage` enables v12 lineage intake for lifecycle events such as resume, fork, clone, and subagent spawn. `features.sessionTreeCompaction` enables v12 checkpoint artifact intake.
 
 ## Tool behavior
 
@@ -439,13 +407,9 @@ There is no `agenr_retire` tool on any host. Taking a memory offline now happens
 
 ### `agenr_work` and Goal Aliases
 
-`agenr_work` is the model-facing working-memory tool. It exposes typed WIP operations such as `merge_checkpoint`, `set_scratchpad`, file notes, command notes, decisions, assumptions, next actions, and candidate memories. Host-only operations are intentionally not in the model schema.
+`agenr_work` is the model-facing working-memory tool. The shared action model, typed WIP operations, revision rules, session and goal layers, snapshot limits, and candidate promotion seam are owned by [`docs/WORKING-MEMORY.md`](./WORKING-MEMORY.md).
 
-Working memory has two active target layers:
-
-- `target: "session"` addresses the independent session working set created for ordinary multi-turn work.
-- `target: "goal"` addresses an explicit goal working set.
-- `target: "auto"` chooses the goal set when one exists, then falls back to the session set. `workingSetId` wins over `target`, but `goals:false` still rejects goal-scoped records selected by id.
+Skeln exposes both session and goal working-set layers. `target: "auto"` chooses the goal set when one exists, then falls back to the session set. `workingSetId` wins over `target`, but `goals:false` still rejects goal-scoped records selected by id.
 
 The plugin also registers Codex-compatible `get_goal`, `create_goal`, and `update_goal` aliases:
 

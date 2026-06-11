@@ -20,6 +20,7 @@ When you need subsystem detail, use the docs that already own it:
 - Episodic memory model: [`docs/EPISODES.md`](./docs/EPISODES.md)
 - Procedural memory model and sync pipeline: [`docs/PROCEDURES.md`](./docs/PROCEDURES.md)
 - Durable store pipeline and direct write paths: [`docs/DURABLES.md`](./docs/DURABLES.md)
+- Working-memory model, lifecycle, and host policy: [`docs/WORKING-MEMORY.md`](./docs/WORKING-MEMORY.md)
 - Dreaming runtime, tiers, and safety model: [`docs/DREAMING.md`](./docs/DREAMING.md)
 - OpenClaw integration and plugin behavior: [`docs/OPENCLAW-PLUGIN.md`](./docs/OPENCLAW-PLUGIN.md)
 - Skeln integration and plugin behavior: [`docs/SKELN-PLUGIN.md`](./docs/SKELN-PLUGIN.md)
@@ -65,6 +66,7 @@ Do not re-derive subsystem behavior from memory. Start from the owning doc:
 - Durable recall, episode recall, unified routing, and telemetry: [`docs/RECALL.md`](./docs/RECALL.md)
 - Episode lifecycle and historical-memory semantics: [`docs/EPISODES.md`](./docs/EPISODES.md)
 - Procedure authoring, storage, and sync semantics: [`docs/PROCEDURES.md`](./docs/PROCEDURES.md)
+- Working-memory scopes, projections, lifecycle, and promotion seam: [`docs/WORKING-MEMORY.md`](./docs/WORKING-MEMORY.md)
 - Dreaming tiers, scan/reconcile/apply flow, and runtime guards: [`docs/DREAMING.md`](./docs/DREAMING.md)
 - OpenClaw hooks, tools, prompt injection, continuity, and memory runtime behavior: [`docs/OPENCLAW-PLUGIN.md`](./docs/OPENCLAW-PLUGIN.md)
 - Eval transport boundaries and non-goals: [`docs/EVALS.md`](./docs/EVALS.md)
@@ -136,6 +138,7 @@ agenr_store
 agenr_recall
 agenr_fetch
 agenr_update
+agenr_work
 ```
 
 Skeln exposes these runtime tools:
