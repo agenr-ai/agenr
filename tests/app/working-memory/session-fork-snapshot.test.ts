@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { cloneForkableSnapshotFields } from "../../../src/app/working-memory/session-fork-snapshot.js";
+import { cloneForkableSnapshotFields } from "../../../src/app/working-memory/snapshot.js";
 import { FORKABLE_SNAPSHOT_FIELD_KEYS, type WorkingSnapshot } from "../../../src/app/working-memory/snapshot.js";
 
 describe("cloneForkableSnapshotFields", () => {

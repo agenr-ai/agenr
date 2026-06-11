@@ -1,12 +1,11 @@
-import { applyOperation } from "../apply-operation.js";
-import { buildCommitAppliedWorkingSetChangeInput, commitAppliedWorkingSetChange, isAppliedWorkingSetCommitFailure } from "./commit-applied-change.js";
-import { isGoalScopeKind, isMutableWorkingSetStatus, isTrustedHostMutationSource } from "../constants.js";
-import type { WorkingMemoryHandlerContext } from "../handler-context.js";
-import type { AgenrWorkUpdateOperation, PrepareExternalGoalMutationParams } from "../mutations.js";
-import type { WorkingEventRecord, WorkingSetRecord } from "../records.js";
-import { isWorkingSetWriteFailure } from "../repository.js";
-import { createFailure, writeFailureToResult, type WorkingMemoryResult } from "../results.js";
-import { selectWorkingSet } from "../select-working-set.js";
+import { applyOperation, buildCommitAppliedWorkingSetChangeInput, commitAppliedWorkingSetChange, isAppliedWorkingSetCommitFailure } from "./apply-operation.js";
+import { isGoalScopeKind, isMutableWorkingSetStatus, isTrustedHostMutationSource } from "./constants.js";
+import type { WorkingMemoryHandlerContext } from "./handlers.js";
+import type { AgenrWorkUpdateOperation, PrepareExternalGoalMutationParams } from "./mutations.js";
+import type { WorkingEventRecord, WorkingSetRecord } from "./records.js";
+import { isWorkingSetWriteFailure } from "./repository.js";
+import { createFailure, writeFailureToResult, type WorkingMemoryResult } from "./results.js";
+import { selectWorkingSet } from "./selection.js";
 
 /** One typed accounting operation to commit before an external goal mutation. */
 interface PrepareOperation {

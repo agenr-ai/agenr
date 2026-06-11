@@ -8,7 +8,7 @@ import {
 } from "../../app/working-memory/constants.js";
 import type { WorkingEventRecord, WorkingSetRecord } from "../../app/working-memory/records.js";
 import type { ResolvedWorkingScope } from "../../app/working-memory/scope.js";
-import type { WorkingEventType } from "../../app/working-memory/events.js";
+import type { WorkingEventType } from "../../app/working-memory/records.js";
 import { normalizeBoundedLimit } from "../../app/working-memory/limits.js";
 import { isWorkingSetWriteFailure } from "../../app/working-memory/repository.js";
 import type {

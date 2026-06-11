@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createHostWorkingSetPolicy } from "../../../src/app/working-memory/host-working-set-policy.js";
-import { resolveListScopes } from "../../../src/app/working-memory/list-scope-resolution.js";
+import { resolveListScopes } from "../../../src/app/working-memory/selection.js";
 
 describe("resolveListScopes", () => {
   it("resolves explicit session and auto list scopes", () => {

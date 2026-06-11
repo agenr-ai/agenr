@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { resolveCreateScope } from "../../../src/app/working-memory/resolve-create-scope.js";
+import { resolveCreateScope } from "../../../src/app/working-memory/selection.js";
 import type { WorkingMemoryRepository } from "../../../src/app/working-memory/repository.js";
 
 describe("resolveCreateScope", () => {

@@ -1,4 +1,6 @@
-import type { WorkingCheckpointRefreshResult } from "../working-memory/lifecycle-checkpoint-types.js";
+// Type-only import keeps the lifecycle-checkpoint module out of the runtime
+// graph; trigger-router loads it lazily through a dynamic import boundary.
+import type { WorkingCheckpointRefreshResult } from "../working-memory/lifecycle-checkpoint.js";
 import type { SessionArtifact, SessionLineageEdge } from "./types.js";
 
 /**

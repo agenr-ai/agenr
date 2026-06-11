@@ -1,7 +1,7 @@
 import type { WorkingSetStatus } from "../../app/working-memory/constants.js";
 import type { WorkingSetRecord } from "../../app/working-memory/records.js";
 import type { WorkingCheckpoint } from "../../app/working-memory/snapshot.js";
-import { readGoalGeneration } from "../../app/working-memory/goal-generation.js";
+import { readGoalGeneration } from "../../app/working-memory/snapshot.js";
 
 /** Codex-compatible goal object returned by goal alias tools. */
 export interface GoalToolGoal {

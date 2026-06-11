@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveGoalWorkingScope } from "../../../../src/app/working-memory/scope-resolver.js";
+import { resolveGoalWorkingScope } from "../../../../src/app/working-memory/scope.js";
 import {
   buildSkelnHostContext,
   mergeSkelnHostContext,

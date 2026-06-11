@@ -1,5 +1,5 @@
 import type { AgenrWorkUpdateOperation } from "../../app/working-memory/mutations.js";
-import type { ModelVisibleOperationType } from "../../app/working-memory/operations/manifest.js";
+import type { ModelVisibleOperationType } from "../../app/working-memory/mutations.js";
 import type { MemoryToolParamReader } from "./memory-tools.js";
 import {
   optionalStringParam,

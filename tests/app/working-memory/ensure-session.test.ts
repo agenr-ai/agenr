@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ensureSessionWorkingSet } from "../../../src/app/working-memory/ensure-session.js";
+import { ensureSessionWorkingSet } from "../../../src/app/working-memory/selection.js";
 import type { WorkingMemoryRepository, WorkingSetCreateResult } from "../../../src/app/working-memory/repository.js";
 import type { ResolvedWorkingScope } from "../../../src/app/working-memory/scope.js";
 import { createTestWorkingSet } from "./service-test-helpers.js";

@@ -1,6 +1,6 @@
 import type { WorkingMemoryResult } from "../../app/working-memory/results.js";
 import type { WorkingSetRecord } from "../../app/working-memory/records.js";
-import { readGoalGeneration } from "../../app/working-memory/goal-generation.js";
+import { readGoalGeneration } from "../../app/working-memory/snapshot.js";
 
 /**
  * Builds structured tool details for agenr_work get responses and related host surfaces.

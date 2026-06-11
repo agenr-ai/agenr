@@ -1,8 +1,7 @@
 import type { AgenrWorkMutationActor, AgenrWorkMutationSource, WorkingScopeKind, WorkingSetStatus } from "./constants.js";
-import type { WorkingEventType } from "./events.js";
 import type { ResolvedWorkingScope } from "./scope.js";
 import type { WorkingSnapshot } from "./snapshot.js";
-import type { WorkingEventRecord, WorkingSetRecord } from "./records.js";
+import type { WorkingEventRecord, WorkingEventType, WorkingSetRecord } from "./records.js";
 
 /** Filter accepted by working-set list queries. */
 export interface WorkingSetListFilter {

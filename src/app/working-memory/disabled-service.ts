@@ -1,10 +1,7 @@
-import { createWorkingContextStubProjection } from "./projection-render.js";
-import { createFailure } from "./results.js";
-import { WORKING_MEMORY_DISABLED_MESSAGE } from "./ready.js";
+import { createWorkingContextStubProjection, type WorkingContextProjection } from "./projection.js";
+import { createFailure, WORKING_MEMORY_DISABLED_MESSAGE, type WorkingMemoryResult } from "./results.js";
 import type { AgenrWorkParams, PrepareExternalGoalMutationParams } from "./mutations.js";
-import type { WorkingContextProjection } from "./projection.js";
-import type { WorkingMemoryResult } from "./results.js";
-import type { EnsureSessionWorkingSetResult } from "./ensure-session.js";
+import type { EnsureSessionWorkingSetResult } from "./selection.js";
 import type { WorkingMemoryService } from "./service.js";
 
 /**

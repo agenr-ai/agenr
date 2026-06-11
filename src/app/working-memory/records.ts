@@ -1,6 +1,23 @@
 import type { AgenrWorkMutationActor, AgenrWorkMutationSource, WorkingScopeKind, WorkingSetStatus } from "./constants.js";
-import type { WorkingEventType } from "./events.js";
+import type { AgenrWorkUpdateOperation } from "./mutations.js";
 import type { WorkingSnapshot } from "./snapshot.js";
+
+/**
+ * Lifecycle event types written outside typed mutation operations.
+ */
+const WORKING_LIFECYCLE_EVENT_TYPES = ["created", "closed", "abandoned"] as const;
+
+export { WORKING_LIFECYCLE_EVENT_TYPES };
+
+/**
+ * Union of lifecycle event types stored in the working-event ledger.
+ */
+export type WorkingLifecycleEventType = (typeof WORKING_LIFECYCLE_EVENT_TYPES)[number];
+
+/**
+ * Closed union of event types stored in schema v11 `working_events.event_type`.
+ */
+export type WorkingEventType = AgenrWorkUpdateOperation["type"] | WorkingLifecycleEventType;
 
 /**
  * Lean working-set row shape for the goal control plane.

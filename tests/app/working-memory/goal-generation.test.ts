@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { applyOperation } from "../../../src/app/working-memory/apply-operation.js";
-import { INITIAL_GOAL_GENERATION, nextGoalGenerationAfterObjectiveChange, readGoalGeneration } from "../../../src/app/working-memory/goal-generation.js";
+import { INITIAL_GOAL_GENERATION, nextGoalGenerationAfterObjectiveChange, readGoalGeneration } from "../../../src/app/working-memory/snapshot.js";
 import type { WorkingSetRecord } from "../../../src/app/working-memory/records.js";
 
 describe("goalGeneration", () => {

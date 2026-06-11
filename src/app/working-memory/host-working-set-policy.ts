@@ -4,7 +4,7 @@ import type { WorkingMemoryFailure } from "./results.js";
 import type { WorkingSetListFilter } from "./repository.js";
 import { createFailure } from "./results.js";
 import type { AgenrWorkTarget, ExplicitWorkingSetTarget } from "./mutations.js";
-import type { WorkingSetSelectionResult } from "./select-working-set.js";
+import type { WorkingSetSelectionResult } from "./selection.js";
 
 const GOAL_WORKING_SETS_DISABLED_MESSAGE = "Goal working sets are disabled for this host." as const;
 

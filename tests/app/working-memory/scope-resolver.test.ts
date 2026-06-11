@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveGoalWorkingScope } from "../../../src/app/working-memory/scope-resolver.js";
+import { resolveGoalWorkingScope } from "../../../src/app/working-memory/scope.js";
 
 describe("resolveGoalWorkingScope", () => {
   it("prefers task scope when taskId is present", () => {

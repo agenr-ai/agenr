@@ -161,5 +161,3 @@ export function isCloseManagedStatus(status: WorkingSetStatus): boolean {
 export function isTrustedHostMutationSource(source: AgenrWorkMutationSource | undefined): source is TrustedHostMutationSource {
   return source !== undefined && TRUSTED_HOST_MUTATION_SOURCES.includes(source as TrustedHostMutationSource);
 }
-
-export { isTrustedHostOnlyWorkingOperation, type TrustedHostOnlyOperationType as TrustedHostOnlyWorkingOperationType } from "./operations/manifest.js";

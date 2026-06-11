@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { WORKING_CONTEXT_GOAL_SECTION_LABEL, WORKING_CONTEXT_SESSION_SECTION_LABEL } from "../../../src/app/working-memory/projection-section-labels.js";
+import { WORKING_CONTEXT_GOAL_SECTION_LABEL, WORKING_CONTEXT_SESSION_SECTION_LABEL } from "../../../src/app/working-memory/projection.js";
 import { toWorkingContextAuditPointer } from "../../../src/app/working-memory/projection.js";
 import { createWorkingMemoryService } from "../../../src/app/working-memory/service.js";
 import { createProjectionRepository, createTestWorkingSet, createWorkingMemoryTestService, closeWorkingMemoryTestService } from "./service-test-helpers.js";

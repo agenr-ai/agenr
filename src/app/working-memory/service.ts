@@ -1,24 +1,14 @@
-import { handleClose } from "./handlers/close.js";
-import { handleCreate } from "./handlers/create.js";
-import { handleGet } from "./handlers/get.js";
-import { handleList } from "./handlers/list.js";
-import { handlePrepareExternalGoalMutation } from "./handlers/prepare-external-mutation.js";
-import { handleUpdate } from "./handlers/update.js";
-import { ensureSessionWorkingSet, type EnsureSessionWorkingSetResult } from "./ensure-session.js";
-import { findUniqueCurrentWorkingSetForTarget } from "./find-current-set.js";
+import { handleClose, handleCreate, handleGet, handleList, handleUpdate, type WorkingMemoryHandlerContext } from "./handlers.js";
+import { handlePrepareExternalGoalMutation } from "./prepare-external-mutation.js";
 import { createHostWorkingSetPolicy, goalWorkingSetsDisabledFailure, goalsEnabled, requiresExplicitGoalTarget } from "./host-working-set-policy.js";
-import type { WorkingMemoryHandlerContext } from "./handler-context.js";
-import { renderWithProjectionReadiness } from "./projection-readiness.js";
-import { renderWorkingContextBundle, type WorkingProjectionBundleRequest } from "./projection-bundle.js";
+import { renderWithProjectionReadiness, renderWorkingContextBundle, type WorkingContextProjection, type WorkingProjectionBundleRequest } from "./projection.js";
 import type { AgenrWorkParams, PrepareExternalGoalMutationParams } from "./mutations.js";
-import type { WorkingContextProjection } from "./projection.js";
 import type { WorkingMemoryRepository } from "./repository.js";
-import type { WorkingMemoryFailure, WorkingMemoryResult } from "./results.js";
+import { workingMemoryNotReadyFailure, WORKING_MEMORY_MISCONFIGURED_MESSAGE, type WorkingMemoryFailure, type WorkingMemoryResult } from "./results.js";
 import type { WorkingScope } from "./scope.js";
-import { cloneForkableSnapshotFields } from "./session-fork-snapshot.js";
-import type { WorkingSnapshot } from "./snapshot.js";
+import { ensureSessionWorkingSet, findUniqueCurrentWorkingSetForTarget, type EnsureSessionWorkingSetResult } from "./selection.js";
+import { cloneForkableSnapshotFields, type WorkingSnapshot } from "./snapshot.js";
 import type { WorkingMemoryFeatureFlags } from "../features/types.js";
-import { workingMemoryNotReadyFailure, WORKING_MEMORY_MISCONFIGURED_MESSAGE } from "./ready.js";
 
 export type {
   WorkingMemoryCloseSuccess,
@@ -32,9 +22,9 @@ export type {
   WorkingMemoryUpdateSuccess,
 } from "./results.js";
 
-export type { EnsureSessionWorkingSetResult } from "./ensure-session.js";
+export type { EnsureSessionWorkingSetResult } from "./selection.js";
 
-export type { WorkingProjectionBundleRequest } from "./projection-bundle.js";
+export type { WorkingProjectionBundleRequest } from "./projection.js";
 
 /** Dependencies used by the working-memory service. */
 export interface WorkingMemoryServiceDeps {

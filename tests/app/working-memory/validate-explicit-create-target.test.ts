@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { CREATE_REQUIRES_EXPLICIT_TARGET_MESSAGE, validateExplicitCreateTarget } from "../../../src/app/working-memory/validate-explicit-create-target.js";
+import { CREATE_REQUIRES_EXPLICIT_TARGET_MESSAGE, validateExplicitCreateTarget } from "../../../src/app/working-memory/validation.js";
 
 describe("validateExplicitCreateTarget", () => {
   it("requires explicit session or goal targets for create", () => {

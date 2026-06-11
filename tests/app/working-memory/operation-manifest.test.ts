@@ -2,11 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { MODEL_VISIBLE_OPERATIONS } from "../../../src/adapters/shared/work-tool-operation-registry.js";
 import type { AgenrWorkUpdateOperation } from "../../../src/app/working-memory/mutations.js";
-import {
-  HOST_ONLY_OPERATION_TYPES,
-  MODEL_VISIBLE_OPERATION_TYPES,
-  WORKING_UPDATE_OPERATION_TYPES,
-} from "../../../src/app/working-memory/operations/manifest.js";
+import { HOST_ONLY_OPERATION_TYPES, MODEL_VISIBLE_OPERATION_TYPES, WORKING_UPDATE_OPERATION_TYPES } from "../../../src/app/working-memory/mutations.js";
 
 describe("working-memory operation manifest", () => {
   it("keeps model-visible registry keys aligned with the canonical manifest", () => {
