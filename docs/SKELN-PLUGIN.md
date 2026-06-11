@@ -455,6 +455,8 @@ The plugin also registers Codex-compatible `get_goal`, `create_goal`, and `updat
 
 Trusted Skeln UI and lifecycle code can call `executeWorkCommand(...)` on the controller returned by `registerAgenrSkelnMemory(...)`. That path can set `continuationPolicy: "on_idle"`, configure budgets, account token/time/turn usage, record heartbeat, lease, resume, and stale metadata, and call `prepare_external_goal_mutation` before external `/goal` mutations. Goal preparation only ever selects goal-layer working sets; when a supplied `workingSetId` resolves to a session-scoped set, prepare returns `prepared: false` instead of mutating it. These trusted operations update Agenr state but do not schedule continuation turns; Skeln owns the runtime loop.
 
+The same controller exposes `executeGoalContinuationCommand(...)`, the trusted route into the goal-continuation boundary. Schedule commands inherit the resolved session scope under any explicit overrides, pass Agenr-side eligibility checks, and are then delegated to the host port registered through `registerAgenrSkelnMemory(..., { goalContinuationHostPort })`. Cancel and query commands delegate directly.
+
 ## Tool failure signaling
 
 Skeln's `AgentToolResult` type does not accept an inline `isError` flag on the result object.
@@ -487,10 +489,13 @@ The Skeln integration is the front edge of the Working Memory PRD seam:
 - `src/app/skeln/runtime.ts` composes working-set repositories, `agenr_work`, and goal aliases
 - `before_agent_start` is the hook used for transient working-context injection
 
-Autonomous idle continuation is host-owned and is committed work, not speculative wiring (issue #22, Option B). Agenr persists the goal state, budgets, and runtime metadata that Skeln's loop will consume, and `GoalContinuationService` in `src/app/goal-continuation/service.ts` is the seam that routes continuation commands to the host:
+Autonomous idle continuation is host-owned (issue #22, Option B; contract wired in issue #29). Agenr persists the goal state, budgets, and runtime metadata that Skeln's loop consumes, and `GoalContinuationService` in `src/app/goal-continuation/service.ts` is the live seam that routes typed continuation commands to the host:
 
-- the `features.goalContinuation` flag plus a registered `GoalContinuationHostPort` resolve the `goalContinuation` capability; flag on without a port reports `misconfigured` and the service fails closed
-- `src/app/skeln/runtime.ts` currently passes no host port; wiring a real Skeln-registered port and replacing the placeholder freeform `runCommand({ command })` payload with a typed continuation command contract is tracked in issue #29
+- the host registers a `GoalContinuationHostPort` through `registerAgenrSkelnMemory(..., { goalContinuationHostPort })`; the port must come from host code, never from persisted JSON settings
+- the `features.goalContinuation` flag plus the registered port resolve the `goalContinuation` capability; flag on without a port reports `misconfigured` and the service fails closed with `host_callback_missing`
+- commands are a closed union: `schedule_continuation` (working set, scope, optional `resumeAfter`, reason), `cancel_continuation` (reason), and `query_continuation`
+- before delegating `schedule_continuation`, Agenr checks eligibility against the persisted goal working set: the set must be an active goal-layer set with `continuation.policy: "on_idle"`, no exhausted budget dimension, `resumeAfter` absent or elapsed, and `staleAfter` absent or not passed; ineligible requests fail with `not_eligible` and never reach the host
+- host results are typed: success with optional `scheduled` state, or `host_rejected` / `host_unavailable` failures; a throwing port surfaces as `host_unavailable`
 - Skeln keeps ownership of the runtime loop: it schedules and executes continuation turns, accounts usage through trusted work commands, and calls `prepare_external_goal_mutation` before external `/goal` mutations
 
 ## Current test coverage
@@ -502,6 +507,7 @@ The current adapter and app tests cover:
 - session scope tracker behavior
 - before-agent-start session-start and before-turn injection behavior
 - working-memory goal aliases and trusted Skeln work commands
+- goal-continuation eligibility gating, host-port wiring, and trusted continuation commands
 - Skeln runtime claim-extraction wiring from agenr config
 
 See:

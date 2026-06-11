@@ -34,10 +34,20 @@ import { createSkelnSessionScopeTracker, type SkelnSessionScopeTracker } from ".
 import { closeSkelnSessionWorkingSet, ensureSkelnSessionWorkingSet } from "./session/working-set-lifecycle.js";
 import { registerAgenrSkelnTools } from "./tools/index.js";
 import type { AgenrSkelnLogger, AgenrSkelnSessionScope, RegisterAgenrSkelnMemoryOptions } from "./types.js";
+import { executeAgenrSkelnGoalContinuationCommand } from "./goal-continuation-command.js";
 import { executeAgenrSkelnWorkCommand, type AgenrSkelnMemoryController } from "./work-command.js";
 
 export type { AgenrSkelnConfig, AgenrSkelnServices } from "./runtime.js";
 export type { AgenrSkelnLogger, AgenrSkelnSessionScope, RegisterAgenrSkelnMemoryOptions, SkelnHostContext } from "./types.js";
+export type {
+  GoalContinuationCancelReason,
+  GoalContinuationCommand,
+  GoalContinuationHostPort,
+  GoalContinuationHostResult,
+  GoalContinuationResult,
+  GoalContinuationScheduleReason,
+} from "../../app/goal-continuation/service.js";
+export type { AgenrSkelnGoalContinuationCommandParams, AgenrSkelnGoalContinuationScheduleCommandParams } from "./goal-continuation-command.js";
 export type {
   AgenrSkelnMemoryController,
   AgenrSkelnWorkCommandMutationMetadata,
@@ -104,6 +114,7 @@ export function registerAgenrSkelnMemory(skeln: ExtensionAPI, options: RegisterA
     memoryPolicy: mergeSkelnMemoryPolicy(memoryPolicySetting.ok ? memoryPolicySetting.value : undefined, options.memoryPolicy),
     goals: options.goals ?? (goalsSetting.ok ? goalsSetting.value : true),
     ...(options.featureFlags ? { featureFlags: options.featureFlags } : {}),
+    ...(options.goalContinuationHostPort ? { goalContinuationHostPort: options.goalContinuationHostPort } : {}),
   };
   const servicesPromise = createAgenrSkelnServices(config);
   const scopeTracker = createSkelnSessionScopeTracker();
@@ -135,6 +146,7 @@ export function registerAgenrSkelnMemory(skeln: ExtensionAPI, options: RegisterA
 
   return {
     executeWorkCommand: (context, params) => executeAgenrSkelnWorkCommand(servicesPromise, resolveScope, context, params),
+    executeGoalContinuationCommand: (context, params) => executeAgenrSkelnGoalContinuationCommand(servicesPromise, resolveScope, context, params),
   };
 }
 

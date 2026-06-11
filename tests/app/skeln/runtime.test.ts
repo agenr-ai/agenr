@@ -2,6 +2,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import type { GoalContinuationCommand, GoalContinuationHostPort } from "../../../src/app/goal-continuation/service.js";
 import { createAgenrSkelnServices } from "../../../src/app/skeln/runtime.js";
 import { createTempRoot, usePluginRuntimeEnv, writeJson } from "../../app/plugin-runtime/helpers.js";
 
@@ -130,6 +131,74 @@ describe("createAgenrSkelnServices", () => {
     });
 
     await services.close();
+  });
+
+  it("routes continuation commands through a registered host port", async () => {
+    const root = await createTempRoot("agenr-skeln-runtime-");
+    const dbPath = path.join(root, "knowledge.db");
+    await writeJson(path.join(root, "config.json"), {
+      credentials: {
+        openaiApiKey: "config-key",
+      },
+      features: {
+        workingMemory: true,
+        goalContinuation: true,
+      },
+    });
+
+    const commands: GoalContinuationCommand[] = [];
+    const goalContinuationHostPort: GoalContinuationHostPort = {
+      runCommand: async (command) => {
+        commands.push(command);
+        return { ok: true, scheduled: true };
+      },
+    };
+
+    const services = await createAgenrSkelnServices({ dbPath, goalContinuationHostPort });
+
+    try {
+      expect(services.capabilities.goalContinuation).toBe("enabled");
+
+      const scope = {
+        conversationKey: "session-1",
+        sessionId: "session-1",
+        cwd: "/tmp/project",
+      };
+      const created = await services.workingMemory.run({
+        action: "create",
+        target: "goal",
+        scope,
+        operation: {
+          type: "set_objective",
+          objective: "Continue autonomously when idle.",
+        },
+        updateReason: "Created goal for continuation wiring test.",
+        source: "goal_command",
+        continuationPolicy: "on_idle",
+      });
+      if (!created.ok || created.action !== "create") {
+        throw new Error("expected goal create to succeed");
+      }
+
+      const result = await services.goalContinuation.runCommand({
+        kind: "schedule_continuation",
+        workingSetId: created.workingSet.id,
+        scope,
+        reason: "policy_on_idle",
+      });
+
+      expect(result).toEqual({ ok: true, scheduled: true });
+      expect(commands).toEqual([
+        {
+          kind: "schedule_continuation",
+          workingSetId: created.workingSet.id,
+          scope,
+          reason: "policy_on_idle",
+        },
+      ]);
+    } finally {
+      await services.close();
+    }
   });
 
   it("resolves feature flags from agenr config at the composition boundary", async () => {

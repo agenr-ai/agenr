@@ -1,6 +1,7 @@
 import type { ExtensionContext } from "./skeln-types.js";
 
 import type { AgenrFeatureFlagConfig } from "../../app/features/types.js";
+import type { GoalContinuationHostPort } from "../../app/goal-continuation/service.js";
 import type { PluginInjectionMemoryPolicyConfig } from "../../app/plugin-runtime/types.js";
 
 /** Logger surface accepted by the Skeln adapter for non-fatal diagnostics. */
@@ -47,6 +48,13 @@ export interface RegisterAgenrSkelnMemoryOptions {
    * the adapter derives cwd and sessionKey from the active extension context.
    */
   getHostContext?: (context: ExtensionContext) => Partial<SkelnHostContext> | Promise<Partial<SkelnHostContext>>;
+  /**
+   * Host-owned continuation scheduler callback. Skeln owns the runtime loop;
+   * this port is how Agenr asks the host to schedule, cancel, or query
+   * continuation turns for eligible goal working sets. The port must come from
+   * host code, never from persisted JSON settings.
+   */
+  goalContinuationHostPort?: GoalContinuationHostPort;
   /** Optional logger used for adapter lifecycle warnings and startup errors. */
   logger?: AgenrSkelnLogger;
 }

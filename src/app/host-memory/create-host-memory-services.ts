@@ -62,9 +62,13 @@ export async function createHostMemoryServices(
       })
     : createDisabledWorkingMemoryService();
 
+  const workingMemoryRepository = options.workingMemoryRepository;
   return {
     workingMemory,
-    goalContinuation: createGoalContinuationService(featureFlags, options.goalContinuationHostPort),
+    goalContinuation: createGoalContinuationService(featureFlags, {
+      hostPort: options.goalContinuationHostPort,
+      ...(workingMemoryRepository ? { readWorkingSet: (workingSetId: string) => workingMemoryRepository.getWorkingSet(workingSetId) } : {}),
+    }),
     routeSessionMemoryTrigger: (event) =>
       routeSessionMemoryTrigger(event, featureFlags, {
         repository: options.sessionMemoryRepository,

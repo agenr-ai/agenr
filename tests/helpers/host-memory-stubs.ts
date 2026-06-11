@@ -16,9 +16,7 @@ export function createStubAgenrHostMemorySurface(
       renderProjectionBundle: vi.fn(),
     } as unknown as AgenrHostMemorySurface["workingMemory"],
     goalContinuation: {
-      getGoal: vi.fn(),
-      createGoal: vi.fn(),
-      updateGoal: vi.fn(),
+      runCommand: vi.fn(),
     } as unknown as AgenrHostMemorySurface["goalContinuation"],
     routeSessionMemoryTrigger: vi.fn(
       async (): Promise<SessionMemoryTriggerResult> => ({

@@ -11,6 +11,8 @@ import type {
 import type { WorkingScope } from "../../app/working-memory/scope.js";
 import type { WorkingBudgetState, WorkingCheckpoint, WorkingUsageDelta } from "../../app/working-memory/snapshot.js";
 import type { WorkingContinuationPolicy } from "../../app/working-memory/constants.js";
+import type { GoalContinuationResult } from "../../app/goal-continuation/service.js";
+import type { AgenrSkelnGoalContinuationCommandParams } from "./goal-continuation-command.js";
 import { workingMemoryResultToToolOutcome } from "../shared/work-tools.js";
 import { scheduleSkelnGoalCloseEpisodePromotion } from "./episode/goal-close-episode.js";
 import type { createAgenrSkelnServices } from "./runtime.js";
@@ -165,6 +167,18 @@ export interface AgenrSkelnMemoryController {
    * @returns Host-neutral working-memory outcome.
    */
   executeWorkCommand(context: ExtensionContext, params: AgenrSkelnWorkCommandParams): Promise<AgenrSkelnWorkCommandOutcome>;
+
+  /**
+   * Routes a trusted continuation command through the goal-continuation boundary.
+   *
+   * Schedule commands inherit the resolved session scope and are checked
+   * against goal eligibility before the registered host port is invoked.
+   *
+   * @param context - Active Skeln extension context.
+   * @param params - Trusted continuation command params.
+   * @returns Goal-continuation result from the app boundary.
+   */
+  executeGoalContinuationCommand(context: ExtensionContext, params: AgenrSkelnGoalContinuationCommandParams): Promise<GoalContinuationResult>;
 }
 
 /**

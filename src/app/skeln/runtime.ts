@@ -1,6 +1,7 @@
 import { composeHostPluginServices, createClaimExtractionFromAgenrConfig, EMBEDDING_MODEL } from "../../adapters/plugin-runtime/index.js";
 import type { PluginInjectionMemoryPolicyConfig, PluginMemoryRuntimeServices, PluginPathConfig, ResolvedPluginPaths } from "../plugin-runtime/types.js";
 import type { AgenrConfig } from "../../config.js";
+import type { GoalContinuationHostPort } from "../goal-continuation/service.js";
 import { resolveAgenrFeatureFlags } from "../features/resolve.js";
 import { resolveRuntimePolicy, type RuntimePolicy } from "../features/runtime-policy.js";
 import type { AgenrFeatureFlagConfig } from "../features/types.js";
@@ -20,6 +21,8 @@ export interface AgenrSkelnConfig extends PluginPathConfig {
   goals?: boolean;
   /** Optional Skeln host feature-flag overrides merged over agenr config features. */
   featureFlags?: AgenrFeatureFlagConfig;
+  /** Host-owned continuation scheduler callback registered by Skeln host code. */
+  goalContinuationHostPort?: GoalContinuationHostPort;
 }
 
 /**
@@ -53,7 +56,7 @@ export async function createAgenrSkelnServices(config: AgenrSkelnConfig = {}): P
         ...agenrConfig.features,
         ...hostConfig.featureFlags,
       });
-      const goalContinuationHostPort = undefined;
+      const goalContinuationHostPort = hostConfig.goalContinuationHostPort;
       const hostMemory = await createHostMemoryServices(featureFlags, {
         workingMemoryRepository: runtimeServices.workingMemoryRepository,
         sessionMemoryRepository: runtimeServices.sessionMemoryRepository,
