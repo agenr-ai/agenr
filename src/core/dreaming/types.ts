@@ -13,7 +13,7 @@ export { DREAM_TIERS };
 export type DreamTier = (typeof DREAM_TIERS)[number];
 
 /** Ordered list of supported dreaming pipeline stages. */
-const DREAM_STAGES = ["scan", "extract", "reconcile", "temporalize", "project", "prune", "apply"] as const;
+const DREAM_STAGES = ["scan", "extract", "reconcile", "temporalize", "project", "prune", "reap", "apply"] as const;
 
 export { DREAM_STAGES };
 
@@ -121,7 +121,7 @@ export interface ReconcilePassSummary {
 }
 
 /** Machine-readable reason one dreaming pipeline stage was skipped. */
-export type DreamStageSkipReason = "light_tier";
+export type DreamStageSkipReason = "light_tier" | "working_memory_unavailable";
 
 /** Structured record for a pipeline stage skipped by tier policy. */
 export interface DreamStageSkipSummary {
@@ -252,6 +252,21 @@ export interface DreamPruneSummary {
   dryRun: boolean;
 }
 
+/** Structured summary of one working-set retention reap stage execution. */
+export interface DreamReapSummary {
+  /** Terminal working sets older than the retention cutoff considered this run. */
+  terminalSetsScanned: number;
+  /** Working sets deleted (apply) or deletable (dry run). */
+  setsReaped: number;
+  /** Ledger events deleted with their parent sets; zero on dry runs. */
+  eventsReaped: number;
+  /** Working sets preserved because candidates are still pending promotion. */
+  setsSkippedPendingCandidates: number;
+  /** Retention window in days applied by the run. */
+  retentionDays: number;
+  dryRun: boolean;
+}
+
 /** Compute-efficiency counters emitted for eval scoreboard reporting. */
 export interface DreamEfficiencySummary {
   evidenceItemsRead: number;
@@ -295,5 +310,6 @@ export interface DreamCompletionSummary {
   temporalize?: DreamTemporalizeSummary;
   project?: DreamProjectSummary;
   prune?: DreamPruneSummary;
+  reap?: DreamReapSummary;
   efficiency?: DreamEfficiencySummary;
 }

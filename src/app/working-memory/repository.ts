@@ -3,6 +3,22 @@ import type { ResolvedWorkingScope } from "./scope.js";
 import type { WorkingSnapshot } from "./snapshot.js";
 import type { WorkingEventRecord, WorkingEventType, WorkingSetRecord } from "./records.js";
 
+/** Query input for terminal working sets eligible for retention reaping. */
+export interface ListReapableWorkingSetsInput {
+  /** Exclusive ISO cutoff; only sets closed (or last updated) before it match. */
+  closedBefore: string;
+  /** Maximum number of rows to return. */
+  limit?: number;
+}
+
+/** Row counts removed by one working-set delete pass. */
+export interface DeleteWorkingSetsResult {
+  /** Number of `working_sets` rows deleted. */
+  workingSetsDeleted: number;
+  /** Number of `working_events` rows deleted with their parent sets. */
+  workingEventsDeleted: number;
+}
+
 /** Filter accepted by working-set list queries. */
 export interface WorkingSetListFilter {
   /** Optional raw scope facts used to narrow the list to one resolved scope. */
@@ -323,4 +339,24 @@ export interface WorkingMemoryRepository {
    * @returns Updated row plus appended event, or a stable write failure.
    */
   recordCandidateConsolidation(input: RecordWorkingSetCandidateConsolidationInput): Promise<WorkingSetCandidateConsolidationWriteResult>;
+
+  /**
+   * Lists terminal (`closed`/`abandoned`) working sets whose close time falls
+   * before the retention cutoff. Rows without `closedAt` fall back to
+   * `updatedAt` so legacy terminal sets still age out.
+   *
+   * @param input - Exclusive cutoff timestamp and optional row limit.
+   * @returns Matching terminal sets ordered oldest first.
+   */
+  listReapableWorkingSets(input: ListReapableWorkingSetsInput): Promise<WorkingSetRecord[]>;
+
+  /**
+   * Deletes working sets and their `working_events` ledger rows atomically.
+   * Only terminal-status rows are deleted; ids that no longer exist or are
+   * not terminal are ignored, which keeps reaper re-runs idempotent.
+   *
+   * @param ids - Working-set ids to delete.
+   * @returns Counts of deleted set and event rows.
+   */
+  deleteWorkingSets(ids: string[]): Promise<DeleteWorkingSetsResult>;
 }

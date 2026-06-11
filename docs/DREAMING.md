@@ -1,6 +1,6 @@
 # Dreaming
 
-Dreaming is agenr's background corpus maintenance pipeline. It replaces the retired surgeon subsystem with a tiered, pipeline-first workflow that scans durable memory, mines durable candidates from episode evidence, reconciles claim-key and structural issues deterministically, revises stale beliefs through supersession, projects profile snapshots, prunes low-signal residue, and applies safe mutations behind an explicit `--apply` gate.
+Dreaming is agenr's background corpus maintenance pipeline. It replaces the retired surgeon subsystem with a tiered, pipeline-first workflow that scans durable memory, mines durable candidates from episode evidence, reconciles claim-key and structural issues deterministically, revises stale beliefs through supersession, projects profile snapshots, prunes low-signal residue, reaps aged terminal working sets, and applies safe mutations behind an explicit `--apply` gate.
 
 ## Code map
 
@@ -12,6 +12,7 @@ Dreaming is agenr's background corpus maintenance pipeline. It replaces the reti
 - `src/app/dreaming/temporalize.ts` - supersession-based revision of `refines` candidates
 - `src/app/dreaming/project.ts` - deterministic profile snapshot projection
 - `src/app/dreaming/prune.ts` - deterministic, conservative durable staleness via `valid_to`
+- `src/app/working-memory/retention.ts` - terminal working-set retention reaper invoked by the reap stage
 - `src/app/dreaming/background-triggers.ts` - post-session and accumulated-importance light-run gates
 - `src/app/dreaming/concurrency.ts` - process-wide dreaming run lock and episode-write serialization guards
 - `src/app/dreaming/proposal-review.ts` - apply or reject one open proposal
@@ -60,8 +61,8 @@ agenr dream review <proposalId> --decision apply --reason "verified safe"
 
 Supported tiers:
 
-- `light` - bounded background tier used by session-end and accumulated-importance triggers. It runs scan, extract, temporalize, and project, but skips reconcile and prune. Extract reads at most two episode sessions per run by default, preferring the newest unsynthesized sessions so a post-session run mines the session that just ended, and skipped stages are recorded in `stages_skipped`.
-- `standard` - default operator tier. It runs the incremental pipeline since the last completed run, including prune.
+- `light` - bounded background tier used by session-end and accumulated-importance triggers. It runs scan, extract, temporalize, and project, but skips reconcile, prune, and reap. Extract reads at most two episode sessions per run by default, preferring the newest unsynthesized sessions so a post-session run mines the session that just ended, and skipped stages are recorded in `stages_skipped`.
+- `standard` - default operator tier. It runs the incremental pipeline since the last completed run, including prune and reap.
 - `deep` - operator full-backlog tier. It rereads all durable evidence, audits same-entity claim-key aliases across the active corpus, and still relies on content hashes, claim-key context lookup, and supersession to avoid duplicate writes. Episode mining stays marker-based on every tier: an episode already recorded in `dream_synthesized_episodes` is never re-mined, even on `deep`. Use `deep` for weekly maintenance or after large corpus imports.
 
 ### Deep tier scheduling
@@ -114,6 +115,7 @@ Typical fields:
 - `stages.extract.contextLookup.enabled` - whether extract shows bounded active claim-key context and checks existing claim-key families before emitting a new durable
 - `stages.project.maxProfileDurables` - bounded profile durable count for session-start injection
 - `stages.prune.protectRecalledDays` and `stages.prune.protectMinImportance` - prune protection thresholds
+- `stages.reap.workingSetRetentionDays` - retention window for terminal (`closed`/`abandoned`) working sets reaped by the reap stage (default 30)
 - `triggers.postSessionLightDream` - enable session-end `light` runs after host episode writes
 - `triggers.importanceThreshold` and `triggers.minIntervalMinutes` - accumulated-importance and rate-limit guards for background `light` runs
 
@@ -146,7 +148,8 @@ These tables ship alongside `durables` during database initialization. Older per
 4. **Temporalize** - apply supersession-based revision to each `refines` candidate. The stage never rewrites content in place: it inserts a successor durable that inherits the predecessor's canonical claim key, closes the predecessor's valid-time window at the revision instant, and links the predecessor to the successor through `superseded_by`. Point-in-time recall before the revision still surfaces the predecessor; current-state recall surfaces the successor. Revisions whose episode evidence (`validFrom`) predates the predecessor's belief start are skipped, so backlog mining can never overwrite a newer belief with stale facts.
 5. **Project** - rank current active durables into a bounded profile snapshot candidate and keep directive ids separate. Dry runs and project-scoped runs report the projected bundle without writing or globally activating it. Successful unscoped apply runs insert a `profile_snapshots` row and mark it active in `dream_state` in the final workflow transaction.
 6. **Prune** - on `standard` and `deep`, close validity on only active low-signal candidates after applying protections for current and projected profile ids, directives, `core` expiry, high importance, and recent recall. The stage is deterministic and writes `stale` actions only for actual apply mutations.
-7. **Apply** - when `--apply` is set, persist accepted extract inserts, reconcile mutations, temporalize revisions, prune staleness closes, and successful unscoped profile projection; otherwise emit a dry-run summary only.
+7. **Reap** - on `standard` and `deep`, delete terminal (`closed`/`abandoned`) working sets older than `stages.reap.workingSetRetentionDays`, together with their `working_events` ledgers. Sets whose snapshots still carry `pending` promotion candidates are never deleted; they are skipped, surfaced in the run observations, and re-evaluated on the next run once promotion settles. The stage is deterministic and idempotent, writes one `reap_working_set` action per deleted set on apply runs, and is recorded as skipped (`working_memory_unavailable`) when the run has no working-memory repository wired. See [`docs/WORKING-MEMORY.md`](./WORKING-MEMORY.md) for the retention policy.
+8. **Apply** - when `--apply` is set, persist accepted extract inserts, reconcile mutations, temporalize revisions, prune staleness closes, working-set reaps, and successful unscoped profile projection; otherwise emit a dry-run summary only.
 
 The extract and temporalize stages call models only through injected factories, so deterministic-only runs (no mining LLM) skip extract and temporalize without error. Both stages respect the daily cost cap shared across the run.
 

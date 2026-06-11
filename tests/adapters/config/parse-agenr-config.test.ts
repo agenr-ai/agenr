@@ -16,6 +16,7 @@ import {
   DEFAULT_DREAMING_MIN_INTERVAL_MINUTES,
   DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE,
   DEFAULT_DREAMING_PRUNE_PROTECT_RECALLED_DAYS,
+  DEFAULT_DREAMING_WORKING_SET_RETENTION_DAYS,
 } from "../../../src/config.js";
 
 const DEFAULT_DB_PATH = "/tmp/agenr-default/knowledge.db";
@@ -67,6 +68,7 @@ describe("parseAgenrConfig", () => {
               protectRecalledDays: DEFAULT_DREAMING_PRUNE_PROTECT_RECALLED_DAYS,
               protectMinImportance: DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE,
             },
+            reap: { workingSetRetentionDays: DEFAULT_DREAMING_WORKING_SET_RETENTION_DAYS },
           },
           triggers: {
             postSessionLightDream: true,
@@ -137,6 +139,7 @@ describe("parseAgenrConfig", () => {
             },
             project: { maxProfileDurables: 4 },
             prune: { protectRecalledDays: 3, protectMinImportance: 8 },
+            reap: { workingSetRetentionDays: 14 },
           },
           triggers: {
             postSessionLightDream: false,
@@ -165,6 +168,7 @@ describe("parseAgenrConfig", () => {
             },
             project: { maxProfileDurables: 4 },
             prune: { protectRecalledDays: 3, protectMinImportance: 8 },
+            reap: { workingSetRetentionDays: 14 },
           },
           triggers: {
             postSessionLightDream: false,
@@ -191,6 +195,7 @@ describe("parseAgenrConfig", () => {
         },
         project: { maxProfileDurables: 4 },
         prune: { protectRecalledDays: 3, protectMinImportance: 8 },
+        reap: { workingSetRetentionDays: 14 },
       },
       triggers: {
         postSessionLightDream: false,

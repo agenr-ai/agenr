@@ -89,6 +89,8 @@ function createPromotionRepository(workingSet: WorkingSetRecord | null): {
       patchWorkingSetUsage: async () => ({ kind: "not_found" }),
       patchWorkingSetUsageAndUpdate: async () => ({ kind: "not_found" }),
       recordCandidateConsolidation: async () => ({ kind: "not_found" }),
+      listReapableWorkingSets: async () => [],
+      deleteWorkingSets: async () => ({ workingSetsDeleted: 0, workingEventsDeleted: 0 }),
       recordEpisodePromotion: async (input) => {
         if (!workingSet) {
           return { kind: "not_found" };

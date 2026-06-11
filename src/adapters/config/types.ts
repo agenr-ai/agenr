@@ -62,6 +62,14 @@ export interface DreamingPruneConfig {
 }
 
 /**
+ * Reap-stage retention configuration for dreaming runs.
+ */
+export interface DreamingReapConfig {
+  /** Retention window in days for terminal (`closed`/`abandoned`) working sets. */
+  workingSetRetentionDays?: number;
+}
+
+/**
  * Dreaming module configuration persisted in `config.json`.
  */
 export interface DreamingConfig {
@@ -82,6 +90,7 @@ export interface DreamingConfig {
     };
     project?: { maxProfileDurables?: number };
     prune?: DreamingPruneConfig;
+    reap?: DreamingReapConfig;
   };
   triggers?: {
     postSessionLightDream?: boolean;
@@ -181,6 +190,14 @@ export interface ResolvedDreamingPruneConfig {
 }
 
 /**
+ * Fully resolved reap-stage retention settings.
+ */
+export interface ResolvedDreamingReapConfig {
+  /** Retention window in days for terminal (`closed`/`abandoned`) working sets. */
+  workingSetRetentionDays: number;
+}
+
+/**
  * Fully resolved dreaming runtime configuration.
  */
 export interface ResolvedDreamingConfig {
@@ -201,6 +218,7 @@ export interface ResolvedDreamingConfig {
     };
     project: { maxProfileDurables: number };
     prune: ResolvedDreamingPruneConfig;
+    reap: ResolvedDreamingReapConfig;
   };
   triggers: {
     postSessionLightDream: boolean;
@@ -239,6 +257,11 @@ const DEFAULT_DREAMING_PRUNE_PROTECT_RECALLED_DAYS = 14;
  * Default prune-stage importance protection threshold.
  */
 const DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE = 9;
+
+/**
+ * Default retention window in days for terminal working sets reaped by dreaming.
+ */
+const DEFAULT_DREAMING_WORKING_SET_RETENTION_DAYS = 30;
 
 const DEFAULT_DREAMING_IMPORTANCE_THRESHOLD = 25;
 const DEFAULT_DREAMING_MIN_INTERVAL_MINUTES = 30;
@@ -330,6 +353,7 @@ export {
   DEFAULT_DREAMING_MIN_INTERVAL_MINUTES,
   DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE,
   DEFAULT_DREAMING_PRUNE_PROTECT_RECALLED_DAYS,
+  DEFAULT_DREAMING_WORKING_SET_RETENTION_DAYS,
   SUPPORTED_AGENR_PROVIDERS,
 };
 

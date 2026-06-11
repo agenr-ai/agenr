@@ -1,5 +1,6 @@
 import { createDatabase } from "../../adapters/db/client.js";
 import { createDreamPort } from "../../adapters/db/dreaming-port.js";
+import { createWorkingMemoryRepository } from "../../adapters/db/working-memory-repository.js";
 import { createEmbeddingClient, createLazyEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
 import { createLlmClient, resolveLlmCredentials, resolveModel } from "../../adapters/llm.js";
 import { readConfig, type ResolvedAgenrConfig } from "../../config.js";
@@ -40,9 +41,12 @@ export async function runDreamRuntime(input: DreamRuntimeOptions): Promise<Dream
   const embedding = createLazyEmbeddingClient(() => createEmbeddingClient(resolveEmbeddingApiKey(runtime.config), resolveEmbeddingModel(runtime.config)));
   const createExtractLlm = createConfiguredLlmFactory(runtime.config, input.env, "dreaming");
   const createClaimExtractionLlm = createConfiguredLlmFactory(runtime.config, input.env, "claim");
-  return withDreamPort(runtime.dbPath, async (port) =>
-    runDream(input, {
-      port,
+  const database = await createDatabase(runtime.dbPath);
+
+  try {
+    return await runDream(input, {
+      port: createDreamPort(database),
+      workingMemory: createWorkingMemoryRepository(database),
       dbPath: runtime.dbPath,
       config: runtime.config,
       createExtractLlm,
@@ -51,8 +55,10 @@ export async function runDreamRuntime(input: DreamRuntimeOptions): Promise<Dream
       backupDb: backupDatabaseFile,
       reportProgress: input.onProgress,
       logger: input.logger,
-    }),
-  );
+    });
+  } finally {
+    await database.close();
+  }
 }
 
 /**

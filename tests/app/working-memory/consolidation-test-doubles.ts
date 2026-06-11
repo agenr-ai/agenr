@@ -63,6 +63,8 @@ export function createCapturingWorkingMemoryRepository(workingSet: WorkingSetRec
       patchWorkingSetUsage: async () => ({ kind: "not_found" }),
       patchWorkingSetUsageAndUpdate: async () => ({ kind: "not_found" }),
       recordEpisodePromotion: async () => ({ kind: "not_found" }),
+      listReapableWorkingSets: async () => [],
+      deleteWorkingSets: async () => ({ workingSetsDeleted: 0, workingEventsDeleted: 0 }),
       recordCandidateConsolidation: async (input) => {
         if (capture.failWith) {
           return capture.failWith;

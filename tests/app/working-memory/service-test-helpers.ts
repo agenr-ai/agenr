@@ -86,5 +86,7 @@ export function createProjectionRepository(session: WorkingSetRecord, goals: Wor
     patchWorkingSetUsageAndUpdate: async () => ({ kind: "not_found" }),
     recordEpisodePromotion: async () => ({ kind: "not_found" }),
     recordCandidateConsolidation: async () => ({ kind: "not_found" }),
+    listReapableWorkingSets: async () => [],
+    deleteWorkingSets: async () => ({ workingSetsDeleted: 0, workingEventsDeleted: 0 }),
   };
 }

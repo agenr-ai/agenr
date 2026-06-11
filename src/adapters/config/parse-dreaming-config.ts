@@ -10,9 +10,11 @@ import {
   DEFAULT_DREAMING_MIN_INTERVAL_MINUTES,
   DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE,
   DEFAULT_DREAMING_PRUNE_PROTECT_RECALLED_DAYS,
+  DEFAULT_DREAMING_WORKING_SET_RETENTION_DAYS,
   type DreamingConfig,
   type ResolvedDreamingConfig,
   type ResolvedDreamingPruneConfig,
+  type ResolvedDreamingReapConfig,
 } from "./types.js";
 
 /**
@@ -182,10 +184,11 @@ function parseDreamingStagesConfig(
   }
 
   const startIndex = issues.length;
-  pushUnexpectedFields(value, new Set(["extract", "project", "prune"]), path, issues);
+  pushUnexpectedFields(value, new Set(["extract", "project", "prune", "reap"]), path, issues);
   const extract = parseDreamingExtractConfig(value.extract, `${path}.extract`, issues);
   const project = parseDreamingProjectConfig(value.project, `${path}.project`, issues);
   const prune = parseDreamingPruneConfig(value.prune, `${path}.prune`, issues);
+  const reap = parseDreamingReapConfig(value.reap, `${path}.reap`, issues);
 
   if (issues.length > startIndex) {
     return { resolved: defaults };
@@ -195,6 +198,7 @@ function parseDreamingStagesConfig(
     ...(extract.input ? { extract: extract.input } : {}),
     ...(project.input ? { project: project.input } : {}),
     ...(prune.input ? { prune: prune.input } : {}),
+    ...(reap.input ? { reap: reap.input } : {}),
   };
 
   return {
@@ -203,6 +207,7 @@ function parseDreamingStagesConfig(
       extract: extract.resolved,
       project: project.resolved,
       prune: prune.resolved,
+      reap: reap.resolved,
     },
   };
 }
@@ -359,6 +364,50 @@ function parseDreamingPruneConfig(
   };
 }
 
+/**
+ * Parses the nested `dreaming.stages.reap` block.
+ *
+ * @param value - Raw reap config value.
+ * @param path - Stable issue path.
+ * @param issues - Mutable issue collection.
+ * @returns Canonical persisted values plus the resolved runtime block.
+ */
+function parseDreamingReapConfig(
+  value: unknown,
+  path: string,
+  issues: ValidationIssue[],
+): { input?: NonNullable<NonNullable<DreamingConfig["stages"]>["reap"]>; resolved: ResolvedDreamingReapConfig } {
+  const defaults = createDefaultDreamingReapConfig();
+  if (value === undefined) {
+    return { resolved: defaults };
+  }
+
+  if (!isRecord(value)) {
+    pushIssue(issues, path, "Expected an object.");
+    return { resolved: defaults };
+  }
+
+  const startIndex = issues.length;
+  pushUnexpectedFields(value, new Set(["workingSetRetentionDays"]), path, issues);
+
+  const workingSetRetentionDays = parseOptionalIntegerInRange(value.workingSetRetentionDays, `${path}.workingSetRetentionDays`, issues, { min: 0 });
+
+  if (issues.length > startIndex) {
+    return { resolved: defaults };
+  }
+
+  const input: NonNullable<NonNullable<DreamingConfig["stages"]>["reap"]> = {
+    ...(workingSetRetentionDays !== undefined ? { workingSetRetentionDays } : {}),
+  };
+
+  return {
+    ...(Object.keys(input).length > 0 ? { input } : {}),
+    resolved: {
+      workingSetRetentionDays: workingSetRetentionDays ?? defaults.workingSetRetentionDays,
+    },
+  };
+}
+
 /** Parses background trigger settings for dreaming. */
 function parseDreamingTriggersConfig(
   value: unknown,
@@ -444,6 +493,7 @@ export function createDefaultDreamingConfig(): ResolvedDreamingConfig {
       },
       project: { maxProfileDurables: DEFAULT_DREAMING_MAX_PROFILE_DURABLES },
       prune: createDefaultDreamingPruneConfig(),
+      reap: createDefaultDreamingReapConfig(),
     },
     triggers: {
       postSessionLightDream: true,
@@ -466,6 +516,17 @@ function createDefaultDreamingPruneConfig(): ResolvedDreamingPruneConfig {
 }
 
 /**
+ * Returns the default reap-stage config.
+ *
+ * @returns Reap-stage defaults used at runtime.
+ */
+function createDefaultDreamingReapConfig(): ResolvedDreamingReapConfig {
+  return {
+    workingSetRetentionDays: DEFAULT_DREAMING_WORKING_SET_RETENTION_DAYS,
+  };
+}
+
+/**
  * Returns whether a dreaming input block contains persisted values.
  *
  * @param value - Candidate dreaming block.
@@ -479,6 +540,7 @@ function hasDreamingInput(value: DreamingConfig): boolean {
     value.stages?.extract !== undefined ||
     value.stages?.project !== undefined ||
     value.stages?.prune !== undefined ||
+    value.stages?.reap !== undefined ||
     value.triggers !== undefined
   );
 }
@@ -526,6 +588,11 @@ export function toDreamingInput(value: ResolvedDreamingConfig): DreamingConfig |
     ...(prune.protectMinImportance !== DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE ? { protectMinImportance: prune.protectMinImportance } : {}),
   };
 
+  const reap = value.stages.reap;
+  const reapInput: NonNullable<NonNullable<DreamingConfig["stages"]>["reap"]> = {
+    ...(reap.workingSetRetentionDays !== DEFAULT_DREAMING_WORKING_SET_RETENTION_DAYS ? { workingSetRetentionDays: reap.workingSetRetentionDays } : {}),
+  };
+
   const triggers = value.triggers;
   const triggersInput: NonNullable<DreamingConfig["triggers"]> = {
     ...(triggers.postSessionLightDream !== true ? { postSessionLightDream: triggers.postSessionLightDream } : {}),
@@ -537,6 +604,7 @@ export function toDreamingInput(value: ResolvedDreamingConfig): DreamingConfig |
     ...(Object.keys(extractInput).length > 0 ? { extract: extractInput } : {}),
     ...(Object.keys(projectInput).length > 0 ? { project: projectInput } : {}),
     ...(Object.keys(pruneInput).length > 0 ? { prune: pruneInput } : {}),
+    ...(Object.keys(reapInput).length > 0 ? { reap: reapInput } : {}),
   };
 
   const input: DreamingConfig = {

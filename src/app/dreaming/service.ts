@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { copyFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 
@@ -7,6 +8,7 @@ import {
   DEFAULT_DREAMING_LIGHT_MAX_SESSIONS,
   DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE,
   DEFAULT_DREAMING_PRUNE_PROTECT_RECALLED_DAYS,
+  DEFAULT_DREAMING_WORKING_SET_RETENTION_DAYS,
   type AgenrConfig,
 } from "../../config.js";
 import { buildDreamEfficiencySummary } from "../../core/dreaming/efficiency.js";
@@ -18,6 +20,7 @@ import type {
   DreamEfficiencySummary,
   DreamProjectSummary,
   DreamPruneSummary,
+  DreamReapSummary,
   DreamRunStatus,
   DreamTier,
 } from "../../core/dreaming/types.js";
@@ -32,6 +35,8 @@ import { runReconcilePass } from "./reconcile/index.js";
 import { type DreamingRunLease, withDreamingRunLock } from "./concurrency.js";
 import { runDreamScan } from "./scan.js";
 import { runTemporalizeStage } from "./temporalize.js";
+import type { WorkingMemoryRepository } from "../working-memory/repository.js";
+import { runWorkingSetRetention } from "../working-memory/retention.js";
 
 /**
  * CLI and runtime options accepted by one dreaming run.
@@ -81,6 +86,8 @@ export interface DreamWorkflowDeps {
   createExtractLlm?: () => CostMeteredLlm;
   /** Embedding provider used to vectorize durables inserted by extract and temporalize. */
   embedding?: EmbeddingPort;
+  /** Working-memory repository used by the reap stage; the stage is skipped when absent. */
+  workingMemory?: WorkingMemoryRepository;
   now?: () => Date;
   backupDb?: (dbPath: string) => Promise<string>;
   reportProgress?: DreamProgressReporter;
@@ -175,6 +182,7 @@ async function executeDreamRun(options: DreamRunOptions, deps: DreamWorkflowDeps
   let temporalizeSummary: DreamCompletionSummary["temporalize"];
   let projectSummary: DreamProjectSummary | undefined;
   let pruneSummary: DreamPruneSummary | undefined;
+  let reapSummary: DreamReapSummary | undefined;
   let efficiencySummary: DreamEfficiencySummary | undefined;
   const stagesSkipped: NonNullable<DreamCompletionSummary["stages_skipped"]> = [];
   let durablesSkipped: DreamCompletionSummary["durables_skipped"] = [];
@@ -328,6 +336,52 @@ async function executeDreamRun(options: DreamRunOptions, deps: DreamWorkflowDeps
       stagesSkipped.push({ stage: "prune", reason: "light_tier" });
     }
 
+    if (stagePlan.runReap) {
+      if (deps.workingMemory) {
+        const retentionDays = resolveReapStageConfig(deps.config).workingSetRetentionDays;
+        const retention = await runWorkingSetRetention({ workingMemory: deps.workingMemory }, { now, retentionDays, apply: options.apply });
+        if (options.apply) {
+          for (const decision of retention.decisions) {
+            if (decision.outcome !== "reaped") {
+              continue;
+            }
+            await deps.port.logRunAction({
+              id: randomUUID(),
+              runId,
+              actionType: "reap_working_set",
+              durableIds: [],
+              reasoning: `Dream reap deleted terminal working set ${decision.workingSetId} closed before the ${retentionDays}-day retention window.`,
+              details: {
+                stage: "reap",
+                working_set_id: decision.workingSetId,
+                working_set_status: decision.status,
+                closed_at: decision.closedAt,
+                retention_cutoff: retention.cutoff,
+              },
+              createdAt: now().toISOString(),
+            });
+          }
+        }
+        reapSummary = {
+          terminalSetsScanned: retention.terminalSetsScanned,
+          setsReaped: retention.setsReaped,
+          eventsReaped: retention.eventsReaped,
+          setsSkippedPendingCandidates: retention.setsSkippedPendingCandidates,
+          retentionDays,
+          dryRun: retention.dryRun,
+        };
+        actionsTaken += options.apply ? retention.setsReaped : 0;
+        actionsSkipped += retention.setsSkippedPendingCandidates + (options.apply ? 0 : retention.setsReaped);
+        if (retention.setsSkippedPendingCandidates > 0) {
+          observations.push(`Reap preserved ${retention.setsSkippedPendingCandidates} terminal working set(s) with candidates still pending promotion.`);
+        }
+      } else {
+        stagesSkipped.push({ stage: "reap", reason: "working_memory_unavailable" });
+      }
+    } else {
+      stagesSkipped.push({ stage: "reap", reason: "light_tier" });
+    }
+
     efficiencySummary = buildDreamEfficiencySummary({
       scan,
       estimatedCostUsd,
@@ -349,6 +403,7 @@ async function executeDreamRun(options: DreamRunOptions, deps: DreamWorkflowDeps
       temporalize: temporalizeSummary,
       project: projectSummary,
       ...(pruneSummary ? { prune: pruneSummary } : {}),
+      ...(reapSummary ? { reap: reapSummary } : {}),
       efficiency: efficiencySummary,
     };
 
@@ -415,6 +470,7 @@ async function executeDreamRun(options: DreamRunOptions, deps: DreamWorkflowDeps
       ...(temporalizeSummary ? { temporalize: temporalizeSummary } : {}),
       ...(projectSummary ? { project: projectSummary } : {}),
       ...(pruneSummary ? { prune: pruneSummary } : {}),
+      ...(reapSummary ? { reap: reapSummary } : {}),
       ...(efficiencySummary ? { efficiency: efficiencySummary } : {}),
     };
     await deps.port.completeRun(runId, {
@@ -541,6 +597,22 @@ function resolvePruneStageConfig(config: AgenrConfig | null): { protectRecalledD
       typeof prune?.protectMinImportance === "number" && prune.protectMinImportance >= 0
         ? prune.protectMinImportance
         : DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE,
+  };
+}
+
+/**
+ * Resolves reap-stage retention settings from config.
+ *
+ * @param config - Resolved or partial agenr config, or null.
+ * @returns Effective working-set retention window.
+ */
+function resolveReapStageConfig(config: AgenrConfig | null): { workingSetRetentionDays: number } {
+  const reap = config?.dreaming?.stages?.reap;
+  return {
+    workingSetRetentionDays:
+      typeof reap?.workingSetRetentionDays === "number" && reap.workingSetRetentionDays >= 0
+        ? reap.workingSetRetentionDays
+        : DEFAULT_DREAMING_WORKING_SET_RETENTION_DAYS,
   };
 }
 

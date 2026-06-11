@@ -54,6 +54,7 @@ describe("maybeRunLightDream", () => {
     expect(result.result.completionSummary?.stages_skipped).toEqual([
       { stage: "reconcile", reason: "light_tier" },
       { stage: "prune", reason: "light_tier" },
+      { stage: "reap", reason: "light_tier" },
     ]);
     expect(result.result.completionSummary?.reconcile).toBeUndefined();
     expect(result.result.completionSummary?.prune).toBeUndefined();

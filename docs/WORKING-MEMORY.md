@@ -195,6 +195,18 @@ Host session shutdown closes the independent session working set through lifecyc
 
 Closed sets can retain the final snapshot and candidate list for later review. The event ledger supplies provenance for any generated candidates.
 
+### Retention and GC
+
+Terminal (`closed` and `abandoned`) working sets do not accumulate forever. The dreaming reap stage garbage-collects them after a configurable retention window:
+
+- The retention window defaults to 30 days and is configured through `dreaming.stages.reap.workingSetRetentionDays`. The comparison uses `closedAt`, falling back to `updatedAt` for legacy terminal rows without a close timestamp.
+- The reaper never deletes a set whose snapshot still carries `pending` promotion candidates of any kind. Those sets are skipped and reported so the consolidation or episode promotion path can finish first; a later pass reaps them once nothing is pending.
+- `working_events` ledger rows are deleted atomically with their parent set.
+- Open and `complete` sets are never touched, even when their id is passed to the delete path.
+- The pass is idempotent: reaped sets no longer match the retention query, and skipped sets are re-evaluated on the next run.
+
+The reaper is implemented as a host-neutral app job, `runWorkingSetRetention` in `src/app/working-memory/retention.ts`, and runs inside `standard` and `deep` dreaming runs behind the same `--apply` gate and run-action audit trail as other corpus maintenance. See [`docs/DREAMING.md`](./DREAMING.md) for stage ordering and scheduling.
+
 ## Candidate Promotion
 
 Working sets can accumulate candidate memories:

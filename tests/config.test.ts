@@ -16,6 +16,7 @@ import {
   DEFAULT_DREAMING_LIGHT_MAX_SESSIONS,
   DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE,
   DEFAULT_DREAMING_PRUNE_PROTECT_RECALLED_DAYS,
+  DEFAULT_DREAMING_WORKING_SET_RETENTION_DAYS,
   readConfig,
   resolveClaimExtractionConfig,
   resolveConfigPath,
@@ -80,6 +81,7 @@ describe("writeConfig", () => {
             protectRecalledDays: DEFAULT_DREAMING_PRUNE_PROTECT_RECALLED_DAYS,
             protectMinImportance: DEFAULT_DREAMING_PRUNE_PROTECT_MIN_IMPORTANCE,
           },
+          reap: { workingSetRetentionDays: DEFAULT_DREAMING_WORKING_SET_RETENTION_DAYS },
         },
         triggers: {
           postSessionLightDream: true,

@@ -229,5 +229,7 @@ function createPromotionRepository(
       };
     },
     recordCandidateConsolidation: async () => ({ kind: "not_found" }),
+    listReapableWorkingSets: async () => [],
+    deleteWorkingSets: async () => ({ workingSetsDeleted: 0, workingEventsDeleted: 0 }),
   };
 }

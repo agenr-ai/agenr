@@ -13,6 +13,8 @@ import { normalizeBoundedLimit } from "../../app/working-memory/limits.js";
 import { isWorkingSetWriteFailure } from "../../app/working-memory/repository.js";
 import type {
   CreateWorkingSetInput,
+  DeleteWorkingSetsResult,
+  ListReapableWorkingSetsInput,
   PatchWorkingSetUsageInput,
   PatchWorkingSetUsageAndUpdateInput,
   RecordWorkingSetCandidateConsolidationInput,
@@ -60,6 +62,8 @@ export function createWorkingMemoryRepository(database: SqlDatabase): WorkingMem
     patchWorkingSetUsageAndUpdate: (input) => patchWorkingSetUsageAndUpdate(database, input),
     recordEpisodePromotion: (input) => recordEpisodePromotion(database, input),
     recordCandidateConsolidation: (input) => recordCandidateConsolidation(database, input),
+    listReapableWorkingSets: (input) => listReapableWorkingSets(database, input),
+    deleteWorkingSets: (ids) => deleteWorkingSets(database, ids),
   };
 }
 
@@ -154,6 +158,65 @@ async function listWorkingEvents(executor: SqlExecutor, workingSetId: string, li
   });
 
   return result.rows.map((row) => mapWorkingEventRow(row)).reverse();
+}
+
+/** Lists terminal working sets whose close time predates the retention cutoff. */
+async function listReapableWorkingSets(executor: SqlExecutor, input: ListReapableWorkingSetsInput): Promise<WorkingSetRecord[]> {
+  const limit = normalizeBoundedLimit(input.limit, 200, 1000);
+  const result = await executor.execute({
+    sql: `
+      SELECT ${WORKING_SET_SELECT_COLUMNS}
+      FROM working_sets
+      WHERE status IN (${CLOSE_MANAGED_WORKING_SET_STATUSES.map(() => "?").join(", ")})
+        AND COALESCE(closed_at, updated_at) < ?
+      ORDER BY COALESCE(closed_at, updated_at) ASC, id ASC
+      LIMIT ?
+    `,
+    args: [...CLOSE_MANAGED_WORKING_SET_STATUSES, input.closedBefore, limit],
+  });
+
+  return result.rows.map((row) => mapWorkingSetRow(row));
+}
+
+/** Deletes terminal working sets and their event ledgers in one transaction. */
+async function deleteWorkingSets(database: SqlDatabase, ids: string[]): Promise<DeleteWorkingSetsResult> {
+  const normalizedIds = ids.map((id) => id.trim()).filter((id) => id.length > 0);
+  if (normalizedIds.length === 0) {
+    return { workingSetsDeleted: 0, workingEventsDeleted: 0 };
+  }
+
+  return database.withTransaction(async (transaction) => {
+    const executor = transaction as SqlDatabase;
+    const placeholders = normalizedIds.map(() => "?").join(", ");
+    const statusPlaceholders = CLOSE_MANAGED_WORKING_SET_STATUSES.map(() => "?").join(", ");
+    // Restrict to terminal-status rows so a set reopened between listing and
+    // deletion is never destroyed, and delete events first because the ledger
+    // references its parent set.
+    const eventsResult = await executor.execute({
+      sql: `
+        DELETE FROM working_events
+        WHERE working_set_id IN (
+          SELECT id FROM working_sets
+          WHERE id IN (${placeholders})
+            AND status IN (${statusPlaceholders})
+        )
+      `,
+      args: [...normalizedIds, ...CLOSE_MANAGED_WORKING_SET_STATUSES],
+    });
+    const setsResult = await executor.execute({
+      sql: `
+        DELETE FROM working_sets
+        WHERE id IN (${placeholders})
+          AND status IN (${statusPlaceholders})
+      `,
+      args: [...normalizedIds, ...CLOSE_MANAGED_WORKING_SET_STATUSES],
+    });
+
+    return {
+      workingSetsDeleted: setsResult.rowsAffected,
+      workingEventsDeleted: eventsResult.rowsAffected,
+    };
+  });
 }
 
 /** Creates one working set and its initial event. */

@@ -450,11 +450,13 @@ function hasPersistedDreamingConfig(config: AgenrConfigInput["dreaming"] | undef
   }
 
   const pruneConfig = config.stages?.prune;
+  const reapConfig = config.stages?.reap;
 
   return (
     hasModelOverride(config.model) ||
     config.dailyCostCap !== undefined ||
     pruneConfig?.protectRecalledDays !== undefined ||
-    pruneConfig?.protectMinImportance !== undefined
+    pruneConfig?.protectMinImportance !== undefined ||
+    reapConfig?.workingSetRetentionDays !== undefined
   );
 }

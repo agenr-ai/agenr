@@ -3,8 +3,10 @@
  *
  * `merge` records one content-level duplicate exclusive-slot collapse: a
  * non-survivor durable superseded by the slot's canonical survivor.
+ * `reap_working_set` records one terminal working set deleted by the
+ * retention reap stage together with its event ledger.
  */
-export type DreamActionType = "stale" | "merge" | "update_durable" | "insert_durable" | "supersede_durable" | "flag_review";
+export type DreamActionType = "stale" | "merge" | "update_durable" | "insert_durable" | "supersede_durable" | "flag_review" | "reap_working_set";
 
 /**
  * Audit log record for one action emitted during a dreaming run.
